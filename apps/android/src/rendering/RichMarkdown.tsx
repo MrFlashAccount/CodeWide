@@ -1,0 +1,463 @@
+import type { Nodes, PhrasingContent, RootContent, Table, TableCell } from "mdast";
+import { isSafeLink, parseRichMarkdown, plainRichMarkdownRootText, richMarkdownBlockIndexAtLine } from "@codewide/rendering-core";
+import { Ionicons } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
+import { createContext, type ComponentProps, type ReactNode, useContext, useId, useRef, useState } from "react";
+import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { ScrollView as GestureScrollView } from "react-native-gesture-handler";
+
+import { colors, radii } from "../theme";
+import { AppText } from "../ui/Typography";
+import { isRemoteFileHref, remoteFileKind } from "./document-preview";
+import { safeImageUri } from "./image-source";
+import { useImagePreview, useImagePreviewGroup, useRegisterImagePreviewItem } from "./ImagePreviewHost";
+import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
+import { markdownTableLayout } from "./markdown-table-layout";
+import { MermaidDiagram } from "./MermaidDiagram";
+import { NativeCodeBlock } from "./NativeCodeBlock";
+import type { RichMarkdownLayout } from "./rich-markdown-layout";
+import { useRichContentWidth } from "./RichContentLayout";
+import { usePrivateImageUri } from "./use-private-image-uri";
+
+const HorizontalScrollView = Platform.OS === "android" ? GestureScrollView : ScrollView;
+const RichMarkdownTextScaleContext = createContext(1);
+
+export function RichMarkdownTextScaleProvider({
+  scale,
+  children,
+}: {
+  scale: number;
+  children: ReactNode;
+}) {
+  return (
+    <RichMarkdownTextScaleContext.Provider value={Math.max(0.8, Math.min(1.4, scale))}>
+      {children}
+    </RichMarkdownTextScaleContext.Provider>
+  );
+}
+
+/** Applies viewer-local typography without mutating global chat Markdown. */
+function Text({ style, ...props }: ComponentProps<typeof AppText>) {
+  const scale = useContext(RichMarkdownTextScaleContext);
+  if (scale === 1) return <AppText {...props} style={style} />;
+  const flattened = StyleSheet.flatten(style);
+  const fontSize = typeof flattened?.fontSize === "number" ? flattened.fontSize * scale : undefined;
+  const lineHeight = typeof flattened?.lineHeight === "number" ? flattened.lineHeight * scale : undefined;
+  return (
+    <AppText
+      {...props}
+      style={[style, {
+        ...(fontSize === undefined ? {} : { fontSize }),
+        ...(lineHeight === undefined ? {} : { lineHeight }),
+      }]}
+    />
+  );
+}
+
+export type RichExtensionRenderer = (value: string, meta: string | null) => ReactNode;
+
+export function RichMarkdown({
+  source,
+  extensions = {},
+  maxLines,
+  layout = "fill",
+  targetLine,
+  onTargetLayout,
+}: {
+  source: string;
+  extensions?: Record<string, RichExtensionRenderer>;
+  maxLines?: number;
+  layout?: RichMarkdownLayout;
+  targetLine?: number;
+  onTargetLayout?(y: number): void;
+}) {
+  const parsed = parseRichMarkdown(source);
+  const imageOrder = collectImageOrder(parsed.root);
+  if (maxLines !== undefined) {
+    return (
+      <Text
+        selectable
+        numberOfLines={maxLines}
+        ellipsizeMode="tail"
+        style={styles.paragraph}
+      >
+        {plainRichMarkdownRootText(parsed.root)}
+      </Text>
+    );
+  }
+  const targetBlockIndex = targetLine === undefined ? null : richMarkdownBlockIndexAtLine(source, targetLine);
+  return (
+    <View style={[styles.document, layout === "fill" && styles.documentFill]}>
+      {parsed.root.children.map((node, index) => {
+        const block = <BlockNode node={node} extensions={extensions} imageOrder={imageOrder} />;
+        return index === targetBlockIndex && onTargetLayout !== undefined
+          ? <View key={`${node.type}-${index}`} collapsable={false} onLayout={({ nativeEvent }) => onTargetLayout(nativeEvent.layout.y)}>{block}</View>
+          : <BlockNode key={`${node.type}-${index}`} node={node} extensions={extensions} imageOrder={imageOrder} />;
+      })}
+      {parsed.truncated && (
+        <View style={styles.truncated}>
+          <Text style={styles.secondary}>Large message preview · {parsed.originalLength.toLocaleString()} characters</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function BlockNode({ node, extensions, imageOrder }: { node: RootContent; extensions: Record<string, RichExtensionRenderer>; imageOrder: WeakMap<object, number> }) {
+  switch (node.type) {
+    case "paragraph":
+      if (node.children.length === 1 && node.children[0]?.type === "image") {
+        const order = imageOrder.get(node.children[0]);
+        return <MarkdownImage url={node.children[0].url} alt={node.children[0].alt ?? "Image"} {...(order === undefined ? {} : { order })} />;
+      }
+      if (node.children.length === 1 && node.children[0]?.type === "link" && node.children[0].children.length === 1 && node.children[0].children[0]?.type === "image") {
+        const image = node.children[0].children[0];
+        const order = imageOrder.get(image);
+        return <MarkdownImage url={image.url} alt={image.alt ?? "Image"} target={node.children[0].url} {...(order === undefined ? {} : { order })} />;
+      }
+      return <Text selectable style={styles.paragraph}>{inline(node.children)}</Text>;
+    case "heading":
+      return <Text selectable style={[styles.heading, headingStyle(node.depth)]}>{inline(node.children)}</Text>;
+    case "blockquote": {
+      const alert = githubAlert(node);
+      if (alert !== null) {
+        return (
+          <View style={styles.alert}>
+            <View style={styles.alertHeader}>
+              <Ionicons name={alert.icon} size={15} color={alert.color} />
+              <Text style={[styles.alertTitle, { color: alert.color }]}>{alert.label}</Text>
+            </View>
+            <View style={styles.alertBody}>{alert.children.map((child, index) => <BlockNode key={index} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>
+          </View>
+        );
+      }
+      return <View style={styles.blockquote}>{node.children.map((child, index) => <BlockNode key={index} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>;
+    }
+    case "list":
+      return (
+        <View style={styles.list}>
+          {node.children.map((item, index) => (
+            <View key={index} style={styles.listRow}>
+              {typeof item.checked === "boolean"
+                ? <View accessibilityLabel={item.checked ? "Completed task" : "Open task"} style={styles.taskMarker}><Ionicons name={item.checked ? "checkbox" : "square-outline"} size={15} color={item.checked ? colors.green : colors.textMuted} /></View>
+                : <Text style={styles.listMarker}>{node.ordered ? `${(node.start ?? 1) + index}.` : "•"}</Text>}
+              <View style={styles.listBody}>{item.children.map((child, childIndex) => <BlockNode key={childIndex} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>
+            </View>
+          ))}
+        </View>
+      );
+    case "code": {
+      const language = node.lang ?? "text";
+      if (language.toLocaleLowerCase() === "mermaid") return <MermaidDiagram source={node.value} />;
+      if (language.startsWith("codex-")) {
+        const extension = extensions[language.slice("codex-".length)];
+        if (extension !== undefined) return <>{extension(node.value, node.meta ?? null)}</>;
+      }
+      return (
+        <CopyableCodeBlock value={node.value} language={language} />
+      );
+    }
+    case "table":
+      return <MarkdownTable table={node} />;
+    case "thematicBreak":
+      return <View style={styles.rule} />;
+    case "html":
+      return <CopyableInline value={node.value} style={styles.rawHtml}>{node.value}</CopyableInline>;
+    case "footnoteDefinition":
+      return (
+        <View style={styles.footnote}>
+          <Text selectable style={styles.footnoteMarker}>[{node.identifier}]</Text>
+          <View style={styles.footnoteBody}>{node.children.map((child, index) => <BlockNode key={index} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>
+        </View>
+      );
+    case "definition":
+    case "yaml":
+      return null;
+    default:
+      return <Text selectable style={styles.secondary}>{fallbackText(node)}</Text>;
+  }
+}
+
+function CopyableCodeBlock({ value, language }: { value: string; language: string }) {
+  const [copied, copy] = useCopyFeedback(value);
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={`Copy ${language} code block`} onPress={copy} style={({ pressed }) => [styles.codeContainer, pressed && styles.copyPressed]}>
+      <View style={styles.codeHeader}>
+        <Text style={styles.codeLanguage}>{language}</Text>
+        <Text accessibilityLiveRegion="polite" style={[styles.copyHint, copied && styles.copyHintDone]}>{copied ? "Copied" : "Tap to copy"}</Text>
+      </View>
+      <NativeCodeBlock value={value} language={language} />
+    </Pressable>
+  );
+}
+
+function CopyableInline({ value, children, style, onLongPress }: { value: string; children: ReactNode; style?: object; onLongPress?(): void }) {
+  const [copied, copy] = useCopyFeedback(value);
+  return (
+    <Text
+      accessibilityRole="button"
+      accessibilityHint={onLongPress === undefined ? "Copies to clipboard" : "Copies to clipboard; long press opens the link"}
+      onPress={copy}
+      {...(onLongPress === undefined ? {} : { onLongPress })}
+      style={[style, copied && styles.copyHintDone]}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function MarkdownLink({ url, children }: { url: string; children: ReactNode }) {
+  const openLocalLink = useMarkdownLocalLinkHandler();
+  const external = isSafeLink(url);
+  const localKind = !external && openLocalLink !== null && isRemoteFileHref(url) ? remoteFileKind(url, url) : null;
+  const local = localKind !== null;
+  if (!external && !local) return <Text style={styles.secondary}>{children}</Text>;
+  return (
+    <Text
+      accessibilityRole="link"
+      accessibilityHint="Opens the link"
+      onPress={() => {
+        if (openLocalLink?.(url)) return;
+        if (external) void Linking.openURL(url);
+      }}
+      style={styles.link}
+    >
+      {children}
+      {(external || localKind === "download") && " "}
+      {external && <Ionicons name="open-outline" size={11} color={colors.accent} />}
+      {localKind === "download" && <Ionicons name="download-outline" size={11} color={colors.accent} />}
+    </Text>
+  );
+}
+
+function useCopyFeedback(value: string): [boolean, () => void] {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copy = () => {
+    void Clipboard.setStringAsync(value);
+    setCopied(true);
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      setCopied(false);
+    }, 900);
+  };
+  return [copied, copy];
+}
+
+function MarkdownImage({ url, alt, target = url, order }: { url: string; alt: string; target?: string; order?: number }) {
+  const openImagePreview = useImagePreview();
+  const openLocalLink = useMarkdownLocalLinkHandler();
+  const groupId = useImagePreviewGroup();
+  const previewId = useId();
+  const imageUri = safeImageUri(url);
+  const privateImage = usePrivateImageUri(imageUri);
+  const safeTarget = isSafeLink(target) ? target : null;
+  const previewItem = {
+    id: groupId === null ? previewId : `${groupId}:${url}:${alt}`,
+    label: alt,
+    source: privateImage.source ?? { uri: imageUri ?? "" },
+    link: safeTarget,
+    reference: url,
+    ...(order === undefined ? {} : { order }),
+  };
+  useRegisterImagePreviewItem(groupId, previewItem);
+  if (imageUri === null && openLocalLink !== null && isRemoteFileHref(url) && remoteFileKind(alt, url) === "image") {
+    return (
+      <Pressable accessibilityRole="imagebutton" accessibilityLabel={`Open ${alt}`} onPress={() => openLocalLink(url)} style={styles.localImageLink}>
+        <Ionicons name="image-outline" size={16} color={colors.accent} />
+        <Text numberOfLines={1} ellipsizeMode="middle" style={styles.link}>{alt}</Text>
+      </Pressable>
+    );
+  }
+  if (imageUri === null || privateImage.failed) return <Text selectable style={styles.secondary}>[Image: {alt}]</Text>;
+  if (privateImage.uri === null) return <View style={styles.markdownImage} />;
+  return (
+    <Pressable
+      accessibilityRole="imagebutton"
+      accessibilityLabel={`Open ${alt}`}
+      onPress={() => openImagePreview({ ...previewItem, groupId })}
+      {...(safeTarget === null ? {} : { onLongPress: () => void Linking.openURL(safeTarget) })}
+    >
+      <Image accessibilityLabel={alt} source={privateImage.source ?? { uri: privateImage.uri }} resizeMode="contain" style={styles.markdownImage} />
+    </Pressable>
+  );
+}
+
+function collectImageOrder(root: Nodes): WeakMap<object, number> {
+  const order = new WeakMap<object, number>();
+  let index = 0;
+  const visit = (node: Nodes): void => {
+    if (node.type === "image") {
+      order.set(node, index);
+      index += 1;
+    }
+    if ("children" in node && Array.isArray(node.children)) {
+      for (const child of node.children) visit(child as Nodes);
+    }
+  };
+  visit(root);
+  return order;
+}
+
+function MarkdownTable({ table }: { table: Table }) {
+  const availableWidth = useRichContentWidth();
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
+  // The surrounding bubble is intrinsic-width. Measuring only this child
+  // creates a circular layout in which a narrow table can never pull the
+  // bubble out to its available width. The pane owns the concrete rich-content
+  // width, so use it as the minimum and keep onLayout only as a fallback for
+  // standalone renderers without a provider.
+  const minimumWidth = availableWidth !== null && availableWidth > 0 ? availableWidth : viewportWidth;
+  const { tableWidth, cellWidth } = markdownTableLayout(minimumWidth, columnCount);
+  return (
+    <View
+      style={[styles.tableViewport, minimumWidth > 0 ? { width: minimumWidth } : null]}
+      onLayout={({ nativeEvent }) => setViewportWidth(Math.ceil(nativeEvent.layout.width))}
+    >
+      <HorizontalScrollView
+        horizontal
+        nestedScrollEnabled
+        showsHorizontalScrollIndicator
+        style={styles.tableHorizontalScroller}
+        contentContainerStyle={[styles.tableHorizontalContent, minimumWidth > 0 ? { minWidth: minimumWidth } : null]}
+      >
+        <View style={[styles.table, { width: tableWidth }]}> 
+          {table.children.map((row, rowIndex) => (
+            <View key={rowIndex} style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}>
+              {row.children.map((cell, cellIndex) => (
+                <TableCellView
+                  key={cellIndex}
+                  cell={cell}
+                  width={cellWidth}
+                  header={rowIndex === 0}
+                  align={table.align?.[cellIndex] ?? null}
+                />
+              ))}
+            </View>
+          ))}
+        </View>
+      </HorizontalScrollView>
+    </View>
+  );
+}
+
+function TableCellView({ cell, width, header, align }: { cell: TableCell; width: number; header: boolean; align: "left" | "right" | "center" | null }) {
+  return <Text selectable style={[styles.tableCell, header && styles.tableCellHeader, { width, textAlign: align ?? "left" }]}>{inline(cell.children)}</Text>;
+}
+
+function inline(nodes: PhrasingContent[]): ReactNode[] {
+  return nodes.map((node, index) => {
+    switch (node.type) {
+      case "text": return node.value;
+      case "strong": return <Text key={index} style={styles.strong}>{inline(node.children)}</Text>;
+      case "emphasis": return <Text key={index} style={styles.emphasis}>{inline(node.children)}</Text>;
+      case "delete": return <Text key={index} style={styles.deleted}>{inline(node.children)}</Text>;
+      case "inlineCode": return <CopyableInline key={index} value={node.value} style={styles.inlineCode}>{node.value}</CopyableInline>;
+      case "break": return "\n";
+      case "link": {
+        return <MarkdownLink key={index} url={node.url}>{inline(node.children)}</MarkdownLink>;
+      }
+      case "image": return <Text key={index} style={styles.secondary}>[Image: {node.alt ?? node.url}]</Text>;
+      case "footnoteReference": return <Text key={index} style={styles.secondary}>[{node.identifier}]</Text>;
+      case "linkReference": return <Text key={index}>{inline(node.children)}</Text>;
+      case "imageReference": return <Text key={index} style={styles.secondary}>[Image: {node.alt ?? node.identifier}]</Text>;
+      case "html": return <Text key={index} style={styles.rawHtml}>{node.value}</Text>;
+      default: return <Text key={index}>{fallbackText(node)}</Text>;
+    }
+  });
+}
+
+function headingStyle(depth: 1 | 2 | 3 | 4 | 5 | 6) {
+  if (depth === 1) return styles.headingOne;
+  if (depth === 2) return styles.headingTwo;
+  if (depth === 3) return styles.headingThree;
+  return styles.headingMinor;
+}
+
+const ALERT_CONFIG = {
+  NOTE: { label: "Note", icon: "information-circle-outline", color: "#70a7ff" },
+  TIP: { label: "Tip", icon: "bulb-outline", color: colors.green },
+  IMPORTANT: { label: "Important", icon: "sparkles-outline", color: "#b59cff" },
+  WARNING: { label: "Warning", icon: "warning-outline", color: colors.amber },
+  CAUTION: { label: "Caution", icon: "alert-circle-outline", color: colors.red },
+} as const;
+
+function githubAlert(node: Extract<RootContent, { type: "blockquote" }>) {
+  const first = node.children[0];
+  if (first?.type !== "paragraph") return null;
+  const firstInline = first.children[0];
+  if (firstInline?.type !== "text") return null;
+  const match = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s+|$)/iu.exec(firstInline.value);
+  if (match === null) return null;
+  const kind = match[1]!.toUpperCase() as keyof typeof ALERT_CONFIG;
+  const remainingText = firstInline.value.slice(match[0].length);
+  const firstChildren = remainingText === ""
+    ? first.children.slice(1)
+    : [{ ...firstInline, value: remainingText }, ...first.children.slice(1)];
+  const children = firstChildren.length === 0
+    ? node.children.slice(1)
+    : [{ ...first, children: firstChildren }, ...node.children.slice(1)];
+  return { ...ALERT_CONFIG[kind], children };
+}
+
+function fallbackText(node: Nodes): string {
+  if ("value" in node && typeof node.value === "string") return node.value;
+  return `[${node.type}]`;
+}
+
+const styles = StyleSheet.create({
+  // Plain text stays intrinsic so the parent bubble behaves like CSS
+  // `fit-content`. Width-dependent blocks explicitly fill the available
+  // bubble/sheet width instead of making every short answer full width.
+  document: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", gap: 5 },
+  documentFill: { width: "100%", alignSelf: "stretch" },
+  // A paragraph lives in the document's vertical flex axis. `flexShrink: 1`
+  // therefore shrank its height (not its width) when Samsung windowed mode
+  // recomputed the available viewport, clipping the last line of text.
+  paragraph: { minWidth: 0, maxWidth: "100%", color: colors.text, fontSize: 13, lineHeight: 18 },
+  heading: { color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "700", marginTop: 3 },
+  headingOne: { fontSize: 17, lineHeight: 22 },
+  headingTwo: { fontSize: 16, lineHeight: 21 },
+  headingThree: { fontSize: 15, lineHeight: 20 },
+  headingMinor: { fontSize: 14, lineHeight: 19 },
+  strong: { fontWeight: "700" },
+  emphasis: { fontStyle: "italic" },
+  deleted: { textDecorationLine: "line-through", color: colors.textMuted },
+  inlineCode: { color: colors.text, backgroundColor: colors.code, fontFamily: "monospace" },
+  link: { color: colors.accent, textDecorationLine: "underline" },
+  secondary: { color: colors.textMuted },
+  blockquote: { borderLeftWidth: 2, borderLeftColor: colors.accent, paddingLeft: 8, gap: 4 },
+  alert: { width: "100%", minWidth: 0, borderRadius: radii.small, backgroundColor: colors.surfaceRaised, paddingHorizontal: 9, paddingVertical: 7, gap: 3 },
+  alertHeader: { flexDirection: "row", alignItems: "center", gap: 5 },
+  alertTitle: { fontSize: 12, lineHeight: 16, fontWeight: "700" },
+  alertBody: { minWidth: 0, gap: 4 },
+  list: { width: "100%", minWidth: 0, gap: 3 },
+  listRow: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6 },
+  listMarker: { color: colors.textMuted, width: 19, textAlign: "right", fontSize: 13, lineHeight: 18 },
+  taskMarker: { width: 19, minHeight: 18, alignItems: "flex-end", justifyContent: "flex-start", paddingTop: 1 },
+  listBody: { minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: 0, gap: 2 },
+  footnote: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 5 },
+  footnoteMarker: { color: colors.accent, fontSize: 10, lineHeight: 15 },
+  footnoteBody: { minWidth: 0, flex: 1, gap: 3 },
+  codeContainer: { minWidth: 0, maxWidth: "100%", backgroundColor: colors.code, borderRadius: radii.small, borderWidth: 1, borderColor: colors.border, padding: 7, gap: 4 },
+  codeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  codeLanguage: { color: colors.textDim, fontSize: 9, textTransform: "uppercase" },
+  copyHint: { color: colors.textDim, fontSize: 9 },
+  copyHintDone: { color: colors.green },
+  copyPressed: { opacity: 0.76 },
+  rawHtml: { color: colors.textMuted, fontFamily: "monospace", fontSize: 11 },
+  rule: { height: 8 },
+  tableViewport: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" },
+  tableHorizontalScroller: { flexGrow: 0, width: "100%", minWidth: 0, maxWidth: "100%" },
+  tableHorizontalContent: { flexGrow: 0 },
+  table: { alignSelf: "flex-start", borderWidth: 1, borderColor: colors.border, borderRadius: radii.small, overflow: "hidden" },
+  tableRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: colors.borderSoft },
+  tableHeader: { backgroundColor: colors.surfaceHover },
+  tableCell: { flexShrink: 0, color: colors.text, minWidth: 144, paddingHorizontal: 7, paddingVertical: 5, borderRightWidth: 1, borderRightColor: colors.borderSoft, fontSize: 12, lineHeight: 16 },
+  tableCellHeader: { fontWeight: "700" },
+  truncated: { borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 5 },
+  markdownImage: { width: "100%", height: 220, borderRadius: radii.medium, backgroundColor: colors.code },
+  localImageLink: { minWidth: 0, maxWidth: "100%", flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 4 },
+});

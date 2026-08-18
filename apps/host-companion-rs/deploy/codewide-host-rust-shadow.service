@@ -1,0 +1,47 @@
+[Unit]
+Description=CodeWide Rust companion shadow
+After=network-online.target codex-app-server-bootstrap.service codewide-host.service
+Wants=network-online.target
+Requires=codex-app-server-bootstrap.service
+
+[Service]
+Type=simple
+UMask=0077
+RuntimeDirectory=codewide-shadow
+RuntimeDirectoryMode=0700
+Environment=HOME=%h
+Environment=CODEX_HOME=%h/.codex
+Environment=CODEWIDE_BUILD_SHELF_ORIGIN=http://127.0.0.1:4190
+Environment='CODEWIDE_PREVIEW_ROOTS=["/tmp/codewide-attachments"]'
+Environment=RUST_LOG=codewide_host_rs=info
+ExecStartPre=/usr/bin/test -S %h/.codex/app-server-control/app-server-control.sock
+ExecStartPre=/usr/bin/test -s %h/.codewide/host.token
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/codewide-rust-shadow
+ExecStart=%h/.local/lib/codewide-rust/codewide-host-rs serve --listen 127.0.0.1:8766 --control-endpoint %t/codewide-shadow/companion-control.sock --state %h/.local/state/codewide-rust-shadow/state.redb --data-dir %h/.local/state/codewide-rust-shadow --token-file %h/.codewide/host.token --app-server-socket %h/.codex/app-server-control/app-server-control.sock --codex-home %h/.codex --device-registry %h/.local/state/codewide-rust-shadow/devices.json
+Restart=always
+RestartSec=2s
+TimeoutStartSec=30s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+KeyringMode=private
+PrivateTmp=true
+PrivateDevices=true
+BindReadOnlyPaths=-/tmp/codewide-attachments
+ProtectSystem=full
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target

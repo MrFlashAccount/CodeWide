@@ -1,0 +1,50 @@
+{
+  "name": "codewide",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "pnpm": {
+    "overrides": {
+      "uuid@<11.1.1": "11.1.1"
+    },
+    "patchedDependencies": {
+      "@legendapp/list@3.3.5": "patches/@legendapp__list@3.3.5.patch",
+      "expo-asset@57.0.9": "patches/expo-asset@57.0.9.patch",
+      "heroui-native@1.0.8": "patches/heroui-native@1.0.8.patch"
+    }
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm typecheck:scripts && pnpm -r typecheck",
+    "typecheck:scripts": "tsc --project scripts/tsconfig.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "bench:fixtures": "tsx scripts/benchmark-deterministic-fixtures.ts",
+    "bench:large-content": "tsx scripts/benchmark-large-content.ts",
+    "bench:markdown-parser": "tsx packages/rendering-core/scripts/benchmark-markdown-parser.mjs",
+    "brand:generate": "node scripts/generate-codewide-assets.mjs",
+    "soak:sync": "tsx scripts/soak-sync.ts",
+    "test:android-device": "tsx scripts/android-device-gate.ts",
+    "android:gradle": "sh scripts/android-gradle.sh",
+    "dev:android": "sh scripts/android-fast-refresh.sh",
+    "ota:publish": "tsx scripts/publish-android-ota.ts",
+    "test:ota": "python3 scripts/test-ota-server.py",
+    "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
+    "security:scan-secrets": "tsx scripts/scan-secrets.ts",
+    "release:gate": "pnpm typecheck && pnpm test && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
+    "test:watch": "vitest",
+    "protocol:generate": "codex app-server generate-ts --experimental --out packages/codex-protocol/src/generated/0.147.0 && codex app-server generate-json-schema --experimental --out packages/codex-protocol/schema/0.147.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,45 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+  <uses-permission android:name="android.permission.INTERNET"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+  <uses-permission android:name="android.permission.VIBRATE"/>
+  <uses-permission android:name="android.permission.CAMERA"/>
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.VIEW"/>
+      <category android:name="android.intent.category.BROWSABLE"/>
+      <data android:scheme="https"/>
+    </intent>
+  </queries>
+  <application android:name="dev.codewide.app.MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:usesCleartextTraffic="false" android:networkSecurityConfig="@xml/network_security_config" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="true">
+    <service android:name="dev.codewide.app.remote.CodexConnectionService" android:exported="false" android:foregroundServiceType="remoteMessaging" android:stopWithTask="false"/>
+    <meta-data android:name="expo.modules.updates.ENABLED" android:value="true"/>
+    <meta-data android:name="expo.modules.updates.ENABLE_BSDIFF_PATCH_SUPPORT" android:value="true"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="${expoUpdatesUrl}"/>
+    <meta-data android:name="expo.modules.updates.EXPO_RUNTIME_VERSION" android:value="0.2.46-native-59"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
+    <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="1200"/>
+    <meta-data android:name="expo.modules.updates.CODE_SIGNING_CERTIFICATE" android:value="-----BEGIN CERTIFICATE-----&#xA;MIIC4zCCAcugAwIBAgIJS6o3uyt3wNcgMA0GCSqGSIb3DQEBCwUAMBsxGTAXBgNV&#xA;BAMTEENvZGV4IFJlbW90ZSBPVEEwHhcNMjYwODEwMTkxMTAzWhcNMzYwODEwMTkx&#xA;MTAzWjAbMRkwFwYDVQQDExBDb2RleCBSZW1vdGUgT1RBMIIBIjANBgkqhkiG9w0B&#xA;AQEFAAOCAQ8AMIIBCgKCAQEAjfLS+/vjzDEJM1l5wkI3YF0kxDNS7Q5tZa1k2P2P&#xA;bUTdLS/XRjGGuwJJCft5sSBhKGZeJQywNGyfQb8fEIUjuziHA4hsgqUs9yLThOeo&#xA;i72HLGRhPxdZTwo2Zgh1CIwfKowW9TfKioQrv2yIG6sY+arxXmV7e+yoDoqtoNau&#xA;1bld02UKZ3G+45cta4OgQ6fJtQnQ2KJh+NSfPxIjF8cE4qUnHMGLt/TtUi6CWwa1&#xA;YfgCO5XWYyK28bRu+z+MQBKuHH5/Vsm2kCWbUWjaDIm0bO07Clexlk3EJHTQ4074&#xA;EhJaTd6tyWAOpnMy2e5/ImMzxyhx2fzyjPajwS/wDwyC3wIDAQABoyowKDAOBgNV&#xA;HQ8BAf8EBAMCB4AwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwMwDQYJKoZIhvcNAQEL&#xA;BQADggEBADdeDEqnoExBYyDRcEa3fVheqGGNKEfjRkHg4qcXVjksoU9mjdizgIMG&#xA;BaGLvpV9l0ZOcBwkllmSZv3taCjfmZzdjkggN54FN6dG0/rPaF/iHZW7yXr1hTol&#xA;rRnHexW4V5fMAdJHH5grHeD9o7lhjx8D9bHPUmZApp/JD0PJwoChlw5+f79iQ04n&#xA;+vqgydGNzBHEtpJkRuMHyAEudt0lGIuPhyQaHIWLCtrjUY08+ncKpwTXaOh0s887&#xA;y0r/vhG9+dxqW3kx5pWwYYvvuqYniGgzbLcR+VQiLutGu7pIGpCNXMWfYZkOXuYZ&#xA;df0J5Ohd42cRN5ySck/w0LElJbT9Vqg=&#xA;-----END CERTIFICATE-----&#xA;"/>
+    <meta-data android:name="expo.modules.updates.CODE_SIGNING_METADATA" android:value="{&quot;keyid&quot;:&quot;main&quot;,&quot;alg&quot;:&quot;rsa-v1_5-sha256&quot;}"/>
+    <activity android:name="dev.codewide.app.MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|smallestScreenSize|density|fontScale|assetsPaths" android:launchMode="singleTask" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="unspecified">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN"/>
+        <category android:name="android.intent.category.LAUNCHER"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="codexremote"/>
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW"/>
+        <category android:name="android.intent.category.DEFAULT"/>
+        <category android:name="android.intent.category.BROWSABLE"/>
+        <data android:scheme="codewide"/>
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>

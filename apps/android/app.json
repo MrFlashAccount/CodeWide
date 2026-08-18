@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "CodeWide",
+    "slug": "codewide",
+    "version": "0.2.46",
+    "runtimeVersion": "0.2.46-native-59",
+    "updates": {
+      "enabled": true,
+      "url": "https://updates.example.invalid/api/updates",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 1200,
+      "codeSigningCertificate": "./certs/certificate.pem",
+      "codeSigningMetadata": {
+        "keyid": "main",
+        "alg": "rsa-v1_5-sha256"
+      }
+    },
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
+    "scheme": [
+      "codewide",
+      "codexremote"
+    ],
+    "plugins": [
+      "expo-router",
+      [
+        "expo-dev-client",
+        {
+          "launchMode": "most-recent"
+        }
+      ],
+      "expo-secure-store",
+      "expo-sqlite",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow CodeWide to scan one-time host pairing QR codes",
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "android": {
+      "package": "dev.codexremote.app",
+      "versionCode": 59,
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/monochrome-icon.png",
+        "backgroundColor": "#101011"
+      },
+      "predictiveBackGestureEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

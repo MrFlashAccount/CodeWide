@@ -1,0 +1,173 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; background: #171b20; color: #eef2f6; overflow: hidden; overscroll-behavior: none; }
+    #root { position: relative; width: 100%; height: 100%; overflow: hidden; }
+    #root[data-mode="inline"] { height: auto; min-height: 1px; padding: 10px; }
+    #root[data-mode="inline"] #stage, #root[data-mode="inline"] #canvas { width: 100%; height: auto; }
+    #root[data-mode="inline"] #canvas svg { display: block; width: 100%; max-width: none; height: auto; }
+    #root[data-mode="fullscreen"] { touch-action: none; }
+    #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; touch-action: none; }
+    #root[data-mode="fullscreen"] #canvas { flex: 0 0 auto; touch-action: none; will-change: transform; transform-origin: 50% 50%; }
+    #root[data-mode="fullscreen"] #canvas svg { display: block; width: 100%; height: 100%; max-width: none; }
+  </style>
+  <script src="mermaid.min.js"></script>
+  <script src="panzoom.min.js"></script>
+</head>
+<body><main id="root"><div id="stage"><div id="canvas"></div></div></main>
+<script>
+  const root = document.getElementById('root');
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('canvas');
+  let panzoom = null;
+  let scale = 1;
+  let fitScale = 1;
+  let naturalWidth = 1;
+  let naturalHeight = 1;
+  let currentMode = 'inline';
+
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    suppressErrorRendering: true,
+    theme: 'dark',
+    flowchart: { htmlLabels: false },
+    themeVariables: {
+      background: '#171b20', primaryColor: '#232931', primaryTextColor: '#eef2f6',
+      primaryBorderColor: '#5f6b78', lineColor: '#9aa7b4', secondaryColor: '#1d2731',
+      tertiaryColor: '#20252b', fontFamily: 'sans-serif'
+    }
+  });
+
+  function send(message) {
+    window.ReactNativeWebView.postMessage(JSON.stringify(message));
+  }
+
+  function reportSize(requestId, height) {
+    requestAnimationFrame(function () {
+      send({
+        type: 'rendered',
+        requestId,
+        height: Math.ceil(height),
+        width: Math.ceil(root.clientWidth),
+        scale
+      });
+    });
+  }
+
+  function destroyPanzoom() {
+    if (panzoom !== null) panzoom.destroy();
+    panzoom = null;
+    canvas.style.removeProperty('transform');
+    canvas.style.removeProperty('cursor');
+  }
+
+  window.diagramZoom = function (factor, requestId) {
+    if (panzoom === null) return;
+    const next = Math.max(.15, Math.min(8, panzoom.getScale() * factor));
+    panzoom.zoom(next, { animate: false });
+    scale = panzoom.getScale();
+    reportSize(requestId, innerHeight);
+  };
+
+  window.diagramReset = function (requestId) {
+    if (panzoom === null) return;
+    panzoom.zoom(fitScale, { animate: false, force: true });
+    panzoom.pan(0, 0, { animate: false, force: true });
+    scale = panzoom.getScale();
+    reportSize(requestId, innerHeight);
+  };
+
+  function viewBoxSize(svg) {
+    const viewBox = svg.viewBox && svg.viewBox.baseVal;
+    if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+      return { width: viewBox.width, height: viewBox.height };
+    }
+    const bounds = svg.getBBox();
+    return { width: Math.max(1, bounds.width), height: Math.max(1, bounds.height) };
+  }
+
+  async function waitForViewport(mode) {
+    for (let frame = 0; frame < 60; frame += 1) {
+      if (root.clientWidth > 0 && (mode !== 'fullscreen' || root.clientHeight > 0)) return;
+      await new Promise(requestAnimationFrame);
+    }
+    throw new Error('Mermaid viewport has no measurable size');
+  }
+
+  function layoutInline(svg, requestId) {
+    destroyPanzoom();
+    canvas.style.width = '100%';
+    canvas.style.height = 'auto';
+    const size = viewBoxSize(svg);
+    const availableWidth = Math.max(1, root.clientWidth - 20);
+    const renderedHeight = availableWidth * size.height / size.width;
+    reportSize(requestId, renderedHeight + 20);
+  }
+
+  function layoutFullscreen(svg, requestId) {
+    destroyPanzoom();
+    const size = viewBoxSize(svg);
+    naturalWidth = Math.max(1, Math.ceil(size.width));
+    naturalHeight = Math.max(1, Math.ceil(size.height));
+    canvas.style.width = naturalWidth + 'px';
+    canvas.style.height = naturalHeight + 'px';
+    const horizontalGutter = Math.min(160, Math.max(48, innerWidth * .14));
+    const verticalGutter = Math.min(180, Math.max(72, innerHeight * .16));
+    fitScale = Math.min(
+      1,
+      Math.max(.15, (innerWidth - horizontalGutter * 2) / naturalWidth),
+      Math.max(.15, (innerHeight - verticalGutter * 2) / naturalHeight)
+    );
+    panzoom = Panzoom(canvas, {
+      canvas: true,
+      cursor: 'move',
+      minScale: .15,
+      maxScale: 8,
+      startScale: fitScale,
+      step: .2,
+      touchAction: 'none'
+    });
+    panzoom.pan(0, 0, { force: true });
+    scale = panzoom.getScale();
+    reportSize(requestId, innerHeight);
+  }
+
+  window.renderMermaid = async function (source, requestId, mode) {
+    try {
+      canvas.replaceChildren();
+      destroyPanzoom();
+      scale = 1;
+      currentMode = mode === 'fullscreen' ? 'fullscreen' : 'inline';
+      root.dataset.mode = currentMode;
+      await waitForViewport(currentMode);
+      const result = await mermaid.render('diagram-' + requestId, source, canvas);
+      canvas.innerHTML = result.svg;
+      const svg = canvas.querySelector('svg');
+      if (svg) {
+        svg.removeAttribute('height');
+        svg.removeAttribute('width');
+        const box = svg.getBBox();
+        if (!svg.getAttribute('viewBox') && box.width > 0 && box.height > 0) {
+          svg.setAttribute('viewBox', [box.x, box.y, box.width, box.height].join(' '));
+        }
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      }
+      if (!svg) throw new Error('Mermaid returned no SVG');
+      if (currentMode === 'fullscreen') layoutFullscreen(svg, requestId);
+      else layoutInline(svg, requestId);
+    } catch (error) {
+      canvas.replaceChildren();
+      send({ type: 'error', requestId, message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  send({ type: 'ready' });
+</script></body>
+</html>

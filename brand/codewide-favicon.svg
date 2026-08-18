@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">CodeWide</title>
+  <rect width="64" height="64" rx="15" fill="#101011"/>
+  <path d="M48 17c-4-5-9-7-16-7-12 0-22 10-22 22s10 22 22 22c7 0 12-2 16-7M20 23l5 20 7-12 7 12 5-20" fill="none" stroke="#F4F4F5" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

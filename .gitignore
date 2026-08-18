@@ -1,0 +1,69 @@
+# Dependencies and tool caches.
+node_modules/
+.pnpm-store/
+.expo/
+.turbo/
+.cache/
+*.tsbuildinfo
+
+# Rust, Python, Android and Gradle outputs.
+target/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.gradle/
+.cxx/
+build/
+dist/
+coverage/
+local.properties
+**/app/src/release/generated/
+debug.keystore
+*.hprof
+*.iml
+*.apk
+*.aab
+*.ap_
+*.idsig
+
+# Editors and operating-system metadata.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Test, benchmark and release artifacts.
+builds/
+test-results/
+playwright-report/
+*.log
+
+# Vendored/generated reference trees are not part of this application repo.
+openai-codex/
+codex-schema-*/
+
+# Local secrets and generated runtime state.
+.env
+.env.*
+!.env.example
+.envrc
+.direnv/
+*.key
+*.pem
+!apps/android/certs/certificate.pem
+*.token
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.redb
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.pid
+*.sock

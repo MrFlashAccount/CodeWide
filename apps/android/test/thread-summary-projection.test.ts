@@ -1,0 +1,328 @@
+import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import { describe, expect, it } from "vitest";
+
+import type { StoredThreadSummary } from "../src/data/thread-summary-types";
+import {
+  projectThreadSummaryEvent,
+  projectThreadSummarySnapshot,
+  retainThreadSummaryMissingFromSnapshot,
+  threadSummaryKey,
+} from "../src/data/thread-summary-projection";
+
+const status = { type: "idle" } as const;
+
+function summary(preview = "Latest cached answer"): StoredThreadSummary {
+  return {
+    connectionId: "server",
+    remoteThreadId: "thread",
+    name: "Thread",
+    preview,
+    cwd: "/repo",
+    updatedAt: 10,
+    recencyAt: 10,
+    status,
+    pinned: true,
+    archived: false,
+    pendingRequestCount: 0,
+    latestActivityCursor: 0,
+    lastSeenCursor: 0,
+    unread: 0,
+    provisionalThread: null,
+    deleteCommandId: null,
+  };
+}
+
+function thread(turns: unknown[] = []): Thread {
+  return {
+    id: "thread",
+    name: "Thread",
+    preview: "First prompt",
+    cwd: "/repo",
+    updatedAt: 20,
+    recencyAt: 20,
+    status,
+    ephemeral: false,
+    turns,
+  } as unknown as Thread;
+}
+
+describe("thread summary projection", () => {
+  it("applies a companion rollout invalidation without knowing the raw App Server event", () => {
+    const current = summary("Stale answer");
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "companion/thread/invalidated",
+      params: { threadId: "thread", archived: false },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "thread",
+        operation: {
+          kind: "threadInvalidated",
+          summary: {
+            activity: true,
+            conversationMessage: true,
+            finalAgentResponse: false,
+            previewText: "Fresh external answer",
+          },
+        },
+      },
+    }, () => current, 42, 8);
+
+    expect(mutation?.value).toMatchObject({
+      preview: "Fresh external answer",
+      updatedAt: 42,
+      recencyAt: 42,
+      latestActivityCursor: 8,
+      unread: 0,
+    });
+  });
+
+  it("uses companion summary semantics instead of reinterpreting the raw method", () => {
+    const current = summary();
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "unknown/new-server-method",
+      params: { threadId: "thread" },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "thread",
+        operation: {
+          kind: "turnCompleted",
+          summary: {
+            activity: true,
+            conversationMessage: true,
+            finalAgentResponse: true,
+            previewText: "**Canonical answer**",
+          },
+        },
+      },
+    }, () => current, 42, 8);
+
+    expect(mutation?.value).toMatchObject({
+      preview: "Canonical answer",
+      updatedAt: 42,
+      recencyAt: 42,
+      latestActivityCursor: 8,
+      unread: 1,
+    });
+  });
+  it("does not regress the latest preview from a metadata-only snapshot", () => {
+    const result = projectThreadSummarySnapshot("server", { ...thread(), preview: "" }, false, summary());
+
+    expect(result.preview).toBe("Latest cached answer");
+    expect(result.pinned).toBe(true);
+  });
+
+  it("uses the companion-projected list preview over a stale local preview", () => {
+    const listed = { ...thread(), preview: "**Newest canonical answer**" } as Thread;
+
+    expect(projectThreadSummarySnapshot("server", listed, false, summary("First prompt")).preview)
+      .toBe("Newest canonical answer");
+  });
+
+  it("clears an empty thread-start shell once the companion lists the materialized thread", () => {
+    const provisional = thread();
+    const previous = { ...summary("Latest answer"), provisionalThread: provisional };
+
+    expect(projectThreadSummarySnapshot("server", thread(), false, previous).provisionalThread).toBeNull();
+  });
+
+  it("uses the latest message from an authoritative detailed snapshot", () => {
+    const result = projectThreadSummarySnapshot("server", thread([
+      { id: "turn", items: [{ type: "agentMessage", text: "Fresh answer" }] },
+    ]), false, summary());
+
+    expect(result.preview).toBe("Fresh answer");
+  });
+
+  it("does not project an inherited parent prompt as a subagent preview", () => {
+    const child = {
+      ...thread([
+        { id: "parent-turn", startedAt: 19, items: [{ type: "userMessage", content: [{ type: "text", text: "Parent chat" }] }] },
+        { id: "child-turn", startedAt: 21, items: [{ type: "agentMessage", text: "Child result" }] },
+      ]),
+      id: "child",
+      parentThreadId: "root",
+      createdAt: 20,
+    } as Thread;
+
+    expect(projectThreadSummarySnapshot("server", child, false, summary("Stale parent preview")).preview).toBe("Child result");
+  });
+
+  it("clears a stale inherited subagent preview when no child message exists", () => {
+    const child = {
+      ...thread([{ id: "parent-turn", startedAt: 19, items: [{ type: "userMessage", content: [{ type: "text", text: "Parent chat" }] }] }]),
+      id: "child",
+      parentThreadId: "root",
+      createdAt: 20,
+      preview: "",
+    } as Thread;
+
+    expect(projectThreadSummarySnapshot("server", child, false, summary("Stale parent preview")).preview).toBe("");
+  });
+
+  it("keeps an event-derived child preview across a metadata-only refresh", () => {
+    const child = {
+      ...thread([]),
+      id: "child",
+      parentThreadId: "root",
+      createdAt: 20,
+      preview: "",
+    } as Thread;
+    const previous = { ...summary("Child result"), latestActivityCursor: 4 };
+
+    expect(projectThreadSummarySnapshot("server", child, false, previous).preview).toBe("Child result");
+  });
+
+  it("updates the preview for item deltas without reordering Recent or marking streaming text unread", () => {
+    const current = summary();
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "item/completed",
+      params: { threadId: "thread", item: { type: "agentMessage", text: "Stream complete" } },
+    }, (threadId) => threadId === "thread" ? current : undefined, 42, 7);
+
+    expect(mutation).toEqual({
+      key: threadSummaryKey("server", "thread"),
+      value: { ...current, preview: "Stream complete", updatedAt: 42, latestActivityCursor: 7, unread: 0 },
+    });
+  });
+
+  it("does not serialize thread-list storage for token-level live patches", () => {
+    const current = summary("Existing preview");
+
+    expect(projectThreadSummaryEvent("server", {
+      method: "item/agentMessage/delta",
+      params: { threadId: "thread", turnId: "turn", itemId: "agent", delta: "next" },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "thread",
+        operation: {
+          kind: "itemTextDelta",
+          itemType: "agentMessage",
+          summary: { activity: true },
+        },
+      },
+    }, () => current, 42, 7)).toBeNull();
+
+    expect(projectThreadSummaryEvent("server", {
+      method: "item/reasoning/summaryTextDelta",
+      params: { threadId: "thread", turnId: "turn", itemId: "reasoning", delta: "next" },
+    }, () => current, 42, 8)).toBeNull();
+  });
+
+  it("keeps the progress preview until a phased final answer completes its turn", () => {
+    const current = summary("Still working");
+    const streamingFinal = projectThreadSummaryEvent("server", {
+      method: "item/completed",
+      params: {
+        threadId: "thread",
+        item: { type: "agentMessage", text: "Final answer", phase: "final_answer" },
+      },
+    }, () => current, 42, 7);
+
+    expect(streamingFinal?.value?.preview).toBe("Still working");
+
+    const completed = projectThreadSummaryEvent("server", {
+      method: "turn/completed",
+      params: {
+        threadId: "thread",
+        turn: { id: "turn", items: [
+          { type: "agentMessage", text: "Final answer", phase: "final_answer" },
+          { type: "agentMessage", text: "Late progress", phase: "commentary" },
+        ] },
+      },
+    }, () => streamingFinal?.value ?? current, 43, 8);
+
+    expect(completed?.value?.preview).toBe("Final answer");
+  });
+
+  it("does not reorder Recent for tool activity", () => {
+    const current = summary();
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "item/completed",
+      params: {
+        threadId: "thread",
+        item: { type: "commandExecution", id: "tool", command: "pnpm test", status: "completed" },
+      },
+    }, () => current, 42, 7);
+
+    expect(mutation?.value).toMatchObject({ updatedAt: 42, recencyAt: 10, unread: 0 });
+  });
+
+  it("reorders Recent when a user message starts a turn", () => {
+    const current = summary();
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "turn/started",
+      params: {
+        threadId: "thread",
+        turn: {
+          id: "turn",
+          items: [{ type: "userMessage", content: [{ type: "text", text: "New prompt" }] }],
+        },
+      },
+    }, () => current, 42, 7);
+
+    expect(mutation?.value).toMatchObject({ preview: "New prompt", updatedAt: 42, recencyAt: 42, unread: 0 });
+  });
+
+  it("marks only the final agent bubble of a completed turn unread", () => {
+    const current = summary();
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "turn/completed",
+      params: {
+        threadId: "thread",
+        turn: { id: "turn", items: [
+          { type: "reasoning", summary: ["Planning redesign"] },
+          { type: "agentMessage", text: "Final answer" },
+        ] },
+      },
+    }, () => current, 42, 8);
+
+    expect(mutation?.value).toMatchObject({
+      preview: "Final answer",
+      updatedAt: 42,
+      recencyAt: 42,
+      latestActivityCursor: 8,
+      lastSeenCursor: 0,
+      unread: 1,
+    });
+  });
+
+  it("does not write the summary or relight unread state for token usage", () => {
+    const current = { ...summary(), latestActivityCursor: 9, lastSeenCursor: 9, unread: 0 };
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "thread/tokenUsage/updated",
+      params: { threadId: "thread" },
+    }, () => current, 42, 10);
+
+    expect(mutation).toBeNull();
+  });
+
+  it("deletes only the addressed summary", () => {
+    expect(projectThreadSummaryEvent("server", {
+      method: "thread/deleted",
+      params: { threadId: "thread" },
+    }, () => summary())).toEqual({ key: threadSummaryKey("server", "thread"), value: null });
+  });
+
+  it("keeps a new empty shell until its first activity", () => {
+    const started = projectThreadSummaryEvent("server", {
+      method: "thread/started",
+      params: { thread: thread() },
+    }, () => undefined)?.value;
+    expect(started).not.toBeNull();
+    expect(retainThreadSummaryMissingFromSnapshot(started as StoredThreadSummary)).toBe(true);
+
+    const active = projectThreadSummaryEvent("server", {
+      method: "turn/started",
+      params: { threadId: "thread", turn: { id: "turn", items: [] } },
+    }, () => started ?? undefined, 42, 1)?.value;
+    expect(active).toMatchObject({ provisionalThread: null });
+    expect(retainThreadSummaryMissingFromSnapshot(active as StoredThreadSummary)).toBe(false);
+  });
+
+  it("keeps a scoped subagent row when the global source-kind snapshot omits it", () => {
+    expect(retainThreadSummaryMissingFromSnapshot({
+      ...summary(),
+      parentThreadId: "root-thread",
+    })).toBe(true);
+  });
+});

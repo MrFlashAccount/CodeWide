@@ -1,0 +1,1769 @@
+use std::{
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    fs::File,
+    io::{BufRead, BufReader, Seek, SeekFrom},
+    path::{Component, Path, PathBuf},
+    sync::{Arc, LazyLock},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+#[cfg(unix)]
+use std::os::unix::fs::{FileExt, MetadataExt};
+
+use aho_corasick::AhoCorasick;
+use futures_util::StreamExt;
+use redb::{Database, ReadableDatabase, TableDefinition};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, RwLock};
+
+use crate::{
+    catalog::{CatalogError, SessionCatalog},
+    files::FileService,
+};
+
+const PROJECTIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_resources");
+const PROJECTION_VERSION: u8 = 7;
+const MAX_DIFF_CHARS_PER_PATH: usize = 4 * 1024 * 1024;
+const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5);
+const COMPLETED_TURN_REFRESH_DELAYS: [Duration; 6] = [
+    Duration::ZERO,
+    Duration::from_millis(100),
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+];
+const SCAN_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+const TAIL_CHECK_BYTES: u64 = 4_096;
+const RECENT_COMPLETED_TURNS: usize = 256;
+const RESOURCE_RECORD_NEEDLES: [&str; 10] = [
+    "\"type\":\"session_meta\"",
+    "\"type\":\"task_started\"",
+    "\"type\":\"task_complete\"",
+    "\"type\":\"turn_aborted\"",
+    "\"type\":\"thread_rolled_back\"",
+    "\"type\":\"user_message\"",
+    "\"type\":\"patch_apply_end\"",
+    "\"type\":\"view_image_tool_call\"",
+    "\"type\":\"image_generation_end\"",
+    "\"type\":\"response_item\"",
+];
+static RESOURCE_RECORD_MATCHER: LazyLock<AhoCorasick> = LazyLock::new(|| {
+    AhoCorasick::new(RESOURCE_RECORD_NEEDLES)
+        .unwrap_or_else(|error| panic!("invalid static resource record matcher: {error}"))
+});
+
+#[derive(Clone)]
+pub struct ResourceService {
+    catalog: Arc<SessionCatalog>,
+    store: Arc<ResourceStore>,
+    files: Arc<FileService>,
+    live: Arc<RwLock<HashMap<String, BTreeMap<String, ResourceData>>>>,
+    refreshes: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    scheduled_prewarm: Arc<std::sync::Mutex<HashSet<String>>>,
+}
+
+struct ResourceStore {
+    database: Database,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangeResource {
+    path: String,
+    kind: ChangeKind,
+    additions: u64,
+    deletions: u64,
+    turn_id: String,
+    item_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ChangeKind {
+    Add,
+    Delete,
+    Update,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttachmentResource {
+    key: String,
+    name: String,
+    kind: AttachmentKind,
+    path: Option<String>,
+    url: Option<String>,
+    origin: AttachmentOrigin,
+    turn_id: String,
+    item_id: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum AttachmentKind {
+    Image,
+    Audio,
+    File,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum AttachmentOrigin {
+    User,
+    Agent,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChangePatch {
+    turn_id: String,
+    item_id: String,
+    kind: ChangeKind,
+    diff: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct PatchBucket {
+    patches: Vec<ChangePatch>,
+    chars: usize,
+    truncated: bool,
+}
+
+impl PatchBucket {
+    fn merge_bucket(&mut self, other: Option<&Self>) {
+        let Some(other) = other else {
+            return;
+        };
+        for patch in &other.patches {
+            if self.chars.saturating_add(patch.diff.len()) > MAX_DIFF_CHARS_PER_PATH {
+                self.truncated = true;
+                break;
+            }
+            self.chars = self.chars.saturating_add(patch.diff.len());
+            self.patches.push(patch.clone());
+        }
+        self.truncated |= other.truncated;
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct ResourceData {
+    changes: BTreeMap<String, ChangeResource>,
+    attachments: Vec<AttachmentResource>,
+    patches: BTreeMap<String, PatchBucket>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct TurnResourceData {
+    turn_id: String,
+    data: ResourceData,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PersistedProjection {
+    version: u8,
+    source_path: PathBuf,
+    device: u64,
+    inode: u64,
+    indexed_bytes: u64,
+    tail_hash: [u8; 32],
+    cwd: Option<PathBuf>,
+    active_turn_id: Option<String>,
+    #[serde(default)]
+    pending_data: ResourceData,
+    #[serde(default)]
+    turns: Vec<TurnResourceData>,
+    recent_completed_turns: VecDeque<String>,
+}
+
+impl PersistedProjection {
+    fn empty(path: PathBuf, device: u64, inode: u64) -> Self {
+        Self {
+            version: PROJECTION_VERSION,
+            source_path: path,
+            device,
+            inode,
+            indexed_bytes: 0,
+            tail_hash: [0; 32],
+            cwd: None,
+            active_turn_id: None,
+            pending_data: ResourceData::default(),
+            turns: Vec::new(),
+            recent_completed_turns: VecDeque::new(),
+        }
+    }
+
+    fn started(&mut self, turn_id: &str) {
+        if self.active_turn_id.as_deref() == Some(turn_id) {
+            return;
+        }
+        if let Some(previous_turn_id) = self.active_turn_id.clone() {
+            // Interrupted turns do not always receive an explicit terminal
+            // record. Once the next turn starts, their canonical resources are
+            // immutable and must not disappear from the session projection.
+            self.completed(&previous_turn_id);
+        }
+        self.active_turn_id = Some(turn_id.to_owned());
+        self.pending_data = ResourceData::default();
+    }
+
+    fn completed(&mut self, turn_id: &str) {
+        if self.active_turn_id.as_deref() == Some(turn_id) {
+            let pending = std::mem::take(&mut self.pending_data);
+            self.turns.push(TurnResourceData {
+                turn_id: turn_id.to_owned(),
+                data: pending,
+            });
+            self.active_turn_id = None;
+        }
+        if !turn_id.is_empty() {
+            self.recent_completed_turns
+                .retain(|candidate| candidate != turn_id);
+            self.recent_completed_turns.push_back(turn_id.to_owned());
+            while self.recent_completed_turns.len() > RECENT_COMPLETED_TURNS {
+                self.recent_completed_turns.pop_front();
+            }
+        }
+    }
+
+    fn aborted(&mut self, turn_id: &str) {
+        self.completed(turn_id);
+    }
+
+    fn pending_for(&mut self, turn_id: &str) -> Option<&mut ResourceData> {
+        (self.active_turn_id.as_deref() == Some(turn_id)).then_some(&mut self.pending_data)
+    }
+
+    fn rollback(&mut self, turns: usize) {
+        let retained = self.turns.len().saturating_sub(turns);
+        self.turns.truncate(retained);
+        self.active_turn_id = None;
+        self.pending_data = ResourceData::default();
+        self.recent_completed_turns = self
+            .turns
+            .iter()
+            .rev()
+            .take(RECENT_COMPLETED_TURNS)
+            .map(|turn| turn.turn_id.clone())
+            .collect::<VecDeque<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+    }
+
+    fn materialized_summary(&self) -> ResourceData {
+        let mut data = ResourceData::default();
+        for turn in &self.turns {
+            data.merge_summary(&turn.data);
+        }
+        // An interrupted or currently active turn can remain at EOF without a
+        // terminal event. Its canonical, newline-terminated records are still
+        // part of the thread and must survive a companion restart.
+        data.merge_summary(&self.pending_data);
+        data
+    }
+
+    fn materialized_patch(&self, path: &str) -> PatchBucket {
+        let mut bucket = PatchBucket::default();
+        for turn in &self.turns {
+            bucket.merge_bucket(turn.data.patches.get(path));
+        }
+        bucket.merge_bucket(self.pending_data.patches.get(path));
+        bucket
+    }
+
+    #[cfg(test)]
+    fn materialized_data(&self) -> ResourceData {
+        let mut data = ResourceData::default();
+        for turn in &self.turns {
+            data.merge(&turn.data);
+        }
+        data.merge(&self.pending_data);
+        data
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResourceError {
+    #[error(transparent)]
+    Catalog(#[from] CatalogError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Database(#[from] redb::Error),
+    #[error(transparent)]
+    DatabaseOpen(#[from] redb::DatabaseError),
+    #[error(transparent)]
+    Transaction(#[from] redb::TransactionError),
+    #[error(transparent)]
+    Table(#[from] redb::TableError),
+    #[error(transparent)]
+    Storage(#[from] redb::StorageError),
+    #[error(transparent)]
+    Commit(#[from] redb::CommitError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error("threadId is required")]
+    MissingThreadId,
+    #[error("path is required")]
+    MissingPath,
+    #[error("resource projection task failed")]
+    Join,
+}
+
+impl ResourceService {
+    /// Opens the compact, crash-safe projection store. It contains only file
+    /// metadata, attachment references, and bounded diffs; canonical JSONL
+    /// remains the only full-history source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the redb projection store cannot be opened.
+    pub fn open(
+        path: impl AsRef<Path>,
+        catalog: Arc<SessionCatalog>,
+        files: Arc<FileService>,
+    ) -> Result<Self, ResourceError> {
+        let path = path.as_ref();
+        let store = match ResourceStore::open(path) {
+            Ok(store) => store,
+            Err(error) if recoverable_resource_database_error(&error) => {
+                let backup = corrupt_backup_path(path);
+                std::fs::rename(path, &backup)?;
+                tracing::warn!(
+                    path = %path.display(),
+                    backup = %backup.display(),
+                    reason = %error,
+                    "quarantined corrupt derived resource index"
+                );
+                ResourceStore::open(path)?
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(Self {
+            catalog,
+            store: Arc::new(store),
+            files,
+            live: Arc::new(RwLock::new(HashMap::new())),
+            refreshes: Arc::new(Mutex::new(HashMap::new())),
+            scheduled_prewarm: Arc::new(std::sync::Mutex::new(HashSet::new())),
+        })
+    }
+
+    #[must_use]
+    pub fn handles(method: &str) -> bool {
+        matches!(
+            method,
+            "companion/threadResources/read" | "companion/threadChange/read"
+        )
+    }
+
+    /// Refreshes the immutable projection from the canonical rollout and then
+    /// overlays only the currently mutable turn observed on the live stream.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the thread is invalid, its rollout cannot be
+    /// read, or the compact projection cannot be committed.
+    pub async fn handle(&self, method: &str, params: &Value) -> Result<Value, ResourceError> {
+        let thread_id = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or(ResourceError::MissingThreadId)?
+            .to_owned();
+        let projection = self.refresh_projection(&thread_id).await?;
+
+        let mut live = self.live.write().await;
+        if let Some(turns) = live.get_mut(&thread_id) {
+            for completed in &projection.recent_completed_turns {
+                turns.remove(completed);
+            }
+            if turns.is_empty() {
+                live.remove(&thread_id);
+            }
+        }
+        let overlays = live.get(&thread_id).cloned().unwrap_or_default();
+        drop(live);
+
+        if method == "companion/threadChange/read" {
+            let requested = params
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or(ResourceError::MissingPath)?;
+            let resolved = resolve_path(requested, projection.cwd.as_deref());
+            let mut bucket = projection.materialized_patch(&resolved);
+            for overlay in overlays.values() {
+                let resolved_overlay = overlay.resolved_against(projection.cwd.as_deref());
+                bucket.merge_bucket(resolved_overlay.patches.get(&resolved));
+            }
+            return Ok(json!({
+                "threadId": thread_id,
+                "path": resolved,
+                "patches": bucket.patches,
+                "truncated": bucket.truncated
+            }));
+        }
+
+        let mut data = projection.materialized_summary();
+        for overlay in overlays.values() {
+            data.merge_missing_summary(&overlay.resolved_against(projection.cwd.as_deref()));
+        }
+        self.files.observe_preview_paths(data.preview_paths()).await;
+
+        let mut changes = futures_util::stream::iter(data.changes.values().cloned().enumerate())
+            .map(|(index, change)| async move {
+                let availability = match tokio::fs::metadata(&change.path).await {
+                    Ok(metadata) if metadata.is_file() => "available",
+                    Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound) => "deleted",
+                    Ok(_) | Err(_) => "unavailable",
+                };
+                (index, change, availability)
+            })
+            .buffer_unordered(32)
+            .collect::<Vec<_>>()
+            .await;
+        changes.sort_by_key(|(index, _, _)| *index);
+        let changes = changes
+            .into_iter()
+            .map(|(_, change, availability)| {
+                let mut value = serde_json::to_value(change)?;
+                if let Some(object) = value.as_object_mut() {
+                    object.insert("availability".into(), Value::String(availability.into()));
+                }
+                Ok(value)
+            })
+            .collect::<Result<Vec<_>, serde_json::Error>>()?;
+        let base_revision = resource_revision(&data)?;
+        let availability_revision = availability_revision(&changes);
+        Ok(json!({
+            "threadId": thread_id,
+            "revision": format!("{base_revision}.{availability_revision}"),
+            "changes": changes,
+            "attachments": data.attachments
+        }))
+    }
+
+    /// Starts an idempotent background refresh for a thread as soon as its
+    /// history is opened. A later resource request joins the same per-thread
+    /// refresh instead of starting a second full scan.
+    pub fn schedule_prewarm(&self, thread_id: &str) {
+        if thread_id.is_empty() {
+            return;
+        }
+        let scheduled = self
+            .scheduled_prewarm
+            .lock()
+            .is_ok_and(|mut scheduled| scheduled.insert(thread_id.to_owned()));
+        if !scheduled {
+            return;
+        }
+        let service = self.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::spawn(async move {
+            match service.refresh_projection(&thread_id).await {
+                Ok(projection) => {
+                    // A thread read must make its exact attachment and changed-file
+                    // paths available immediately. Previously this happened only
+                    // after the Changes/Attachments sheet made a separate resource
+                    // RPC, so opening the same file directly from a message could
+                    // race that RPC and receive path_outside_root (403).
+                    service
+                        .files
+                        .observe_preview_paths(projection.materialized_summary().preview_paths())
+                        .await;
+                }
+                Err(error) => {
+                    tracing::warn!(thread_id, reason = %error, "resource prewarm failed");
+                }
+            }
+            // This set only deduplicates concurrent refreshes. A later thread
+            // open must be allowed to incrementally observe attachments added
+            // after this prewarm or while the companion was disconnected.
+            if let Ok(mut scheduled) = service.scheduled_prewarm.lock() {
+                scheduled.remove(&thread_id);
+            }
+        });
+    }
+
+    async fn refresh_projection(
+        &self,
+        thread_id: &str,
+    ) -> Result<PersistedProjection, ResourceError> {
+        let refresh = {
+            let mut refreshes = self.refreshes.lock().await;
+            refreshes
+                .entry(thread_id.to_owned())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        let _guard = refresh.lock().await;
+        let path = self.catalog.resolve(thread_id)?;
+        let store = self.store.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::task::spawn_blocking(move || store.refresh(&thread_id, &path))
+            .await
+            .map_err(|_| ResourceError::Join)?
+    }
+
+    /// Observes App Server notifications. Only the active turn is retained in
+    /// memory; completed immutable data is picked up from canonical JSONL.
+    pub async fn observe(&self, payload: &Value) {
+        let Some(method) = payload.get("method").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(params) = payload.get("params").and_then(Value::as_object) else {
+            return;
+        };
+        let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else {
+            return;
+        };
+        if method == "thread/deleted" {
+            self.live.write().await.remove(thread_id);
+            if let Err(error) = self.files.mark_thread_attachments_deleted(thread_id).await {
+                tracing::warn!(thread_id, reason = %error, "attachment cleanup tombstone failed");
+            }
+            return;
+        }
+        if method == "thread/compacted" {
+            self.live.write().await.remove(thread_id);
+            return;
+        }
+        let mut completed_turn = None;
+        let preview_paths = match method {
+            "turn/started" | "turn/completed" => {
+                let Some(turn) = params.get("turn") else {
+                    return;
+                };
+                let Some(turn_id) = turn.get("id").and_then(Value::as_str) else {
+                    return;
+                };
+                let mut data = ResourceData::default();
+                if let Some(items) = turn.get("items").and_then(Value::as_array) {
+                    for item in items {
+                        data.apply_materialized_item(turn_id, item, None);
+                    }
+                }
+                let preview_paths = data.preview_paths();
+                self.live
+                    .write()
+                    .await
+                    .entry(thread_id.to_owned())
+                    .or_default()
+                    .insert(turn_id.to_owned(), data);
+                if method == "turn/completed" {
+                    completed_turn = Some(turn_id.to_owned());
+                }
+                preview_paths
+            }
+            "item/started" | "item/completed" | "item/fileChange/patchUpdated" => {
+                let Some(turn_id) = params.get("turnId").and_then(Value::as_str) else {
+                    return;
+                };
+                let item = if method == "item/fileChange/patchUpdated" {
+                    json!({
+                        "id": params.get("itemId").and_then(Value::as_str).unwrap_or(""),
+                        "type": "fileChange",
+                        "changes": params.get("changes").cloned().unwrap_or_else(|| json!([]))
+                    })
+                } else {
+                    params.get("item").cloned().unwrap_or(Value::Null)
+                };
+                let mut live = self.live.write().await;
+                let data = live
+                    .entry(thread_id.to_owned())
+                    .or_default()
+                    .entry(turn_id.to_owned())
+                    .or_default();
+                data.apply_materialized_item(turn_id, &item, None);
+                data.preview_paths()
+            }
+            _ => Vec::new(),
+        };
+        // Live attachments are usable as soon as their item is observed; the
+        // UI must not need to open the resource sheet first to grant access.
+        self.files.observe_preview_paths(preview_paths).await;
+        if let Some(turn_id) = completed_turn {
+            self.schedule_completed_turn_eviction(thread_id.to_owned(), turn_id);
+        }
+    }
+
+    /// Authorizes previewable files returned by trusted App Server history
+    /// RPCs before the response is forwarded to a client. This deliberately
+    /// does not depend on the rollout file: a newly-created thread can be
+    /// readable from App Server before its JSONL has appeared on disk.
+    pub async fn observe_rpc_result(&self, method: &str, result: &Value) {
+        let mut data = ResourceData::default();
+        match method {
+            "thread/read" | "thread/resume" => {
+                let Some(thread) = result.get("thread") else {
+                    return;
+                };
+                let cwd = thread.get("cwd").and_then(Value::as_str).map(Path::new);
+                observe_turns(&mut data, thread.get("turns"), cwd);
+            }
+            "thread/turns/list" => observe_turns(&mut data, result.get("data"), None),
+            "thread/items/list" => {
+                let Some(entries) = result.get("data").and_then(Value::as_array) else {
+                    return;
+                };
+                for entry in entries {
+                    let Some(item) = entry.get("item") else {
+                        continue;
+                    };
+                    let turn_id = entry.get("turnId").and_then(Value::as_str).unwrap_or("");
+                    data.apply_materialized_item(turn_id, item, None);
+                }
+            }
+            _ => return,
+        }
+        self.files.observe_preview_paths(data.preview_paths()).await;
+    }
+
+    fn schedule_completed_turn_eviction(&self, thread_id: String, turn_id: String) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            for delay in COMPLETED_TURN_REFRESH_DELAYS {
+                if !delay.is_zero() {
+                    tokio::time::sleep(delay).await;
+                }
+                let Ok(projection) = service.refresh_projection(&thread_id).await else {
+                    continue;
+                };
+                if !projection
+                    .recent_completed_turns
+                    .iter()
+                    .any(|candidate| candidate == &turn_id)
+                {
+                    continue;
+                }
+                let mut live = service.live.write().await;
+                if let Some(turns) = live.get_mut(&thread_id) {
+                    turns.remove(&turn_id);
+                    if turns.is_empty() {
+                        live.remove(&thread_id);
+                    }
+                }
+                return;
+            }
+            tracing::warn!(
+                thread_id,
+                turn_id,
+                "completed live resource overlay is waiting for canonical rollout"
+            );
+        });
+    }
+}
+
+fn observe_turns(data: &mut ResourceData, turns: Option<&Value>, cwd: Option<&Path>) {
+    let Some(turns) = turns.and_then(Value::as_array) else {
+        return;
+    };
+    for turn in turns {
+        let turn_id = turn.get("id").and_then(Value::as_str).unwrap_or("");
+        let Some(items) = turn.get("items").and_then(Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            data.apply_materialized_item(turn_id, item, cwd);
+        }
+    }
+}
+
+fn recoverable_resource_database_error(error: &ResourceError) -> bool {
+    match error {
+        ResourceError::DatabaseOpen(redb::DatabaseError::Storage(
+            redb::StorageError::Corrupted(_),
+        )) => true,
+        ResourceError::DatabaseOpen(redb::DatabaseError::Storage(redb::StorageError::Io(
+            error,
+        ))) => matches!(
+            error.kind(),
+            std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof
+        ),
+        _ => false,
+    }
+}
+
+fn corrupt_backup_path(path: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("resources.redb");
+    path.with_file_name(format!(
+        "{file_name}.corrupt.{timestamp}.{}",
+        std::process::id()
+    ))
+}
+
+impl ResourceStore {
+    fn open(path: impl AsRef<Path>) -> Result<Self, ResourceError> {
+        let database = Database::create(path)?;
+        let write = database.begin_write()?;
+        write.open_table(PROJECTIONS)?;
+        write.commit()?;
+        Ok(Self { database })
+    }
+
+    fn load(&self, thread_id: &str) -> Result<Option<PersistedProjection>, ResourceError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(PROJECTIONS)?;
+        table
+            .get(thread_id)?
+            .map(|value| serde_json::from_slice(value.value()).map_err(ResourceError::from))
+            .transpose()
+    }
+
+    fn save(&self, thread_id: &str, projection: &PersistedProjection) -> Result<(), ResourceError> {
+        let encoded = serde_json::to_vec(projection)?;
+        let write = self.database.begin_write()?;
+        {
+            let mut table = write.open_table(PROJECTIONS)?;
+            table.insert(thread_id, encoded.as_slice())?;
+        }
+        write.commit()?;
+        Ok(())
+    }
+
+    fn refresh(&self, thread_id: &str, path: &Path) -> Result<PersistedProjection, ResourceError> {
+        let file = File::open(path)?;
+        let metadata = file.metadata()?;
+        let (device, inode) = file_identity(&metadata);
+        let mut projection = self.load(thread_id)?.filter(|candidate| {
+            candidate.version == PROJECTION_VERSION
+                && candidate.source_path == path
+                && candidate.device == device
+                && candidate.inode == inode
+                && candidate.indexed_bytes <= metadata.len()
+                && tail_hash(&file, candidate.indexed_bytes).ok() == Some(candidate.tail_hash)
+        });
+        let mut projection = projection
+            .take()
+            .unwrap_or_else(|| PersistedProjection::empty(path.to_path_buf(), device, inode));
+        let mut reader = BufReader::with_capacity(SCAN_BUFFER_BYTES, file);
+        reader.seek(SeekFrom::Start(projection.indexed_bytes))?;
+        let mut offset = projection.indexed_bytes;
+        let mut partial_line = Vec::new();
+        let mut last_checkpoint = Instant::now();
+        loop {
+            let available = reader.fill_buf()?;
+            if available.is_empty() {
+                break;
+            }
+            let consumed = available.len();
+            let mut segment_start = 0;
+            for newline in memchr::memchr_iter(b'\n', available) {
+                let segment = &available[segment_start..=newline];
+                let line_bytes = if partial_line.is_empty() {
+                    apply_rollout_record(&mut projection, offset, segment);
+                    segment.len()
+                } else {
+                    partial_line.extend_from_slice(segment);
+                    apply_rollout_record(&mut projection, offset, &partial_line);
+                    let line_bytes = partial_line.len();
+                    partial_line.clear();
+                    line_bytes
+                };
+                offset = offset.saturating_add(u64::try_from(line_bytes).unwrap_or(u64::MAX));
+                segment_start = newline + 1;
+            }
+            partial_line.extend_from_slice(&available[segment_start..]);
+            reader.consume(consumed);
+            if offset != projection.indexed_bytes
+                && last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL
+            {
+                projection.indexed_bytes = offset;
+                projection.tail_hash = tail_hash(reader.get_ref(), offset)?;
+                self.save(thread_id, &projection)?;
+                last_checkpoint = Instant::now();
+            }
+        }
+        if offset != projection.indexed_bytes {
+            projection.indexed_bytes = offset;
+            projection.tail_hash = tail_hash(reader.get_ref(), offset)?;
+            self.save(thread_id, &projection)?;
+        }
+        Ok(projection)
+    }
+}
+
+impl ResourceData {
+    fn preview_paths(&self) -> Vec<PathBuf> {
+        self.changes
+            .keys()
+            .chain(
+                self.attachments
+                    .iter()
+                    .filter_map(|item| item.path.as_ref()),
+            )
+            .map(PathBuf::from)
+            .collect()
+    }
+
+    fn item_ids(&self) -> HashSet<String> {
+        self.changes
+            .values()
+            .map(|item| item.item_id.as_str())
+            .chain(self.attachments.iter().map(|item| item.item_id.as_str()))
+            .chain(
+                self.patches
+                    .values()
+                    .flat_map(|bucket| &bucket.patches)
+                    .map(|item| item.item_id.as_str()),
+            )
+            .filter(|item_id| !item_id.is_empty())
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    fn merge_missing_summary(&mut self, other: &Self) {
+        let existing_item_ids = self.item_ids();
+        for change in other.changes.values() {
+            if !existing_item_ids.contains(change.item_id.as_str()) {
+                self.upsert_change(change.clone());
+            }
+        }
+        for attachment in &other.attachments {
+            self.upsert_attachment(attachment.clone());
+        }
+    }
+
+    fn resolved_against(&self, cwd: Option<&Path>) -> Self {
+        let mut resolved = Self::default();
+        for change in self.changes.values() {
+            let mut change = change.clone();
+            change.path = resolve_path(&change.path, cwd);
+            resolved.upsert_change(change);
+        }
+        for attachment in &self.attachments {
+            let mut attachment = attachment.clone();
+            if let Some(path) = attachment.path.as_deref() {
+                let path = resolve_path(path, cwd);
+                attachment.key = format!("path:{path}");
+                attachment.path = Some(path);
+            }
+            resolved.upsert_attachment(attachment);
+        }
+        for (path, bucket) in &self.patches {
+            let path = resolve_path(path, cwd);
+            for patch in &bucket.patches {
+                resolved.append_patch(&path, patch.clone());
+            }
+            if bucket.truncated {
+                resolved.patches.entry(path).or_default().truncated = true;
+            }
+        }
+        resolved
+    }
+
+    #[cfg(test)]
+    fn merge(&mut self, other: &Self) {
+        for change in other.changes.values() {
+            self.upsert_change(change.clone());
+        }
+        for attachment in &other.attachments {
+            self.upsert_attachment(attachment.clone());
+        }
+        for (path, bucket) in &other.patches {
+            for patch in &bucket.patches {
+                self.append_patch(path, patch.clone());
+            }
+            if bucket.truncated {
+                self.patches.entry(path.clone()).or_default().truncated = true;
+            }
+        }
+    }
+
+    fn merge_summary(&mut self, other: &Self) {
+        for change in other.changes.values() {
+            self.upsert_change(change.clone());
+        }
+        for attachment in &other.attachments {
+            self.upsert_attachment(attachment.clone());
+        }
+    }
+
+    fn upsert_change(&mut self, change: ChangeResource) {
+        if let Some(previous) = self.changes.get_mut(&change.path) {
+            previous.kind = change.kind;
+            previous.additions = previous.additions.saturating_add(change.additions);
+            previous.deletions = previous.deletions.saturating_add(change.deletions);
+            previous.turn_id = change.turn_id;
+            previous.item_id = change.item_id;
+        } else {
+            self.changes.insert(change.path.clone(), change);
+        }
+    }
+
+    fn upsert_attachment(&mut self, attachment: AttachmentResource) {
+        if let Some(existing) = self
+            .attachments
+            .iter_mut()
+            .find(|candidate| candidate.key == attachment.key)
+        {
+            *existing = attachment;
+        } else {
+            self.attachments.push(attachment);
+        }
+    }
+
+    fn append_patch(&mut self, file_path: &str, change_patch: ChangePatch) {
+        let bucket = self.patches.entry(file_path.to_owned()).or_default();
+        if let Some(existing) = bucket.patches.iter_mut().find(|existing| {
+            existing.turn_id == change_patch.turn_id && existing.item_id == change_patch.item_id
+        }) {
+            let next_chars = bucket
+                .chars
+                .saturating_sub(existing.diff.len())
+                .saturating_add(change_patch.diff.len());
+            if next_chars > MAX_DIFF_CHARS_PER_PATH {
+                bucket.truncated = true;
+                return;
+            }
+            bucket.chars = next_chars;
+            *existing = change_patch;
+        } else if bucket.chars.saturating_add(change_patch.diff.len()) > MAX_DIFF_CHARS_PER_PATH {
+            bucket.truncated = true;
+        } else {
+            bucket.chars = bucket.chars.saturating_add(change_patch.diff.len());
+            bucket.patches.push(change_patch);
+        }
+    }
+
+    fn apply_change(
+        &mut self,
+        turn_id: &str,
+        item_id: &str,
+        path: &str,
+        raw: &Value,
+        cwd: Option<&Path>,
+    ) {
+        let kind_name = raw
+            .get("kind")
+            .and_then(|kind| {
+                kind.as_str()
+                    .or_else(|| kind.get("type").and_then(Value::as_str))
+            })
+            .or_else(|| raw.get("type").and_then(Value::as_str))
+            .unwrap_or("update");
+        let kind = match kind_name {
+            "add" => ChangeKind::Add,
+            "delete" => ChangeKind::Delete,
+            _ => ChangeKind::Update,
+        };
+        let moved = raw
+            .get("kind")
+            .and_then(|kind| kind.get("move_path"))
+            .or_else(|| raw.get("move_path"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let resolved = resolve_path(moved.unwrap_or(path), cwd);
+        let diff = raw
+            .get("diff")
+            .or_else(|| raw.get("unified_diff"))
+            .or_else(|| raw.get("content"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .unwrap_or_default();
+        let (additions, deletions) = diff_stats(&diff);
+        self.upsert_change(ChangeResource {
+            path: resolved.clone(),
+            kind,
+            additions,
+            deletions,
+            turn_id: turn_id.to_owned(),
+            item_id: item_id.to_owned(),
+        });
+        if !diff.is_empty() {
+            self.append_patch(
+                &resolved,
+                ChangePatch {
+                    turn_id: turn_id.to_owned(),
+                    item_id: item_id.to_owned(),
+                    kind,
+                    diff,
+                },
+            );
+        }
+    }
+
+    fn apply_materialized_item(&mut self, turn_id: &str, item: &Value, cwd: Option<&Path>) {
+        let item_id = item.get("id").and_then(Value::as_str).unwrap_or("");
+        match item.get("type").and_then(Value::as_str) {
+            Some("fileChange") => {
+                if let Some(changes) = item.get("changes").and_then(Value::as_array) {
+                    for raw in changes {
+                        if let Some(path) = raw.get("path").and_then(Value::as_str) {
+                            self.apply_change(turn_id, item_id, path, raw, cwd);
+                        }
+                    }
+                }
+            }
+            Some("userMessage") => {
+                if let Some(content) = item.get("content").and_then(Value::as_array) {
+                    for part in content {
+                        self.apply_user_part(turn_id, item_id, part, cwd);
+                    }
+                }
+            }
+            Some("imageView") => {
+                if let Some(path) = item.get("path").and_then(Value::as_str) {
+                    self.local_attachment(
+                        path,
+                        AttachmentKind::Image,
+                        AttachmentOrigin::Agent,
+                        turn_id,
+                        item_id,
+                        None,
+                        cwd,
+                    );
+                }
+            }
+            Some("imageGeneration") => {
+                if let Some(path) = item.get("savedPath").and_then(Value::as_str) {
+                    self.local_attachment(
+                        path,
+                        AttachmentKind::Image,
+                        AttachmentOrigin::Agent,
+                        turn_id,
+                        item_id,
+                        None,
+                        cwd,
+                    );
+                } else if let Some(url) = item
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .filter(|url| remote_url(url))
+                {
+                    self.remote_attachment(
+                        url,
+                        "Generated image",
+                        AttachmentKind::Image,
+                        AttachmentOrigin::Agent,
+                        turn_id,
+                        item_id,
+                    );
+                }
+            }
+            Some("agentMessage") => {
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    self.agent_markdown_links(text, turn_id, item_id, cwd);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_user_part(&mut self, turn_id: &str, item_id: &str, part: &Value, cwd: Option<&Path>) {
+        match part.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    self.mentioned_files(text, turn_id, item_id, cwd);
+                }
+            }
+            Some("localImage") => {
+                self.local_part(part, "path", AttachmentKind::Image, turn_id, item_id, cwd);
+            }
+            Some("localAudio") => {
+                self.local_part(part, "path", AttachmentKind::Audio, turn_id, item_id, cwd);
+            }
+            Some("mention") => {
+                self.local_part(part, "path", AttachmentKind::File, turn_id, item_id, cwd);
+            }
+            Some("image") => self.remote_part(
+                part,
+                "url",
+                "Image",
+                AttachmentKind::Image,
+                turn_id,
+                item_id,
+            ),
+            Some("audio") => self.remote_part(
+                part,
+                "url",
+                "Audio",
+                AttachmentKind::Audio,
+                turn_id,
+                item_id,
+            ),
+            _ => {}
+        }
+    }
+
+    fn local_part(
+        &mut self,
+        part: &Value,
+        field: &str,
+        kind: AttachmentKind,
+        turn_id: &str,
+        item_id: &str,
+        cwd: Option<&Path>,
+    ) {
+        if let Some(path) = part.get(field).and_then(Value::as_str) {
+            let name = part.get("name").and_then(Value::as_str);
+            self.local_attachment(
+                path,
+                kind,
+                AttachmentOrigin::User,
+                turn_id,
+                item_id,
+                name,
+                cwd,
+            );
+        }
+    }
+
+    fn remote_part(
+        &mut self,
+        part: &Value,
+        field: &str,
+        name: &str,
+        kind: AttachmentKind,
+        turn_id: &str,
+        item_id: &str,
+    ) {
+        if let Some(url) = part
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|url| remote_url(url))
+        {
+            self.remote_attachment(url, name, kind, AttachmentOrigin::User, turn_id, item_id);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn local_attachment(
+        &mut self,
+        path: &str,
+        kind: AttachmentKind,
+        origin: AttachmentOrigin,
+        turn_id: &str,
+        item_id: &str,
+        name: Option<&str>,
+        cwd: Option<&Path>,
+    ) {
+        if path.contains('\0') || path.is_empty() {
+            return;
+        }
+        let resolved = resolve_path(path, cwd);
+        let name = name
+            .filter(|value| !value.is_empty())
+            .map_or_else(|| file_name(&resolved), ToOwned::to_owned);
+        self.upsert_attachment(AttachmentResource {
+            key: format!("path:{resolved}"),
+            name,
+            kind,
+            path: Some(resolved),
+            url: None,
+            origin,
+            turn_id: turn_id.to_owned(),
+            item_id: item_id.to_owned(),
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn remote_attachment(
+        &mut self,
+        url: &str,
+        name: &str,
+        kind: AttachmentKind,
+        origin: AttachmentOrigin,
+        turn_id: &str,
+        item_id: &str,
+    ) {
+        self.upsert_attachment(AttachmentResource {
+            key: format!("url:{url}"),
+            name: name.to_owned(),
+            kind,
+            path: None,
+            url: Some(url.to_owned()),
+            origin,
+            turn_id: turn_id.to_owned(),
+            item_id: item_id.to_owned(),
+        });
+    }
+
+    fn mentioned_files(&mut self, text: &str, turn_id: &str, item_id: &str, cwd: Option<&Path>) {
+        let mut in_files = false;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed == "# Files mentioned by the user:" {
+                in_files = true;
+                continue;
+            }
+            if in_files && (trimmed == "## My request:" || trimmed == "## My request for Codex:") {
+                break;
+            }
+            if !in_files {
+                continue;
+            }
+            let Some(entry) = trimmed.strip_prefix("## ") else {
+                continue;
+            };
+            let Some((name, raw_path)) = entry.split_once(':') else {
+                continue;
+            };
+            let name = name.trim();
+            let path = raw_path.trim().trim_matches('`');
+            if !name.is_empty() && !path.is_empty() {
+                self.local_attachment(
+                    path,
+                    attachment_kind(name, path),
+                    AttachmentOrigin::User,
+                    turn_id,
+                    item_id,
+                    Some(name),
+                    cwd,
+                );
+            }
+        }
+    }
+
+    fn agent_markdown_links(
+        &mut self,
+        text: &str,
+        turn_id: &str,
+        item_id: &str,
+        cwd: Option<&Path>,
+    ) {
+        for path in markdown_local_paths(text) {
+            self.local_attachment(
+                &path,
+                attachment_kind(&path, &path),
+                AttachmentOrigin::Agent,
+                turn_id,
+                item_id,
+                None,
+                cwd,
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn apply_rollout_record(projection: &mut PersistedProjection, offset: u64, line: &[u8]) {
+    if !RESOURCE_RECORD_MATCHER.is_match(line) {
+        return;
+    }
+    let Ok(envelope) = serde_json::from_slice::<Value>(line) else {
+        return;
+    };
+    let Some(payload) = envelope.get("payload") else {
+        return;
+    };
+    let kind = payload
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| envelope.get("type").and_then(Value::as_str))
+        .unwrap_or("");
+    match kind {
+        "session_meta" => {
+            projection.cwd = payload
+                .get("cwd")
+                .and_then(Value::as_str)
+                .filter(|value| Path::new(value).is_absolute())
+                .map(PathBuf::from);
+        }
+        "task_started" => {
+            if let Some(turn_id) = payload.get("turn_id").and_then(Value::as_str) {
+                projection.started(turn_id);
+            }
+        }
+        "task_complete" => {
+            let turn_id = payload
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .or(projection.active_turn_id.as_deref())
+                .unwrap_or("")
+                .to_owned();
+            projection.completed(&turn_id);
+        }
+        "turn_aborted" => {
+            let turn_id = payload
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .or(projection.active_turn_id.as_deref())
+                .unwrap_or("")
+                .to_owned();
+            projection.aborted(&turn_id);
+        }
+        "thread_rolled_back" => {
+            let turns = payload
+                .get("num_turns")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(1);
+            projection.rollback(turns);
+        }
+        "user_message" => {
+            let turn_id = projection
+                .active_turn_id
+                .as_deref()
+                .unwrap_or("")
+                .to_owned();
+            let item_id = format!("rollout-{offset}");
+            let cwd = projection.cwd.clone();
+            let Some(data) = projection.pending_for(&turn_id) else {
+                return;
+            };
+            if let Some(message) = payload.get("message").and_then(Value::as_str) {
+                data.mentioned_files(message, &turn_id, &item_id, cwd.as_deref());
+            }
+            for (field, attachment_kind, local) in [
+                ("local_images", AttachmentKind::Image, true),
+                ("images", AttachmentKind::Image, false),
+                ("local_audio", AttachmentKind::Audio, true),
+                ("audio", AttachmentKind::Audio, false),
+            ] {
+                let Some(values) = payload.get(field).and_then(Value::as_array) else {
+                    continue;
+                };
+                for value in values.iter().filter_map(Value::as_str) {
+                    if local {
+                        data.local_attachment(
+                            value,
+                            attachment_kind,
+                            AttachmentOrigin::User,
+                            &turn_id,
+                            &item_id,
+                            None,
+                            cwd.as_deref(),
+                        );
+                    } else if remote_url(value) {
+                        data.remote_attachment(
+                            value,
+                            match attachment_kind {
+                                AttachmentKind::Image => "Image",
+                                AttachmentKind::Audio => "Audio",
+                                AttachmentKind::File => "Attachment",
+                            },
+                            attachment_kind,
+                            AttachmentOrigin::User,
+                            &turn_id,
+                            &item_id,
+                        );
+                    }
+                }
+            }
+        }
+        "patch_apply_end" => {
+            let turn_id = payload
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .or(projection.active_turn_id.as_deref())
+                .unwrap_or("")
+                .to_owned();
+            let item_id = payload.get("call_id").and_then(Value::as_str).unwrap_or("");
+            let cwd = projection.cwd.clone();
+            let Some(data) = projection.pending_for(&turn_id) else {
+                return;
+            };
+            if let Some(changes) = payload.get("changes").and_then(Value::as_object) {
+                for (path, change) in changes {
+                    data.apply_change(&turn_id, item_id, path, change, cwd.as_deref());
+                }
+            }
+        }
+        "view_image_tool_call" => {
+            if let Some(path) = payload.get("path").and_then(Value::as_str) {
+                let turn_id = projection.active_turn_id.clone().unwrap_or_default();
+                let cwd = projection.cwd.clone();
+                let Some(data) = projection.pending_for(&turn_id) else {
+                    return;
+                };
+                data.local_attachment(
+                    path,
+                    AttachmentKind::Image,
+                    AttachmentOrigin::Agent,
+                    &turn_id,
+                    payload.get("call_id").and_then(Value::as_str).unwrap_or(""),
+                    None,
+                    cwd.as_deref(),
+                );
+            }
+        }
+        "image_generation_end" => {
+            let turn_id = projection.active_turn_id.clone().unwrap_or_default();
+            let item_id = payload.get("call_id").and_then(Value::as_str).unwrap_or("");
+            let cwd = projection.cwd.clone();
+            let Some(data) = projection.pending_for(&turn_id) else {
+                return;
+            };
+            if let Some(path) = payload.get("saved_path").and_then(Value::as_str) {
+                data.local_attachment(
+                    path,
+                    AttachmentKind::Image,
+                    AttachmentOrigin::Agent,
+                    &turn_id,
+                    item_id,
+                    None,
+                    cwd.as_deref(),
+                );
+            } else if let Some(url) = payload
+                .get("result")
+                .and_then(Value::as_str)
+                .filter(|url| remote_url(url))
+            {
+                data.remote_attachment(
+                    url,
+                    "Generated image",
+                    AttachmentKind::Image,
+                    AttachmentOrigin::Agent,
+                    &turn_id,
+                    item_id,
+                );
+            }
+        }
+        "message" if payload.get("role").and_then(Value::as_str) == Some("assistant") => {
+            let turn_id = projection.active_turn_id.clone().unwrap_or_default();
+            let item_id = payload.get("id").and_then(Value::as_str).unwrap_or("");
+            let cwd = projection.cwd.clone();
+            let Some(data) = projection.pending_for(&turn_id) else {
+                return;
+            };
+            if let Some(content) = payload.get("content").and_then(Value::as_array) {
+                for text in content.iter().filter_map(|part| {
+                    part.get("text").and_then(Value::as_str).filter(|_| {
+                        matches!(
+                            part.get("type").and_then(Value::as_str),
+                            Some("output_text" | "text")
+                        )
+                    })
+                }) {
+                    data.agent_markdown_links(text, &turn_id, item_id, cwd.as_deref());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn markdown_local_paths(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let bytes = text.as_bytes();
+    let mut cursor = 0;
+    while cursor + 1 < bytes.len() {
+        let Some(link_start) = text[cursor..].find("](") else {
+            break;
+        };
+        let mut index = cursor + link_start + 2;
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        let angle = bytes.get(index) == Some(&b'<');
+        if angle {
+            index += 1;
+        }
+        let start = index;
+        let mut escaped = false;
+        while let Some(&byte) = bytes.get(index) {
+            if escaped {
+                escaped = false;
+                index += 1;
+                continue;
+            }
+            if byte == b'\\' {
+                escaped = true;
+                index += 1;
+                continue;
+            }
+            if (angle && byte == b'>') || (!angle && (byte == b')' || byte.is_ascii_whitespace())) {
+                break;
+            }
+            index += 1;
+        }
+        cursor = index.saturating_add(1);
+        if index == start || (angle && bytes.get(index) != Some(&b'>')) {
+            continue;
+        }
+        let raw = text[start..index].replace("\\ ", " ");
+        let without_fragment = raw.split_once('#').map_or(raw.as_str(), |(path, _)| path);
+        let without_suffix = without_fragment
+            .split_once('?')
+            .map_or(without_fragment, |(path, _)| path);
+        if without_suffix.is_empty()
+            || without_suffix.starts_with('#')
+            || without_suffix.starts_with("//")
+            || has_uri_scheme(without_suffix)
+        {
+            continue;
+        }
+        if let Ok(decoded) = percent_encoding::percent_decode_str(without_suffix).decode_utf8()
+            && !decoded.is_empty()
+        {
+            paths.push(decoded.into_owned());
+        }
+    }
+    paths
+}
+
+fn has_uri_scheme(value: &str) -> bool {
+    let Some((scheme, _rest)) = value.split_once(':') else {
+        return false;
+    };
+    let mut bytes = scheme.bytes();
+    bytes.next().is_some_and(|byte| byte.is_ascii_alphabetic())
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'.' | b'-'))
+}
+
+fn resolve_path(value: &str, cwd: Option<&Path>) -> String {
+    let path = Path::new(value);
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.map_or_else(|| path.to_path_buf(), |cwd| cwd.join(path))
+    };
+    lexical_normalize(&joined).to_string_lossy().into_owned()
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() && !path.is_absolute() {
+                    normalized.push("..");
+                }
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn diff_stats(diff: &str) -> (u64, u64) {
+    let mut additions = 0_u64;
+    let mut deletions = 0_u64;
+    for line in diff.lines() {
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with('+') {
+            additions = additions.saturating_add(1);
+        } else if line.starts_with('-') {
+            deletions = deletions.saturating_add(1);
+        }
+    }
+    (additions, deletions)
+}
+
+fn attachment_kind(name: &str, path: &str) -> AttachmentKind {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif" | "heic" | "heif"
+    ) {
+        AttachmentKind::Image
+    } else if matches!(
+        extension.as_str(),
+        "wav" | "mp3" | "m4a" | "aac" | "ogg" | "flac"
+    ) {
+        AttachmentKind::Audio
+    } else if name.to_ascii_lowercase().ends_with(".png") {
+        AttachmentKind::Image
+    } else {
+        AttachmentKind::File
+    }
+}
+
+fn file_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Attachment")
+        .to_owned()
+}
+
+fn remote_url(value: &str) -> bool {
+    value.starts_with("https://") || value.starts_with("http://")
+}
+
+fn resource_revision(data: &ResourceData) -> Result<String, serde_json::Error> {
+    let changes = data.changes.values().collect::<Vec<_>>();
+    let raw = serde_json::to_string(&(changes, &data.attachments))?;
+    let mut hash = 2_166_136_261_u32;
+    for unit in raw.encode_utf16() {
+        hash ^= u32::from(unit);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    Ok(base36(hash))
+}
+
+fn availability_revision(changes: &[Value]) -> String {
+    let mut raw = String::new();
+    for (index, change) in changes.iter().enumerate() {
+        if index > 0 {
+            raw.push('\0');
+        }
+        raw.push_str(change.get("path").and_then(Value::as_str).unwrap_or(""));
+        raw.push('\0');
+        raw.push_str(
+            change
+                .get("availability")
+                .and_then(Value::as_str)
+                .unwrap_or("unavailable"),
+        );
+    }
+    hex::encode(Sha256::digest(raw.as_bytes()))[..12].to_owned()
+}
+
+fn base36(mut value: u32) -> String {
+    if value == 0 {
+        return "0".into();
+    }
+    let mut output = Vec::new();
+    while value > 0 {
+        let digit = u8::try_from(value % 36).unwrap_or(0);
+        output.push(if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + digit - 10
+        });
+        value /= 36;
+    }
+    output.reverse();
+    String::from_utf8(output).unwrap_or_default()
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
+}
+
+#[cfg(not(unix))]
+fn file_identity(_metadata: &std::fs::Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+#[cfg(unix)]
+fn tail_hash(file: &File, indexed_bytes: u64) -> Result<[u8; 32], std::io::Error> {
+    if indexed_bytes == 0 {
+        return Ok([0; 32]);
+    }
+    let bytes = TAIL_CHECK_BYTES.min(indexed_bytes);
+    let start = indexed_bytes - bytes;
+    let mut buffer = vec![0_u8; usize::try_from(bytes).map_err(std::io::Error::other)?];
+    let mut read = 0;
+    while read < buffer.len() {
+        let count = file.read_at(&mut buffer[read..], start + read as u64)?;
+        if count == 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+        }
+        read += count;
+    }
+    Ok(*blake3::hash(&buffer).as_bytes())
+}
+
+#[cfg(not(unix))]
+fn tail_hash(file: &File, indexed_bytes: u64) -> Result<[u8; 32], std::io::Error> {
+    use std::io::Read;
+    if indexed_bytes == 0 {
+        return Ok([0; 32]);
+    }
+    let bytes = TAIL_CHECK_BYTES.min(indexed_bytes);
+    let mut snapshot = file.try_clone()?;
+    snapshot.seek(SeekFrom::Start(indexed_bytes - bytes))?;
+    let mut buffer = vec![0_u8; usize::try_from(bytes).map_err(std::io::Error::other)?];
+    snapshot.read_exact(&mut buffer)?;
+    Ok(*blake3::hash(&buffer).as_bytes())
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_turn_commits_resources_from_an_interrupted_turn() {
+        let source = PathBuf::from("/tmp/session.jsonl");
+        let mut projection = PersistedProjection::empty(source, 1, 2);
+        projection.started("interrupted");
+        let pending = projection.pending_for("interrupted");
+        assert!(pending.is_some());
+        if let Some(pending) = pending {
+            pending.local_attachment(
+                "/tmp/photo.png",
+                AttachmentKind::Image,
+                AttachmentOrigin::User,
+                "interrupted",
+                "message",
+                None,
+                None,
+            );
+        }
+        assert_eq!(projection.materialized_data().attachments.len(), 1);
+
+        projection.started("next");
+
+        assert_eq!(projection.turns.len(), 1);
+        assert_eq!(projection.turns[0].turn_id, "interrupted");
+        assert_eq!(projection.materialized_data().attachments.len(), 1);
+        assert_eq!(projection.active_turn_id.as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn normalizes_paths_diffs_and_metadata_attachments() {
+        assert_eq!(
+            resolve_path("src/../src/a.ts", Some(Path::new("/workspace/project"))),
+            "/workspace/project/src/a.ts"
+        );
+        assert_eq!(diff_stats("--- a\n+++ b\n-old\n+new\n"), (1, 1));
+        let mut data = ResourceData::default();
+        data.mentioned_files(
+            "# Files mentioned by the user:\n\n## Photo 1.jpg: `/tmp/photo.jpg`\n\n## My request for Codex:\nHi",
+            "turn",
+            "item",
+            None,
+        );
+        assert_eq!(data.attachments.len(), 1);
+        assert_eq!(data.attachments[0].kind, AttachmentKind::Image);
+    }
+
+    #[test]
+    fn extracts_only_local_markdown_links_from_agent_text() {
+        assert_eq!(
+            markdown_local_paths(
+                "[relative](<../reports/final report.md>) [absolute](/tmp/result.png) \
+                 [web](https://example.com/a.md) [anchor](#details)"
+            ),
+            vec!["../reports/final report.md", "/tmp/result.png"]
+        );
+    }
+
+    #[test]
+    fn streaming_patch_updates_replace_the_same_item() {
+        let mut data = ResourceData::default();
+        data.apply_change(
+            "turn",
+            "item",
+            "/tmp/file.rs",
+            &json!({"type":"update","diff":"+first\n"}),
+            None,
+        );
+        data.apply_change(
+            "turn",
+            "item",
+            "/tmp/file.rs",
+            &json!({"type":"update","diff":"+second\n"}),
+            None,
+        );
+
+        let bucket = data.patches.get("/tmp/file.rs").expect("patch bucket");
+        assert_eq!(bucket.patches.len(), 1);
+        assert_eq!(bucket.patches[0].diff, "+second\n");
+        assert_eq!(bucket.chars, "+second\n".len());
+    }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@codewide/codex-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pairing": "./src/pairing.ts",
+    "./v0.147.0": "./src/generated/0.147.0/index.ts",
+    "./v0.147.0/v2": "./src/generated/0.147.0/v2/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  }
+}

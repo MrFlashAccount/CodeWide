@@ -1,0 +1,45 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+    classpath('androidx.baselineprofile:androidx.baselineprofile.gradle.plugin:1.4.1')
+  }
+}
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+// The live Apple Intelligence RenderEffect requires RuntimeShader input from
+// the complete View hierarchy. CodeWide now targets Android 14 and newer.
+ext.minSdkVersion = 34
+
+// Native toolchains otherwise embed the developer's absolute home/workspace paths
+// in release .so files. Apply a stable prefix map to every Android subproject,
+// including autolinked React Native libraries, before their CMake tasks are created.
+def privateBuildRoot = System.getProperty("user.home")
+subprojects { subproject ->
+  subproject.afterEvaluate {
+    def androidExtension = subproject.extensions.findByName("android")
+    if (androidExtension != null) {
+      androidExtension.defaultConfig.externalNativeBuild.cmake {
+        arguments "-DCMAKE_C_FLAGS=-ffile-prefix-map=${privateBuildRoot}=/build",
+                  "-DCMAKE_CXX_FLAGS=-ffile-prefix-map=${privateBuildRoot}=/build"
+      }
+    }
+  }
+}
+
+apply plugin: "expo-root-project"
+apply plugin: "com.facebook.react.rootproject"

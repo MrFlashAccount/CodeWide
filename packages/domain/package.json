@@ -1,0 +1,19 @@
+{
+  "name": "@codewide/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codewide/codex-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@codewide/fixtures": "workspace:*"
+  }
+}

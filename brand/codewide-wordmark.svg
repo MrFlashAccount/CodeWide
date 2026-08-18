@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 96" role="img" aria-labelledby="title desc">
+  <title id="title">CodeWide</title>
+  <desc id="desc">CodeWide W-inside-C monogram with wordmark.</desc>
+  <path d="M48 17c-4-5-9-7-16-7-12 0-22 10-22 22s10 22 22 22c7 0 12-2 16-7M20 23l5 20 7-12 7 12 5-20" transform="translate(3 2) scale(1.45)" fill="none" stroke="#0F0F10" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="108" y="67" fill="#0F0F10" font-family="Inter, Roboto Flex, Roboto, system-ui, sans-serif" font-size="62" font-weight="600" letter-spacing="-3.2">CodeWide</text>
+</svg>

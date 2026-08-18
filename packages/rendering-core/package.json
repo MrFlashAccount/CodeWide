@@ -1,0 +1,20 @@
+{
+  "name": "@codewide/rendering-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "decode-named-character-reference": "1.3.0",
+    "marked": "18.0.6"
+  },
+  "devDependencies": {
+    "@types/mdast": "4.0.4"
+  }
+}

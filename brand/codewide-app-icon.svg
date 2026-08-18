@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">CodeWide app icon</title>
+  <desc id="desc">Warm-white CodeWide W-inside-C monogram on a graphite field.</desc>
+  <rect width="1024" height="1024" rx="230" fill="#101011"/>
+  <path d="M48 17c-4-5-9-7-16-7-12 0-22 10-22 22s10 22 22 22c7 0 12-2 16-7M20 23l5 20 7-12 7 12 5-20" transform="translate(164 128) scale(12)" fill="none" stroke="#F4F4F5" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

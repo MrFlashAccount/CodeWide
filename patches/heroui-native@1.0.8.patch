@@ -1,0 +1,476 @@
+diff --git a/lib/module/components/menu/menu.js b/lib/module/components/menu/menu.js
+index 95534185a48bda16c123707aa419ab0ea3d3a0c5..bd49cb25c64542bdbcc0ec3b0d82152aec621a7a 100644
+--- a/lib/module/components/menu/menu.js
++++ b/lib/module/components/menu/menu.js
+@@ -205,7 +205,7 @@ const MenuContentPopover = /*#__PURE__*/forwardRef(({
+   const {
+     height: screenHeight
+   } = useWindowDimensions();
+-  const isReady = Boolean(contentLayout?.y && contentLayout.y < screenHeight);
++  const isReady = contentLayout !== null && Number.isFinite(contentLayout.y) && contentLayout.y >= 0 && contentLayout.y < screenHeight;
+   const insets = {
+     top: DEFAULT_INSETS.top + safeAreaInsets.top,
+     bottom: DEFAULT_INSETS.bottom + safeAreaInsets.bottom,
+diff --git a/lib/module/components/popover/popover.js b/lib/module/components/popover/popover.js
+index 0825189944a9950d74e5fba3792be580eb80ab93..490db657546813930e9f983c0dc7e09840f6a833 100644
+--- a/lib/module/components/popover/popover.js
++++ b/lib/module/components/popover/popover.js
+@@ -202,7 +202,7 @@ const PopoverContentPopover = /*#__PURE__*/forwardRef(({
+
+   // Initially useRelativePosition returns { position: 'absolute', opacity: 0, top: dimensions.height }
+   // So we need to wait for the content to be ready before showing it
+-  const isReady = Boolean(contentLayout?.y && contentLayout.y < screenHeight);
++  const isReady = contentLayout !== null && Number.isFinite(contentLayout.y) && contentLayout.y >= 0 && contentLayout.y < screenHeight;
+   const insets = {
+     top: DEFAULT_INSETS.top + safeAreaInsets.top,
+     bottom: DEFAULT_INSETS.bottom + safeAreaInsets.bottom,
+diff --git a/lib/module/helpers/internal/components/bottom-sheet-content.js b/lib/module/helpers/internal/components/bottom-sheet-content.js
+index 62a7fc7ecf64d48bc555f7dd14c854b2c75cc34e..e0cd93a2c60ed652ab0b0012b5efac951e0222f1 100644
+--- a/lib/module/helpers/internal/components/bottom-sheet-content.js
++++ b/lib/module/helpers/internal/components/bottom-sheet-content.js
+@@ -144,7 +144,7 @@ export const BottomSheetContent = /*#__PURE__*/forwardRef(({
+     },
+     children: /*#__PURE__*/_jsx(StyledBottomSheet, {
+       ref: ref,
+-      index: -1,
++      index: isOpen ? initialIndex ?? 0 : -1,
+       backgroundClassName: contentBackgroundClassName,
+       backgroundStyle: backgroundStyle,
+       handleIndicatorClassName: contentHandleIndicatorClassName,
+diff --git a/lib/module/primitives/bottom-sheet/bottom-sheet.js b/lib/module/primitives/bottom-sheet/bottom-sheet.js
+index e46ca8bacf5642fd71e88ebd8968fb45f9a74613..2ad49ef719b7fdda7c9cb5d5a5a84ac03e553cf8 100644
+--- a/lib/module/primitives/bottom-sheet/bottom-sheet.js
++++ b/lib/module/primitives/bottom-sheet/bottom-sheet.js
+@@ -82,6 +82,7 @@ function Portal({
+   children
+ }) {
+   const value = useRootContext();
++  if (!value.isOpen) return null;
+   return /*#__PURE__*/_jsx(PortalPrimitive, {
+     hostName: hostName,
+     name: `${value.nativeID}_portal`,
+diff --git a/lib/module/primitives/menu/menu.js b/lib/module/primitives/menu/menu.js
+index 6a64799c036048bd692d16613712bb88c21d1b33..84b85395e9a12a19a7cb8ff5a411763ba4055c23 100644
+--- a/lib/module/primitives/menu/menu.js
++++ b/lib/module/primitives/menu/menu.js
+@@ -1,7 +1,7 @@
+ "use strict";
+
+ import React, { createContext, forwardRef, useCallback, useContext, useEffect, useId, useMemo, useState } from 'react';
+-import { BackHandler, Pressable, Text, View } from 'react-native';
++import { BackHandler, Dimensions, Keyboard, Pressable, Text, View } from 'react-native';
+ import { useAugmentedRef, useControllableState, useRelativePosition } from "../../helpers/internal/hooks/index.js";
+ import { Portal as PrimitivePortal } from "../portal/index.js";
+ import * as Slot from "../slot/index.js";
+@@ -14,6 +14,20 @@ const useRootContext = () => {
+   }
+   return context;
+ };
++function syncContentLayoutPosition(contentLayout, positionStyle) {
++  const {
++    left,
++    top
++  } = positionStyle;
++  if (contentLayout === null || typeof left !== 'number' || !Number.isFinite(left) || typeof top !== 'number' || !Number.isFinite(top) || contentLayout.x === left && contentLayout.y === top) {
++    return contentLayout;
++  }
++  return {
++    ...contentLayout,
++    x: left,
++    y: top
++  };
++}
+ const Root = /*#__PURE__*/forwardRef(({
+   asChild,
+   isOpen: isOpenProp,
+@@ -104,6 +118,37 @@ const Trigger = /*#__PURE__*/forwardRef(({
+     },
+     deps: [isOpen]
+   });
++  useEffect(() => {
++    if (!isOpen) return undefined;
++    let animationFrame = null;
++    const measureTrigger = () => {
++      augmentedRef.current?.measure((_x, _y, width, height, pageX, pageY) => {
++        setTriggerPosition({
++          width,
++          pageX,
++          pageY,
++          height
++        });
++      });
++    };
++    const invalidate = () => {
++      setTriggerPosition(null);
++      setContentLayout(null);
++    };
++    const reposition = () => {
++      invalidate();
++      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++      animationFrame = requestAnimationFrame(() => {
++        animationFrame = null;
++        measureTrigger();
++      });
++    };
++    const subscriptions = [Keyboard.addListener('keyboardWillShow', invalidate), Keyboard.addListener('keyboardWillHide', invalidate), Keyboard.addListener('keyboardDidShow', reposition), Keyboard.addListener('keyboardDidHide', reposition), Dimensions.addEventListener('change', reposition)];
++    return () => {
++      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++      subscriptions.forEach(subscription => subscription.remove());
++    };
++  }, [isOpen, setContentLayout, setTriggerPosition]);
+
+   // Open menu on mount if isDefaultOpen is true
+   useEffect(() => {
+@@ -269,6 +314,12 @@ const Content = /*#__PURE__*/forwardRef(({
+     placement,
+     disablePositioningStyle
+   });
++  useEffect(() => {
++    const positionedLayout = syncContentLayoutPosition(contentLayout, positionStyle);
++    if (positionedLayout !== contentLayout) {
++      setContentLayout(positionedLayout);
++    }
++  }, [contentLayout, positionStyle, setContentLayout]);
+
+   // Calculate content width based on width prop
+   const widthStyle = {};
+diff --git a/lib/module/primitives/popover/popover.js b/lib/module/primitives/popover/popover.js
+index 796910614d93569b560844871ef44f7fd9d9ca4c..4e521ca7f02b4d8bca9c03b87312caa9bb3a1658 100644
+--- a/lib/module/primitives/popover/popover.js
++++ b/lib/module/primitives/popover/popover.js
+@@ -1,7 +1,7 @@
+ "use strict";
+
+ import React, { forwardRef, useContext, useEffect, useId, useState } from 'react';
+-import { BackHandler, Pressable, View } from 'react-native';
++import { BackHandler, Dimensions, Keyboard, Pressable, View } from 'react-native';
+ import { useAugmentedRef, useControllableState, useRelativePosition } from "../../helpers/internal/hooks/index.js";
+ import { Portal as PrimitivePortal } from "../portal/index.js";
+ import * as Slot from "../slot/index.js";
+@@ -14,6 +14,20 @@ const useRootContext = () => {
+   }
+   return context;
+ };
++function syncContentLayoutPosition(contentLayout, positionStyle) {
++  const {
++    left,
++    top
++  } = positionStyle;
++  if (contentLayout === null || typeof left !== 'number' || !Number.isFinite(left) || typeof top !== 'number' || !Number.isFinite(top) || contentLayout.x === left && contentLayout.y === top) {
++    return contentLayout;
++  }
++  return {
++    ...contentLayout,
++    x: left,
++    y: top
++  };
++}
+ const Root = /*#__PURE__*/forwardRef(({
+   asChild,
+   isOpen: isOpenProp,
+@@ -92,6 +106,37 @@ const Trigger = /*#__PURE__*/forwardRef(({
+     },
+     deps: [isOpen]
+   });
++  useEffect(() => {
++    if (!isOpen) return undefined;
++    let animationFrame = null;
++    const measureTrigger = () => {
++      augmentedRef.current?.measure((_x, _y, width, height, pageX, pageY) => {
++        setTriggerPosition({
++          width,
++          pageX,
++          pageY,
++          height
++        });
++      });
++    };
++    const invalidate = () => {
++      setTriggerPosition(null);
++      setContentLayout(null);
++    };
++    const reposition = () => {
++      invalidate();
++      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++      animationFrame = requestAnimationFrame(() => {
++        animationFrame = null;
++        measureTrigger();
++      });
++    };
++    const subscriptions = [Keyboard.addListener('keyboardWillShow', invalidate), Keyboard.addListener('keyboardWillHide', invalidate), Keyboard.addListener('keyboardDidShow', reposition), Keyboard.addListener('keyboardDidHide', reposition), Dimensions.addEventListener('change', reposition)];
++    return () => {
++      if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++      subscriptions.forEach(subscription => subscription.remove());
++    };
++  }, [isOpen, setContentLayout, setTriggerPosition]);
+
+   // Open popover on mount if isDefaultOpen is true
+   useEffect(() => {
+@@ -257,6 +302,12 @@ const Content = /*#__PURE__*/forwardRef(({
+     placement,
+     disablePositioningStyle
+   });
++  useEffect(() => {
++    const positionedLayout = syncContentLayoutPosition(contentLayout, positionStyle);
++    if (positionedLayout !== contentLayout) {
++      setContentLayout(positionedLayout);
++    }
++  }, [contentLayout, positionStyle, setContentLayout]);
+
+   // Calculate content width based on width prop
+   const widthStyle = {};
+diff --git a/src/components/menu/menu.tsx b/src/components/menu/menu.tsx
+index f60d356194a858d2b119e0c4097738698240a448..bf8d722e8d74353d6ab4f7dd9d3c646f462b725d 100644
+--- a/src/components/menu/menu.tsx
++++ b/src/components/menu/menu.tsx
+@@ -272,7 +272,7 @@ const MenuContentPopover = forwardRef<
+     const safeAreaInsets = useSafeAreaInsets();
+     const { height: screenHeight } = useWindowDimensions();
+
+-    const isReady = Boolean(contentLayout?.y && contentLayout.y < screenHeight);
++    const isReady = contentLayout !== null && Number.isFinite(contentLayout.y) && contentLayout.y >= 0 && contentLayout.y < screenHeight;
+
+     const insets = {
+       top: DEFAULT_INSETS.top + safeAreaInsets.top,
+diff --git a/src/components/popover/popover.tsx b/src/components/popover/popover.tsx
+index e0d93c930923959c6e6bf8c2c16232dff10767cd..b7fe0c757f36404c40a81af8030785f69e3b4f45 100644
+--- a/src/components/popover/popover.tsx
++++ b/src/components/popover/popover.tsx
+@@ -272,7 +272,7 @@ const PopoverContentPopover = forwardRef<
+
+     // Initially useRelativePosition returns { position: 'absolute', opacity: 0, top: dimensions.height }
+     // So we need to wait for the content to be ready before showing it
+-    const isReady = Boolean(contentLayout?.y && contentLayout.y < screenHeight);
++    const isReady = contentLayout !== null && Number.isFinite(contentLayout.y) && contentLayout.y >= 0 && contentLayout.y < screenHeight;
+
+     const insets = {
+       top: DEFAULT_INSETS.top + safeAreaInsets.top,
+diff --git a/src/helpers/internal/components/bottom-sheet-content.tsx b/src/helpers/internal/components/bottom-sheet-content.tsx
+index dd9ebcc316ff621254249138d3bfa5636f976ea0..338a758f32d13227ae2650d2dae815da682eb17a 100644
+--- a/src/helpers/internal/components/bottom-sheet-content.tsx
++++ b/src/helpers/internal/components/bottom-sheet-content.tsx
+@@ -195,7 +195,9 @@ export const BottomSheetContent = forwardRef<
+       <BottomSheetIsDraggingProvider value={{ isDragging }}>
+         <StyledBottomSheet
+           ref={ref}
+-          index={-1}
++          // Closed portal content is not mounted. A newly mounted sheet is
++          // already open, so initialize Gorhom at the requested snap point.
++          index={isOpen ? (initialIndex ?? 0) : -1}
+           backgroundClassName={contentBackgroundClassName}
+           backgroundStyle={backgroundStyle}
+           handleIndicatorClassName={contentHandleIndicatorClassName}
+diff --git a/src/primitives/bottom-sheet/bottom-sheet.tsx b/src/primitives/bottom-sheet/bottom-sheet.tsx
+index 2747d5881aa5205dcd6cb005c46d7595eac59474..6699f86c1d0a0693f40e89dab54566f0990d9d97 100644
+--- a/src/primitives/bottom-sheet/bottom-sheet.tsx
++++ b/src/primitives/bottom-sheet/bottom-sheet.tsx
+@@ -115,6 +115,11 @@ Trigger.displayName = 'HeroUINative.Primitive.BottomSheet.Trigger';
+ function Portal({ hostName, children }: PortalProps) {
+   const value = useRootContext();
+
++  // A closed bottom sheet must not leave its portal subtree mounted. Besides
++  // wasting native views, mounted TextInputs and gesture handlers can regain
++  // focus or become visible after an Android configuration change.
++  if (!value.isOpen) return null;
++
+   return (
+     <PortalPrimitive hostName={hostName} name={`${value.nativeID}_portal`}>
+       <BottomSheetContext.Provider value={value}>
+diff --git a/src/primitives/menu/menu.tsx b/src/primitives/menu/menu.tsx
+index ea1f98288478d3db115dee73733f6c1aaf1673c1..4223c751d4e6c63ccb5860e404ada5c927945370 100644
+--- a/src/primitives/menu/menu.tsx
++++ b/src/primitives/menu/menu.tsx
+@@ -10,6 +10,8 @@ import React, {
+ } from 'react';
+ import {
+   BackHandler,
++  Dimensions,
++  Keyboard,
+   Pressable,
+   Text,
+   View,
+@@ -67,6 +69,24 @@ const useRootContext = () => {
+   return context;
+ };
+
++function syncContentLayoutPosition(
++  contentLayout: LayoutRectangle | null,
++  positionStyle: { left?: unknown; top?: unknown }
++): LayoutRectangle | null {
++  const { left, top } = positionStyle;
++  if (
++    contentLayout === null ||
++    typeof left !== 'number' ||
++    !Number.isFinite(left) ||
++    typeof top !== 'number' ||
++    !Number.isFinite(top) ||
++    (contentLayout.x === left && contentLayout.y === top)
++  ) {
++    return contentLayout;
++  }
++  return { ...contentLayout, x: left, y: top };
++}
++
+ const Root = forwardRef<RootRef, RootProps>(
+   (
+     {
+@@ -165,6 +185,43 @@ const Trigger = forwardRef<TriggerRef, TriggerProps>(
+       deps: [isOpen],
+     });
+
++    useEffect(() => {
++      if (!isOpen) return undefined;
++
++      let animationFrame: number | null = null;
++      const measureTrigger = () => {
++        augmentedRef.current?.measure(
++          (_x, _y, width, height, pageX, pageY) => {
++            setTriggerPosition({ width, pageX, pageY, height });
++          }
++        );
++      };
++      const invalidate = () => {
++        setTriggerPosition(null);
++        setContentLayout(null);
++      };
++      const reposition = () => {
++        invalidate();
++        if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++        animationFrame = requestAnimationFrame(() => {
++          animationFrame = null;
++          measureTrigger();
++        });
++      };
++      const subscriptions = [
++        Keyboard.addListener('keyboardWillShow', invalidate),
++        Keyboard.addListener('keyboardWillHide', invalidate),
++        Keyboard.addListener('keyboardDidShow', reposition),
++        Keyboard.addListener('keyboardDidHide', reposition),
++        Dimensions.addEventListener('change', reposition),
++      ];
++
++      return () => {
++        if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++        subscriptions.forEach((subscription) => subscription.remove());
++      };
++    }, [isOpen, setContentLayout, setTriggerPosition]);
++
+     // Open menu on mount if isDefaultOpen is true
+     useEffect(() => {
+       if ((isDefaultOpen || isOpen) && !triggerPosition) {
+@@ -336,6 +393,16 @@ const Content = forwardRef<ContentRef, ContentProps>(
+       disablePositioningStyle,
+     });
+
++    useEffect(() => {
++      const positionedLayout = syncContentLayoutPosition(
++        contentLayout,
++        positionStyle
++      );
++      if (positionedLayout !== contentLayout) {
++        setContentLayout(positionedLayout);
++      }
++    }, [contentLayout, positionStyle, setContentLayout]);
++
+     // Calculate content width based on width prop
+     const widthStyle: { width?: number | `${number}%` } = {};
+     if (width === 'trigger' && triggerPosition) {
+diff --git a/src/primitives/popover/popover.tsx b/src/primitives/popover/popover.tsx
+index 913f205edc85f50f681fc4e72a234e7f16fa700b..397e560d2ea486a77335bbef648daf3474cdbdd3 100644
+--- a/src/primitives/popover/popover.tsx
++++ b/src/primitives/popover/popover.tsx
+@@ -7,6 +7,8 @@ import React, {
+ } from 'react';
+ import {
+   BackHandler,
++  Dimensions,
++  Keyboard,
+   Pressable,
+   View,
+   type GestureResponderEvent,
+@@ -48,6 +50,24 @@ const useRootContext = () => {
+   return context;
+ };
+
++function syncContentLayoutPosition(
++  contentLayout: LayoutRectangle | null,
++  positionStyle: { left?: unknown; top?: unknown }
++): LayoutRectangle | null {
++  const { left, top } = positionStyle;
++  if (
++    contentLayout === null ||
++    typeof left !== 'number' ||
++    !Number.isFinite(left) ||
++    typeof top !== 'number' ||
++    !Number.isFinite(top) ||
++    (contentLayout.x === left && contentLayout.y === top)
++  ) {
++    return contentLayout;
++  }
++  return { ...contentLayout, x: left, y: top };
++}
++
+ const Root = forwardRef<RootRef, RootProps>(
+   (
+     {
+@@ -132,6 +152,43 @@ const Trigger = forwardRef<TriggerRef, TriggerProps>(
+       deps: [isOpen],
+     });
+
++    useEffect(() => {
++      if (!isOpen) return undefined;
++
++      let animationFrame: number | null = null;
++      const measureTrigger = () => {
++        augmentedRef.current?.measure(
++          (_x, _y, width, height, pageX, pageY) => {
++            setTriggerPosition({ width, pageX, pageY, height });
++          }
++        );
++      };
++      const invalidate = () => {
++        setTriggerPosition(null);
++        setContentLayout(null);
++      };
++      const reposition = () => {
++        invalidate();
++        if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++        animationFrame = requestAnimationFrame(() => {
++          animationFrame = null;
++          measureTrigger();
++        });
++      };
++      const subscriptions = [
++        Keyboard.addListener('keyboardWillShow', invalidate),
++        Keyboard.addListener('keyboardWillHide', invalidate),
++        Keyboard.addListener('keyboardDidShow', reposition),
++        Keyboard.addListener('keyboardDidHide', reposition),
++        Dimensions.addEventListener('change', reposition),
++      ];
++
++      return () => {
++        if (animationFrame !== null) cancelAnimationFrame(animationFrame);
++        subscriptions.forEach((subscription) => subscription.remove());
++      };
++    }, [isOpen, setContentLayout, setTriggerPosition]);
++
+     // Open popover on mount if isDefaultOpen is true
+     useEffect(() => {
+       if ((isDefaultOpen || isOpen) && !triggerPosition) {
+@@ -303,6 +360,16 @@ const Content = forwardRef<ContentRef, ContentProps>(
+       disablePositioningStyle,
+     });
+
++    useEffect(() => {
++      const positionedLayout = syncContentLayoutPosition(
++        contentLayout,
++        positionStyle
++      );
++      if (positionedLayout !== contentLayout) {
++        setContentLayout(positionedLayout);
++      }
++    }, [contentLayout, positionStyle, setContentLayout]);
++
+     // Calculate content width based on width prop
+     const widthStyle: { width?: number | `${number}%` } = {};
+     if (width === 'trigger' && triggerPosition) {

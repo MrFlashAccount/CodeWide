@@ -1,0 +1,6 @@
+# Generated WebView bundles are reproducible build outputs. Treat them as
+# generated binary-like assets so whitespace checks and review diffs stay on
+# their source files and dependency notices.
+apps/android/android/app/src/main/assets/code-review-editor.js -diff linguist-generated=true
+apps/android/android/app/src/main/assets/mermaid.min.js -diff linguist-generated=true
+apps/android/android/app/src/main/assets/panzoom.min.js -diff linguist-generated=true

@@ -1,0 +1,40 @@
+diff --git a/build/AssetSources.js b/build/AssetSources.js
+index f9e81cd5c436a09df654811455138334a1fa8263..62882e43cb7cabb2e69d317fe899c4056e344226 100644
+--- a/build/AssetSources.js
++++ b/build/AssetSources.js
+@@ -34,8 +34,13 @@ export function selectAssetSource(meta) {
+     }
+     // For assets during development using manifest2, we use the development server's URL origin
+     const manifest2 = getManifest2();
+-    // Use the scheme from manifestBaseUrl (derived from experienceUrl) to support HTTPS dev servers
+-    const scheme = manifestBaseUrl?.startsWith('https://') ? 'https://' : 'http://';
++    // Dev clients can expose an empty/non-HTTP experienceUrl even when the
++    // manifest and bundle were fetched through an HTTPS reverse proxy. Prefer
++    // the actual launch asset URL so fonts and images use the same origin.
++    const launchAssetUrl = manifest2?.launchAsset?.url;
++    const scheme = manifestBaseUrl?.startsWith('https://') || launchAssetUrl?.startsWith('https://')
++        ? 'https://'
++        : 'http://';
+     const devServerUrl = manifest2?.extra?.expoGo?.developer
+         ? scheme + manifest2.extra.expoGo.debuggerHost
+         : null;
+diff --git a/src/AssetSources.ts b/src/AssetSources.ts
+index d5a704b50372cbe71b72baa37bc972bc65f58528..37cc3aa711d1c6dd15ce8b4fb8a94d294de24c08 100644
+--- a/src/AssetSources.ts
++++ b/src/AssetSources.ts
+@@ -57,8 +57,13 @@ export function selectAssetSource(meta: AssetMetadata): AssetSource {
+   // For assets during development using manifest2, we use the development server's URL origin
+   const manifest2 = getManifest2();
+ 
+-  // Use the scheme from manifestBaseUrl (derived from experienceUrl) to support HTTPS dev servers
+-  const scheme = manifestBaseUrl?.startsWith('https://') ? 'https://' : 'http://';
++  // Dev clients can expose an empty/non-HTTP experienceUrl even when the
++  // manifest and bundle were fetched through an HTTPS reverse proxy. Prefer
++  // the actual launch asset URL so fonts and images use the same origin.
++  const launchAssetUrl = manifest2?.launchAsset?.url;
++  const scheme = manifestBaseUrl?.startsWith('https://') || launchAssetUrl?.startsWith('https://')
++    ? 'https://'
++    : 'http://';
+   const devServerUrl = manifest2?.extra?.expoGo?.developer
+     ? scheme + manifest2.extra.expoGo.debuggerHost
+     : null;

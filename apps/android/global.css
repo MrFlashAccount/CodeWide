@@ -1,0 +1,119 @@
+@import "tailwindcss";
+@import "uniwind";
+@import "heroui-native/styles";
+
+/* Expo's dev LogBox can leave an empty fixed toast above the mobile composer. */
+#error-toast:empty {
+  pointer-events: none;
+}
+
+@layer theme {
+  :root {
+    --radius: 0.625rem;
+    --font-sans: "RobotoFlex-Regular";
+    --font-serif: "RobotoFlex-Regular";
+    --font-mono: monospace;
+
+    @variant dark {
+      --background: #0f0f0f;
+      --foreground: #f2f2f2;
+
+      --surface: #181818;
+      --surface-foreground: #f2f2f2;
+      --surface-secondary: #202020;
+      --surface-secondary-foreground: #f2f2f2;
+      --surface-tertiary: #272727;
+      --surface-tertiary-foreground: #f2f2f2;
+
+      --overlay: #202020;
+      --overlay-foreground: #f2f2f2;
+      --backdrop: rgb(0 0 0 / 58%);
+      --muted: #b8b8b8;
+
+      --default: #272727;
+      --default-foreground: #f2f2f2;
+      --accent: #e6e6e6;
+      --accent-foreground: #111111;
+
+      --field-background: #202020;
+      --field-foreground: #f2f2f2;
+      --field-placeholder: #858585;
+      --field-border: #2e2e2e;
+
+      --success: #35c778;
+      --success-foreground: #0f0f0f;
+      --warning: #e9872c;
+      --warning-foreground: #0f0f0f;
+      --danger: #f05d65;
+      --danger-foreground: #0f0f0f;
+
+      --segment: #272727;
+      --segment-foreground: #f2f2f2;
+      --border: #2e2e2e;
+      --separator: #3a3a3a;
+      --focus: #e6e6e6;
+      --link: #f2f2f2;
+
+    }
+  }
+}
+
+@layer components {
+  .menu__overlay {
+    background-color: var(--color-backdrop);
+  }
+
+  .menu__content {
+    background-color: var(--color-overlay);
+    border-color: var(--color-border);
+    border-radius: 20px;
+    border-width: 1px;
+    padding: 6px;
+  }
+
+  .menu__label {
+    color: var(--color-muted);
+    font-size: 11px;
+    line-height: 15px;
+    margin-bottom: 4px;
+    margin-inline: 10px;
+    margin-top: 8px;
+  }
+
+  .menu__item {
+    border-radius: 14px;
+    gap: 10px;
+    min-height: 44px;
+    padding-block: 8px;
+    padding-inline: 10px;
+  }
+
+  .menu__item-title {
+    font-size: 15px;
+    line-height: 20px;
+  }
+
+  .menu__item-description {
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .sub-menu__root,
+  .sub-menu__background {
+    background-color: var(--color-overlay);
+    border-radius: 20px;
+  }
+
+  .sub-menu__trigger {
+    gap: 10px;
+    min-height: 44px;
+    padding-block: 8px;
+    padding-inline: 10px;
+  }
+
+  .sub-menu__content {
+    padding-bottom: 6px;
+    padding-inline: 6px;
+  }
+
+}
