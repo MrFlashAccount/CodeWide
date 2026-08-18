@@ -527,19 +527,13 @@ test.describe("adaptive CodeWide workspace", () => {
       const shortTurnBox = await page.getByTestId("turn-group").first().boundingBox();
       const composerBox = await page.getByTestId("composer-row").boundingBox();
       expect((composerBox?.y ?? 0) - ((shortTurnBox?.y ?? 0) + (shortTurnBox?.height ?? 0))).toBeLessThan(32);
-      const activityLabel = page.getByText("Edited files, ran commands · 7", { exact: true });
-      await expect(activityLabel).toBeVisible();
-      expect(await activityLabel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      const activityHeader = page.getByRole("button", { name: /Expand activity Edited files, ran commands · 6/ });
+      await expect(activityHeader).toBeVisible();
+      expect(await activityHeader.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     }
 
     if (testInfo.project.name === "phone" || testInfo.project.name === "fold") {
       await page.screenshot({ path: `test-results/${testInfo.project.name}-turn-ux.png`, fullPage: true });
-      await page.screenshot({
-        path: testInfo.project.name === "phone"
-          ? "mockups/canonical-phone-thread-v1.png"
-          : "mockups/canonical-fold-workspace-v1.png",
-        fullPage: true,
-      });
     }
   });
 
@@ -614,7 +608,7 @@ test.describe("adaptive CodeWide workspace", () => {
     await page.getByLabel("Send message").click();
     const optimistic = page.getByText("Ship the verified build", { exact: true });
     await expect(optimistic).toBeVisible();
-    await expect(page.getByLabel("Message pending")).toBeVisible();
+    await expect(page.getByLabel("Message sending")).toBeVisible();
     const optimisticTurn = page.getByTestId("turn-group").filter({ hasText: "Ship the verified build" });
     await expect(optimisticTurn.getByTestId("codex-bubble")).toHaveCount(0);
     const optimisticBounds = await optimisticTurn.boundingBox();
@@ -783,7 +777,7 @@ test.describe("adaptive CodeWide workspace", () => {
     await page.goto("/");
     await page.getByLabel("New thread").click();
     if (testInfo.project.name === "phone") {
-      await expect(page.getByText("New thread on…", { exact: true })).toBeVisible();
+      await expect(page.getByText("Choose server", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: /Orbit/ }).last().click();
     }
     await expect(page.getByText("New Codex thread", { exact: true }).last()).toBeVisible();
@@ -815,8 +809,7 @@ test.describe("adaptive CodeWide workspace", () => {
     test.skip(testInfo.project.name !== "phone");
     await page.goto("/");
     await page.getByRole("button", { name: /Release v1\.4/ }).click();
-    await page.getByLabel("Composer menu").click();
-    await page.getByText("Model", { exact: true }).click();
+    await page.getByRole("button", { name: /Model and thinking:/ }).click();
     await page.getByText("GPT-5.6", { exact: true }).click();
     await page.getByText("xhigh", { exact: true }).click();
     await page.getByText("pragmatic", { exact: true }).click();
@@ -825,16 +818,14 @@ test.describe("adaptive CodeWide workspace", () => {
     await page.getByLabel("Back to threads").click();
 
     await page.getByRole("button", { name: /Duplicate ID isolation/ }).click();
-    await page.getByLabel("Composer menu").click();
-    await page.getByText("Model", { exact: true }).click();
+    await page.getByRole("button", { name: /Model and thinking:/ }).click();
     await expect(page.getByRole("button", { name: "xhigh" })).toBeVisible();
     await expect(page.getByRole("button", { name: "pragmatic" })).toBeVisible();
     await page.getByLabel("Close turn controls").click();
     await page.getByLabel("Back to threads").click();
 
     await page.getByRole("button", { name: /Release v1\.4/ }).click();
-    await page.getByLabel("Composer menu").click();
-    await page.getByText("Model", { exact: true }).click();
+    await page.getByRole("button", { name: /Model and thinking:/ }).click();
     await expect(page.getByRole("button", { name: "xhigh, selected" })).toBeVisible();
     await expect(page.getByRole("button", { name: "pragmatic, selected" })).toBeVisible();
   });

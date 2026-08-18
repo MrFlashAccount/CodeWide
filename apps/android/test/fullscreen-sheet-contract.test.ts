@@ -38,6 +38,13 @@ describe("fullscreen workspace presentation", () => {
     expect(screen).not.toContain("AppFullscreenModal");
   });
 
+  it("hardware-accelerates the Android fullscreen window used by WebView renderers", () => {
+    expect(nativeFullscreenModal).toContain("hardwareAccelerated");
+    expect(nativeFullscreenModal).toContain("setWindowReady(true)");
+    expect(mermaid).toContain('androidLayerType="hardware"');
+    expect(mermaid).toContain('enabled={fullscreenReady} mode="fullscreen"');
+  });
+
   it("captures lifecycle before mounting and owns close/show centrally", () => {
     expect(fullscreenOverlay.indexOf("binding.lifecycle?.willOpen?.(id);")).toBeLessThan(fullscreenOverlay.indexOf("publish([...entriesRef.current, entry]);"));
     expect(fullscreenOverlay).toContain("onShow={() => {");
@@ -98,7 +105,23 @@ describe("fullscreen workspace presentation", () => {
     const strip = screen.slice(start, end);
     expect(strip.indexOf("sessionAttachmentsLabel")).toBeGreaterThanOrEqual(0);
     expect(strip.indexOf("Subagents: ${visibleSubagents.length}")).toBeGreaterThan(strip.indexOf("sessionAttachmentsLabel"));
-    expect(screen).toContain('composerContextContent: { alignItems: "center", gap: 6, paddingHorizontal: spacing.sm, paddingTop: 2, paddingBottom: spacing.xs }');
+    expect(screen).toContain('composerContextContent: { alignItems: "center", gap: 6, paddingHorizontal: spacing.sm, paddingTop: 2, paddingBottom: spacing.xxs }');
+  });
+
+  it("exposes live port forwarding as a direct composer chip", () => {
+    const start = screen.indexOf('<ScrollView testID="composer-context-strip"');
+    const end = screen.indexOf("</ScrollView>", start);
+    const strip = screen.slice(start, end);
+    expect(strip).toContain('testID="composer-ports-label"');
+    expect(strip).toContain('onPress={() => openControls("ports")}');
+    expect(strip).toContain('livePortForwardCount > 0 ? colors.green : colors.textMuted');
+    expect(screen).toContain('page === "ports" ? (');
+    expect(screen).toContain('<PortForwardingManager {...portForwarding} />');
+    expect(screen).toContain('if (page === "ports") return "Ports";');
+  });
+
+  it("does not expose the non-descriptive no-prompts approval label", () => {
+    expect(screen).not.toContain('"No prompts"');
   });
 
   it("uses back navigation for the subagent list and keeps its data live", () => {

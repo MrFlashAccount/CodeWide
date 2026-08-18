@@ -3,7 +3,7 @@ import path from "node:path";
 
 const roots = process.argv.slice(2);
 const requestedRoots = roots.length === 0
-  ? ["apps/android/dist", "apps/host-companion/dist"]
+  ? ["apps/android/dist", "target/release/codewide-companion"]
   : roots;
 
 const forbidden = [

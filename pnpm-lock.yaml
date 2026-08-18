@@ -243,34 +243,6 @@ importers:
         specifier: 1.32.5
         version: 1.32.5
 
-  apps/host-companion:
-    dependencies:
-      '@codewide/codex-protocol':
-        specifier: workspace:*
-        version: link:../../packages/codex-protocol
-      '@codewide/file-types':
-        specifier: workspace:*
-        version: link:../../packages/file-types
-      mime-types:
-        specifier: 3.0.2
-        version: 3.0.2
-      qrcode-terminal:
-        specifier: 0.12.0
-        version: 0.12.0
-      ws:
-        specifier: ^8.18.3
-        version: 8.21.3
-    devDependencies:
-      '@types/mime-types':
-        specifier: 3.0.1
-        version: 3.0.1
-      '@types/qrcode-terminal':
-        specifier: 0.12.2
-        version: 0.12.2
-      '@types/ws':
-        specifier: ^8.18.1
-        version: 8.18.1
-
   packages/app-server-client:
     dependencies:
       '@codewide/codex-protocol':
@@ -2007,14 +1979,8 @@ packages:
   '@types/mdast@4.0.4':
     resolution: {integrity: sha512-kGaNbPh1k7AFzgpud/gMdvIm5xuECykRR+JnWKQno9TAXVa6WIVCGTPvYGekIDL4uwCZQSYbUxNBSb1aUo79oA==}
 
-  '@types/mime-types@3.0.1':
-    resolution: {integrity: sha512-xRMsfuQbnRq1Ef+C+RKaENOxXX87Ygl38W1vDfPHRku02TgQr+Qd8iivLtAMcR0KF5/29xlnFihkTlbqFrGOVQ==}
-
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
-
-  '@types/qrcode-terminal@0.12.2':
-    resolution: {integrity: sha512-v+RcIEJ+Uhd6ygSQ0u5YYY7ZM+la7GgPbs0V/7l/kFs2uO4S8BcIUEMoP7za4DNIqNnUD5npf0A/7kBhrCKG5Q==}
 
   '@types/react-test-renderer@19.1.0':
     resolution: {integrity: sha512-XD0WZrHqjNrxA/MaR9O22w/RNidWR9YZmBdRGI7wcnWGrv/3dA8wKCJ8m63Sn+tLJhcjmuhOi629N66W6kgWzQ==}
@@ -4373,10 +4339,6 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
-
-  qrcode-terminal@0.12.0:
-    resolution: {integrity: sha512-EXtzRZmC+YGmGlDFbXKxQiMZNwCLEO6BANKXG4iCtSIM0yqc/pappSx3RIKr4r0uh5JsBckOXeKrB3Iz7mdQpQ==}
-    hasBin: true
 
   qs@6.15.3:
     resolution: {integrity: sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==}
@@ -7197,13 +7159,9 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
 
-  '@types/mime-types@3.0.1': {}
-
   '@types/node@24.13.3':
     dependencies:
       undici-types: 7.18.2
-
-  '@types/qrcode-terminal@0.12.2': {}
 
   '@types/react-test-renderer@19.1.0':
     dependencies:
@@ -9691,8 +9649,6 @@ snapshots:
       ipaddr.js: 1.9.1
 
   punycode@2.3.1: {}
-
-  qrcode-terminal@0.12.0: {}
 
   qs@6.15.3:
     dependencies:

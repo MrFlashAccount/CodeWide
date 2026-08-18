@@ -10,6 +10,7 @@ import {
 
 import { colors, radii, spacing, touchTarget } from "../theme";
 import { useAppFullscreenOverlay } from "../ui/AppFullscreenOverlay";
+import { useFullscreenWindowReady } from "../ui/FullscreenWindowReady";
 import { AppText as Text } from "../ui/Typography";
 import { useRichContentWidth } from "./RichContentLayout";
 
@@ -101,10 +102,11 @@ export function MermaidDiagram({ source }: { source: string }) {
 
 function FullscreenMermaidDiagram({ source, onClose, onCopy }: { source: string; onClose(): void; onCopy(): void }) {
   const insets = useSafeAreaInsets();
+  const fullscreenReady = useFullscreenWindowReady();
   const fullscreenWebView = useRef<WebView>(null);
   return (
     <View style={[styles.fullscreen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <DiagramSurface mode="fullscreen" source={source} webViewRef={fullscreenWebView} style={styles.fullscreenSurface} />
+      <DiagramSurface enabled={fullscreenReady} mode="fullscreen" source={source} webViewRef={fullscreenWebView} style={styles.fullscreenSurface} />
       <View pointerEvents="box-none" style={[styles.fullscreenTopBar, { top: insets.top + spacing.xs }]}>
         <DiagramIconButton accessibilityLabel="Close diagram" icon="close" emphasized onPress={onClose} />
         <View style={styles.fullscreenTitle}>
@@ -123,12 +125,14 @@ function FullscreenMermaidDiagram({ source, onClose, onCopy }: { source: string;
 }
 
 function DiagramSurface({
+  enabled = true,
   mode,
   source,
   webViewRef,
   style,
   onHeight,
 }: {
+  enabled?: boolean;
   mode: "inline" | "fullscreen";
   source: string;
   webViewRef: RefObject<WebView | null>;
@@ -206,7 +210,7 @@ function DiagramSurface({
       }}
       style={[styles.viewport, style]}
     >
-      {viewportWidth > 0 && <WebView
+      {enabled && viewportWidth > 0 && <WebView
         key={`${mode}:${viewportWidth}`}
         ref={webViewRef}
         source={{ uri: RENDERER_URI }}

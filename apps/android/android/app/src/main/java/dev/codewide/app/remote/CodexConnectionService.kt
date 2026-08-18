@@ -76,7 +76,7 @@ class CodexConnectionService : Service() {
     commandStore = NativeCommandStore(this)
     credentialsStore = NativeSessionCredentialsStore(this)
     portForwardManager = NativePortForwardManager(this, credentialsStore, httpClient)
-    terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient)
+    terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient, cacheDir)
     connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     activeDefaultNetwork = connectivityManager.activeNetwork
     createNotificationChannel()
@@ -148,12 +148,15 @@ class CodexConnectionService : Service() {
 
   fun removePortForward(profileId: String) = portForwardManager.remove(profileId)
 
-  internal fun openTerminal(sessionId: String, connectionId: String, cwd: String?, cols: Int, rows: Int) =
-    terminalSessionManager.open(sessionId, connectionId, cwd, cols, rows)
+  internal fun openTerminal(sessionId: String, connectionId: String, threadId: String, cwd: String?, cols: Int, rows: Int) =
+    terminalSessionManager.open(sessionId, connectionId, threadId, cwd, cols, rows)
 
   internal fun writeTerminal(sessionId: String, base64: String) = terminalSessionManager.write(sessionId, base64)
 
   internal fun resizeTerminal(sessionId: String, cols: Int, rows: Int) = terminalSessionManager.resize(sessionId, cols, rows)
+
+  internal fun readTerminalOutput(sessionId: String, offset: Long, maxBytes: Int): String =
+    terminalSessionManager.readOutput(sessionId, offset, maxBytes)
 
   internal fun closeTerminal(sessionId: String) = terminalSessionManager.close(sessionId)
 

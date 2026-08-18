@@ -43,7 +43,7 @@ const workspace = {
     { id: "agents", name: "Agents", emoji: "🤖", status: "offline" },
   ],
   threads: [
-    { id: "release", serverId: "orbit", title: "🚀 Release v1.4", preview: "Update changelog, bump version, and open PR.", time: "10:42", pinned: true, unread: 2, state: "running" },
+    { id: "release", serverId: "orbit", title: "🚀 Release v1.4", preview: "Update changelog, bump version, and open PR.", time: "10:42", pinned: true, unread: 2 },
     { id: "rag", serverId: "orbit", title: "🧪 Experiment: RAG eval", preview: "Results for search quality tuning.", time: "09:18", pinned: true, unread: 1 },
     { id: "chores", serverId: "orbit", title: "🏠 Weekly chores bot", preview: "Add recurring cleanup and report summary.", time: "Wed", pinned: true, unread: 0 },
     { id: "metrics", serverId: "orbit", title: "Add metrics endpoint", preview: "Expose /v1/metrics and tests.", time: "Mon", pinned: false, unread: 0 },

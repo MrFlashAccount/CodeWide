@@ -59,7 +59,7 @@ export type RemoteFileAttachment = {
 
 export type OutboxFlushOptions = {
   /**
-   * Queue commands are normally dispatched by the always-on host companion.
+   * Queue commands are normally dispatched by the always-on companion.
    * A client may disable local dispatch after it has mirrored the queue to
    * avoid two independent owners racing the same turn/start.
    */

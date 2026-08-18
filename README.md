@@ -4,9 +4,8 @@
 
 <h1 align="center">CodeWide</h1>
 
-The repository is under active V1 implementation. `IMPLEMENTATION_PLAN.md` is
-the product contract; a green unit suite is not treated as proof that the V1
-definition of done is complete.
+CodeWide is an Android-first agentic IDE for working with Codex on remote
+development machines.
 
 ## Current executable surface
 
@@ -19,23 +18,20 @@ definition of done is complete.
 - Durable SQLite cache/outbox/drafts/pending approvals with batched delta commits.
 - Native Android foreground WebSocket service with replay journal, network callbacks,
   and voice dictation bridge.
-- Authenticated loopback host companion bridging WebSocket frames to the managed
+- Authenticated loopback companion bridging WebSocket frames to the managed
   App Server over its Unix WebSocket socket.
 - One-time device pairing/revocation, scoped file transfer, and bounded localhost
   previews plus native phone-local TCP forwarding for HTTP, WebSocket and HMR.
-- Host-owned durable prompt queue with reconnect reconciliation and delivery
+- Companion-owned durable prompt queue with reconnect reconciliation and delivery
   receipts, plus goals/progress, review, compact, steer and boundary-aware fork.
 - A full-width composer with a left control menu for model/effort, files,
   skills, permissions and delivery mode; no filter tabs below thread search.
 - Typed root-scoped file/image/audio inputs with persisted attachment drafts and
   authenticated inline previews for scoped remote files. Arbitrary external
-  image URLs still require the V1 authenticated media-proxy gate.
+  image URLs still require the authenticated media-proxy gate.
 - Bounded, schema-valid per-server outboxes with exactly-once reconciliation and
   explicit backpressure instead of invisible overflow.
 - Deterministic protocol fixtures for rendering, synchronization, and performance tests.
-
-The executable chat/streaming/rendering release checklist and current hostile
-audit live in [`docs/chat-engineering-checklist.md`](docs/chat-engineering-checklist.md).
 
 CodeWide is distributed under the [MIT License](LICENSE).
 
@@ -50,9 +46,9 @@ pnpm test:e2e
 pnpm security:scan-artifacts
 pnpm security:scan-secrets
 pnpm --filter @codewide/android build
-pnpm --filter @codewide/host-companion smoke:live
-pnpm --filter @codewide/host-companion smoke:live-mutations
-pnpm --filter @codewide/host-companion smoke:compiled
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo run -p codewide-companion -- --help
 ```
 
 `pnpm security:scan-secrets` runs pinned Gitleaks against both reachable Git
@@ -146,18 +142,14 @@ OAuth stays on the host; microphone audio and credentials are never persisted
 by the Android client. Retryable rate limits retain the host-side recording only
 until explicit retry/cancel or idle cleanup.
 
-Create a host capability token and start the companion:
+Build and install the companion as a user service:
 
 ```sh
-pnpm --filter @codewide/host-companion token:create
-pnpm --filter @codewide/host-companion start
-pnpm --filter @codewide/host-companion exec codewide-host pair
+pnpm build:companion
+target/release/codewide-companion create-token
+apps/companion/deploy/install.sh
+codewide-companion pair
 ```
-
-`pnpm --filter @codewide/host-companion build` produces the executable
-Node-target bundle at `apps/host-companion/dist/codewide-host`. The compiled
-smoke starts that exact artifact, keeps a valid client past the 10-second hello
-deadline and performs a live `thread/list` through the managed App Server.
 
 For camera pairing, expose the companion through a private `wss://` endpoint and
 tell the CLI which public URL belongs in the QR:
@@ -168,11 +160,11 @@ set -lx CODEWIDE_SERVER_NAME 'Home workstation'
 set -lx CODEWIDE_SERVER_EMOJI '🏠'
 # Optional OkHttp-style SHA-256 SPKI pin:
 set -lx CODEWIDE_TLS_PIN_SHA256 'sha256/BASE64_PUBLIC_KEY_HASH'
-codewide-host-rs pair
+codewide-companion pair
 ```
 
 Scan the terminal QR from `Add server`, or enter the one-time token manually.
-The Rust CLI selects compact Unicode, ANSI, or a private SVG fallback with
+The CLI selects compact Unicode, ANSI, or a private SVG fallback with
 `--qr auto`; use `--qr unicode|ansi|svg` to force a renderer.
 The QR expires after five minutes and contains a secret: do not paste it into
 logs or share a screenshot. Remote endpoints must use `wss://`; plain `ws://`
@@ -189,7 +181,7 @@ a long-lived device capability cannot open `/v1/sync`; and a paired device can
 never open the raw `/v1/app-server` bridge. Raw shell execution and direct MCP
 tool invocation are not granted by default.
 
-The Rust companion exposes registration and session minting through the single
+The companion exposes registration and session minting through the single
 public `/v1/auth` endpoint. Registration signs the one-time pairing token and
 device metadata with the non-exportable Android Keystore key. The server derives
 `deviceId` from that public key; the id is an identifier, not a secret or a
@@ -201,9 +193,9 @@ endpoint and are not routed by the public server at all.
 Inspect, restrict and revoke devices:
 
 ```sh
-codewide-host-rs devices
-codewide-host-rs scopes DEVICE_ID threads.read,turns.start
-codewide-host-rs revoke DEVICE_ID
+codewide-companion devices
+codewide-companion scopes DEVICE_ID threads.read,turns.start
+codewide-companion revoke DEVICE_ID
 ```
 
 Changing scopes immediately closes that device's existing sync socket so the
@@ -212,22 +204,28 @@ active port-forward streams.
 
 ## Interactive terminal
 
-The Android thread menu can open a full-screen terminal rooted at that
-thread's working directory. The companion owns the pseudo-terminal and sends
+The Android thread menu can open a full-screen terminal workspace rooted at
+that thread's working directory. Each Codex thread owns its own terminal tabs;
+there is no global terminal. The companion owns every pseudo-terminal and sends
 ordered binary input/output over a dedicated authenticated WebSocket at
 `/v1/terminals`; Android owns the certificate-pinned socket, while
 `expo-libghostty` provides VT parsing, rendering, selection, IME input and the
-terminal accessory keyboard. Terminal sessions close with their overlay,
-connection, or companion process and are bounded to eight concurrent sessions
-on both client and host.
+terminal accessory keyboard. The down-arrow minimizes the full-screen workspace
+without stopping its shells. A `Terminals · N` chip beside the thread resources
+restores it; only closing an individual tab terminates that shell. Android keeps
+the ordered ANSI transcript in its cache so a recreated renderer can recover
+after minimization without keeping hidden terminal views mounted. Transcripts
+are deleted with their tabs and bounded to 128 MiB each. A connection shutdown,
+thread deletion, or companion shutdown also closes the associated terminals.
+The client and companion each permit at most eight concurrent sessions.
 
 Remote shell access is intentionally absent from the default device grant. An
 operator must add `shell.explicit` to the device's complete scope list through
 the local control CLI; `scopes` replaces the list rather than appending to it:
 
 ```sh
-codewide-host-rs devices
-codewide-host-rs scopes DEVICE_ID approvals.respond,files.download.workspace,files.upload.workspace,localhost.forward,processes.manage,shell.explicit,threads.read,threads.write,turns.start,turns.steer
+codewide-companion devices
+codewide-companion scopes DEVICE_ID approvals.respond,files.download.workspace,files.upload.workspace,localhost.forward,processes.manage,shell.explicit,threads.read,threads.write,turns.start,turns.steer
 ```
 
 The current `expo-libghostty` React Native seam carries base64 strings across
@@ -261,7 +259,7 @@ not in use; do not forward an unauthenticated administrative service.
 Development pairings created before device-proof support have no public key and
 must be paired again; the host fails closed with `device_key_required_repair`.
 
-The production Rust companion binds only its authenticated public transport to
+The production companion binds only its authenticated public transport to
 `127.0.0.1:8766`. Operator commands such as pairing and device management use
 the same CLI over a private local IPC endpoint (`$XDG_RUNTIME_DIR/codewide/companion-control.sock`
 on Linux), protected by directory mode `0700`, endpoint mode `0600` and the
@@ -269,12 +267,11 @@ administrator capability. There is no administrative TCP listener to forward by
 mistake. Reach the public port through an SSH forward or a TLS/private-network
 reverse proxy; never publish plain `ws://` to the internet.
 
-The installed Rust binary is also the headless operator CLI: `create-token`,
+The installed companion binary is also the headless operator CLI: `create-token`,
 `pair`, `devices`, `scopes` and `revoke` call the running process through that
-local endpoint. The TypeScript CLI remains only as a development compatibility
-path and is not required by a packaged Rust companion.
+local endpoint.
 
-A durable deployment runs `codewide-host.service` behind an operator-owned
+A durable deployment runs `codewide-companion.service` behind an operator-owned
 TLS reverse proxy or private overlay network. Hostnames, tunnel credentials and
 provider-specific configuration are machine-local and must not be committed.
 Set the Android build's update endpoint explicitly:
@@ -292,7 +289,7 @@ until the host explicitly scopes them:
 
 ```sh
 set -lx CODEWIDE_FILE_ROOTS '{"project":"/absolute/path/to/project"}'
-pnpm --filter @codewide/host-companion start
+systemctl --user restart codewide-companion.service
 ```
 
 Uploads require `X-Content-SHA256`, use bounded resumable chunks and cannot leave
@@ -348,7 +345,7 @@ mkdir -p test-results/private-runtime/android
 chmod 700 test-results/private-runtime/android
 set -lx CODEWIDE_PUBLIC_ENDPOINT ws://10.0.2.2:8765/v1/sync
 set -lx CODEWIDE_SERVER_NAME 'AVD test server'
-pnpm --filter @codewide/host-companion exec codewide-host pair --json \
+codewide-companion pair --json \
   > test-results/private-runtime/android/pairing.json
 chmod 600 test-results/private-runtime/android/pairing.json
 pnpm test:android-device -- \

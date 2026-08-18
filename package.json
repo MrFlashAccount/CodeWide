@@ -19,13 +19,15 @@
     }
   },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r build && pnpm build:companion",
     "typecheck": "pnpm typecheck:scripts && pnpm -r typecheck",
     "typecheck:scripts": "tsc --project scripts/tsconfig.json",
     "test": "vitest run",
+    "test:companion": "cargo test --workspace",
+    "build:companion": "sh scripts/build-companion.sh",
     "test:e2e": "playwright test",
     "bench:fixtures": "tsx scripts/benchmark-deterministic-fixtures.ts",
-    "bench:large-content": "tsx scripts/benchmark-large-content.ts",
+    "bench:large-content": "cargo test -p codewide-companion --test content_transport deterministic_large_content_projection_is_bounded -- --nocapture",
     "bench:markdown-parser": "tsx packages/rendering-core/scripts/benchmark-markdown-parser.mjs",
     "brand:generate": "node scripts/generate-codewide-assets.mjs",
     "soak:sync": "tsx scripts/soak-sync.ts",
@@ -36,7 +38,7 @@
     "test:ota": "python3 scripts/test-ota-server.py",
     "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",
-    "release:gate": "pnpm typecheck && pnpm test && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
+    "release:gate": "pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
     "test:watch": "vitest",
     "protocol:generate": "codex app-server generate-ts --experimental --out packages/codex-protocol/src/generated/0.147.0 && codex app-server generate-json-schema --experimental --out packages/codex-protocol/schema/0.147.0"
   },

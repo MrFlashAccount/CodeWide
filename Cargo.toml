@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/host-companion-rs"]
+members = ["apps/companion"]
 exclude = ["openai-codex/codex-rs"]
 resolver = "2"
 

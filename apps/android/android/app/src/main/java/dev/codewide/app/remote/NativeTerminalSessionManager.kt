@@ -11,6 +11,10 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
+import java.io.BufferedOutputStream
+import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
@@ -21,28 +25,100 @@ internal class NativeTerminalSessionManager(
   private val credentialsStore: NativeSessionCredentialsStore,
   private val credentialClient: OkHttpClient,
   private val socketClient: OkHttpClient,
+  cacheDirectory: File,
 ) {
+  private data class OutputChunk(
+    val bytes: ByteArray,
+    val nextOffset: Long,
+    val hasMore: Boolean,
+  )
+
+  private class Transcript(directory: File, sessionId: String) {
+    private val file = File(directory, "$sessionId.ansi")
+    private var output: BufferedOutputStream? = null
+    private var length = 0L
+
+    init {
+      directory.mkdirs()
+      check(directory.isDirectory) { "Could not create terminal cache directory" }
+      if (file.exists()) check(file.delete()) { "Could not reset terminal transcript" }
+      output = BufferedOutputStream(FileOutputStream(file), TRANSCRIPT_WRITE_BUFFER_BYTES)
+    }
+
+    @Synchronized
+    fun append(bytes: ByteString): Long {
+      check(length + bytes.size <= MAX_TRANSCRIPT_BYTES) { "Terminal output exceeded the replay limit" }
+      output?.write(bytes.toByteArray()) ?: error("Terminal transcript is closed")
+      length += bytes.size
+      return length
+    }
+
+    @Synchronized
+    fun read(offset: Long, maxBytes: Int): OutputChunk {
+      require(offset in 0..length) { "Terminal output offset is invalid" }
+      require(maxBytes in 1..MAX_READ_BYTES) { "Terminal output read size is invalid" }
+      output?.flush()
+      val count = minOf(maxBytes.toLong(), length - offset).toInt()
+      val bytes = ByteArray(count)
+      if (count > 0) {
+        RandomAccessFile(file, "r").use { input ->
+          input.seek(offset)
+          input.readFully(bytes)
+        }
+      }
+      val nextOffset = offset + count
+      return OutputChunk(bytes, nextOffset, nextOffset < length)
+    }
+
+    @Synchronized
+    fun finish() {
+      output?.close()
+      output = null
+    }
+
+    @Synchronized
+    fun delete() {
+      finish()
+      if (file.exists()) file.delete()
+    }
+  }
+
   private data class Session(
     val id: String,
     val connectionId: String,
-    val closed: AtomicBoolean = AtomicBoolean(false),
+    val threadId: String,
+    val transcript: Transcript,
+    val disposed: AtomicBoolean = AtomicBoolean(false),
     val pending: ArrayDeque<ByteString> = ArrayDeque(),
     var pendingBytes: Long = 0,
     var socket: WebSocket? = null,
     var open: Boolean = false,
+    @Volatile var finished: Boolean = false,
   )
 
   private val sessions = ConcurrentHashMap<String, Session>()
+  private val transcriptDirectory = File(cacheDirectory, "terminal-sessions")
 
-  fun open(sessionId: String, connectionId: String, cwd: String?, cols: Int, rows: Int) {
+  init {
+    transcriptDirectory.listFiles { file -> file.isFile && file.extension == "ansi" }
+      ?.forEach { file -> file.delete() }
+  }
+
+  fun open(sessionId: String, connectionId: String, threadId: String, cwd: String?, cols: Int, rows: Int) {
     require(SESSION_ID.matches(sessionId)) { "Terminal session id is invalid" }
     require(connectionId.isNotBlank()) { "Connection id is required" }
+    require(threadId.isNotBlank() && threadId.length <= MAX_THREAD_ID_CHARS) { "Thread id is invalid" }
     require(cwd == null || cwd.length in 1..MAX_CWD_CHARS) { "Terminal working directory is invalid" }
     require(cols in MIN_COLS..MAX_COLS && rows in MIN_ROWS..MAX_ROWS) { "Terminal size is invalid" }
     require(sessions.size < MAX_SESSIONS) { "Too many terminal sessions are open" }
     val saved = credentialsStore.get(connectionId) ?: error("Saved server credentials are missing")
     require(saved.enabled) { "Server connection is disabled" }
-    val session = Session(id = sessionId, connectionId = connectionId)
+    val session = Session(
+      id = sessionId,
+      connectionId = connectionId,
+      threadId = threadId,
+      transcript = Transcript(transcriptDirectory, sessionId),
+    )
     check(sessions.putIfAbsent(session.id, session) == null) { "Could not allocate terminal session" }
     emit(session, "connecting")
     SessionCredentialClient.mint(credentialClient, saved.endpoint, saved.token, saved.tlsPinSha256) { result ->
@@ -75,7 +151,7 @@ internal class NativeTerminalSessionManager(
 
   fun close(sessionId: String) {
     val session = sessions.remove(sessionId) ?: return
-    if (!session.closed.compareAndSet(false, true)) return
+    if (!session.disposed.compareAndSet(false, true)) return
     synchronized(session) {
       session.pending.clear()
       session.pendingBytes = 0
@@ -83,8 +159,21 @@ internal class NativeTerminalSessionManager(
       session.socket?.close(1000, "terminal_closed")
       session.socket = null
       session.open = false
+      session.finished = true
     }
-    emit(session, "closed")
+    session.transcript.delete()
+    emit(session, "removed")
+  }
+
+  fun readOutput(sessionId: String, offset: Long, maxBytes: Int): String {
+    val session = sessions[sessionId] ?: error("Terminal session is unavailable")
+    val chunk = session.transcript.read(offset, maxBytes)
+    return JSONObject()
+      .put("data", Base64.encodeToString(chunk.bytes, Base64.NO_WRAP))
+      .put("nextOffset", chunk.nextOffset)
+      .put("hasMore", chunk.hasMore)
+      .put("finished", session.finished)
+      .toString()
   }
 
   fun closeConnection(connectionId: String) {
@@ -103,7 +192,7 @@ internal class NativeTerminalSessionManager(
     cols: Int,
     rows: Int,
   ) {
-    if (session.closed.get()) return
+    if (session.disposed.get()) return
     val endpoint = terminalEndpoint(saved.endpoint, cwd, cols, rows)
     val request = Request.Builder()
       .url(endpoint)
@@ -116,7 +205,7 @@ internal class NativeTerminalSessionManager(
     }
     val socket = client.newWebSocket(request, object : WebSocketListener() {
       override fun onOpen(socket: WebSocket, response: Response) {
-        if (session.closed.get()) {
+        if (session.disposed.get() || session.finished) {
           socket.close(1000, "terminal_closed")
           return
         }
@@ -135,7 +224,12 @@ internal class NativeTerminalSessionManager(
       }
 
       override fun onMessage(socket: WebSocket, bytes: ByteString) {
-        emit(session, "output", Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP))
+        try {
+          val offset = session.transcript.append(bytes)
+          emit(session, "output", offset = offset)
+        } catch (error: Throwable) {
+          fail(session, error.message ?: "Could not cache terminal output")
+        }
       }
 
       override fun onMessage(socket: WebSocket, text: String) {
@@ -143,8 +237,14 @@ internal class NativeTerminalSessionManager(
       }
 
       override fun onClosed(socket: WebSocket, code: Int, reason: String) {
-        if (sessions.remove(session.id, session) && session.closed.compareAndSet(false, true)) {
-          emit(session, "closed", null, code, reason)
+        if (!session.disposed.get()) {
+          synchronized(session) {
+            session.socket = null
+            session.open = false
+            session.finished = true
+          }
+          session.transcript.finish()
+          emit(session, "closed", code = code, message = reason)
         }
       }
 
@@ -158,13 +258,13 @@ internal class NativeTerminalSessionManager(
       }
     })
     synchronized(session) {
-      if (session.closed.get()) socket.close(1000, "terminal_closed") else session.socket = socket
+      if (session.disposed.get()) socket.close(1000, "terminal_closed") else session.socket = socket
     }
   }
 
   private fun send(sessionId: String, bytes: ByteString) {
     val session = sessions[sessionId] ?: error("Terminal session is closed")
-    check(!session.closed.get()) { "Terminal session is closed" }
+    check(!session.disposed.get() && !session.finished) { "Terminal session is closed" }
     synchronized(session) {
       val socket = session.socket
       if (session.open && socket != null) {
@@ -178,32 +278,34 @@ internal class NativeTerminalSessionManager(
   }
 
   private fun fail(session: Session, message: String) {
-    sessions.remove(session.id, session)
-    if (!session.closed.compareAndSet(false, true)) return
+    if (session.disposed.get() || session.finished) return
     synchronized(session) {
       session.pending.clear()
       session.pendingBytes = 0
       session.socket?.cancel()
       session.socket = null
       session.open = false
+      session.finished = true
     }
-    emit(session, "error", null, null, message.take(500))
+    session.transcript.finish()
+    emit(session, "error", message = message.take(500))
   }
 
   private fun emit(
     session: Session,
     type: String,
-    data: String? = null,
     code: Int? = null,
     message: String? = null,
+    offset: Long? = null,
   ) {
     val event = JSONObject()
       .put("sessionId", session.id)
       .put("connectionId", session.connectionId)
+      .put("threadId", session.threadId)
       .put("type", type)
-    if (data != null) event.put("data", data)
     if (code != null) event.put("code", code)
     if (message != null) event.put("message", message)
+    if (offset != null) event.put("offset", offset)
     CodeWideModule.emitTerminalEvent(event.toString())
   }
 
@@ -216,8 +318,12 @@ internal class NativeTerminalSessionManager(
     private const val MIN_ROWS = 2
     private const val MAX_ROWS = 300
     private const val MAX_CWD_CHARS = 4096
+    private const val MAX_THREAD_ID_CHARS = 512
     private const val MAX_INPUT_BYTES = 1024 * 1024
     private const val MAX_PENDING_BYTES = 1024L * 1024
+    private const val MAX_TRANSCRIPT_BYTES = 128L * 1024 * 1024
+    private const val MAX_READ_BYTES = 256 * 1024
+    private const val TRANSCRIPT_WRITE_BUFFER_BYTES = 64 * 1024
     private const val MAX_SESSIONS = 8
     private val SESSION_ID = Regex("terminal-[0-9a-fA-F-]{36}")
 

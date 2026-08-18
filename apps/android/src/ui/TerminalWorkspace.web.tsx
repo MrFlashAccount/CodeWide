@@ -5,8 +5,9 @@ import { AppText as Text } from "./Typography";
 
 export function TerminalWorkspace(_props: {
   connectionId: string;
+  threadId: string;
   cwd: string | null;
-  onClose(): void;
+  onMinimize(): void;
 }) {
   return (
     <View style={styles.root}>

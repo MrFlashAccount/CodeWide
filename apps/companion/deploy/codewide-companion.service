@@ -1,0 +1,46 @@
+[Unit]
+Description=CodeWide Companion
+After=network-online.target codex-app-server-bootstrap.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+UMask=0077
+RuntimeDirectory=codewide
+RuntimeDirectoryMode=0700
+Environment=HOME=%h
+Environment=CODEX_HOME=%h/.codex
+Environment=CODEWIDE_BUILD_SHELF_ORIGIN=http://127.0.0.1:4190
+Environment='CODEWIDE_PREVIEW_ROOTS=["/tmp/codewide-attachments"]'
+Environment=RUST_LOG=codewide_companion=info
+ExecStartPre=/usr/bin/test -S %h/.codex/app-server-control/app-server-control.sock
+ExecStartPre=/usr/bin/test -s %h/.codewide/host.token
+ExecStartPre=/usr/bin/mkdir -p %h/.local/state/codewide/companion
+ExecStart=%h/.local/lib/codewide/codewide-companion serve --listen 127.0.0.1:8766 --control-endpoint %t/codewide/companion-control.sock --state %h/.local/state/codewide/companion/state.redb --data-dir %h/.local/state/codewide/companion --token-file %h/.codewide/host.token --app-server-socket %h/.codex/app-server-control/app-server-control.sock --codex-home %h/.codex --device-registry %h/.codewide/devices.json --enable-mutations
+Restart=always
+RestartSec=2s
+TimeoutStartSec=30s
+TimeoutStopSec=15s
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+KeyringMode=private
+PrivateTmp=true
+PrivateDevices=true
+BindReadOnlyPaths=-/tmp/codewide-attachments
+ProtectSystem=full
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target

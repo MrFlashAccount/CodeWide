@@ -1036,6 +1036,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('rawTurn.status === "inProgress"');
     expect(screen).toContain('accessibilityLabel="Message actions"');
     expect(screen.match(/trigger="long-press"/g)).toHaveLength(3);
+    expect(screen).toContain('<GesturePressable\n      {...(selected ? { testID: "selected-thread-row" } : {})}\n      accessibilityRole="button"\n      cancelable\n      delayLongPress={350}');
     expect(screen).toContain('testID="composer-accessory-tray"');
     expect(screen).toContain('const useAnchoredComposerMenu = Platform.OS === "android";');
     expect(screen).toContain('<KeyboardStickyView\n        enabled');

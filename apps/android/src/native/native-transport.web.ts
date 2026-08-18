@@ -36,11 +36,14 @@ export type NativePortForwardEvent =
 export type NativeTerminalEvent = {
   sessionId: string;
   connectionId: string;
-  type: "connecting" | "open" | "output" | "closed" | "error";
+  threadId: string;
+  type: "connecting" | "open" | "output" | "closed" | "error" | "removed";
   data?: string;
   code?: number;
   message?: string;
+  offset?: number;
 };
+export type NativeTerminalOutput = { data: string; nextOffset: number; hasMore: boolean; finished: boolean };
 export type NativeDiscoveredPort = {
   port: number;
   name: string;
@@ -69,6 +72,7 @@ export function subscribeNativePortForwards(): () => void { return () => {}; }
 export async function openNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
 export async function writeNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
 export async function resizeNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
+export async function readNativeTerminalOutput(): Promise<NativeTerminalOutput> { throw new Error("Terminal is available on Android only"); }
 export function closeNativeTerminal(): void {}
 export function subscribeNativeTerminal(): () => void { return () => {}; }
 export async function enqueueNativeCommand(): Promise<void> { throw new Error("Android only"); }

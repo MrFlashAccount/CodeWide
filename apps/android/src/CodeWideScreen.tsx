@@ -75,6 +75,11 @@ import {
   nativePortForwardingStore,
   useNativePortForwarding,
 } from "./data/native-port-forwarding-store";
+import {
+  closeInteractiveTerminalWorkspace,
+  createInteractiveTerminalTab,
+  useInteractiveTerminalWorkspace,
+} from "./data/interactive-terminal-store";
 import { effectiveTurnLifecycleStatus, isThreadLifecycleActive } from "./data/thread-lifecycle";
 import type { StoredConnection } from "./data/connection-profile-types";
 import type { PendingServerRequest } from "./data/pending-request-types";
@@ -247,7 +252,7 @@ function writePersistentExpansionState(key: string, expanded: boolean): void {
   }
 }
 
-type ComposerMenuPage = "model" | "skills" | "permissions" | "queue" | "goal" | "review" | "runtime";
+type ComposerMenuPage = "model" | "skills" | "permissions" | "queue" | "goal" | "review" | "runtime" | "ports";
 type ComposerAccessoryAction = "files" | "skills" | "goal" | "runtime";
 
 function composerHeightForContent(text: string, measuredContentHeight: number): number {
@@ -280,7 +285,7 @@ function executionPermissionsLabel(settings: ReturnType<typeof projectedThreadEx
     : settings?.approvalPolicy === "untrusted"
       ? "Untrusted"
       : settings?.approvalPolicy === "never"
-        ? "No prompts"
+        ? null
         : settings?.approvalPolicy === "granular"
           ? "Granular"
           : null;
@@ -444,7 +449,9 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const [mobileThreadOffset] = useState(() => new ScrollOffsetMemory());
   const [threadListMode, setThreadListMode] = useState<ThreadListMode>("active");
   const demoForkCounterRef = useRef(0);
+  const demoDeliveryCounterRef = useRef(0);
   const [demoComposerMemory] = useState(() => new DemoComposerMemory());
+  const [demoPendingDeliveries, setDemoPendingDeliveries] = useState<Array<NativeCommandDelivery & { attachments: ComposerAttachment[] }>>([]);
   const demoScrollOffsetsRef = useRef(new Map<string, number>());
   const saveDemoDraft = async (serverId: string, threadId: string, text: string) => {
     demoComposerMemory.writeDraft(`${serverId}\u0000${threadId}`, text);
@@ -1251,7 +1258,9 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const useLocalConversationState = !remote.native;
   const activeDemoComposerKey = `${activeConnectionId}\u0000${activeRemoteThreadId ?? "none"}`;
   const activeDemoComposer = demoComposerMemory.read(activeDemoComposerKey);
-  const conversationActions = remote.native && activeRemoteThreadId !== null
+  const conversationActions = activeRemoteThreadId === null
+    ? {}
+    : remote.native
       ? {
           onSend: async (text: string, mode: SendMode, options: TurnSendOptions) => await remote.sendText(activeConnectionId, activeRemoteThreadId, text, mode, options),
           onRetryFailedMessage: async (commandId: string) => await remote.retryFailedMessage(activeConnectionId, commandId),
@@ -1278,7 +1287,27 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           getTransferAccess: async (forceRefresh = false) => await remote.transferAccess(activeConnectionId, forceRefresh),
           onStartVoiceTranscription: async (listener: (event: VoiceTranscriptionEvent) => void, options?: VoiceTranscriptionOptions) => await remote.startVoiceTranscription(activeConnectionId, activeRemoteThreadId, listener, options),
         }
-      : {};
+      : {
+          onSend: async (text: string, mode: SendMode, options: TurnSendOptions) => {
+            const now = Date.now() * 1_000;
+            const commandId = `demo-command-${now}-${demoDeliveryCounterRef.current++}`;
+            setDemoPendingDeliveries((current) => [...current, {
+              connectionId: activeConnectionId,
+              commandId,
+              method: mode.type === "queue" ? "companion/queue/put" : mode.type === "steer" ? "turn/steer" : "turn/start",
+              threadId: activeRemoteThreadId,
+              targetCommandId: mode.type === "steer" ? mode.expectedTurnId : null,
+              text,
+              attachments: options.attachments ?? [],
+              state: "sending",
+              attempts: 1,
+              lastError: null,
+              createdAt: now,
+              updatedAt: now,
+            }]);
+            return commandId;
+          },
+        };
 
   const nativePortForwarding: PortForwardingManagerProps | undefined = remote.native && activeConnectionId !== "" ? {
     serverName: servers.find((server) => server.id === activeConnectionId)?.name ?? "Server",
@@ -1420,7 +1449,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             onLoadOlder={loadOlderTurns}
             onRevealNewer={revealNewerTurns}
             onLoadTurnItems={loadTurnItems}
-            pendingDeliveries={useLocalConversationState ? [] : activePendingDeliveries}
+            pendingDeliveries={useLocalConversationState ? demoPendingDeliveries : activePendingDeliveries}
             queuedPrompts={useLocalConversationState ? [] : activeQueuedPrompts}
             composerState={useLocalConversationState ? null : activeComposerState}
             controlsResource={useLocalConversationState ? null : activeControlsResource}
@@ -1587,7 +1616,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           onLoadOlder={loadOlderTurns}
           onRevealNewer={revealNewerTurns}
           onLoadTurnItems={loadTurnItems}
-          pendingDeliveries={useLocalConversationState ? [] : activePendingDeliveries}
+          pendingDeliveries={useLocalConversationState ? demoPendingDeliveries : activePendingDeliveries}
           queuedPrompts={useLocalConversationState ? [] : activeQueuedPrompts}
           composerState={useLocalConversationState ? null : activeComposerState}
           controlsResource={useLocalConversationState ? null : activeControlsResource}
@@ -2140,9 +2169,11 @@ function ThreadRow({
     swipeableRef.current?.close();
   }, [selected, thread.id]);
   const row = (
-    <Pressable
+    <GesturePressable
       {...(selected ? { testID: "selected-thread-row" } : {})}
       accessibilityRole="button"
+      cancelable
+      delayLongPress={350}
       onPress={onPress}
       {...(Platform.OS === "web" ? { onLongPress: () => setWebContextVisible(true), delayLongPress: 350 } : {})}
       style={({ pressed }) => [
@@ -2184,7 +2215,7 @@ function ThreadRow({
           <Text testID="thread-preview" numberOfLines={1} style={styles.threadPreview}>{plainThreadPreview(thread.preview)}</Text>
         </View>
       </View>
-    </Pressable>
+    </GesturePressable>
   );
   const rowMenu = Platform.OS === "web" ? row : (
     <ActionMenu
@@ -2703,6 +2734,7 @@ function ConversationPane({
   const draftConnectionId = server?.id ?? null;
   const draftThreadId = thread?.id ?? null;
   const composerScope = `${draftConnectionId ?? "demo"}\u0000${draftThreadId ?? "none"}`;
+  const interactiveTerminals = useInteractiveTerminalWorkspace(draftConnectionId, draftThreadId);
   const [narrowConversationPane, setNarrowConversationPane] = useState(false);
   const [conversationPaneWidth, setConversationPaneWidth] = useState(0);
   const timelineCompact = compact || narrowConversationPane;
@@ -2741,6 +2773,7 @@ function ConversationPane({
   const visibleComposerInputHeight = draft === "" ? COMPOSER_MIN_HEIGHT : composerInputHeight;
   const attachments = demo ? demoAttachments : composerState?.attachments ?? [];
   const visibleSubagents = draftThreadId === null ? [] : subagentsForThread(subagents, draftThreadId);
+  const livePortForwardCount = portForwarding?.profiles.filter(({ status }) => status === "live").length ?? 0;
   const sessionChangeCount = threadResources?.value?.changes.length ?? 0;
   const sessionAttachmentCount = threadResources?.value?.attachments.length ?? 0;
   const sessionChangesEmpty = threadResources?.status === "ready" && sessionChangeCount === 0;
@@ -2764,7 +2797,7 @@ function ConversationPane({
   const updateComposerPreferences = (apply: (current: StoredComposerPreferences) => StoredComposerPreferences) => {
     const next = apply(composerPreferences);
     if (demo) setDemoPreferences(next);
-    else if (saveComposerPreferences !== undefined && draftConnectionId !== null && draftThreadId !== null) {
+    if (saveComposerPreferences !== undefined && draftConnectionId !== null && draftThreadId !== null) {
       void saveComposerPreferences(draftConnectionId, draftThreadId, next).catch(() => undefined);
     }
   };
@@ -3441,7 +3474,7 @@ function ConversationPane({
     setMenuVisible(true);
     // A failed/background prefetch may be retried, but an already loaded sheet
     // never refetches its model, skill and permission lists.
-    if ((controlsResource === null || controlsResource.status === "error") && !controlsLoading) requestControls();
+    if (initialPage !== "ports" && (controlsResource === null || controlsResource.status === "error") && !controlsLoading) requestControls();
   };
   const closeControls = () => {
     setMenuVisible(false);
@@ -3536,10 +3569,19 @@ function ConversationPane({
     ));
   };
   const openTerminal = () => {
-    if (draftConnectionId === null) return;
+    if (draftConnectionId === null || draftThreadId === null) return;
+    if (Platform.OS === "android" && interactiveTerminals.tabs.length === 0) {
+      createInteractiveTerminalTab({ connectionId: draftConnectionId, threadId: draftThreadId, cwd: cwd ?? null });
+    }
     fullscreenOverlay.present(({ close }) => (
-      <TerminalWorkspace connectionId={draftConnectionId} cwd={cwd ?? null} onClose={close} />
+      <TerminalWorkspace connectionId={draftConnectionId} threadId={draftThreadId} cwd={cwd ?? null} onMinimize={close} />
     ));
+  };
+  const deleteThread = onDelete === undefined ? undefined : async () => {
+    await onDelete();
+    if (draftConnectionId !== null && draftThreadId !== null) {
+      closeInteractiveTerminalWorkspace(draftConnectionId, draftThreadId);
+    }
   };
   const fileAttachmentEnabled = fileTransferController !== null
     && getTransferAccess !== undefined
@@ -3689,13 +3731,13 @@ function ConversationPane({
     const scope = composerScope;
     const previousModel = selectedModel;
     const previousEffort = selectedEffort;
-    setSelectedModel(model);
-    setSelectedEffort(effort);
+    updateComposerPreferences((current) => ({ ...current, model, effort }));
     if (onUpdateSettings === undefined) return;
     setControlError(null);
     void onUpdateSettings({ model, effort }).catch((cause) => {
-      setSelectedModel((current) => current === model ? previousModel : current);
-      setSelectedEffort((current) => current === effort ? previousEffort : current);
+      updateComposerPreferences((current) => current.model === model && current.effort === effort
+        ? { ...current, model: previousModel, effort: previousEffort }
+        : current);
       if (mountedConversationScopeRef.current.scope === scope) {
         setControlError(cause instanceof Error ? cause.message : "Could not update model settings");
       }
@@ -3846,7 +3888,7 @@ function ConversationPane({
             : (onArchive === undefined ? {} : { onArchive }))}
           {...(onCompact === undefined ? {} : { onCompact })}
           {...(onFork === undefined ? {} : { onFork })}
-          {...(onDelete === undefined ? {} : { onDelete })}
+          {...(deleteThread === undefined ? {} : { onDelete: deleteThread })}
         />}
       </View>
 
@@ -4147,6 +4189,24 @@ function ConversationPane({
           {threadResourcesPending || sessionAttachmentsEmpty || threadResources?.status === "error" && threadResources.value === null
             ? <ComposerContextLabel loading={threadResourcesPending} testID="composer-attachments-label" text={sessionAttachmentsLabel} />
             : <ComposerContextCount label="Attachments" value={sessionAttachmentCount} testID="composer-attachments-label" />}
+        </Pressable>}
+        {portForwarding !== undefined && <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Ports: ${livePortForwardCount} active`}
+          onPress={() => openControls("ports")}
+          style={styles.composerContextChip}
+        >
+          <Ionicons name="git-network-outline" size={15} color={livePortForwardCount > 0 ? colors.green : colors.textMuted} />
+          <ComposerContextCount label="Ports" value={livePortForwardCount} testID="composer-ports-label" />
+        </Pressable>}
+        {interactiveTerminals.tabs.length > 0 && <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Terminals: ${interactiveTerminals.tabs.length}`}
+          onPress={openTerminal}
+          style={styles.composerContextChip}
+        >
+          <Ionicons name="terminal-outline" size={15} color={interactiveTerminals.tabs.some(({ status }) => status === "open") ? colors.green : colors.textMuted} />
+          <ComposerContextCount label="Terminals" value={interactiveTerminals.tabs.length} testID="composer-terminals-label" />
         </Pressable>}
         {visibleSubagents.length > 0 && onReadSubagentThread !== undefined && <Pressable
           accessibilityRole="button"
@@ -5524,6 +5584,10 @@ function ComposerMenu({
             onClose={onClose}
             {...(onStartReview === undefined ? {} : { onStartReview })}
           />
+        ) : page === "ports" ? (
+          portForwarding !== undefined
+            ? <PortForwardingManager {...portForwarding} />
+            : <Text style={styles.menuNotice}>Port forwarding is unavailable for this server</Text>
         ) : page === "runtime" ? (
           <>
             {onListTerminals !== undefined && (portForwarding !== undefined || onCreateTunnel !== undefined) && (
@@ -5688,6 +5752,7 @@ function pageTitle(page: ComposerMenuPage): string {
   if (page === "queue") return "Queued prompts";
   if (page === "goal") return "Goal & progress";
   if (page === "review") return "Review";
+  if (page === "ports") return "Ports";
   return "Runtime";
 }
 
@@ -9327,7 +9392,7 @@ const styles = StyleSheet.create({
   composerSticky: { flexShrink: 0, minWidth: 0, alignSelf: "stretch", zIndex: 30 },
   composerDock: { flexShrink: 0, minWidth: 0, alignSelf: "stretch", backgroundColor: colors.surface, zIndex: 30, elevation: 4 },
   composerContextStrip: { flexGrow: 0, flexShrink: 0, backgroundColor: colors.surface },
-  composerContextContent: { alignItems: "center", gap: 6, paddingHorizontal: spacing.sm, paddingTop: 2, paddingBottom: spacing.xs },
+  composerContextContent: { alignItems: "center", gap: 6, paddingHorizontal: spacing.sm, paddingTop: 2, paddingBottom: spacing.xxs },
   composerContextChip: { flexGrow: 0, flexShrink: 0, alignSelf: "flex-start", minHeight: 24, paddingHorizontal: 9, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, backgroundColor: colors.surfaceContainer },
   composerContextText: { flexGrow: 0, flexShrink: 0, color: colors.textMuted, fontSize: 11, lineHeight: 15, fontWeight: "600" },
   composerContextValue: { alignSelf: "center", justifyContent: "center" },

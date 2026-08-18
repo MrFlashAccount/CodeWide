@@ -4,6 +4,7 @@ import { Modal, StyleSheet } from "react-native";
 import { SafeAreaView, type Edge } from "react-native-safe-area-context";
 
 import { colors } from "../theme";
+import { FullscreenWindowReadyProvider } from "./FullscreenWindowReady";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
@@ -26,10 +27,12 @@ export function AppFullscreenModal({
     <RecoverableRenderBoundary scope="dialog" label="Fullscreen modal" onDismiss={onClose}>
       <Modal visible animationType="slide" presentationStyle="fullScreen" onShow={onShow} onRequestClose={onClose}>
         <SafeAreaView testID="fullscreen-modal-safe-area" edges={FULLSCREEN_SAFE_AREA_EDGES} style={styles.root}>
-          <OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>
-            {children}
-            <PortalHost name={portalHostName} />
-          </OverlaySurfaceProvider>
+          <FullscreenWindowReadyProvider ready>
+            <OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>
+              {children}
+              <PortalHost name={portalHostName} />
+            </OverlaySurfaceProvider>
+          </FullscreenWindowReadyProvider>
         </SafeAreaView>
       </Modal>
     </RecoverableRenderBoundary>

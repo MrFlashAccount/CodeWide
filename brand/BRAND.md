@@ -4,7 +4,7 @@
 
 ## Mark
 
-The current primary mark is the **C/W monogram**: a wide `W` nested inside an open `C`. It gives the product name a compact signature without relying on a generic terminal glyph. This is the production mark for the current identity iteration; its geometry may be refined later without changing the CodeWide name.
+The primary mark is the **C/W monogram**: a wide `W` nested inside an open `C`. It gives the product name a compact signature without relying on a generic terminal glyph.
 
 - UI accent: `#5878FF`
 - Graphite: `#0F0F10`

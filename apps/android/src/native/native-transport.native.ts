@@ -41,9 +41,10 @@ type NativeBridge = {
   startPortForward(profileId: string): Promise<string>;
   stopPortForward(profileId: string): Promise<string>;
   removePortForward(profileId: string): Promise<void>;
-  openTerminal?(sessionId: string, connectionId: string, cwd: string | null, cols: number, rows: number): Promise<void>;
+  openTerminal?(sessionId: string, connectionId: string, threadId: string, cwd: string | null, cols: number, rows: number): Promise<void>;
   writeTerminal?(sessionId: string, base64: string): Promise<void>;
   resizeTerminal?(sessionId: string, cols: number, rows: number): Promise<void>;
+  readTerminalOutput?(sessionId: string, offset: number, maxBytes: number): Promise<string>;
   closeTerminal?(sessionId: string): void;
   engineEnqueueCommand(connectionId: string, commandId: string, method: string, paramsJson: string): Promise<string>;
   engineListCommands(): Promise<string>;
@@ -96,10 +97,19 @@ export type NativePortForwardEvent =
 export type NativeTerminalEvent = {
   sessionId: string;
   connectionId: string;
-  type: "connecting" | "open" | "output" | "closed" | "error";
+  threadId: string;
+  type: "connecting" | "open" | "output" | "closed" | "error" | "removed";
   data?: string;
   code?: number;
   message?: string;
+  offset?: number;
+};
+
+export type NativeTerminalOutput = {
+  data: string;
+  nextOffset: number;
+  hasMore: boolean;
+  finished: boolean;
 };
 
 export type NativeDiscoveredPort = {
@@ -269,6 +279,7 @@ export function subscribeNativePortForwards(listener: (event: NativePortForwardE
 export async function openNativeTerminal(input: {
   sessionId: string;
   connectionId: string;
+  threadId: string;
   cwd: string | null;
   cols: number;
   rows: number;
@@ -276,7 +287,7 @@ export async function openNativeTerminal(input: {
   if (bridge === undefined || Platform.OS !== "android" || typeof bridge.openTerminal !== "function") {
     throw new Error("This app build does not include terminal support");
   }
-  await bridge.openTerminal(input.sessionId, input.connectionId, input.cwd, input.cols, input.rows);
+  await bridge.openTerminal(input.sessionId, input.connectionId, input.threadId, input.cwd, input.cols, input.rows);
 }
 
 export async function writeNativeTerminal(sessionId: string, base64: string): Promise<void> {
@@ -291,6 +302,22 @@ export async function resizeNativeTerminal(sessionId: string, cols: number, rows
     throw new Error("This app build does not include terminal support");
   }
   await bridge.resizeTerminal(sessionId, cols, rows);
+}
+
+export async function readNativeTerminalOutput(sessionId: string, offset: number, maxBytes = 256 * 1024): Promise<NativeTerminalOutput> {
+  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.readTerminalOutput !== "function") {
+    throw new Error("This app build does not include resumable terminal output");
+  }
+  const value = JSON.parse(await bridge.readTerminalOutput(sessionId, offset, maxBytes)) as unknown;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Native terminal output is invalid");
+  const row = value as Partial<NativeTerminalOutput>;
+  if (
+    typeof row.data !== "string"
+    || typeof row.nextOffset !== "number" || !Number.isSafeInteger(row.nextOffset) || row.nextOffset < offset
+    || typeof row.hasMore !== "boolean"
+    || typeof row.finished !== "boolean"
+  ) throw new Error("Native terminal output is invalid");
+  return row as NativeTerminalOutput;
 }
 
 export function closeNativeTerminal(sessionId: string): void {
@@ -315,13 +342,14 @@ function parseNativeTerminalEvent(value: unknown): NativeTerminalEvent {
   const row = value as Partial<NativeTerminalEvent>;
   if (
     typeof row.sessionId !== "string" || row.sessionId.length === 0
-    || typeof row.connectionId !== "string" || row.connectionId.length === 0
-    || !["connecting", "open", "output", "closed", "error"].includes(row.type ?? "")
+    || typeof row.threadId !== "string" || row.threadId.length === 0
+    || !["connecting", "open", "output", "closed", "error", "removed"].includes(row.type ?? "")
     || !(row.data === undefined || typeof row.data === "string")
     || !(row.code === undefined || (typeof row.code === "number" && Number.isInteger(row.code)))
     || !(row.message === undefined || typeof row.message === "string")
+    || !(row.offset === undefined || (typeof row.offset === "number" && Number.isSafeInteger(row.offset) && row.offset >= 0))
   ) throw new Error("Native terminal event is invalid");
-  if (row.type === "output" && row.data === undefined) throw new Error("Native terminal output is missing");
+  if (row.type === "output" && row.offset === undefined) throw new Error("Native terminal output offset is missing");
   return row as NativeTerminalEvent;
 }
 

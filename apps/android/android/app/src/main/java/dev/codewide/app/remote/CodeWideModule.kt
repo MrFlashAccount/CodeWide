@@ -539,13 +539,13 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
-  fun openTerminal(sessionId: String, connectionId: String, cwd: String?, cols: Double, rows: Double, promise: Promise) {
+  fun openTerminal(sessionId: String, connectionId: String, threadId: String, cwd: String?, cols: Double, rows: Double, promise: Promise) {
     try {
       val columns = cols.toInt()
       val lines = rows.toInt()
       require(cols == columns.toDouble() && rows == lines.toDouble()) { "Terminal size is invalid" }
       val service = CodexConnectionService.instance ?: error("Server connection is not ready")
-      service.openTerminal(sessionId, connectionId, cwd, columns, lines)
+      service.openTerminal(sessionId, connectionId, threadId, cwd, columns, lines)
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("TERMINAL_OPEN_FAILED", error.message ?: "Could not open terminal", error)
@@ -574,6 +574,19 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("TERMINAL_RESIZE_FAILED", error.message ?: "Could not resize terminal", error)
+    }
+  }
+
+  @ReactMethod
+  fun readTerminalOutput(sessionId: String, offset: Double, maxBytes: Double, promise: Promise) {
+    try {
+      val outputOffset = offset.toLong()
+      val outputLimit = maxBytes.toInt()
+      require(offset == outputOffset.toDouble() && maxBytes == outputLimit.toDouble()) { "Terminal output range is invalid" }
+      val service = CodexConnectionService.instance ?: error("Server connection is not ready")
+      promise.resolve(service.readTerminalOutput(sessionId, outputOffset, outputLimit))
+    } catch (error: Throwable) {
+      promise.reject("TERMINAL_READ_FAILED", error.message ?: "Could not read terminal output", error)
     }
   }
 

@@ -1,12 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
 import { TerminalView, type TerminalViewRef } from "expo-libghostty";
-import * as Crypto from "expo-crypto";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
 
 import {
-  closeNativeTerminal,
-  openNativeTerminal,
+  closeInteractiveTerminalTab,
+  createInteractiveTerminalTab,
+  selectInteractiveTerminalTab,
+  useInteractiveTerminalWorkspace,
+  type InteractiveTerminalTab,
+} from "../data/interactive-terminal-store";
+import {
+  readNativeTerminalOutput,
   resizeNativeTerminal,
   subscribeNativeTerminal,
   writeNativeTerminal,
@@ -14,84 +19,22 @@ import {
 import { colors, spacing, touchTarget, typeScale } from "../theme";
 import { AppText as Text } from "./Typography";
 
+const MAX_TABS = 8;
+
 export function TerminalWorkspace({
   connectionId,
+  threadId,
   cwd,
-  onClose,
+  onMinimize,
 }: {
   connectionId: string;
+  threadId: string;
   cwd: string | null;
-  onClose(): void;
+  onMinimize(): void;
 }) {
-  const terminalRef = useRef<TerminalViewRef>(null);
-  const sessionIdRef = useRef(`terminal-${Crypto.randomUUID()}`);
-  const nativeSessionCreatedRef = useRef(false);
-  const sizeRef = useRef({ cols: 80, rows: 24 });
-  const [status, setStatus] = useState<"connecting" | "open" | "closed" | "error">("connecting");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let disposed = false;
-    const unsubscribe = subscribeNativeTerminal((event) => {
-      if (event.sessionId !== sessionIdRef.current) return;
-      if (event.type === "output" && event.data !== undefined) {
-        void terminalRef.current?.write(event.data).catch((cause) => {
-          setStatus("error");
-          setError(message(cause, "Could not render terminal output"));
-        });
-        return;
-      }
-      if (event.type === "open") {
-        setStatus("open");
-        setError(null);
-      } else if (event.type === "error") {
-        setStatus("error");
-        setError(event.message ?? "Terminal connection failed");
-      } else if (event.type === "closed") {
-        setStatus("closed");
-        void terminalRef.current?.finish(0);
-      }
-    });
-    const sessionId = sessionIdRef.current;
-    void openNativeTerminal({ sessionId, connectionId, cwd, ...sizeRef.current }).then(
-      () => {
-        nativeSessionCreatedRef.current = true;
-        if (disposed) {
-          closeNativeTerminal(sessionId);
-          return;
-        }
-        void resizeNativeTerminal(sessionId, sizeRef.current.cols, sizeRef.current.rows).catch(() => undefined);
-      },
-      (cause) => {
-        if (disposed) return;
-        setStatus("error");
-        setError(message(cause, "Could not open terminal"));
-      },
-    );
-    return () => {
-      disposed = true;
-      unsubscribe();
-      if (nativeSessionCreatedRef.current) closeNativeTerminal(sessionId);
-    };
-  }, [connectionId, cwd]);
-
-  const send = (data: string) => {
-    if (!nativeSessionCreatedRef.current) return;
-    const sessionId = sessionIdRef.current;
-    void writeNativeTerminal(sessionId, data).catch((cause) => {
-      setStatus("error");
-      setError(message(cause, "Could not send terminal input"));
-    });
-  };
-  const resize = (cols: number, rows: number) => {
-    sizeRef.current = { cols, rows };
-    if (!nativeSessionCreatedRef.current) return;
-    const sessionId = sessionIdRef.current;
-    void resizeNativeTerminal(sessionId, cols, rows).catch((cause) => {
-      setStatus("error");
-      setError(message(cause, "Could not resize terminal"));
-    });
-  };
+  const workspace = useInteractiveTerminalWorkspace(connectionId, threadId);
+  const active = workspace.tabs.find(({ id }) => id === workspace.activeId) ?? workspace.tabs[0] ?? null;
+  const createTab = () => createInteractiveTerminalTab({ connectionId, threadId, cwd });
 
   return (
     <View testID="terminal-workspace" style={styles.root}>
@@ -100,14 +43,141 @@ export function TerminalWorkspace({
           <Text numberOfLines={1} style={styles.title}>Terminal</Text>
           <Text numberOfLines={1} ellipsizeMode="middle" style={styles.subtitle}>{cwd ?? "Home directory"}</Text>
         </View>
-        <View style={styles.status}>
-          {status === "connecting" && <ActivityIndicator size="small" color={colors.textMuted} />}
-          <View style={[styles.statusDot, status === "open" ? styles.statusLive : status === "error" ? styles.statusError : styles.statusIdle]} />
-        </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close terminal" onPress={onClose} style={({ pressed }) => [styles.close, pressed && styles.pressed]}>
-          <Ionicons name="close" size={23} color={colors.text} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Minimize terminal"
+          onPress={onMinimize}
+          style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+        >
+          <Ionicons name="chevron-down" size={24} color={colors.text} />
         </Pressable>
       </View>
+
+      <View style={styles.tabBar}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabList}>
+          {workspace.tabs.map((tab) => (
+            <View key={tab.id} style={[styles.tab, tab.id === active?.id && styles.activeTab]}>
+              <Pressable
+                accessibilityRole="tab"
+                accessibilityState={{ selected: tab.id === active?.id }}
+                accessibilityLabel={tab.title}
+                onPress={() => selectInteractiveTerminalTab(connectionId, threadId, tab.id)}
+                style={styles.tabSelect}
+              >
+                <View style={[styles.statusDot, statusDotStyle(tab.status)]} />
+                <Text numberOfLines={1} style={[styles.tabText, tab.id === active?.id && styles.activeTabText]}>{tab.title}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Close ${tab.title}`}
+                hitSlop={8}
+                onPress={() => closeInteractiveTerminalTab(connectionId, threadId, tab.id)}
+                style={({ pressed }) => [styles.tabClose, pressed && styles.pressed]}
+              >
+                <Ionicons name="close" size={16} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New terminal tab"
+          accessibilityState={{ disabled: workspace.tabs.length >= MAX_TABS }}
+          disabled={workspace.tabs.length >= MAX_TABS}
+          onPress={createTab}
+          style={({ pressed }) => [styles.newTab, pressed && styles.pressed, workspace.tabs.length >= MAX_TABS && styles.disabled]}
+        >
+          <Ionicons name="add" size={21} color={colors.text} />
+        </Pressable>
+      </View>
+
+      {active === null ? (
+        <View style={styles.empty}>
+          <Ionicons name="terminal-outline" size={30} color={colors.textMuted} />
+          <Text style={styles.emptyTitle}>No terminal tabs</Text>
+          <Pressable accessibilityRole="button" onPress={createTab} style={({ pressed }) => [styles.createButton, pressed && styles.pressed]}>
+            <Ionicons name="add" size={18} color={colors.onPrimary} />
+            <Text style={styles.createButtonText}>New terminal</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <TerminalTab key={active.id} tab={active} />
+      )}
+    </View>
+  );
+}
+
+function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
+  const terminalRef = useRef<TerminalViewRef>(null);
+  const nextOffsetRef = useRef(0);
+  const [renderError, setRenderError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let pumping = false;
+    let requested = false;
+    let finished = false;
+
+    const drain = async () => {
+      while (requested && !disposed) {
+        requested = false;
+        const terminal = terminalRef.current;
+        if (terminal === null) return;
+        while (!disposed) {
+          const chunk = await readNativeTerminalOutput(tab.id, nextOffsetRef.current);
+          if (chunk.data !== "") await terminal.write(chunk.data);
+          nextOffsetRef.current = chunk.nextOffset;
+          if (!chunk.hasMore) {
+            if (chunk.finished && !finished) {
+              finished = true;
+              await terminal.finish(0);
+            }
+            break;
+          }
+        }
+      }
+    };
+
+    const pump = () => {
+      requested = true;
+      if (pumping || disposed) return;
+      pumping = true;
+      void drain().then(
+        () => {
+          pumping = false;
+          if (requested && !disposed) pump();
+        },
+        (cause: unknown) => {
+          pumping = false;
+          if (!disposed) setRenderError(message(cause, "Could not restore terminal output"));
+          if (requested && !disposed) pump();
+        },
+      );
+    };
+
+    const unsubscribe = subscribeNativeTerminal((event) => {
+      if (event.sessionId !== tab.id) return;
+      if (event.type === "output" || event.type === "open" || event.type === "closed" || event.type === "error") pump();
+    });
+    pump();
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [tab.id]);
+
+  const resize = (cols: number, rows: number) => {
+    void resizeNativeTerminal(tab.id, cols, rows).catch((cause) => {
+      if (tab.status !== "closed" && tab.status !== "error") setRenderError(message(cause, "Could not resize terminal"));
+    });
+  };
+  const send = (data: string) => {
+    void writeNativeTerminal(tab.id, data).catch((cause) => setRenderError(message(cause, "Could not send terminal input")));
+  };
+  const error = renderError ?? tab.error;
+
+  return (
+    <View style={styles.terminalPane}>
       {error !== null && (
         <View style={styles.errorBanner}>
           <Ionicons name="alert-circle-outline" size={17} color={colors.red} />
@@ -127,8 +197,19 @@ export function TerminalWorkspace({
         onResize={({ nativeEvent }) => resize(nativeEvent.cols, nativeEvent.rows)}
         style={styles.terminal}
       />
+      {tab.status === "connecting" && (
+        <View pointerEvents="none" style={styles.connecting}>
+          <ActivityIndicator size="small" color={colors.textMuted} />
+        </View>
+      )}
     </View>
   );
+}
+
+function statusDotStyle(status: InteractiveTerminalTab["status"]) {
+  if (status === "open") return styles.statusLive;
+  if (status === "error") return styles.statusError;
+  return styles.statusIdle;
 }
 
 function message(cause: unknown, fallback: string): string {
@@ -141,14 +222,29 @@ const styles = StyleSheet.create({
   identity: { flex: 1, minWidth: 0 },
   title: { color: colors.text, ...typeScale.titleMedium },
   subtitle: { color: colors.textMuted, ...typeScale.labelMedium },
-  status: { minWidth: 24, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  headerButton: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", borderRadius: touchTarget / 2 },
+  tabBar: { minHeight: 48, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft, backgroundColor: colors.surface },
+  tabList: { alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  tab: { height: 34, maxWidth: 190, flexDirection: "row", alignItems: "center", borderRadius: 10, backgroundColor: colors.surfaceHover },
+  activeTab: { backgroundColor: colors.surfaceRaised },
+  tabSelect: { minWidth: 80, flex: 1, height: "100%", flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.sm },
+  tabText: { flexShrink: 1, color: colors.textMuted, ...typeScale.labelMedium },
+  activeTabText: { color: colors.text },
+  tabClose: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 8 },
+  newTab: { width: 38, height: 38, marginRight: spacing.xs, alignItems: "center", justifyContent: "center", borderRadius: 10 },
+  statusDot: { width: 7, height: 7, borderRadius: 4 },
   statusLive: { backgroundColor: colors.green },
   statusError: { backgroundColor: colors.red },
   statusIdle: { backgroundColor: colors.textDim },
-  close: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", borderRadius: touchTarget / 2 },
-  pressed: { backgroundColor: colors.surfaceHover },
+  terminalPane: { flex: 1, minWidth: 0, minHeight: 0 },
+  terminal: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  connecting: { position: "absolute", top: spacing.md, right: spacing.md },
   errorBanner: { flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, backgroundColor: colors.errorContainer },
   errorText: { flex: 1, color: colors.red, ...typeScale.labelMedium },
-  terminal: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg },
+  emptyTitle: { color: colors.textMuted, ...typeScale.bodyLarge },
+  createButton: { minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, borderRadius: 14, backgroundColor: colors.accent },
+  createButtonText: { color: colors.onPrimary, ...typeScale.labelLarge },
+  pressed: { opacity: 0.72 },
+  disabled: { opacity: 0.4 },
 });
