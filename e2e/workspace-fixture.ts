@@ -67,6 +67,7 @@ const workspace = {
       { id: ":read-only", description: "Read workspace files", allowed: true },
       { id: ":workspace", description: "Read and write inside the workspace", allowed: true },
     ],
+    defaults: { model: "gpt-5.6", effort: "high", permissions: ":workspace" },
   },
 };
 

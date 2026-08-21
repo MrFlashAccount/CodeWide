@@ -1,4 +1,4 @@
-import { projectMarkdownStream } from "@codewide/rendering-core";
+import { projectLiveMarkdownTail, projectMarkdownStream } from "@codewide/rendering-core";
 
 export const LIVE_TEXT_TARGET_SEGMENT_CHARS = 8 * 1024;
 export const LIVE_TEXT_MAX_PENDING_CHARS = 24 * 1024;
@@ -9,6 +9,11 @@ export type LiveTextProjection = {
   source: string;
   segments: readonly string[];
   remainder: string;
+};
+
+export type LiveMarkdownProjection = LiveTextProjection & {
+  visibleRemainder: string;
+  visibleSource: string;
 };
 
 const liveTextProjectionCache = new Map<string, LiveTextProjection>();
@@ -36,6 +41,22 @@ export function projectCachedLiveText(cacheKey: string, source: string): LiveTex
     liveTextProjectionCache.delete(oldest);
   }
   return projection;
+}
+
+/**
+ * One render-frame projection for live Markdown. Bubble measurement and the
+ * Markdown renderer must consume this same visible source: the authoritative
+ * native value can end in an incomplete word or Markdown construct that is
+ * deliberately withheld from the current frame.
+ */
+export function projectCachedLiveMarkdown(cacheKey: string, source: string, complete = false): LiveMarkdownProjection {
+  const projection = projectCachedLiveText(cacheKey, source);
+  const visibleRemainder = projectLiveMarkdownTail(projection.remainder, complete).visible;
+  return {
+    ...projection,
+    visibleRemainder,
+    visibleSource: [...projection.segments, visibleRemainder].join(""),
+  };
 }
 
 export function liveTextProjectionCacheStats(): { entries: number; sourceChars: number } {

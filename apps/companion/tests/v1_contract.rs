@@ -80,7 +80,31 @@ fn companion_implements_the_frozen_v1_contract() -> Result<(), Box<dyn std::erro
         contract_scope_for_rpc("account/rateLimits/read"),
         Some("threads.read")
     );
-    assert_eq!(contract.http_routes.len(), 18);
+    assert_eq!(
+        contract_scope_for_rpc("fs/readDirectory"),
+        Some("threads.read")
+    );
+    assert_eq!(
+        contract_scope_for_rpc("companion/project/list"),
+        Some("threads.read")
+    );
+    assert_eq!(
+        contract_scope_for_rpc("companion/project/add"),
+        Some("threads.write")
+    );
+    assert_eq!(
+        contract_scope_for_rpc("companion/workspace/inspect"),
+        Some("threads.read")
+    );
+    assert_eq!(
+        contract_scope_for_rpc("companion/workspace/create"),
+        Some("threads.write")
+    );
+    assert_eq!(
+        contract_scope_for_rpc("companion/workspace/read"),
+        Some("threads.read")
+    );
+    assert_eq!(contract.http_routes.len(), 20);
     assert_eq!(
         contract.device_scopes,
         contract_device_scopes()

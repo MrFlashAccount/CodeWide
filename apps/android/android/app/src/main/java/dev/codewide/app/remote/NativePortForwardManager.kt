@@ -35,10 +35,12 @@ internal data class PortForwardProjection(
     put("remoteHost", "127.0.0.1")
     put("remotePort", profile.remotePort)
     put("preferredLocalPort", profile.preferredLocalPort ?: JSONObject.NULL)
+    put("serviceKey", profile.serviceKey ?: JSONObject.NULL)
+    put("preference", profile.preference)
     put("localPort", localPort ?: JSONObject.NULL)
     put("enabled", profile.enabled)
     put("status", status)
-    put("previewUrl", if (localPort == null) JSONObject.NULL else "http://127.0.0.1:$localPort/")
+    put("previewUrl", if (localPort == null || status != "live") JSONObject.NULL else "http://127.0.0.1:$localPort/")
     put("error", error ?: JSONObject.NULL)
     put("updatedAt", profile.updatedAt)
   }
@@ -62,16 +64,23 @@ internal class NativePortForwardManager(
   private val store = NativePortForwardStore(context)
   private val runtimes = ConcurrentHashMap<String, Runtime>()
   private val projections = ConcurrentHashMap<String, PortForwardProjection>()
+  private val availablePorts = ConcurrentHashMap<String, Set<Int>>()
   private val credentialCache = ConcurrentHashMap<String, CachedCredential>()
   private val credentialLocks = ConcurrentHashMap<String, Any>()
 
   fun restore() {
-    store.list().filter { it.enabled }.forEach { start(it.id) }
+    val enabled = store.list().filter { it.enabled && it.preference != "excluded" }
+    enabled.forEach { start(it.id) }
+    enabled.map { it.connectionId }.distinct().forEach { connectionId ->
+      thread(name = "CodeWideForwardDiscovery-${safeId(connectionId)}", isDaemon = true) {
+        runCatching { discover(connectionId) }
+      }
+    }
   }
 
   fun list(connectionId: String): List<PortForwardProjection> = store.list(connectionId)
     .sortedWith(compareByDescending<StoredPortForward> { it.enabled }.thenByDescending { it.updatedAt })
-    .map { profile -> projections[profile.id] ?: PortForwardProjection(profile, null, "stopped", null) }
+    .map { profile -> projections[profile.id] ?: PortForwardProjection(profile, null, if (profile.enabled) "connecting" else "stopped", null) }
 
   fun discover(connectionId: String): String {
     val saved = credentialsStore.get(connectionId) ?: error("Saved server credentials are missing")
@@ -85,6 +94,8 @@ internal class NativePortForwardManager(
     label: String,
     remotePort: Int,
     preferredLocalPort: Int?,
+    serviceKey: String?,
+    preference: String,
   ): PortForwardProjection {
     val previous = store.get(profileId)
     require(previous == null || previous.connectionId == connectionId) { "Port forward belongs to another server" }
@@ -95,16 +106,33 @@ internal class NativePortForwardManager(
         label = label.trim(),
         remotePort = remotePort,
         preferredLocalPort = preferredLocalPort,
-        enabled = previous?.enabled ?: false,
+        serviceKey = serviceKey,
+        preference = preference,
+        enabled = preference != "excluded" && (previous?.enabled ?: false),
         updatedAt = System.currentTimeMillis(),
       ),
     )
     val wasRunning = runtimes.containsKey(profileId)
-    if (wasRunning) {
+    val transportChanged = previous == null
+      || previous.remotePort != profile.remotePort
+      || previous.preferredLocalPort != profile.preferredLocalPort
+    if (wasRunning && profile.preference == "excluded") {
       stopRuntime(profileId, persistDisabled = false)
-      start(profileId)
+      return projection(profile, null, "stopped", null).also(::publish)
+    } else if (wasRunning && transportChanged) {
+      stopRuntime(profileId, persistDisabled = false)
+      return start(profileId)
+    } else if (wasRunning) {
+      val current = projections[profileId]
+      val runtime = runtimes[profileId] ?: error("Port forward runtime disappeared")
+      return projection(
+        profile,
+        runtime.serverSocket.localPort,
+        current?.status ?: "live",
+        current?.error,
+      ).also(::publish)
     }
-    return projections[profileId] ?: PortForwardProjection(profile, null, "stopped", null).also(::publish)
+    return PortForwardProjection(profile, null, "stopped", null).also(::publish)
   }
 
   fun start(profileId: String): PortForwardProjection {
@@ -112,6 +140,9 @@ internal class NativePortForwardManager(
       return projections[profileId] ?: projection(store.get(profileId) ?: error("Port forward not found"), runtime.serverSocket.localPort, "live", null)
     }
     val profile = store.setEnabled(profileId, true) ?: error("Port forward not found")
+    if (profile.preference == "excluded") {
+      return projection(profile, null, "stopped", null).also(::publish)
+    }
     val credentials = credentialsStore.get(profile.connectionId)
     if (credentials?.enabled != true) {
       return projection(profile, null, "error", "Server connection is disabled").also(::publish)
@@ -130,7 +161,10 @@ internal class NativePortForwardManager(
           socket.close()
           return@thread
         }
-        publish(projection(profile, socket.localPort, "live", null))
+        val confirmedPorts = availablePorts[profile.connectionId]
+        val status = if (confirmedPorts != null && profile.remotePort !in confirmedPorts) "unavailable" else "live"
+        val error = if (status == "unavailable") unavailableMessage(profile.remotePort) else null
+        publish(projection(profile, socket.localPort, status, error))
         accept(profile, runtime)
       } catch (error: Throwable) {
         if (store.get(profile.id)?.enabled == true) {
@@ -170,6 +204,7 @@ internal class NativePortForwardManager(
     store.list(connectionId).forEach { stopRuntime(it.id, persistDisabled = false) }
     store.removeConnection(connectionId)
     credentialCache.remove(connectionId)
+    availablePorts.remove(connectionId)
   }
 
   fun close() {
@@ -267,8 +302,8 @@ internal class NativePortForwardManager(
             projection(
               store.get(profile.id) ?: profile,
               runtime.serverSocket.localPort,
-              "error",
-              if (response?.code == 502) "Nothing is listening on remote localhost:${profile.remotePort}"
+              if (response?.code == 502) "unavailable" else "error",
+              if (response?.code == 502) unavailableMessage(profile.remotePort)
               else diagnostic(error, "Port forward connection failed"),
             ),
           )
@@ -322,8 +357,27 @@ internal class NativePortForwardManager(
       check(response.isSuccessful) { "Port discovery failed (${response.code})" }
       val body = response.body?.string() ?: error("Port discovery returned an empty response")
       require(body.length <= MAX_DISCOVERY_RESPONSE_CHARS) { "Port discovery response is too large" }
-      require(JSONTokener(body).nextValue() is JSONObject) { "Port discovery response is invalid" }
+      val envelope = JSONTokener(body).nextValue() as? JSONObject ?: error("Port discovery response is invalid")
+      val rows = envelope.optJSONArray("ports") ?: error("Port discovery response is invalid")
+      val discovered = buildSet {
+        for (index in 0 until rows.length()) add(rows.getJSONObject(index).getInt("port"))
+      }
+      availablePorts[saved.id] = discovered
+      reconcileAvailability(saved.id, discovered)
       return body
+    }
+  }
+
+  private fun reconcileAvailability(connectionId: String, discovered: Set<Int>) {
+    store.list(connectionId).filter { it.enabled }.forEach { profile ->
+      val runtime = runtimes[profile.id] ?: return@forEach
+      val status = if (profile.remotePort in discovered) "live" else "unavailable"
+      publishIfChanged(projection(
+        profile,
+        runtime.serverSocket.localPort,
+        status,
+        if (status == "unavailable") unavailableMessage(profile.remotePort) else null,
+      ))
     }
   }
 
@@ -385,6 +439,9 @@ internal class NativePortForwardManager(
 
     private fun diagnostic(error: Throwable, fallback: String): String =
       error.message?.takeIf { it.isNotBlank() }?.take(240) ?: fallback
+
+    private fun unavailableMessage(port: Int): String =
+      "Nothing is listening on remote localhost:$port"
 
     private fun safeId(value: String): String = value.replace(Regex("[^A-Za-z0-9._-]"), "_").take(48)
   }

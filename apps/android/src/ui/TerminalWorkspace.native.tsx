@@ -5,7 +5,9 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "reac
 
 import {
   closeInteractiveTerminalTab,
+  commitInteractiveTerminalRenderedOffset,
   createInteractiveTerminalTab,
+  readInteractiveTerminalRenderedOffset,
   selectInteractiveTerminalTab,
   useInteractiveTerminalWorkspace,
   type InteractiveTerminalTab,
@@ -17,9 +19,11 @@ import {
   writeNativeTerminal,
 } from "../native/native-transport";
 import { colors, spacing, touchTarget, typeScale } from "../theme";
+import { useFullscreenWindowReady } from "./FullscreenWindowReady";
 import { AppText as Text } from "./Typography";
 
 const MAX_TABS = 8;
+const TERMINAL_FONT_SIZE = 10;
 
 export function TerminalWorkspace({
   connectionId,
@@ -39,22 +43,7 @@ export function TerminalWorkspace({
   return (
     <View testID="terminal-workspace" style={styles.root}>
       <View style={styles.header}>
-        <View style={styles.identity}>
-          <Text numberOfLines={1} style={styles.title}>Terminal</Text>
-          <Text numberOfLines={1} ellipsizeMode="middle" style={styles.subtitle}>{cwd ?? "Home directory"}</Text>
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Minimize terminal"
-          onPress={onMinimize}
-          style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
-        >
-          <Ionicons name="chevron-down" size={24} color={colors.text} />
-        </Pressable>
-      </View>
-
-      <View style={styles.tabBar}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabList}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabList} style={styles.tabScroll}>
           {workspace.tabs.map((tab) => (
             <View key={tab.id} style={[styles.tab, tab.id === active?.id && styles.activeTab]}>
               <Pressable
@@ -89,6 +78,14 @@ export function TerminalWorkspace({
         >
           <Ionicons name="add" size={21} color={colors.text} />
         </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Minimize terminal"
+          onPress={onMinimize}
+          style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+        >
+          <Ionicons name="chevron-down" size={24} color={colors.text} />
+        </Pressable>
       </View>
 
       {active === null ? (
@@ -109,7 +106,8 @@ export function TerminalWorkspace({
 
 function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
   const terminalRef = useRef<TerminalViewRef>(null);
-  const nextOffsetRef = useRef(0);
+  const fullscreenWindowReady = useFullscreenWindowReady();
+  const nextOffsetRef = useRef(readInteractiveTerminalRenderedOffset(tab.id));
   const [renderError, setRenderError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -127,6 +125,7 @@ function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
           const chunk = await readNativeTerminalOutput(tab.id, nextOffsetRef.current);
           if (chunk.data !== "") await terminal.write(chunk.data);
           nextOffsetRef.current = chunk.nextOffset;
+          commitInteractiveTerminalRenderedOffset(tab.id, chunk.nextOffset);
           if (!chunk.hasMore) {
             if (chunk.finished && !finished) {
               finished = true;
@@ -166,6 +165,16 @@ function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
     };
   }, [tab.id]);
 
+  useEffect(() => {
+    if (!fullscreenWindowReady) return;
+    const frame = requestAnimationFrame(() => {
+      void terminalRef.current?.reconcileLayout?.().catch((cause: unknown) => {
+        setRenderError(message(cause, "Could not restore terminal layout"));
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fullscreenWindowReady, tab.id]);
+
   const resize = (cols: number, rows: number) => {
     void resizeNativeTerminal(tab.id, cols, rows).catch((cause) => {
       if (tab.status !== "closed" && tab.status !== "error") setRenderError(message(cause, "Could not resize terminal"));
@@ -186,7 +195,8 @@ function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
       )}
       <TerminalView
         ref={terminalRef}
-        fontSize={14}
+        persistentSessionId={tab.id}
+        fontSize={TERMINAL_FONT_SIZE}
         theme={{
           background: colors.background,
           foreground: colors.text,
@@ -218,13 +228,10 @@ function message(cause: unknown, fallback: string): string {
 
 const styles = StyleSheet.create({
   root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
-  header: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingLeft: spacing.md, paddingRight: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft },
-  identity: { flex: 1, minWidth: 0 },
-  title: { color: colors.text, ...typeScale.titleMedium },
-  subtitle: { color: colors.textMuted, ...typeScale.labelMedium },
+  header: { minHeight: 48, flexDirection: "row", alignItems: "center", paddingLeft: spacing.xs, paddingRight: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft, backgroundColor: colors.surface },
   headerButton: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", borderRadius: touchTarget / 2 },
-  tabBar: { minHeight: 48, flexDirection: "row", alignItems: "center", borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft, backgroundColor: colors.surface },
-  tabList: { alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  tabScroll: { flex: 1, minWidth: 0 },
+  tabList: { alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs },
   tab: { height: 34, maxWidth: 190, flexDirection: "row", alignItems: "center", borderRadius: 10, backgroundColor: colors.surfaceHover },
   activeTab: { backgroundColor: colors.surfaceRaised },
   tabSelect: { minWidth: 80, flex: 1, height: "100%", flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.sm },

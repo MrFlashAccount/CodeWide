@@ -86,6 +86,28 @@ async fn canonical_resources_are_incremental_crash_safe_and_live()
     assert_eq!(first_snapshot["changes"][1]["additions"], 0);
     assert_eq!(first_snapshot["changes"][1]["deletions"], 0);
     assert_eq!(first_snapshot["changes"][0]["availability"], "available");
+    let changes_snapshot = service
+        .handle(
+            "companion/threadChanges/read",
+            &json!({"threadId":THREAD_ID}),
+        )
+        .await?;
+    assert_eq!(
+        changes_snapshot["changes"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert!(changes_snapshot.get("attachments").is_none());
+    let attachments_snapshot = service
+        .handle(
+            "companion/threadAttachments/read",
+            &json!({"threadId":THREAD_ID}),
+        )
+        .await?;
+    assert_eq!(
+        attachments_snapshot["attachments"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert!(attachments_snapshot.get("changes").is_none());
     let diff = service
         .handle(
             "companion/threadChange/read",

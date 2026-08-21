@@ -35,9 +35,10 @@ export function ActionMenu({
       <AppSheet isOpen={isOpen} onOpenChange={setOpen} contentProps={{ index: 0, enableDynamicSizing: true }}>
         <View style={styles.content}>
           {controls}
-          {actions.map((action) => (
+          {actions.map((action, index) => (
+            <View key={action.id}>
+            {action.section !== undefined && action.section !== actions[index - 1]?.section && <Text style={styles.section}>{action.section}</Text>}
             <Pressable
-              key={action.id}
               accessibilityRole="menuitem"
               accessibilityState={{ disabled: action.disabled, selected: action.selected }}
               disabled={action.disabled}
@@ -56,6 +57,7 @@ export function ActionMenu({
               </View>
               {action.selected === true && <Ionicons name="checkmark" size={18} color={colors.accent} />}
             </Pressable>
+            </View>
           ))}
         </View>
       </AppSheet>
@@ -65,6 +67,7 @@ export function ActionMenu({
 
 const styles = StyleSheet.create({
   content: { gap: 2 },
+  section: { color: colors.textDim, fontSize: 12, lineHeight: 16, paddingHorizontal: spacing.sm, paddingBottom: 3, paddingTop: spacing.sm },
   item: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: 14 },
   pressed: { backgroundColor: colors.surfaceContainerHigh },
   disabled: { opacity: 0.42 },

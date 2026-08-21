@@ -67,6 +67,7 @@ export function SubagentWorkspace({
           </View>
           <LegendList
             data={subagents}
+            extraData={selected?.remoteThreadId ?? null}
             recycleItems
             estimatedItemSize={66}
             drawDistance={360}

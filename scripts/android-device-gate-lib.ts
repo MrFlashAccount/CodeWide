@@ -17,7 +17,8 @@ export type LayoutEvidence = {
     inputShare: number;
   };
   search: Bounds;
-  serverControls: { add: Bounds; settings: Bounds | null; serverCount: number };
+  serverControls: { add: Bounds | null; settings: Bounds | null; serverCount: number };
+  threadControls: { newThread: Bounds | null };
   forbiddenTabsNearSearch: string[];
 };
 
@@ -103,11 +104,14 @@ export function analyzeAdaptiveLayout(listXml: string, conversationXml?: string)
   );
   if (send === undefined) throw new Error("Missing accessibility node: Send message or Stop response");
   const search = requiredDescription(listNodes, "Search threads");
-  const add = requiredDescription(listNodes, "Add server");
   const compact = listNodes.some(({ description }) => description === "Choose server");
+  const add = listNodes.find(({ description }) => description === "Add server") ?? null;
+  const newThread = listNodes.find(({ description }) => description === "New thread") ?? null;
+  if (!compact && add === null) throw new Error("Missing accessibility node: Add server");
   const settings = listNodes.find(({ description }) => description === "Settings") ?? null;
   if (!compact && settings === null) throw new Error("Missing accessibility node: Settings");
   if (compact && settings !== null) throw new Error("Settings must be inside the compact server menu");
+  if (compact && newThread === null) throw new Error("Missing accessibility node: New thread");
   if (conversationXml !== undefined) requiredDescription(conversationNodes, "Back to threads");
 
   assertHorizontalOrder(menu.bounds, input.bounds, "Composer menu", "Message Codex");
@@ -145,10 +149,11 @@ export function analyzeAdaptiveLayout(listXml: string, conversationXml?: string)
     },
     search: search.bounds,
     serverControls: {
-      add: add.bounds,
+      add: add?.bounds ?? null,
       settings: settings?.bounds ?? null,
       serverCount: serverControlCount(listNodes),
     },
+    threadControls: { newThread: newThread?.bounds ?? null },
     forbiddenTabsNearSearch,
   };
 }

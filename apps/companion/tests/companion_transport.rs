@@ -90,13 +90,7 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
         .ok_or("forward closed")??;
     assert_eq!(echoed.into_data().as_ref(), b"opaque tcp");
 
-    let discovery = reqwest::Client::new()
-        .get(format!("http://{address}/v1/port-forwards/discovery"))
-        .bearer_auth(TOKEN)
-        .send()
-        .await?;
-    assert_eq!(discovery.status(), reqwest::StatusCode::OK);
-    assert!(discovery.json::<Value>().await?["ports"].is_array());
+    verify_port_discovery(address, echo_port).await?;
 
     let mut terminal_request =
         format!("ws://{address}/v1/terminals?cols=80&rows=24").into_client_request()?;
@@ -121,11 +115,77 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
     .await??;
     terminal.send(Message::Binary(vec![2_u8].into())).await?;
 
+    verify_durable_terminal(address).await?;
+
     raw.close(None).await?;
     forward.close(None).await?;
     server_task.abort();
     fake_app_server.abort();
     echo.abort();
+    Ok(())
+}
+
+async fn verify_port_discovery(
+    address: std::net::SocketAddr,
+    echo_port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let response = reqwest::Client::new()
+        .get(format!("http://{address}/v1/port-forwards/discovery"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let discovery = response.json::<Value>().await?;
+    let ports = discovery["ports"]
+        .as_array()
+        .ok_or("missing discovered ports")?;
+    let service = ports
+        .iter()
+        .find(|service| service["port"] == echo_port)
+        .ok_or("echo listener was not discovered")?;
+    assert!(service["name"].is_string());
+    assert!(service["group"].is_string());
+    assert!(service["details"].is_string());
+    assert_eq!(service["forwardingKey"].as_str().map(str::len), Some(64));
+    assert!(service["defaultForwardingEnabled"].is_boolean());
+    Ok(())
+}
+
+async fn verify_durable_terminal(
+    address: std::net::SocketAddr,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let durable_id = "terminal-12345678-1234-1234-1234-123456789abc";
+    let request = |create: bool| -> Result<_, Box<dyn std::error::Error + Send + Sync>> {
+        let mut request = format!(
+            "ws://{address}/v1/terminals?cols=80&rows=24&sessionId={durable_id}&offset=0&create={create}"
+        )
+        .into_client_request()?;
+        request.headers_mut().insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
+        );
+        Ok(request)
+    };
+
+    let (mut durable, _) = connect_async(request(true)?).await?;
+    let mut input = vec![0_u8];
+    input.extend_from_slice(b"sleep 0.2; printf 'DURABLE-PTY-OK\\n'; exit\r");
+    durable.send(Message::Binary(input.into())).await?;
+    durable.close(None).await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let (mut resumed, _) = connect_async(request(false)?).await?;
+    let mut output = Vec::new();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !String::from_utf8_lossy(&output).contains("DURABLE-PTY-OK") {
+            let frame = resumed.next().await.ok_or("resumed terminal closed")??;
+            if let Message::Binary(bytes) = frame {
+                output.extend_from_slice(&bytes);
+            }
+        }
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await??;
     Ok(())
 }
 

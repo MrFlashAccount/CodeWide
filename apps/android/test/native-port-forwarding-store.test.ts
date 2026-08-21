@@ -25,7 +25,7 @@ vi.mock("../src/native/native-transport", () => ({
 
 import { nativePortForwardingStore } from "../src/data/native-port-forwarding-store";
 
-function profile(connectionId: string, status: "stopped" | "connecting" | "live", localPort: number | null) {
+function profile(connectionId: string, status: "stopped" | "connecting" | "live" | "unavailable", localPort: number | null, overrides: Record<string, unknown> = {}) {
   return {
     id: `forward-${connectionId}`,
     connectionId,
@@ -33,12 +33,30 @@ function profile(connectionId: string, status: "stopped" | "connecting" | "live"
     remoteHost: "127.0.0.1" as const,
     remotePort: 43_191,
     preferredLocalPort: null,
+    serviceKey: null,
+    preference: "included" as const,
     localPort,
     enabled: status !== "stopped",
     status,
     previewUrl: localPort === null ? null : `http://127.0.0.1:${localPort}/`,
     error: null,
     updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function discoveredPort(defaultForwardingEnabled: boolean) {
+  return {
+    port: 4_173,
+    name: "Vite",
+    group: "/workspace/app",
+    details: "vite --port 4173",
+    process: "node",
+    pid: 101,
+    cwd: "/workspace/app",
+    kind: "vite" as const,
+    forwardingKey: "a".repeat(64),
+    defaultForwardingEnabled,
   };
 }
 
@@ -85,5 +103,67 @@ describe("native port forwarding store", () => {
     expect(result.localPort).toBe(46_211);
     expect(native.upsert).not.toHaveBeenCalled();
     expect(native.start).not.toHaveBeenCalled();
+  });
+
+  it("automatically starts companion-recognized developer services", async () => {
+    const connectionId = "automatic-server";
+    const candidate = discoveredPort(true);
+    native.list.mockResolvedValue([]);
+    native.discover.mockResolvedValue({ ports: [candidate], scannedAt: Date.now() });
+    native.upsert.mockImplementation(async (input: { profileId: string }) => profile(connectionId, "stopped", null, {
+      id: input.profileId,
+      label: candidate.name,
+      remotePort: candidate.port,
+      serviceKey: candidate.forwardingKey,
+      preference: "automatic",
+    }));
+    native.start.mockImplementation(async (profileId: string) => profile(connectionId, "live", 46_212, {
+      id: profileId,
+      label: candidate.name,
+      remotePort: candidate.port,
+      serviceKey: candidate.forwardingKey,
+      preference: "automatic",
+    }));
+
+    await nativePortForwardingStore.refreshDiscovery(connectionId);
+
+    expect(native.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      serviceKey: candidate.forwardingKey,
+      preference: "automatic",
+      remotePort: candidate.port,
+    }));
+    expect(native.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves unknown ephemeral services available until explicitly included", async () => {
+    const connectionId = "available-server";
+    native.list.mockResolvedValue([]);
+    native.discover.mockResolvedValue({ ports: [discoveredPort(false)], scannedAt: Date.now() });
+
+    await nativePortForwardingStore.refreshDiscovery(connectionId);
+
+    expect(native.upsert).not.toHaveBeenCalled();
+    expect(native.start).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite an unavailable native event with a stale connecting result", async () => {
+    const connectionId = "unavailable-server";
+    native.list.mockResolvedValue([profile(connectionId, "stopped", null)]);
+    await nativePortForwardingStore.scope(connectionId).load();
+    native.start.mockImplementation(async () => {
+      const connecting = profile(connectionId, "connecting", null);
+      queueMicrotask(() => {
+        for (const listener of native.listeners) listener({
+          type: "profile",
+          profile: profile(connectionId, "unavailable", 46_213, { previewUrl: null, error: "Nothing is listening on remote localhost:43191" }),
+        });
+      });
+      return connecting;
+    });
+
+    const result = await nativePortForwardingStore.start(connectionId, `forward-${connectionId}`);
+
+    expect(result.status).toBe("unavailable");
+    expect(result.previewUrl).toBeNull();
   });
 });

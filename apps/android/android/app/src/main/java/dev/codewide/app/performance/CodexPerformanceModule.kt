@@ -39,11 +39,24 @@ private data class PerformanceSample(
   val javaHeapBytes: Long,
   val javaHeapLimitBytes: Long,
   val nativeHeapBytes: Long,
+  val javaHeapPssBytes: Long,
+  val nativeHeapPssBytes: Long,
+  val codePssBytes: Long,
+  val stackPssBytes: Long,
+  val graphicsPssBytes: Long,
+  val privateOtherPssBytes: Long,
+  val systemPssBytes: Long,
   val rxBytesPerSecond: Double,
   val txBytesPerSecond: Double,
   val rxSessionBytes: Long,
   val txSessionBytes: Long,
   val frame: FrameWindowSnapshot,
+)
+
+private data class ActiveNavigationTrace(
+  val id: String,
+  val startedAtElapsedMs: Long,
+  val frames: FrameWindowAccumulator = FrameWindowAccumulator(),
 )
 
 /**
@@ -61,6 +74,7 @@ class CodexPerformanceModule(
   private val frameHandler = Handler(frameThread.looper)
   private val mainHandler = Handler(Looper.getMainLooper())
   private val frameAccumulator = FrameWindowAccumulator()
+  private val navigationTraceLock = Any()
   private val history = ArrayDeque<PerformanceSample>(HISTORY_CAPACITY)
   private val historyLock = Any()
   @Volatile private var listenerCount = 0
@@ -82,11 +96,15 @@ class CodexPerformanceModule(
   private var totalJankFrames = 0L
   private var totalDroppedFrameEstimate = 0L
   @Volatile private var latest: PerformanceSample? = null
+  private var activeNavigationTrace: ActiveNavigationTrace? = null
 
   private val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
     val totalDuration = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
     val deadline = metrics.getMetric(FrameMetrics.DEADLINE)
     frameAccumulator.record(totalDuration, deadline, displayIntervalNanos)
+    synchronized(navigationTraceLock) {
+      activeNavigationTrace?.frames?.record(totalDuration, deadline, displayIntervalNanos)
+    }
   }
 
   init {
@@ -109,6 +127,31 @@ class CodexPerformanceModule(
       if (nextEnabled) startCollector() else stopCollector()
     }
     promise.resolve(snapshotMap())
+  }
+
+  @ReactMethod
+  fun beginNavigationTrace(traceId: String, promise: Promise) {
+    if (!enabled || traceId.isBlank() || traceId.length > 256) {
+      promise.resolve(false)
+      return
+    }
+    synchronized(navigationTraceLock) {
+      activeNavigationTrace = ActiveNavigationTrace(traceId, SystemClock.elapsedRealtime())
+    }
+    promise.resolve(true)
+  }
+
+  @ReactMethod
+  fun endNavigationTrace(traceId: String, promise: Promise) {
+    val trace = synchronized(navigationTraceLock) {
+      activeNavigationTrace?.takeIf { it.id == traceId }?.also { activeNavigationTrace = null }
+    }
+    if (trace == null) {
+      promise.resolve(null)
+      return
+    }
+    val durationMs = (SystemClock.elapsedRealtime() - trace.startedAtElapsedMs).coerceAtLeast(1L)
+    promise.resolve(frameTraceMap(trace.frames.drain(durationMs), durationMs))
   }
 
   @ReactMethod
@@ -179,6 +222,7 @@ class CodexPerformanceModule(
     sampler?.cancel(false)
     sampler = null
     frameAccumulator.reset()
+    synchronized(navigationTraceLock) { activeNavigationTrace = null }
     mainHandler.post { detachWindow() }
     if (clearLatest) latest = null
   }
@@ -217,6 +261,13 @@ class CodexPerformanceModule(
     val javaHeapBytes = runtime.totalMemory() - runtime.freeMemory()
     val javaHeapLimitBytes = runtime.maxMemory()
     val nativeHeapBytes = Debug.getNativeHeapAllocatedSize()
+    val javaHeapPssBytes = memoryStatBytes(memory, "summary.java-heap")
+    val nativeHeapPssBytes = memoryStatBytes(memory, "summary.native-heap")
+    val codePssBytes = memoryStatBytes(memory, "summary.code")
+    val stackPssBytes = memoryStatBytes(memory, "summary.stack")
+    val graphicsPssBytes = memoryStatBytes(memory, "summary.graphics")
+    val privateOtherPssBytes = memoryStatBytes(memory, "summary.private-other")
+    val systemPssBytes = memoryStatBytes(memory, "summary.system")
 
     val uid = Process.myUid()
     val rxBytes = TrafficStats.getUidRxBytes(uid)
@@ -243,6 +294,13 @@ class CodexPerformanceModule(
       javaHeapBytes = javaHeapBytes,
       javaHeapLimitBytes = javaHeapLimitBytes,
       nativeHeapBytes = nativeHeapBytes,
+      javaHeapPssBytes = javaHeapPssBytes,
+      nativeHeapPssBytes = nativeHeapPssBytes,
+      codePssBytes = codePssBytes,
+      stackPssBytes = stackPssBytes,
+      graphicsPssBytes = graphicsPssBytes,
+      privateOtherPssBytes = privateOtherPssBytes,
+      systemPssBytes = systemPssBytes,
       rxBytesPerSecond = rxRate,
       txBytesPerSecond = txRate,
       rxSessionBytes = sessionBytes(rxBytes, sessionRxBaseline),
@@ -266,6 +324,9 @@ class CodexPerformanceModule(
     if (current == TrafficStats.UNSUPPORTED.toLong() || baseline == TrafficStats.UNSUPPORTED.toLong()) return -1L
     return (current - baseline).coerceAtLeast(0L)
   }
+
+  private fun memoryStatBytes(memory: Debug.MemoryInfo, key: String): Long =
+    memory.getMemoryStat(key)?.toLongOrNull()?.times(1_024L) ?: 0L
 
   private fun emitSnapshot() {
     if (listenerCount <= 0) return
@@ -310,6 +371,13 @@ class CodexPerformanceModule(
     putDouble("javaHeapBytes", sample.javaHeapBytes.toDouble())
     putDouble("javaHeapLimitBytes", sample.javaHeapLimitBytes.toDouble())
     putDouble("nativeHeapBytes", sample.nativeHeapBytes.toDouble())
+    putDouble("javaHeapPssBytes", sample.javaHeapPssBytes.toDouble())
+    putDouble("nativeHeapPssBytes", sample.nativeHeapPssBytes.toDouble())
+    putDouble("codePssBytes", sample.codePssBytes.toDouble())
+    putDouble("stackPssBytes", sample.stackPssBytes.toDouble())
+    putDouble("graphicsPssBytes", sample.graphicsPssBytes.toDouble())
+    putDouble("privateOtherPssBytes", sample.privateOtherPssBytes.toDouble())
+    putDouble("systemPssBytes", sample.systemPssBytes.toDouble())
     putDouble("rxBytesPerSecond", sample.rxBytesPerSecond)
     putDouble("txBytesPerSecond", sample.txBytesPerSecond)
     putDouble("rxSessionBytes", sample.rxSessionBytes.toDouble())
@@ -323,6 +391,16 @@ class CodexPerformanceModule(
     putDouble("jankPercent", sample.frame.jankPercent)
     putInt("droppedFrameEstimate", sample.frame.droppedFrameEstimate)
     putDouble("averageOverrunMs", sample.frame.averageOverrunMs)
+  }
+
+  private fun frameTraceMap(frame: FrameWindowSnapshot, durationMs: Long): WritableMap = Arguments.createMap().apply {
+    putDouble("durationMs", durationMs.toDouble())
+    putInt("renderedFrames", frame.renderedFrames)
+    putDouble("averageFrameMs", frame.averageFrameMs)
+    putDouble("p95FrameMs", frame.p95FrameMs)
+    putDouble("maxFrameMs", frame.maxFrameMs)
+    putInt("jankFrames", frame.jankFrames)
+    putInt("droppedFrameEstimate", frame.droppedFrameEstimate)
   }
 
   private fun recentSamples(): WritableArray = Arguments.createArray().apply {

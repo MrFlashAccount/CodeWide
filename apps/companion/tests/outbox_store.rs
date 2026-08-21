@@ -77,6 +77,53 @@ fn durable_delivery_is_not_presented_as_an_explicit_user_queue()
 }
 
 #[test]
+fn workspace_gate_is_durable_and_part_of_command_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("state.redb");
+    let params = json!({
+        "threadId": "thread-1",
+        "clientUserMessageId": "workspace-command",
+        "input": [{"type": "text", "text": "hello"}]
+    });
+    {
+        let store = IndexStore::open(&path)?;
+        let command = store.outbox_put_turn_start_with_workspace(
+            "workspace-command",
+            "thread-1",
+            params.clone(),
+            Some(10),
+            OutboxPresentation::Delivery,
+            Some("workspace-request-1"),
+        )?;
+        assert_eq!(
+            command.workspace_request_id.as_deref(),
+            Some("workspace-request-1")
+        );
+        assert!(
+            store
+                .outbox_put_turn_start_with_workspace(
+                    "workspace-command",
+                    "thread-1",
+                    params,
+                    Some(10),
+                    OutboxPresentation::Delivery,
+                    Some("different-workspace"),
+                )
+                .is_err()
+        );
+    }
+    let reopened = IndexStore::open(path)?;
+    assert_eq!(
+        reopened.outbox_list(None)?[0]
+            .workspace_request_id
+            .as_deref(),
+        Some("workspace-request-1")
+    );
+    Ok(())
+}
+
+#[test]
 fn deferred_outbox_commands_wait_and_can_be_retried_with_the_same_identity()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;

@@ -17,6 +17,7 @@ export type CodeReviewDocument = {
   path: string;
   source: string;
   patches: readonly CodeReviewPatch[];
+  displayState?: "deleted" | "empty";
   revision: string;
 };
 
@@ -80,7 +81,12 @@ export function codeReviewWorkspaceRevision(files: readonly CodeReviewFileItem[]
   return files.map((file) => `${file.treePath}\u0000${file.status}\u0000${file.additions}\u0000${file.deletions}\u0000${file.sourceOnly === true ? 1 : 0}`).join("\u0001");
 }
 
-export function codeReviewDocumentRevision(path: string, source: string, patches: readonly CodeReviewPatch[]): string {
+export function codeReviewDocumentRevision(
+  path: string,
+  source: string,
+  patches: readonly CodeReviewPatch[],
+  displayState?: CodeReviewDocument["displayState"],
+): string {
   let hash = 0x811c9dc5;
   const append = (value: string) => {
     for (let index = 0; index < value.length; index += 1) {
@@ -90,6 +96,7 @@ export function codeReviewDocumentRevision(path: string, source: string, patches
   };
   append(path);
   append(source);
+  append(displayState ?? "content");
   for (const patch of patches) {
     append(patch.kind);
     append(patch.diff);

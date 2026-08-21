@@ -7,6 +7,7 @@ import {
   materializePendingTimeline,
   materializeThreadDetails,
   materializeThreadTurns,
+  mergePendingTimelineEntry,
   pendingTimelineRowId,
   planQueuedMoveMutation,
   reconcileAuthoritativeThread,
@@ -14,6 +15,7 @@ import {
   selectLiveThreadDetailRows,
   shouldApplyLiveThreadRow,
   shouldWriteAuthoritativeThreadDetailRow,
+  shouldWriteHydratedActivityRow,
   shouldWriteThreadDetailRow,
   type ThreadDetailRow,
 } from "../src/data/thread-detail-projection";
@@ -45,6 +47,74 @@ function turn(): Turn {
 }
 
 describe("thread detail projection", () => {
+  it("does not let a late optimistic acceptance revive a delivered message", () => {
+    const delivered = {
+      commandId: "command",
+      method: "turn/steer" as const,
+      presentation: "delivery" as const,
+      text: "already sent",
+      attachments: [],
+      state: "delivered" as const,
+      attempts: 1,
+      lastError: null,
+      createdAt: 10,
+      updatedAt: 20,
+      order: 10,
+    };
+
+    expect(mergePendingTimelineEntry(delivered, {
+      ...delivered,
+      state: "accepted",
+      updatedAt: 21,
+    })).toBe(delivered);
+  });
+
+  it("accepts definitive native delivery even when its timestamp predates the optimistic write", () => {
+    const accepted = {
+      commandId: "command",
+      method: "turn/steer" as const,
+      presentation: "delivery" as const,
+      text: "already sent",
+      attachments: [],
+      state: "accepted" as const,
+      attempts: 1,
+      lastError: null,
+      createdAt: 10,
+      updatedAt: 21,
+      order: 10,
+    };
+
+    expect(mergePendingTimelineEntry(accepted, {
+      ...accepted,
+      state: "delivered",
+      updatedAt: 20,
+    }).state).toBe("delivered");
+  });
+
+  it("still lets an explicit retry leave a failed state", () => {
+    const failed = {
+      commandId: "command",
+      method: "turn/steer" as const,
+      presentation: "delivery" as const,
+      text: "retry me",
+      attachments: [],
+      state: "failed" as const,
+      attempts: 1,
+      lastError: "offline",
+      createdAt: 10,
+      updatedAt: 20,
+      order: 10,
+    };
+
+    expect(mergePendingTimelineEntry(failed, {
+      ...failed,
+      state: "sending",
+      attempts: 2,
+      lastError: null,
+      updatedAt: 21,
+    }).state).toBe("sending");
+  });
+
   it("plans a queue move as one atomic two-row mutation", () => {
     const pending = (commandId: string, order: number) => row({
       id: commandId,
@@ -143,6 +213,31 @@ describe("thread detail projection", () => {
     });
   });
 
+  it("keeps command output footprint when completed activity is compacted", () => {
+    const user = { id: "user", type: "userMessage", content: [{ type: "text", text: "run" }] } as Turn["items"][number];
+    const tool = {
+      id: "tool",
+      type: "commandExecution",
+      command: "pnpm test",
+      status: "completed",
+      codewideOutputFootprint: { version: 1, basis: "approxBytesPerToken", bytes: 4_000, estimatedTokens: 1_000 },
+    } as unknown as Turn["items"][number];
+    const final = { id: "final", type: "agentMessage", text: "done" } as Turn["items"][number];
+
+    const compacted = compactCompletedTurnForStorage({
+      ...turn(),
+      itemsView: "full",
+      items: [user, tool, final],
+    } as Turn);
+
+    expect((compacted as Turn & { codewide?: { activity?: { outputFootprint?: unknown } } }).codewide?.activity?.outputFootprint).toEqual({
+      version: 1,
+      basis: "approxBytesPerToken",
+      bytes: 4_000,
+      estimatedTokens: 1_000,
+    });
+  });
+
   it("never rewrites sealed content from a late live event", () => {
     const previous = row({ sealed: true, turn: turn() });
     expect(shouldApplyLiveThreadRow(previous, row({ sealed: true, turn: { ...turn(), items: [{ type: "agentMessage", text: "late" }] } as Turn }))).toBe(false);
@@ -154,6 +249,23 @@ describe("thread detail projection", () => {
       row({ kind: "activity", activityItems: [{ type: "agentMessage", text: "cached" }] }),
       row({ kind: "activity", activityItems: [{ type: "agentMessage", text: "replacement" }] }),
     )).toBe(false);
+  });
+
+  it("replaces a stale private asset during explicit activity recovery", () => {
+    const staleId = "a".repeat(64);
+    const freshId = "b".repeat(64);
+    const activity = (assetId: string) => row({
+      kind: "activity",
+      activityItems: [{
+        id: "image",
+        type: "image",
+        codewideAsset: { version: 1, id: assetId, byteLength: 100, contentType: "image/png" },
+      }] as unknown as Turn["items"],
+    });
+
+    expect(shouldWriteThreadDetailRow(activity(staleId), activity(freshId))).toBe(false);
+    expect(shouldWriteHydratedActivityRow(activity(staleId), activity(freshId))).toBe(true);
+    expect(shouldWriteHydratedActivityRow(activity(freshId), activity(freshId))).toBe(false);
   });
 
   it("repairs a sealed turn when the authoritative summary supplies its missing prompt", () => {

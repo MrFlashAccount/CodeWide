@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as Haptics from "expo-haptics";
 import { Menu, type MenuTriggerRef } from "heroui-native/menu";
-import { cloneElement, useState } from "react";
+import { Fragment, cloneElement, useState } from "react";
 import {
   Pressable,
   StyleSheet,
@@ -34,6 +34,7 @@ function HeroActionMenu({
   const { portalHostName } = useOverlaySurface();
   const [triggerHandle, setTriggerHandle] = useState<MenuTriggerRef | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const [longPressAnchor, setLongPressAnchor] = useState({ left: 0, top: 0 });
   const { width } = useWindowDimensions();
   const menuWidth = Math.min(288, width - 24);
   const triggerAccessibilityLabel = children.props.accessibilityLabel ?? accessibilityLabel;
@@ -44,9 +45,12 @@ function HeroActionMenu({
   const content = (
     <>
       {controls}
-      {actions.map((action) => (
+      {actions.map((action, index) => (
+        <Fragment key={action.id}>
+        {action.section !== undefined && action.section !== actions[index - 1]?.section && (
+          <Menu.Label className="px-3 pb-1 pt-2 text-xs text-muted">{action.section}</Menu.Label>
+        )}
         <Menu.Item
-          key={action.id}
           id={action.id}
           {...(action.description === undefined ? {} : { className: "items-start" })}
           {...(action.disabled === undefined ? {} : { isDisabled: action.disabled })}
@@ -75,6 +79,7 @@ function HeroActionMenu({
           </View>
           {action.selected === true && <Menu.ItemIndicator />}
         </Menu.Item>
+        </Fragment>
       ))}
     </>
   );
@@ -109,14 +114,21 @@ function HeroActionMenu({
             accessibilityLabel: triggerAccessibilityLabel,
             onLongPress: (event) => {
               children.props.onLongPress?.(event);
-              triggerHandle?.open();
+              setLongPressAnchor({
+                left: event.nativeEvent.locationX,
+                top: event.nativeEvent.locationY,
+              });
+              // Menu.Trigger measures its native child when open() runs. Give
+              // React Native one frame to move the 1px anchor under the finger
+              // instead of measuring the whole row as the popover anchor.
+              requestAnimationFrame(() => triggerHandle?.open());
             },
           })}
           <Menu.Trigger ref={setTriggerHandle} asChild>
             <Pressable
               accessible={false}
               pointerEvents="none"
-              style={StyleSheet.absoluteFill}
+              style={[styles.longPressAnchor, longPressAnchor]}
             />
           </Menu.Trigger>
         </View>
@@ -149,6 +161,11 @@ const styles = StyleSheet.create({
   longPressRoot: {
     minWidth: 0,
     position: "relative",
+  },
+  longPressAnchor: {
+    position: "absolute",
+    width: 1,
+    height: 1,
   },
   text: {
     flex: 1,

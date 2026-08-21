@@ -23,6 +23,12 @@ import {
   type CodeReviewViewMode,
   type CodeReviewWorkspaceState,
 } from "../src/rendering/code-review-bridge";
+import {
+  codeReviewDocumentEmptyState,
+  EMPTY_CHANGES_STATE,
+  EMPTY_CHANGES_TREE_STATE,
+  type CodeReviewEmptyState,
+} from "../src/rendering/code-review-empty-state";
 import type { CodeReviewComment, CodeReviewLineReference } from "../src/rendering/code-review";
 
 type AnnotationMetadata =
@@ -77,7 +83,9 @@ const treeTheme = {
 const treeThemeStyles = themeToTreeStyles(treeTheme);
 
 const treeHost = requiredElement("tree");
+const treeEmptyHost = requiredElement("tree-empty");
 const previewHost = requiredElement("preview");
+const previewEmptyHost = requiredElement("preview-empty");
 const workspaceHost = requiredElement("workspace");
 const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
@@ -114,7 +122,10 @@ function receiveHostMessage(event: MessageEvent<string>): void {
     case "settings":
       currentMode = parsed.payload.mode;
       wrapLines = parsed.payload.wrapLines;
-      renderCurrentDocument();
+      // Pierre skips rendering when the file and annotations are unchanged.
+      // Display-only options are not part of that equality check, so settings
+      // changes must explicitly invalidate the fast path.
+      renderCurrentDocument(true);
       break;
     case "comments":
       currentComments = parsed.payload;
@@ -149,6 +160,8 @@ function updateWorkspace(payload: CodeReviewWorkspaceState): void {
   workspaceHost.dataset.compact = payload.compact ? "true" : "false";
   workspaceHost.dataset.sidebarOpen = payload.sidebarOpen ? "true" : "false";
   treePathToFile = new Map(payload.files.map((file) => [file.treePath, file]));
+  treeHost.hidden = payload.files.length === 0;
+  setEmptyState(treeEmptyHost, payload.files.length === 0 ? EMPTY_CHANGES_TREE_STATE : null);
   const instance = ensureTree(payload);
   if (pathsChanged && tree !== null) {
     instance.resetPaths(payload.files.map((file) => file.treePath));
@@ -157,6 +170,7 @@ function updateWorkspace(payload: CodeReviewWorkspaceState): void {
     instance.setGitStatus(gitStatus(payload.files));
   }
   selectTreeFile(payload.selectedPath, pathsChanged);
+  if (currentDocument === null) renderCurrentDocument();
 }
 
 function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
@@ -224,24 +238,46 @@ function selectTreeFile(path: string | null, scroll: boolean): void {
   }
 }
 
-function renderCurrentDocument(): void {
+function renderCurrentDocument(forceRender = false): void {
   if (currentDocument === null) {
     fileHost.hidden = true;
     diffHost.hidden = true;
+    setEmptyState(previewEmptyHost, currentWorkspace.files.length === 0
+      ? EMPTY_CHANGES_STATE
+      : { title: "Select a file", message: "Choose a changed file from the tree." });
     return;
   }
   const requestId = latestRequestId;
   pendingRender = { requestId, startedAt: performance.now() };
   try {
-    if (currentMode === "source") renderSource(currentDocument);
-    else renderDiff(currentDocument, currentMode);
+    const emptyState = codeReviewDocumentEmptyState(currentDocument, currentMode);
+    if (emptyState !== null) {
+      fileHost.hidden = true;
+      diffHost.hidden = true;
+      activeRenderer = null;
+      setEmptyState(previewEmptyHost, emptyState);
+      finishRender();
+      return;
+    }
+    setEmptyState(previewEmptyHost, null);
+    if (currentMode === "source") renderSource(currentDocument, forceRender);
+    else renderDiff(currentDocument, currentMode, forceRender);
   } catch (cause) {
     pendingRender = null;
     post({ type: "error", requestId, message: cause instanceof Error ? cause.message : "Code preview failed" });
   }
 }
 
-function renderSource(payload: CodeReviewDocument): void {
+function setEmptyState(host: HTMLElement, state: CodeReviewEmptyState | null): void {
+  host.hidden = state === null;
+  if (state === null) return;
+  const title = host.querySelector<HTMLElement>("[data-empty-title]");
+  const message = host.querySelector<HTMLElement>("[data-empty-message]");
+  if (title !== null) title.textContent = state.title;
+  if (message !== null) message.textContent = state.message;
+}
+
+function renderSource(payload: CodeReviewDocument, forceRender = false): void {
   fileHost.hidden = false;
   diffHost.hidden = true;
   const instance = ensureFileRenderer();
@@ -251,15 +287,16 @@ function renderSource(payload: CodeReviewDocument): void {
     containerWrapper: fileHost,
     file: fileContents(payload.path, payload.source, `${payload.revision}:source`),
     lineAnnotations: fileAnnotations(payload),
+    forceRender,
   });
   revealPendingLine(instance);
 }
 
-function renderDiff(payload: CodeReviewDocument, mode: Exclude<CodeReviewViewMode, "source">): void {
+function renderDiff(payload: CodeReviewDocument, mode: Exclude<CodeReviewViewMode, "source">, forceRender = false): void {
   const before = materializeBeforeSource(payload);
   if (before === null) {
     post({ type: "diffUnavailable", requestId: latestRequestId, message: "The complete previous version is unavailable. Showing the current file." });
-    renderSource(payload);
+    renderSource(payload, forceRender);
     return;
   }
   fileHost.hidden = true;
@@ -272,6 +309,7 @@ function renderDiff(payload: CodeReviewDocument, mode: Exclude<CodeReviewViewMod
     oldFile: fileContents(payload.path, before, `${payload.revision}:old`),
     newFile: fileContents(payload.path, payload.source, `${payload.revision}:new`),
     lineAnnotations: diffAnnotations(payload),
+    forceRender,
   });
   revealPendingLine(instance);
 }

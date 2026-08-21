@@ -21,6 +21,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     catalog::{CatalogError, SessionCatalog},
     files::FileService,
+    vcs::{VcsDiff, VcsError, VcsFileStatus, VcsScope, VcsService, VcsSnapshot},
 };
 
 const PROJECTIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_resources");
@@ -61,8 +62,25 @@ pub struct ResourceService {
     store: Arc<ResourceStore>,
     files: Arc<FileService>,
     live: Arc<RwLock<HashMap<String, BTreeMap<String, ResourceData>>>>,
+    latest_live_turns: Arc<RwLock<HashMap<String, String>>>,
     refreshes: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     scheduled_prewarm: Arc<std::sync::Mutex<HashSet<String>>>,
+    vcs: Option<Arc<VcsService>>,
+}
+
+struct ResourceRequestContext {
+    thread_id: String,
+    projection: PersistedProjection,
+    overlays: BTreeMap<String, ResourceData>,
+    latest_live_turn: Option<String>,
+    requested_scope: ChangeScope,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ResourceSelection {
+    All,
+    Changes,
+    Attachments,
 }
 
 struct ResourceStore {
@@ -86,6 +104,27 @@ enum ChangeKind {
     Add,
     Delete,
     Update,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum ChangeScope {
+    Session,
+    LastTurn,
+    Staged,
+    Unstaged,
+    Branch,
+}
+
+impl ChangeScope {
+    fn vcs(self) -> Option<VcsScope> {
+        match self {
+            Self::Session | Self::LastTurn => None,
+            Self::Staged => Some(VcsScope::Staged),
+            Self::Unstaged => Some(VcsScope::Unstaged),
+            Self::Branch => Some(VcsScope::Branch),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -312,6 +351,8 @@ pub enum ResourceError {
     MissingPath,
     #[error("resource projection task failed")]
     Join,
+    #[error(transparent)]
+    Vcs(#[from] VcsError),
 }
 
 impl ResourceService {
@@ -348,16 +389,27 @@ impl ResourceService {
             store: Arc::new(store),
             files,
             live: Arc::new(RwLock::new(HashMap::new())),
+            latest_live_turns: Arc::new(RwLock::new(HashMap::new())),
             refreshes: Arc::new(Mutex::new(HashMap::new())),
             scheduled_prewarm: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            vcs: None,
         })
+    }
+
+    #[must_use]
+    pub fn with_vcs(mut self, vcs: Arc<VcsService>) -> Self {
+        self.vcs = Some(vcs);
+        self
     }
 
     #[must_use]
     pub fn handles(method: &str) -> bool {
         matches!(
             method,
-            "companion/threadResources/read" | "companion/threadChange/read"
+            "companion/threadResources/read"
+                | "companion/threadChanges/read"
+                | "companion/threadAttachments/read"
+                | "companion/threadChange/read"
         )
     }
 
@@ -388,45 +440,171 @@ impl ResourceService {
         }
         let overlays = live.get(&thread_id).cloned().unwrap_or_default();
         drop(live);
+        let latest_live_turn = self.latest_live_turns.read().await.get(&thread_id).cloned();
+        let requested_scope = params
+            .get("changeScope")
+            .cloned()
+            .map(serde_json::from_value::<ChangeScope>)
+            .transpose()?
+            .unwrap_or(ChangeScope::Branch);
+
+        let context = ResourceRequestContext {
+            thread_id,
+            projection,
+            overlays,
+            latest_live_turn,
+            requested_scope,
+        };
 
         if method == "companion/threadChange/read" {
-            let requested = params
-                .get("path")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .ok_or(ResourceError::MissingPath)?;
-            let resolved = resolve_path(requested, projection.cwd.as_deref());
-            let mut bucket = projection.materialized_patch(&resolved);
-            for overlay in overlays.values() {
-                let resolved_overlay = overlay.resolved_against(projection.cwd.as_deref());
-                bucket.merge_bucket(resolved_overlay.patches.get(&resolved));
-            }
-            return Ok(json!({
-                "threadId": thread_id,
-                "path": resolved,
-                "patches": bucket.patches,
-                "truncated": bucket.truncated
-            }));
+            return self.handle_thread_change(params, &context).await;
         }
 
-        let mut data = projection.materialized_summary();
-        for overlay in overlays.values() {
-            data.merge_missing_summary(&overlay.resolved_against(projection.cwd.as_deref()));
+        let selection = match method {
+            "companion/threadChanges/read" => ResourceSelection::Changes,
+            "companion/threadAttachments/read" => ResourceSelection::Attachments,
+            _ => ResourceSelection::All,
+        };
+        self.handle_thread_resources(params, &context, selection)
+            .await
+    }
+
+    async fn handle_thread_change(
+        &self,
+        params: &Value,
+        context: &ResourceRequestContext,
+    ) -> Result<Value, ResourceError> {
+        let requested = params
+            .get("path")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or(ResourceError::MissingPath)?;
+        let resolved = resolve_path(requested, context.projection.cwd.as_deref());
+        let mut effective_scope = context.requested_scope;
+        if let Some(vcs_scope) = context.requested_scope.vcs() {
+            if let Some(response) = vcs_change_response(
+                self.vcs.as_deref(),
+                context.projection.cwd.as_deref(),
+                &context.thread_id,
+                &resolved,
+                vcs_scope,
+            )
+            .await?
+            {
+                return Ok(response);
+            }
+            effective_scope = ChangeScope::Session;
+        }
+        let bucket = if effective_scope == ChangeScope::LastTurn {
+            last_turn_patch(
+                &context.projection,
+                &context.overlays,
+                context.latest_live_turn.as_deref(),
+                &resolved,
+            )
+        } else {
+            let mut bucket = context.projection.materialized_patch(&resolved);
+            for overlay in context.overlays.values() {
+                let resolved_overlay = overlay.resolved_against(context.projection.cwd.as_deref());
+                bucket.merge_bucket(resolved_overlay.patches.get(&resolved));
+            }
+            bucket
+        };
+        Ok(json!({
+            "threadId": context.thread_id,
+            "path": resolved,
+            "changeScope": effective_scope,
+            "patches": bucket.patches,
+            "truncated": bucket.truncated
+        }))
+    }
+
+    async fn handle_thread_resources(
+        &self,
+        params: &Value,
+        context: &ResourceRequestContext,
+        selection: ResourceSelection,
+    ) -> Result<Value, ResourceError> {
+        let mut data = context.projection.materialized_summary();
+        for overlay in context.overlays.values() {
+            data.merge_missing_summary(
+                &overlay.resolved_against(context.projection.cwd.as_deref()),
+            );
         }
         self.files.observe_preview_paths(data.preview_paths()).await;
 
-        let mut changes = futures_util::stream::iter(data.changes.values().cloned().enumerate())
-            .map(|(index, change)| async move {
-                let availability = match tokio::fs::metadata(&change.path).await {
-                    Ok(metadata) if metadata.is_file() => "available",
-                    Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound) => "deleted",
-                    Ok(_) | Err(_) => "unavailable",
-                };
-                (index, change, availability)
-            })
-            .buffer_unordered(32)
-            .collect::<Vec<_>>()
-            .await;
+        if selection == ResourceSelection::Attachments {
+            return Ok(json!({
+                "threadId": context.thread_id,
+                "revision": resource_revision(&data)?,
+                "attachments": data.attachments
+            }));
+        }
+
+        let explicit_scope = params.get("changeScope").is_some();
+        let mut effective_scope = context.requested_scope;
+        let vcs_snapshot = if let (Some(vcs), Some(cwd), Some(vcs_scope)) = (
+            &self.vcs,
+            context.projection.cwd.as_deref(),
+            context.requested_scope.vcs(),
+        ) {
+            match vcs.changes(cwd, vcs_scope).await {
+                Ok(snapshot) => Some(snapshot),
+                Err(VcsError::UnsupportedWorkspace(_)) => None,
+                Err(VcsError::UnsupportedScope { .. })
+                    if !explicit_scope && vcs_scope == VcsScope::Branch =>
+                {
+                    effective_scope = ChangeScope::Unstaged;
+                    match vcs.changes(cwd, VcsScope::Unstaged).await {
+                        Ok(snapshot) => Some(snapshot),
+                        Err(VcsError::UnsupportedWorkspace(_)) => None,
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            None
+        };
+
+        if let Some(snapshot) = vcs_snapshot {
+            let mut response =
+                thread_resources_from_vcs(context.thread_id.clone(), snapshot, &data, &self.files)
+                    .await?;
+            remove_attachments_for_changes(&mut response, selection);
+            return Ok(response);
+        }
+        if effective_scope.vcs().is_some() {
+            effective_scope = ChangeScope::Session;
+        }
+
+        let selected_data = if effective_scope == ChangeScope::LastTurn {
+            last_turn_summary(
+                &context.projection,
+                &context.overlays,
+                context.latest_live_turn.as_deref(),
+            )
+        } else {
+            data.clone()
+        };
+        let change_scopes =
+            available_change_scopes(self.vcs.as_deref(), context.projection.cwd.as_deref()).await?;
+
+        let mut changes =
+            futures_util::stream::iter(selected_data.changes.values().cloned().enumerate())
+                .map(|(index, change)| async move {
+                    let availability = match tokio::fs::metadata(&change.path).await {
+                        Ok(metadata) if metadata.is_file() => "available",
+                        Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound) => {
+                            "deleted"
+                        }
+                        Ok(_) | Err(_) => "unavailable",
+                    };
+                    (index, change, availability)
+                })
+                .buffer_unordered(32)
+                .collect::<Vec<_>>()
+                .await;
         changes.sort_by_key(|(index, _, _)| *index);
         let changes = changes
             .into_iter()
@@ -438,14 +616,18 @@ impl ResourceService {
                 Ok(value)
             })
             .collect::<Result<Vec<_>, serde_json::Error>>()?;
-        let base_revision = resource_revision(&data)?;
+        let base_revision = resource_revision(&selected_data)?;
         let availability_revision = availability_revision(&changes);
-        Ok(json!({
-            "threadId": thread_id,
+        let mut response = json!({
+            "threadId": context.thread_id,
             "revision": format!("{base_revision}.{availability_revision}"),
+            "changeScope": effective_scope,
+            "changeScopes": change_scopes,
             "changes": changes,
             "attachments": data.attachments
-        }))
+        });
+        remove_attachments_for_changes(&mut response, selection);
+        Ok(response)
     }
 
     /// Starts an idempotent background refresh for a thread as soon as its
@@ -524,6 +706,7 @@ impl ResourceService {
         };
         if method == "thread/deleted" {
             self.live.write().await.remove(thread_id);
+            self.latest_live_turns.write().await.remove(thread_id);
             if let Err(error) = self.files.mark_thread_attachments_deleted(thread_id).await {
                 tracing::warn!(thread_id, reason = %error, "attachment cleanup tombstone failed");
             }
@@ -531,6 +714,7 @@ impl ResourceService {
         }
         if method == "thread/compacted" {
             self.live.write().await.remove(thread_id);
+            self.latest_live_turns.write().await.remove(thread_id);
             return;
         }
         let mut completed_turn = None;
@@ -555,6 +739,10 @@ impl ResourceService {
                     .entry(thread_id.to_owned())
                     .or_default()
                     .insert(turn_id.to_owned(), data);
+                self.latest_live_turns
+                    .write()
+                    .await
+                    .insert(thread_id.to_owned(), turn_id.to_owned());
                 if method == "turn/completed" {
                     completed_turn = Some(turn_id.to_owned());
                 }
@@ -580,7 +768,13 @@ impl ResourceService {
                     .entry(turn_id.to_owned())
                     .or_default();
                 data.apply_materialized_item(turn_id, &item, None);
-                data.preview_paths()
+                let preview_paths = data.preview_paths();
+                drop(live);
+                self.latest_live_turns
+                    .write()
+                    .await
+                    .insert(thread_id.to_owned(), turn_id.to_owned());
+                preview_paths
             }
             _ => Vec::new(),
         };
@@ -648,6 +842,11 @@ impl ResourceService {
                         live.remove(&thread_id);
                     }
                 }
+                drop(live);
+                let mut latest = service.latest_live_turns.write().await;
+                if latest.get(&thread_id) == Some(&turn_id) {
+                    latest.remove(&thread_id);
+                }
                 return;
             }
             tracing::warn!(
@@ -656,6 +855,237 @@ impl ResourceService {
                 "completed live resource overlay is waiting for canonical rollout"
             );
         });
+    }
+}
+
+fn remove_attachments_for_changes(response: &mut Value, selection: ResourceSelection) {
+    if selection == ResourceSelection::Changes
+        && let Some(object) = response.as_object_mut()
+    {
+        object.remove("attachments");
+    }
+}
+
+async fn vcs_change_response(
+    vcs: Option<&VcsService>,
+    cwd: Option<&Path>,
+    thread_id: &str,
+    resolved: &str,
+    scope: VcsScope,
+) -> Result<Option<Value>, ResourceError> {
+    let (Some(vcs), Some(cwd)) = (vcs, cwd) else {
+        return Ok(None);
+    };
+    match vcs.diff(cwd, Path::new(resolved), scope).await {
+        Ok(diff) => Ok(Some(project_vcs_diff(thread_id, &diff))),
+        Err(VcsError::FileNotChanged(_)) => Ok(Some(json!({
+            "threadId": thread_id,
+            "path": resolved,
+            "changeScope": scope,
+            "patches": [],
+            "source": Value::Null,
+            "truncated": false
+        }))),
+        Err(VcsError::UnsupportedWorkspace(_)) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn project_vcs_diff(thread_id: &str, diff: &VcsDiff) -> Value {
+    json!({
+        "threadId": thread_id,
+        "path": diff.path,
+        "changeScope": diff.scope,
+        "patches": [{
+            "turnId": "",
+            "itemId": format!("vcs:{}:{}", diff.snapshot_id, diff.file_id),
+            "kind": vcs_change_kind(diff.status),
+            "diff": diff.diff
+        }],
+        "source": diff.source,
+        "truncated": diff.truncated,
+        "binary": diff.binary,
+        "snapshotId": diff.snapshot_id
+    })
+}
+
+async fn thread_resources_from_vcs(
+    thread_id: String,
+    snapshot: VcsSnapshot,
+    rollout_data: &ResourceData,
+    files: &FileService,
+) -> Result<Value, ResourceError> {
+    files
+        .observe_preview_paths_within(
+            snapshot.repository.root.clone(),
+            snapshot
+                .files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect(),
+        )
+        .await;
+    let snapshot_id = snapshot.snapshot_id.clone();
+    let mut changes = futures_util::stream::iter(snapshot.files.into_iter().enumerate())
+        .map(|(index, file)| {
+            let snapshot_id = snapshot_id.clone();
+            async move {
+                let availability = match tokio::fs::metadata(&file.path).await {
+                    Ok(metadata) if metadata.is_file() => "available",
+                    Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound) => "deleted",
+                    Ok(_) | Err(_) => "unavailable",
+                };
+                let kind = vcs_change_kind(file.status);
+                (
+                    index,
+                    json!({
+                        "path": file.path,
+                        "kind": kind,
+                        "availability": availability,
+                        "additions": file.additions.unwrap_or(0),
+                        "deletions": file.deletions.unwrap_or(0),
+                        "binary": file.binary,
+                        "turnId": "",
+                        "itemId": format!("vcs:{}:{}", snapshot_id, file.id)
+                    }),
+                )
+            }
+        })
+        .buffer_unordered(32)
+        .collect::<Vec<_>>()
+        .await;
+    changes.sort_by_key(|(index, _)| *index);
+    let changes = changes
+        .into_iter()
+        .map(|(_, change)| change)
+        .collect::<Vec<_>>();
+    let attachment_revision = resource_revision(rollout_data)?;
+    Ok(json!({
+        "threadId": thread_id,
+        "revision": format!("vcs.{}.{}", snapshot.snapshot_id, attachment_revision),
+        "changeScope": snapshot.scope,
+        "changeScopes": (
+            [ChangeScope::Session, ChangeScope::LastTurn]
+                .into_iter()
+                .chain(snapshot.available_scopes.into_iter().map(ChangeScope::from))
+                .collect::<Vec<_>>()
+        ),
+        "changes": changes,
+        "attachments": rollout_data.attachments
+    }))
+}
+
+impl From<VcsScope> for ChangeScope {
+    fn from(scope: VcsScope) -> Self {
+        match scope {
+            VcsScope::Staged => Self::Staged,
+            VcsScope::Unstaged => Self::Unstaged,
+            VcsScope::Branch => Self::Branch,
+        }
+    }
+}
+
+async fn available_change_scopes(
+    vcs: Option<&VcsService>,
+    cwd: Option<&Path>,
+) -> Result<Vec<ChangeScope>, ResourceError> {
+    let mut scopes = vec![ChangeScope::Session, ChangeScope::LastTurn];
+    let (Some(vcs), Some(cwd)) = (vcs, cwd) else {
+        return Ok(scopes);
+    };
+    let snapshot = match vcs.changes(cwd, VcsScope::Branch).await {
+        Ok(snapshot) => Some(snapshot),
+        Err(VcsError::UnsupportedScope { .. }) => {
+            match vcs.changes(cwd, VcsScope::Unstaged).await {
+                Ok(snapshot) => Some(snapshot),
+                Err(VcsError::UnsupportedWorkspace(_)) => None,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(VcsError::UnsupportedWorkspace(_)) => None,
+        Err(error) => return Err(error.into()),
+    };
+    if let Some(snapshot) = snapshot {
+        scopes.extend(snapshot.available_scopes.into_iter().map(ChangeScope::from));
+    }
+    scopes.dedup();
+    Ok(scopes)
+}
+
+fn last_turn_id<'a>(
+    projection: &'a PersistedProjection,
+    latest_live_turn: Option<&'a str>,
+) -> Option<&'a str> {
+    latest_live_turn.or_else(|| {
+        projection
+            .active_turn_id
+            .as_deref()
+            .or_else(|| projection.turns.last().map(|turn| turn.turn_id.as_str()))
+    })
+}
+
+fn last_turn_summary(
+    projection: &PersistedProjection,
+    overlays: &BTreeMap<String, ResourceData>,
+    latest_live_turn: Option<&str>,
+) -> ResourceData {
+    let Some(turn_id) = last_turn_id(projection, latest_live_turn) else {
+        return ResourceData::default();
+    };
+    let base = if projection.active_turn_id.as_deref() == Some(turn_id) {
+        &projection.pending_data
+    } else {
+        projection
+            .turns
+            .iter()
+            .rev()
+            .find(|turn| turn.turn_id == turn_id)
+            .map_or(&projection.pending_data, |turn| &turn.data)
+    };
+    let mut data = base.resolved_against(projection.cwd.as_deref());
+    if let Some(overlay) = overlays.get(turn_id) {
+        data.merge_missing_summary(&overlay.resolved_against(projection.cwd.as_deref()));
+    }
+    data
+}
+
+fn last_turn_patch(
+    projection: &PersistedProjection,
+    overlays: &BTreeMap<String, ResourceData>,
+    latest_live_turn: Option<&str>,
+    resolved: &str,
+) -> PatchBucket {
+    let Some(turn_id) = last_turn_id(projection, latest_live_turn) else {
+        return PatchBucket::default();
+    };
+    let base = if projection.active_turn_id.as_deref() == Some(turn_id) {
+        &projection.pending_data
+    } else {
+        projection
+            .turns
+            .iter()
+            .rev()
+            .find(|turn| turn.turn_id == turn_id)
+            .map_or(&projection.pending_data, |turn| &turn.data)
+    };
+    let resolved_base = base.resolved_against(projection.cwd.as_deref());
+    let mut bucket = resolved_base
+        .patches
+        .get(resolved)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(overlay) = overlays.get(turn_id) {
+        let overlay = overlay.resolved_against(projection.cwd.as_deref());
+        bucket.merge_bucket(overlay.patches.get(resolved));
+    }
+    bucket
+}
+
+fn vcs_change_kind(status: VcsFileStatus) -> &'static str {
+    match status {
+        VcsFileStatus::Added | VcsFileStatus::Untracked => "add",
+        VcsFileStatus::Deleted => "delete",
+        VcsFileStatus::Modified | VcsFileStatus::Renamed | VcsFileStatus::Conflicted => "update",
     }
 }
 
@@ -1765,5 +2195,257 @@ mod tests {
         assert_eq!(bucket.patches.len(), 1);
         assert_eq!(bucket.patches[0].diff, "+second\n");
         assert_eq!(bucket.chars, "+second\n".len());
+    }
+
+    #[test]
+    fn last_turn_scope_excludes_changes_from_earlier_turns() {
+        let mut projection = PersistedProjection::empty(PathBuf::from("/tmp/session.jsonl"), 1, 2);
+        projection.cwd = Some(PathBuf::from("/workspace"));
+        let mut first = ResourceData::default();
+        first.apply_change(
+            "turn-1",
+            "item-1",
+            "first.rs",
+            &json!({ "type": "update", "diff": "-old\n+first\n" }),
+            projection.cwd.as_deref(),
+        );
+        let mut second = ResourceData::default();
+        second.apply_change(
+            "turn-2",
+            "item-2",
+            "second.rs",
+            &json!({ "type": "update", "diff": "-old\n+second\n" }),
+            projection.cwd.as_deref(),
+        );
+        projection.turns = vec![
+            TurnResourceData {
+                turn_id: "turn-1".into(),
+                data: first,
+            },
+            TurnResourceData {
+                turn_id: "turn-2".into(),
+                data: second,
+            },
+        ];
+
+        let session = projection.materialized_summary();
+        assert_eq!(session.changes.len(), 2);
+        assert!(session.changes.contains_key("/workspace/first.rs"));
+        assert!(session.changes.contains_key("/workspace/second.rs"));
+
+        let selected = last_turn_summary(&projection, &BTreeMap::new(), None);
+        assert_eq!(selected.changes.len(), 1);
+        assert!(selected.changes.contains_key("/workspace/second.rs"));
+        assert!(
+            last_turn_patch(&projection, &BTreeMap::new(), None, "/workspace/first.rs")
+                .patches
+                .is_empty()
+        );
+        assert_eq!(
+            last_turn_patch(&projection, &BTreeMap::new(), None, "/workspace/second.rs").patches[0]
+                .item_id,
+            "item-2"
+        );
+
+        let mut live = ResourceData::default();
+        live.apply_change(
+            "turn-live",
+            "item-live",
+            "live.rs",
+            &json!({ "type": "update", "diff": "+live\n" }),
+            projection.cwd.as_deref(),
+        );
+        let overlays = BTreeMap::from([("turn-live".into(), live)]);
+        let selected_live = last_turn_summary(&projection, &overlays, Some("turn-live"));
+        assert_eq!(selected_live.changes.len(), 1);
+        assert!(selected_live.changes.contains_key("/workspace/live.rs"));
+    }
+
+    #[tokio::test]
+    async fn session_and_last_turn_scopes_remain_available_without_vcs() {
+        assert_eq!(
+            available_change_scopes(None, None)
+                .await
+                .expect("change scopes"),
+            vec![ChangeScope::Session, ChangeScope::LastTurn]
+        );
+    }
+
+    #[test]
+    fn vcs_diff_projects_into_the_existing_android_patch_contract() {
+        let value = project_vcs_diff(
+            "thread",
+            &VcsDiff {
+                capability: crate::vcs::DIFF_CAPABILITY.into(),
+                repository: crate::vcs::VcsRepository {
+                    provider: "arc".into(),
+                    root: PathBuf::from("/arcadia"),
+                    branch: Some("feature".into()),
+                    head: Some("abc".into()),
+                    base: Some("base".into()),
+                },
+                scope: VcsScope::Branch,
+                snapshot_id: "snapshot".into(),
+                file_id: "file".into(),
+                path: PathBuf::from("/arcadia/file.rs"),
+                old_path: None,
+                status: VcsFileStatus::Modified,
+                diff: "@@ -1 +1 @@\n-old\n+new\n".into(),
+                source: Some("new\n".into()),
+                truncated: false,
+                binary: false,
+                additions: 1,
+                deletions: 1,
+            },
+        );
+        assert_eq!(value["threadId"], "thread");
+        assert_eq!(value["patches"][0]["kind"], "update");
+        assert_eq!(value["patches"][0]["itemId"], "vcs:snapshot:file");
+        assert_eq!(value["patches"][0]["diff"], "@@ -1 +1 @@\n-old\n+new\n");
+        assert_eq!(value["source"], "new\n");
+        assert_eq!(value["snapshotId"], "snapshot");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    #[allow(clippy::too_many_lines)]
+    async fn vcs_snapshot_replaces_rollout_changes_without_dropping_attachments() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let repository = directory.path().join("repository");
+        std::fs::create_dir(&repository).expect("repository directory");
+        let changed = repository.join("changed.rs");
+        std::fs::write(&changed, "changed").expect("changed file");
+        let outside = directory.path().join("outside.rs");
+        std::fs::write(&outside, "private").expect("outside file");
+        let escaped = repository.join("escaped.rs");
+        std::os::unix::fs::symlink(&outside, &escaped).expect("escaped symlink");
+        let files = FileService::open(HashMap::new(), Vec::new(), None, None)
+            .await
+            .expect("file service");
+        let mut rollout = ResourceData::default();
+        rollout.attachments.push(AttachmentResource {
+            key: "attachment".into(),
+            name: "notes.md".into(),
+            kind: AttachmentKind::File,
+            path: Some("/tmp/notes.md".into()),
+            url: None,
+            origin: AttachmentOrigin::User,
+            turn_id: "turn".into(),
+            item_id: "message".into(),
+        });
+        let snapshot = VcsSnapshot {
+            capability: crate::vcs::CHANGES_CAPABILITY.into(),
+            repository: crate::vcs::VcsRepository {
+                provider: "arc".into(),
+                root: repository,
+                branch: Some("feature".into()),
+                head: Some("abc".into()),
+                base: Some("base".into()),
+            },
+            scope: VcsScope::Branch,
+            available_scopes: vec![VcsScope::Staged, VcsScope::Unstaged, VcsScope::Branch],
+            snapshot_id: "snapshot".into(),
+            state: crate::vcs::VcsState::Dirty,
+            summary: crate::vcs::VcsSummary {
+                total: 2,
+                modified: 2,
+                ..crate::vcs::VcsSummary::default()
+            },
+            files: vec![
+                crate::vcs::VcsFile {
+                    id: "file".into(),
+                    path: changed.clone(),
+                    old_path: None,
+                    status: VcsFileStatus::Modified,
+                    staged: false,
+                    additions: Some(1),
+                    deletions: Some(1),
+                    binary: false,
+                    conflict: None,
+                },
+                crate::vcs::VcsFile {
+                    id: "escaped".into(),
+                    path: escaped.clone(),
+                    old_path: None,
+                    status: VcsFileStatus::Modified,
+                    staged: false,
+                    additions: Some(1),
+                    deletions: Some(1),
+                    binary: false,
+                    conflict: None,
+                },
+            ],
+        };
+
+        let preview_query = |path: &Path| crate::files::FileQuery {
+            root_id: None,
+            path: Some(path.to_string_lossy().into_owned()),
+        };
+        assert!(matches!(
+            files
+                .download(
+                    preview_query(&changed),
+                    &axum::http::HeaderMap::new(),
+                    false,
+                    true
+                )
+                .await,
+            Err(crate::files::FileError::Client {
+                status: axum::http::StatusCode::FORBIDDEN,
+                code: "path_outside_root"
+            })
+        ));
+
+        let value = thread_resources_from_vcs("thread".into(), snapshot, &rollout, &files)
+            .await
+            .expect("resources project");
+
+        assert_eq!(
+            files
+                .download(
+                    preview_query(&changed),
+                    &axum::http::HeaderMap::new(),
+                    false,
+                    true
+                )
+                .await
+                .expect("changed file preview")
+                .status(),
+            axum::http::StatusCode::OK
+        );
+        assert!(matches!(
+            files
+                .download(
+                    preview_query(&escaped),
+                    &axum::http::HeaderMap::new(),
+                    false,
+                    true
+                )
+                .await,
+            Err(crate::files::FileError::Client {
+                status: axum::http::StatusCode::FORBIDDEN,
+                code: "path_outside_root"
+            })
+        ));
+
+        assert_eq!(
+            value["changes"][0]["path"].as_str(),
+            Some(changed.to_string_lossy().as_ref())
+        );
+        assert_eq!(value["changes"][0]["availability"], "available");
+        assert_eq!(value["changes"][0]["additions"], 1);
+        assert_eq!(value["changes"][0]["deletions"], 1);
+        assert_eq!(value["changes"][0]["binary"], false);
+        assert_eq!(value["changes"][0]["itemId"], "vcs:snapshot:file");
+        assert_eq!(value["attachments"][0]["key"], "attachment");
+        assert_eq!(
+            value["changeScopes"],
+            json!(["session", "lastTurn", "staged", "unstaged", "branch"])
+        );
+        assert!(
+            value["revision"]
+                .as_str()
+                .is_some_and(|revision| revision.starts_with("vcs.snapshot."))
+        );
     }
 }

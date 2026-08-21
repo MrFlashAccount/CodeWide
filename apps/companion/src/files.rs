@@ -277,19 +277,49 @@ impl FileService {
     /// most once for the whole projection.
     pub async fn observe_preview_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
         let canonical = futures_util::stream::iter(paths)
-            .map(|path| async move {
-                let readable = self.readable_preview_path(&path);
-                if let Ok(canonical) = tokio::fs::canonicalize(&readable).await {
-                    Some(canonical)
-                } else {
-                    let source = strip_source_location(&readable)?;
-                    tokio::fs::canonicalize(source).await.ok()
+            .map(|path| async move { self.canonical_preview_path(&path).await })
+            .buffer_unordered(32)
+            .filter_map(async |result| result)
+            .collect::<Vec<_>>()
+            .await;
+        self.record_observed_preview_paths(canonical).await;
+    }
+
+    /// Adds exact preview paths only when their canonical targets remain
+    /// inside the supplied root. This is used for VCS-discovered files: a
+    /// changed symlink must not authorize an arbitrary target outside the
+    /// repository that produced the snapshot.
+    pub(crate) async fn observe_preview_paths_within(&self, root: PathBuf, paths: Vec<PathBuf>) {
+        let Some(canonical_root) = self.canonical_preview_path(&root).await else {
+            return;
+        };
+        let canonical = futures_util::stream::iter(paths)
+            .map(|path| {
+                let canonical_root = canonical_root.clone();
+                async move {
+                    self.canonical_preview_path(&path)
+                        .await
+                        .filter(|candidate| is_child(&canonical_root, candidate))
                 }
             })
             .buffer_unordered(32)
             .filter_map(async |result| result)
             .collect::<Vec<_>>()
             .await;
+        self.record_observed_preview_paths(canonical).await;
+    }
+
+    async fn canonical_preview_path(&self, path: &Path) -> Option<PathBuf> {
+        let readable = self.readable_preview_path(path);
+        if let Ok(canonical) = tokio::fs::canonicalize(&readable).await {
+            Some(canonical)
+        } else {
+            let source = strip_source_location(&readable)?;
+            tokio::fs::canonicalize(source).await.ok()
+        }
+    }
+
+    async fn record_observed_preview_paths(&self, canonical: Vec<PathBuf>) {
         if canonical.is_empty() {
             return;
         }

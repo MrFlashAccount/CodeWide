@@ -1,5 +1,5 @@
 import type { Nodes, PhrasingContent, RootContent, Table, TableCell } from "mdast";
-import { isSafeLink, parseRichMarkdown, plainRichMarkdownRootText, richMarkdownBlockIndexAtLine } from "@codewide/rendering-core";
+import { isSafeLink, plainRichMarkdownRootText, richMarkdownBlockIndexAtLine } from "@codewide/rendering-core";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { createContext, type ComponentProps, type ReactNode, useContext, useId, useRef, useState } from "react";
@@ -7,20 +7,28 @@ import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, View } fro
 import { ScrollView as GestureScrollView } from "react-native-gesture-handler";
 
 import { colors, radii } from "../theme";
+import { usePerformanceExperiment } from "../data/performance-experiments";
 import { AppText } from "../ui/Typography";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
+import { parseDiagnosticRichMarkdown } from "./diagnostic-markdown";
 import { safeImageUri } from "./image-source";
 import { useImagePreview, useImagePreviewGroup, useRegisterImagePreviewItem } from "./ImagePreviewHost";
 import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
 import { markdownTableLayout } from "./markdown-table-layout";
-import { MermaidDiagram } from "./MermaidDiagram";
+import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
 import { NativeCodeBlock } from "./NativeCodeBlock";
-import type { RichMarkdownLayout } from "./rich-markdown-layout";
-import { useRichContentWidth } from "./RichContentLayout";
+import { NativeRevealSurface } from "./NativeRevealSurface";
+import { useContentReview } from "./ContentReviewHost";
+import type { ContentReviewTarget } from "./content-review";
+import { ReviewableText } from "./ReviewableText";
+import { looksLikeAsciiDiagram } from "./ascii-diagram";
+import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
 import { usePrivateImageUri } from "./use-private-image-uri";
 
 const HorizontalScrollView = Platform.OS === "android" ? GestureScrollView : ScrollView;
 const RichMarkdownTextScaleContext = createContext(1);
+const RichMarkdownReviewContext = createContext<{ target: ContentReviewTarget; pathPrefix: string } | null>(null);
+const RichMarkdownStreamingContext = createContext(false);
 
 export function RichMarkdownTextScaleProvider({
   scale,
@@ -37,21 +45,55 @@ export function RichMarkdownTextScaleProvider({
 }
 
 /** Applies viewer-local typography without mutating global chat Markdown. */
-function Text({ style, ...props }: ComponentProps<typeof AppText>) {
+function Text({
+  style,
+  reviewBlockPath,
+  reviewOffset = 0,
+  ...props
+}: ComponentProps<typeof AppText> & {
+  reviewBlockPath?: string;
+  reviewOffset?: number;
+}) {
   const scale = useContext(RichMarkdownTextScaleContext);
-  if (scale === 1) return <AppText {...props} style={style} />;
+  const review = useContext(RichMarkdownReviewContext);
+  const beginReview = useContentReview();
   const flattened = StyleSheet.flatten(style);
   const fontSize = typeof flattened?.fontSize === "number" ? flattened.fontSize * scale : undefined;
   const lineHeight = typeof flattened?.lineHeight === "number" ? flattened.lineHeight * scale : undefined;
+  const resolvedStyle = scale === 1 ? style : [style, {
+    ...(fontSize === undefined ? {} : { fontSize }),
+    ...(lineHeight === undefined ? {} : { lineHeight }),
+  }];
+  if (review !== null && reviewBlockPath !== undefined) {
+    return (
+      <ReviewableText
+        {...props}
+        style={resolvedStyle}
+        onReviewSelection={(selection) => {
+          void beginReview({
+            kind: "text",
+            target: review.target,
+            blockPath: `${review.pathPrefix}/${reviewBlockPath}`,
+            quote: selection.text,
+            start: reviewOffset + selection.start,
+            end: reviewOffset + selection.end,
+          });
+        }}
+      />
+    );
+  }
   return (
     <AppText
       {...props}
-      style={[style, {
-        ...(fontSize === undefined ? {} : { fontSize }),
-        ...(lineHeight === undefined ? {} : { lineHeight }),
-      }]}
+      style={resolvedStyle}
     />
   );
+}
+
+function InsetRichContentWidth({ inset, children }: { inset: number; children: ReactNode }) {
+  const availableWidth = useRichContentWidth();
+  const nestedWidth = availableWidth === null ? null : Math.max(1, availableWidth - inset);
+  return <RichContentWidthProvider width={nestedWidth}>{children}</RichContentWidthProvider>;
 }
 
 export type RichExtensionRenderer = (value: string, meta: string | null) => ReactNode;
@@ -60,64 +102,95 @@ export function RichMarkdown({
   source,
   extensions = {},
   maxLines,
-  layout = "fill",
   targetLine,
   onTargetLayout,
+  reviewTarget,
+  reviewPathPrefix = "segment-0",
+  streaming = false,
 }: {
   source: string;
   extensions?: Record<string, RichExtensionRenderer>;
   maxLines?: number;
-  layout?: RichMarkdownLayout;
   targetLine?: number;
   onTargetLayout?(y: number): void;
+  reviewTarget?: ContentReviewTarget;
+  reviewPathPrefix?: string;
+  streaming?: boolean;
 }) {
-  const parsed = parseRichMarkdown(source);
+  const plainText = usePerformanceExperiment("plainTextMarkdown");
+  if (plainText) {
+    return (
+      <RichMarkdownReviewContext.Provider value={reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }}>
+        <Text
+          selectable
+          reviewBlockPath="plain"
+          {...(maxLines === undefined ? {} : { numberOfLines: maxLines, ellipsizeMode: "tail" as const })}
+          style={styles.paragraph}
+        >
+          {source}
+        </Text>
+      </RichMarkdownReviewContext.Provider>
+    );
+  }
+  const parsed = parseDiagnosticRichMarkdown(source);
   const imageOrder = collectImageOrder(parsed.root);
   if (maxLines !== undefined) {
     return (
-      <Text
-        selectable
-        numberOfLines={maxLines}
-        ellipsizeMode="tail"
-        style={styles.paragraph}
-      >
-        {plainRichMarkdownRootText(parsed.root)}
-      </Text>
+      <RichMarkdownReviewContext.Provider value={reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }}>
+        <Text
+          selectable
+          reviewBlockPath="truncated"
+          numberOfLines={maxLines}
+          ellipsizeMode="tail"
+          style={styles.paragraph}
+        >
+          {plainRichMarkdownRootText(parsed.root)}
+        </Text>
+      </RichMarkdownReviewContext.Provider>
     );
   }
   const targetBlockIndex = targetLine === undefined ? null : richMarkdownBlockIndexAtLine(source, targetLine);
   return (
-    <View style={[styles.document, layout === "fill" && styles.documentFill]}>
-      {parsed.root.children.map((node, index) => {
-        const block = <BlockNode node={node} extensions={extensions} imageOrder={imageOrder} />;
-        return index === targetBlockIndex && onTargetLayout !== undefined
-          ? <View key={`${node.type}-${index}`} collapsable={false} onLayout={({ nativeEvent }) => onTargetLayout(nativeEvent.layout.y)}>{block}</View>
-          : <BlockNode key={`${node.type}-${index}`} node={node} extensions={extensions} imageOrder={imageOrder} />;
-      })}
-      {parsed.truncated && (
-        <View style={styles.truncated}>
-          <Text style={styles.secondary}>Large message preview · {parsed.originalLength.toLocaleString()} characters</Text>
+    <RichMarkdownStreamingContext.Provider value={streaming}>
+      <RichMarkdownReviewContext.Provider value={reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }}>
+        <View style={styles.document}>
+          {parsed.root.children.map((node, index) => {
+            const path = `${node.type}-${index}`;
+            const block = <BlockNode node={node} path={path} extensions={extensions} imageOrder={imageOrder} />;
+            return index === targetBlockIndex && onTargetLayout !== undefined
+              ? <View key={path} collapsable={false} onLayout={({ nativeEvent }) => onTargetLayout(nativeEvent.layout.y)}>{block}</View>
+              : <BlockNode key={path} node={node} path={path} extensions={extensions} imageOrder={imageOrder} />;
+          })}
+          {parsed.truncated && (
+            <View style={styles.truncated}>
+              <Text style={styles.secondary}>Large message preview · {parsed.originalLength.toLocaleString()} characters</Text>
+            </View>
+          )}
         </View>
-      )}
-    </View>
+      </RichMarkdownReviewContext.Provider>
+    </RichMarkdownStreamingContext.Provider>
   );
 }
 
-function BlockNode({ node, extensions, imageOrder }: { node: RootContent; extensions: Record<string, RichExtensionRenderer>; imageOrder: WeakMap<object, number> }) {
+function BlockNode({ node, path, extensions, imageOrder }: { node: RootContent; path: string; extensions: Record<string, RichExtensionRenderer>; imageOrder: WeakMap<object, number> }) {
+  const review = useContext(RichMarkdownReviewContext);
+  const streaming = useContext(RichMarkdownStreamingContext);
   switch (node.type) {
     case "paragraph":
       if (node.children.length === 1 && node.children[0]?.type === "image") {
         const order = imageOrder.get(node.children[0]);
-        return <MarkdownImage url={node.children[0].url} alt={node.children[0].alt ?? "Image"} {...(order === undefined ? {} : { order })} />;
+        return <MarkdownImage url={node.children[0].url} alt={node.children[0].alt ?? "Image"} reveal={streaming} {...(order === undefined ? {} : { order })} />;
       }
       if (node.children.length === 1 && node.children[0]?.type === "link" && node.children[0].children.length === 1 && node.children[0].children[0]?.type === "image") {
         const image = node.children[0].children[0];
         const order = imageOrder.get(image);
-        return <MarkdownImage url={image.url} alt={image.alt ?? "Image"} target={node.children[0].url} {...(order === undefined ? {} : { order })} />;
+        return <MarkdownImage url={image.url} alt={image.alt ?? "Image"} target={node.children[0].url} reveal={streaming} {...(order === undefined ? {} : { order })} />;
       }
-      return <Text selectable style={styles.paragraph}>{inline(node.children)}</Text>;
-    case "heading":
-      return <Text selectable style={[styles.heading, headingStyle(node.depth)]}>{inline(node.children)}</Text>;
+      return <Text selectable reviewBlockPath={path} style={styles.paragraph}>{inline(node.children)}</Text>;
+    case "heading": {
+      const style = [styles.heading, headingStyle(node.depth)];
+      return <Text selectable reviewBlockPath={path} style={style}>{inline(node.children)}</Text>;
+    }
     case "blockquote": {
       const alert = githubAlert(node);
       if (alert !== null) {
@@ -127,11 +200,21 @@ function BlockNode({ node, extensions, imageOrder }: { node: RootContent; extens
               <Ionicons name={alert.icon} size={15} color={alert.color} />
               <Text style={[styles.alertTitle, { color: alert.color }]}>{alert.label}</Text>
             </View>
-            <View style={styles.alertBody}>{alert.children.map((child, index) => <BlockNode key={index} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>
+            <View style={styles.alertBody}>
+              <InsetRichContentWidth inset={18}>
+                {alert.children.map((child, index) => <BlockNode key={index} node={child} path={`${path}/alert-${index}`} extensions={extensions} imageOrder={imageOrder} />)}
+              </InsetRichContentWidth>
+            </View>
           </View>
         );
       }
-      return <View style={styles.blockquote}>{node.children.map((child, index) => <BlockNode key={index} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>;
+      return (
+        <View style={styles.blockquote}>
+          <InsetRichContentWidth inset={10}>
+            {node.children.map((child, index) => <BlockNode key={index} node={child} path={`${path}/quote-${index}`} extensions={extensions} imageOrder={imageOrder} />)}
+          </InsetRichContentWidth>
+        </View>
+      );
     }
     case "list":
       return (
@@ -141,14 +224,27 @@ function BlockNode({ node, extensions, imageOrder }: { node: RootContent; extens
               {typeof item.checked === "boolean"
                 ? <View accessibilityLabel={item.checked ? "Completed task" : "Open task"} style={styles.taskMarker}><Ionicons name={item.checked ? "checkbox" : "square-outline"} size={15} color={item.checked ? colors.green : colors.textMuted} /></View>
                 : <Text style={styles.listMarker}>{node.ordered ? `${(node.start ?? 1) + index}.` : "•"}</Text>}
-              <View style={styles.listBody}>{item.children.map((child, childIndex) => <BlockNode key={childIndex} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>
+              <View style={styles.listBody}>
+                <InsetRichContentWidth inset={25}>
+                  {item.children.map((child, childIndex) => <BlockNode key={childIndex} node={child} path={`${path}/item-${index}-${childIndex}`} extensions={extensions} imageOrder={imageOrder} />)}
+                </InsetRichContentWidth>
+              </View>
             </View>
           ))}
         </View>
       );
     case "code": {
       const language = node.lang ?? "text";
-      if (language.toLocaleLowerCase() === "mermaid") return <MermaidDiagram source={node.value} />;
+      if (language.toLocaleLowerCase() === "mermaid") return (
+        <View style={styles.wideBlock}>
+          <MermaidDiagram
+            source={node.value}
+            reveal={streaming}
+            {...(review === null ? {} : { reviewTarget: review.target, diagramId: `${review.pathPrefix}/${path}` })}
+          />
+        </View>
+      );
+      if (looksLikeAsciiDiagram(node.value, node.lang)) return <View style={styles.wideBlock}><AsciiDiagram source={node.value} /></View>;
       if (language.startsWith("codex-")) {
         const extension = extensions[language.slice("codex-".length)];
         if (extension !== undefined) return <>{extension(node.value, node.meta ?? null)}</>;
@@ -158,7 +254,7 @@ function BlockNode({ node, extensions, imageOrder }: { node: RootContent; extens
       );
     }
     case "table":
-      return <MarkdownTable table={node} />;
+      return <MarkdownTable table={node} path={path} />;
     case "thematicBreak":
       return <View style={styles.rule} />;
     case "html":
@@ -167,14 +263,14 @@ function BlockNode({ node, extensions, imageOrder }: { node: RootContent; extens
       return (
         <View style={styles.footnote}>
           <Text selectable style={styles.footnoteMarker}>[{node.identifier}]</Text>
-          <View style={styles.footnoteBody}>{node.children.map((child, index) => <BlockNode key={index} node={child} extensions={extensions} imageOrder={imageOrder} />)}</View>
+          <View style={styles.footnoteBody}>{node.children.map((child, index) => <BlockNode key={index} node={child} path={`${path}/footnote-${index}`} extensions={extensions} imageOrder={imageOrder} />)}</View>
         </View>
       );
     case "definition":
     case "yaml":
       return null;
     default:
-      return <Text selectable style={styles.secondary}>{fallbackText(node)}</Text>;
+      return <Text selectable reviewBlockPath={path} style={styles.secondary}>{fallbackText(node)}</Text>;
   }
 }
 
@@ -245,13 +341,14 @@ function useCopyFeedback(value: string): [boolean, () => void] {
   return [copied, copy];
 }
 
-function MarkdownImage({ url, alt, target = url, order }: { url: string; alt: string; target?: string; order?: number }) {
+function MarkdownImage({ url, alt, target = url, order, reveal = false }: { url: string; alt: string; target?: string; order?: number; reveal?: boolean }) {
   const openImagePreview = useImagePreview();
   const openLocalLink = useMarkdownLocalLinkHandler();
   const groupId = useImagePreviewGroup();
   const previewId = useId();
   const imageUri = safeImageUri(url);
   const privateImage = usePrivateImageUri(imageUri);
+  const [loadedUri, setLoadedUri] = useState<string | null>(null);
   const safeTarget = isSafeLink(target) ? target : null;
   const previewItem = {
     id: groupId === null ? previewId : `${groupId}:${url}:${alt}`,
@@ -273,14 +370,16 @@ function MarkdownImage({ url, alt, target = url, order }: { url: string; alt: st
   if (imageUri === null || privateImage.failed) return <Text selectable style={styles.secondary}>[Image: {alt}]</Text>;
   if (privateImage.uri === null) return <View style={styles.markdownImage} />;
   return (
-    <Pressable
-      accessibilityRole="imagebutton"
-      accessibilityLabel={`Open ${alt}`}
-      onPress={() => openImagePreview({ ...previewItem, groupId })}
-      {...(safeTarget === null ? {} : { onLongPress: () => void Linking.openURL(safeTarget) })}
-    >
-      <Image accessibilityLabel={alt} source={privateImage.source ?? { uri: privateImage.uri }} resizeMode="contain" style={styles.markdownImage} />
-    </Pressable>
+    <NativeRevealSurface ready={!reveal || loadedUri === privateImage.uri} revealKey={`image:${privateImage.uri}`}>
+      <Pressable
+        accessibilityRole="imagebutton"
+        accessibilityLabel={`Open ${alt}`}
+        onPress={() => openImagePreview({ ...previewItem, groupId })}
+        {...(safeTarget === null ? {} : { onLongPress: () => void Linking.openURL(safeTarget) })}
+      >
+        <Image accessibilityLabel={alt} source={privateImage.source ?? { uri: privateImage.uri }} resizeMode="contain" style={styles.markdownImage} onLoad={() => setLoadedUri(privateImage.uri)} />
+      </Pressable>
+    </NativeRevealSurface>
   );
 }
 
@@ -300,7 +399,8 @@ function collectImageOrder(root: Nodes): WeakMap<object, number> {
   return order;
 }
 
-function MarkdownTable({ table }: { table: Table }) {
+function MarkdownTable({ table, path }: { table: Table; path: string }) {
+  const streaming = useContext(RichMarkdownStreamingContext);
   const availableWidth = useRichContentWidth();
   const [viewportWidth, setViewportWidth] = useState(0);
   const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
@@ -323,28 +423,34 @@ function MarkdownTable({ table }: { table: Table }) {
         style={styles.tableHorizontalScroller}
         contentContainerStyle={[styles.tableHorizontalContent, minimumWidth > 0 ? { minWidth: minimumWidth } : null]}
       >
-        <View style={[styles.table, { width: tableWidth }]}> 
-          {table.children.map((row, rowIndex) => (
-            <View key={rowIndex} style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}>
-              {row.children.map((cell, cellIndex) => (
-                <TableCellView
-                  key={cellIndex}
-                  cell={cell}
-                  width={cellWidth}
-                  header={rowIndex === 0}
-                  align={table.align?.[cellIndex] ?? null}
-                />
-              ))}
-            </View>
-          ))}
+        <View style={[styles.table, { width: tableWidth }]}>
+          {table.children.map((row, rowIndex) => {
+            const content = (
+              <View key={rowIndex} style={[styles.tableRow, rowIndex === 0 && styles.tableHeader]}>
+                {row.children.map((cell, cellIndex) => (
+                  <TableCellView
+                    key={cellIndex}
+                    cell={cell}
+                    width={cellWidth}
+                    header={rowIndex === 0}
+                    align={table.align?.[cellIndex] ?? null}
+                    reviewBlockPath={`${path}/cell-${rowIndex}-${cellIndex}`}
+                  />
+                ))}
+              </View>
+            );
+            return streaming
+              ? <NativeRevealSurface key={rowIndex} revealKey={`${path}:row:${rowIndex}`}>{content}</NativeRevealSurface>
+              : content;
+          })}
         </View>
       </HorizontalScrollView>
     </View>
   );
 }
 
-function TableCellView({ cell, width, header, align }: { cell: TableCell; width: number; header: boolean; align: "left" | "right" | "center" | null }) {
-  return <Text selectable style={[styles.tableCell, header && styles.tableCellHeader, { width, textAlign: align ?? "left" }]}>{inline(cell.children)}</Text>;
+function TableCellView({ cell, width, header, align, reviewBlockPath }: { cell: TableCell; width: number; header: boolean; align: "left" | "right" | "center" | null; reviewBlockPath: string }) {
+  return <Text selectable reviewBlockPath={reviewBlockPath} style={[styles.tableCell, header && styles.tableCellHeader, { width, textAlign: align ?? "left" }]}>{inline(cell.children)}</Text>;
 }
 
 function inline(nodes: PhrasingContent[]): ReactNode[] {
@@ -408,14 +514,8 @@ function fallbackText(node: Nodes): string {
 }
 
 const styles = StyleSheet.create({
-  // Plain text stays intrinsic so the parent bubble behaves like CSS
-  // `fit-content`. Width-dependent blocks explicitly fill the available
-  // bubble/sheet width instead of making every short answer full width.
-  document: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", gap: 5 },
-  documentFill: { width: "100%", alignSelf: "stretch" },
-  // A paragraph lives in the document's vertical flex axis. `flexShrink: 1`
-  // therefore shrank its height (not its width) when Samsung windowed mode
-  // recomputed the available viewport, clipping the last line of text.
+  document: { minWidth: 0, maxWidth: "100%", gap: 5 },
+  wideBlock: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" },
   paragraph: { minWidth: 0, maxWidth: "100%", color: colors.text, fontSize: 13, lineHeight: 18 },
   heading: { color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "700", marginTop: 3 },
   headingOne: { fontSize: 17, lineHeight: 22 },

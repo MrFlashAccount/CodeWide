@@ -28,6 +28,7 @@ const MAX_PENDING_WRITES: usize = 64;
 const MAX_DISK_BYTES: u64 = 1024 * 1024 * 1024;
 const PRUNE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_INLINE_ASSET_BYTES: usize = 32 * 1024 * 1024;
+const APPROX_BYTES_PER_TOKEN: usize = 4;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -316,7 +317,11 @@ impl ContentProjector {
 
     #[must_use]
     pub fn project_item(&self, raw: Value) -> Value {
-        let item = self.compact_inline_images(raw);
+        // Attribute command output before bounded projection externalizes or
+        // truncates the visible string. The app-server protocol does not
+        // expose per-tool token usage, so this mirrors Codex's own bytes/4
+        // approximation and deliberately remains an estimate.
+        let item = self.compact_inline_images(attach_command_output_footprint(raw));
         let projected = self.project_bounded(item.clone(), MAX_PROJECTED_ITEM_BYTES);
         if encoded_len(&projected) <= MAX_PROJECTED_ITEM_BYTES {
             return projected;
@@ -330,7 +335,9 @@ impl ContentProjector {
             "command",
             "text",
             "aggregatedOutput",
+            "codewideOutputFootprint",
             "content",
+            "codewideAttachments",
             "changes",
         ] {
             if let Some(value) = item.get(key).cloned() {
@@ -516,6 +523,7 @@ impl ContentProjector {
         }
         if object.get("type").and_then(Value::as_str) == Some("userMessage") {
             compact_user_images(object, &self.content);
+            attach_user_message_attachments(object);
         }
         if object.get("type").and_then(Value::as_str) == Some("imageGeneration")
             && let Some(result) = object.get("result").and_then(Value::as_str)
@@ -668,6 +676,147 @@ fn compact_user_images(object: &mut Map<String, Value>, content: &PrivateContent
     }
 }
 
+/// Adds a small, stable attachment index to the projected user item. Codex is
+/// still the source of truth: the index is derived exclusively from the
+/// persisted user-message content after inline images have been materialized.
+/// Clients no longer need to retain composer state to reconstruct attachments.
+fn attach_user_message_attachments(object: &mut Map<String, Value>) {
+    let Some(parts) = object.get("content").and_then(Value::as_array) else {
+        return;
+    };
+    let mut items = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut image_index = 0_usize;
+    for part in parts {
+        let Some(part) = part.as_object() else {
+            continue;
+        };
+        match part.get("type").and_then(Value::as_str).unwrap_or("") {
+            "localImage" => {
+                image_index += 1;
+                let Some(path) = part.get("path").and_then(Value::as_str) else {
+                    continue;
+                };
+                let name = attachment_basename(path, image_index, "Image");
+                push_path_attachment(&mut items, &mut seen, "image", &name, path);
+            }
+            "image" => {
+                image_index += 1;
+                if let Some(asset) = part.get("codewideAsset") {
+                    push_user_attachment(
+                        &mut items,
+                        &mut seen,
+                        json!({
+                            "kind": "image",
+                            "name": format!("Image {image_index}"),
+                            "source": {"type": "content", "asset": asset}
+                        }),
+                    );
+                } else if let Some(url) = part.get("url").and_then(Value::as_str)
+                    && !url.is_empty()
+                {
+                    push_user_attachment(
+                        &mut items,
+                        &mut seen,
+                        json!({
+                            "kind": "image",
+                            "name": format!("Image {image_index}"),
+                            "source": {"type": "url", "url": url}
+                        }),
+                    );
+                }
+            }
+            "localAudio" => {
+                let Some(path) = part.get("path").and_then(Value::as_str) else {
+                    continue;
+                };
+                let name = attachment_basename(path, 1, "Audio");
+                push_path_attachment(&mut items, &mut seen, "audio", &name, path);
+            }
+            "mention" => {
+                let Some(path) = part.get("path").and_then(Value::as_str) else {
+                    continue;
+                };
+                let name = part
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                    .map_or_else(|| attachment_basename(path, 1, "File"), ToOwned::to_owned);
+                push_path_attachment(&mut items, &mut seen, "file", &name, path);
+            }
+            "text" => {
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    for (name, path) in mentioned_user_files(text) {
+                        push_path_attachment(&mut items, &mut seen, "file", &name, &path);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if !items.is_empty() {
+        object.insert(
+            "codewideAttachments".into(),
+            json!({"version": 1, "items": items}),
+        );
+    }
+}
+
+fn push_path_attachment(
+    items: &mut Vec<Value>,
+    seen: &mut std::collections::HashSet<String>,
+    kind: &str,
+    name: &str,
+    path: &str,
+) {
+    push_user_attachment(
+        items,
+        seen,
+        json!({"kind": kind, "name": name, "source": {"type": "path", "path": path}}),
+    );
+}
+
+fn push_user_attachment(
+    items: &mut Vec<Value>,
+    seen: &mut std::collections::HashSet<String>,
+    value: Value,
+) {
+    let Some(key) = value.get("source").map(Value::to_string) else {
+        return;
+    };
+    if seen.insert(key) {
+        items.push(value);
+    }
+}
+
+fn attachment_basename(path: &str, index: usize, fallback: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| format!("{fallback} {index}"), ToOwned::to_owned)
+}
+
+fn mentioned_user_files(text: &str) -> Vec<(String, String)> {
+    let Some((_, remainder)) = text.split_once("# Files mentioned by the user:") else {
+        return Vec::new();
+    };
+    let metadata = remainder
+        .split_once("## My request for Codex:")
+        .map_or(remainder, |(metadata, _)| metadata);
+    metadata
+        .lines()
+        .filter_map(|line| {
+            let entry = line.trim().strip_prefix("## ")?;
+            let (name, path) = entry.split_once(": ")?;
+            let name = name.trim();
+            let path = path.trim().trim_matches('`');
+            (!name.is_empty() && Path::new(path).is_absolute())
+                .then(|| (name.to_owned(), path.to_owned()))
+        })
+        .collect()
+}
+
 fn store_data_image(value: &str, content: &PrivateContentService) -> Option<ContentReference> {
     let (metadata, encoded) = value.split_once(',')?;
     let content_type = metadata.strip_prefix("data:")?.strip_suffix(";base64")?;
@@ -755,6 +904,17 @@ fn mentioned_image_paths(parts: &[Value]) -> Vec<String> {
         .filter_map(|part| part.get("text").and_then(Value::as_str))
     {
         for line in text.lines() {
+            // Current Codex transcripts describe uploaded images with an
+            // explicit path attribute. Their content-addressed filenames end
+            // in `image:<id>` rather than a conventional file extension, so
+            // the legacy extension heuristic below cannot recognize them.
+            if line.contains("<image ")
+                && let Some(candidate) = quoted_attribute(line, "path")
+                && Path::new(candidate).is_absolute()
+            {
+                paths.push(candidate.to_owned());
+                continue;
+            }
             let Some((_, candidate)) = line.split_once(':') else {
                 continue;
             };
@@ -770,6 +930,13 @@ fn mentioned_image_paths(parts: &[Value]) -> Vec<String> {
         }
     }
     paths
+}
+
+fn quoted_attribute<'a>(value: &'a str, name: &str) -> Option<&'a str> {
+    let marker = format!("{name}=\"");
+    let remainder = value.split_once(&marker)?.1;
+    let candidate = remainder.split_once('"')?.0.trim();
+    (!candidate.is_empty()).then_some(candidate)
 }
 
 fn scalar_fields(value: &Value) -> Map<String, Value> {
@@ -815,7 +982,75 @@ fn activity_summary(items: &[Value]) -> Option<Value> {
             (kind != "userMessage" && Some(index) != final_agent).then_some(kind)
         })
         .collect::<Vec<_>>();
-    (!kinds.is_empty()).then(|| json!({"count": kinds.len(), "kinds": kinds}))
+    (!kinds.is_empty()).then(|| {
+        let output_footprint = aggregate_output_footprint(items);
+        let mut activity = json!({"count": kinds.len(), "kinds": kinds});
+        if let (Some(activity), Some(output_footprint)) =
+            (activity.as_object_mut(), output_footprint)
+        {
+            activity.insert("outputFootprint".into(), output_footprint);
+        }
+        activity
+    })
+}
+
+fn attach_command_output_footprint(mut item: Value) -> Value {
+    let Some(object) = item.as_object_mut() else {
+        return item;
+    };
+    if object.get("type").and_then(Value::as_str) != Some("commandExecution") {
+        return item;
+    }
+    let Some(output) = object.get("aggregatedOutput").and_then(Value::as_str) else {
+        return item;
+    };
+    if output.is_empty() {
+        return item;
+    }
+    object.insert(
+        "codewideOutputFootprint".into(),
+        output_footprint(output.len()),
+    );
+    item
+}
+
+fn output_footprint(bytes: usize) -> Value {
+    json!({
+        "version": 1,
+        "basis": "approxBytesPerToken",
+        "bytes": bytes,
+        "estimatedTokens": bytes.saturating_add(APPROX_BYTES_PER_TOKEN - 1) / APPROX_BYTES_PER_TOKEN
+    })
+}
+
+fn aggregate_output_footprint(items: &[Value]) -> Option<Value> {
+    let (bytes, estimated_tokens) = items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("commandExecution"))
+        .filter_map(|item| {
+            let footprint = item.get("codewideOutputFootprint")?;
+            Some((
+                footprint.get("bytes")?.as_u64()?,
+                footprint.get("estimatedTokens")?.as_u64()?,
+            ))
+        })
+        .fold(
+            (0_u64, 0_u64),
+            |(bytes, tokens), (next_bytes, next_tokens)| {
+                (
+                    bytes.saturating_add(next_bytes),
+                    tokens.saturating_add(next_tokens),
+                )
+            },
+        );
+    (bytes > 0 || estimated_tokens > 0).then(|| {
+        json!({
+            "version": 1,
+            "basis": "approxBytesPerToken",
+            "bytes": bytes,
+            "estimatedTokens": estimated_tokens
+        })
+    })
 }
 
 fn bounded_preview(value: &str, budget: usize) -> String {
@@ -1085,6 +1320,94 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn recognizes_current_extensionless_attachment_markup() {
+        let path =
+            "/home/user/.codex/attachments/codewide/sessions/thread/files/message-image:7731";
+        let parts = vec![json!({
+            "type": "text",
+            "text": format!("<image name=[Image #1] path=\"{path}\">")
+        })];
+
+        assert_eq!(mentioned_image_paths(&parts), vec![path]);
+    }
+
+    #[tokio::test]
+    async fn projects_current_user_attachment_as_a_stable_local_image() {
+        let directory = tempfile::tempdir().expect("temp content directory");
+        let attachment = directory.path().join("message-image:7731");
+        std::fs::write(&attachment, b"image bytes").expect("write attachment");
+        let content = PrivateContentService::open(directory.path().join("cas"));
+        let projector = ContentProjector::new(content);
+        let projected = projector.project_item(json!({
+            "id": "user-message",
+            "type": "userMessage",
+            "content": [
+                {
+                    "type": "text",
+                    "text": format!("<image name=[Image #1] path=\"{}\">", attachment.display())
+                },
+                {
+                    "type": "image",
+                    "url": "data:image/png;base64,iVBORw0KGgo="
+                }
+            ]
+        }));
+
+        assert_eq!(projected["content"][1]["type"], "localImage");
+        assert_eq!(
+            projected["content"][1]["path"],
+            attachment.to_string_lossy().as_ref()
+        );
+        assert!(projected["content"][1].get("url").is_none());
+        assert!(projected["content"][1].get("codewideAsset").is_none());
+        assert_eq!(projected["codewideAttachments"]["version"], 1);
+        assert_eq!(
+            projected["codewideAttachments"]["items"][0]["kind"],
+            "image"
+        );
+        assert_eq!(
+            projected["codewideAttachments"]["items"][0]["source"]["path"],
+            attachment.to_string_lossy().as_ref()
+        );
+    }
+
+    #[tokio::test]
+    async fn projects_mentioned_files_from_the_persisted_user_message() {
+        let projector = ContentProjector::new(PrivateContentService::open(
+            tempfile::tempdir()
+                .expect("temp content directory")
+                .path()
+                .join("cas"),
+        ));
+        let projected = projector.project_item(json!({
+            "id": "user-message",
+            "type": "userMessage",
+            "content": [{
+                "type": "text",
+                "text": "# Files mentioned by the user:\n\n## plan.md: /srv/codex/plan.md\n\n## page.html: `/srv/codex/page.html`\n\n## My request for Codex:\n\nReview both."
+            }]
+        }));
+
+        assert_eq!(projected["codewideAttachments"]["version"], 1);
+        assert_eq!(
+            projected["codewideAttachments"]["items"][0],
+            json!({
+                "kind": "file",
+                "name": "plan.md",
+                "source": {"type": "path", "path": "/srv/codex/plan.md"}
+            })
+        );
+        assert_eq!(
+            projected["codewideAttachments"]["items"][1],
+            json!({
+                "kind": "file",
+                "name": "page.html",
+                "source": {"type": "path", "path": "/srv/codex/page.html"}
+            })
+        );
+    }
+
     #[tokio::test]
     async fn materializes_images_from_custom_tool_output_notifications()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1157,6 +1480,60 @@ mod tests {
             projected["codewideAsset"]["id"],
             hex::encode(Sha256::digest(&png))
         );
+    }
+
+    #[tokio::test]
+    async fn attributes_full_command_output_before_bounded_projection() {
+        let projector = ContentProjector::new(PrivateContentService::open(
+            tempfile::tempdir()
+                .expect("temp content directory")
+                .path()
+                .join("cas"),
+        ));
+        let output = "λ".repeat(MAX_PROJECTED_ITEM_BYTES);
+        let expected_bytes = output.len();
+        let projected = projector.project_item(json!({
+            "id": "command",
+            "type": "commandExecution",
+            "command": "print output",
+            "status": "completed",
+            "aggregatedOutput": output
+        }));
+
+        assert_eq!(projected["codewideOutputFootprint"]["version"], 1);
+        assert_eq!(
+            projected["codewideOutputFootprint"]["basis"],
+            "approxBytesPerToken"
+        );
+        assert_eq!(
+            projected["codewideOutputFootprint"]["bytes"],
+            expected_bytes
+        );
+        assert_eq!(
+            projected["codewideOutputFootprint"]["estimatedTokens"],
+            expected_bytes.div_ceil(APPROX_BYTES_PER_TOKEN)
+        );
+    }
+
+    #[test]
+    fn activity_summary_aggregates_command_output_footprints() {
+        let items = vec![
+            attach_command_output_footprint(json!({
+                "id": "one",
+                "type": "commandExecution",
+                "aggregatedOutput": "12345"
+            })),
+            json!({ "id": "reasoning", "type": "reasoning" }),
+            attach_command_output_footprint(json!({
+                "id": "two",
+                "type": "commandExecution",
+                "aggregatedOutput": "123"
+            })),
+        ];
+
+        let summary = activity_summary(&items).expect("activity summary");
+        assert_eq!(summary["outputFootprint"]["bytes"], 8);
+        assert_eq!(summary["outputFootprint"]["estimatedTokens"], 3);
     }
 
     #[tokio::test]

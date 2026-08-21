@@ -733,6 +733,45 @@ test.describe("adaptive CodeWide workspace", () => {
     await expect.poll(async () => timeline.evaluate((element) => element.scrollHeight)).toBeGreaterThan(10_000);
   });
 
+  test("agent responses survive recycling across a long timeline scroll", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "fold");
+    const largeThread = createLargeFixtureThread(320);
+    largeThread.id = "release";
+    largeThread.name = "🚀 Release v1.4";
+    await page.addInitScript((thread) => {
+      const target = globalThis as typeof globalThis & { __CODEWIDE_TEST_WORKSPACE__?: { thread?: unknown } };
+      if (target.__CODEWIDE_TEST_WORKSPACE__ !== undefined) target.__CODEWIDE_TEST_WORKSPACE__.thread = thread;
+    }, largeThread);
+
+    await page.goto("/");
+    const timeline = page.getByTestId("conversation-timeline");
+    const scrollToRatio = async (ratio: number) => timeline.evaluate((root, nextRatio) => {
+      const candidates = [root, ...root.querySelectorAll<HTMLElement>("*")];
+      const scroller = candidates
+        .filter((element): element is HTMLElement => element instanceof HTMLElement && element.scrollHeight > element.clientHeight)
+        .sort((left, right) => right.scrollHeight - left.scrollHeight)[0];
+      if (scroller === undefined) throw new Error("Missing virtualized timeline scroller");
+      scroller.scrollTop = Math.round((scroller.scrollHeight - scroller.clientHeight) * nextRatio);
+      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    }, ratio);
+    const visibleCompletedTurnsHaveAgentText = () => timeline.evaluate((root) => {
+      const viewport = root.getBoundingClientRect();
+      const visibleTurns = [...root.querySelectorAll<HTMLElement>('[data-testid="turn-group"]')]
+        .filter((turn) => {
+          const bounds = turn.getBoundingClientRect();
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom;
+        });
+      return visibleTurns.length > 0 && visibleTurns.every((turn) =>
+        turn.querySelector('[data-testid="codex-bubble"]')?.textContent?.includes("Deterministic response"),
+      );
+    });
+
+    for (const ratio of [0.72, 0.38, 0.08, 0.52, 0.94]) {
+      await scrollToRatio(ratio);
+      await expect.poll(visibleCompletedTurnsHaveAgentText).toBe(true);
+    }
+  });
+
   test("warm navigation restores each thread scroll anchor", async ({ page }, testInfo) => {
     test.fixme(true, "Direct DOM scrollTop mutation does not exercise Legend List's native scroll bridge.");
     await page.goto("/");
@@ -780,8 +819,25 @@ test.describe("adaptive CodeWide workspace", () => {
       await expect(page.getByText("Choose server", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: /Orbit/ }).last().click();
     }
-    await expect(page.getByText("New Codex thread", { exact: true }).last()).toBeVisible();
-    await expect(page.getByLabel("Message Codex")).toBeVisible();
+    await expect(page.getByTestId("conversation-title")).toHaveText("New Chat");
+    const composer = page.getByLabel("Message Codex");
+    await expect(composer).toBeVisible();
+    await composer.fill("Draft survives project changes");
+    await page.getByLabel(/Change project, currently/).click();
+    await page.getByText("Server default", { exact: true }).click();
+    await expect(composer).toHaveValue("Draft survives project changes");
+    await expect(page.getByTestId("conversation-title")).toHaveText("New Chat");
+    if (testInfo.project.name !== "phone") await expect(page.getByTestId("selected-thread-row")).toHaveCount(0);
+  });
+
+  test("phone skips the server chooser when a server is already selected", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "phone");
+    await page.goto("/");
+    await page.getByLabel("Choose server").click();
+    await page.getByText("L Lab", { exact: true }).click();
+    await page.getByLabel("New thread").click();
+    await expect(page.getByText("Choose server", { exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("conversation-title")).toHaveText("New Chat");
   });
 
   test("renames the selected thread from its action sheet", async ({ page }, testInfo) => {
@@ -853,6 +909,7 @@ test.describe("adaptive CodeWide workspace", () => {
 
   test("connection sheet supports QR and pinned WSS pairing", async ({ page }, testInfo) => {
     await page.goto("/");
+    if (testInfo.project.name === "phone") await page.getByLabel("Choose server").click();
     await page.getByLabel("Add server").click();
     await expect(page.getByLabel("Scan pairing QR")).toBeVisible();
     await page.getByLabel("Open manual server setup").click();

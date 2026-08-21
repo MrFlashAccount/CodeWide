@@ -111,8 +111,13 @@ For the signed release app, publish JS/TS, message-renderer, and asset changes
 without rebuilding or reinstalling the APK:
 
 ```sh
-pnpm ota:publish
+./scripts/release-ota
 ```
+
+The one-shot command discovers the private OTA key and public update endpoint,
+runs the Android release checks, publishes atomically, verifies the public
+manifest and bundle hash, and prints the update ID as JSON. Use `--dry-run` to
+validate release configuration without publishing.
 
 The build shelf serves the signed Expo Updates protocol at `/api/updates`.
 A release app checks once when its UI opens and at most once every 30 minutes
@@ -202,6 +207,30 @@ Changing scopes immediately closes that device's existing sync socket so the
 new least-privilege grant applies on reconnect. It also closes that device's
 active port-forward streams.
 
+## Streaming telemetry
+
+Android sends bounded structured telemetry batches to its own companion. The
+schema contains timestamps, event names, numeric measurements, short tags and
+explicit identifiers only; message text, prompts, protocol payloads and raw
+state are rejected by both client and server. The companion stores at most
+200,000 events for seven days in a separate `telemetry.redb`, deduplicated by
+device and event id, so diagnostics cannot enlarge or lock the canonical thread
+index.
+
+Telemetry ingestion is session-authorized on the public endpoint. Reading it is
+available only through the OS-local administrator control endpoint:
+
+```sh
+codewide-companion telemetry query --session-id THREAD_ID --descending
+codewide-companion telemetry query --request-id REQUEST_ID
+codewide-companion telemetry query --from-unix-ms 1787240000000 --to-unix-ms 1787240300000 --name stream.react_commit
+```
+
+Time filters use the companion receipt time, which remains useful when a phone
+clock is skewed. Queries also accept `--device-id`, `--connection-id`,
+`--batch-id`, `--client-session-id`, `--event-id`, `--thread-id`, `--turn-id`,
+`--item-id`, exact `--tag-name`/`--tag-value` pairs and `--limit`.
+
 ## Interactive terminal
 
 The Android thread menu can open a full-screen terminal workspace rooted at
@@ -243,6 +272,26 @@ The Android foreground service can expose a remote-machine loopback service as
 phone port. Profiles survive JS runtime recreation and reconnect after the
 foreground service is restored; React only renders the native projection.
 
+The companion lazily inventories listeners when the selected server is active.
+It applies the same conservative recognition policy as Doma for Docker Compose,
+Minikube, Kubernetes port-forwards, Hermes, Vite, Bun/Node, Python, zrok,
+user processes and system-owned services. Stable service keys preserve an
+include/exclude choice across ephemeral port changes. Known developer services
+start automatically; system services and unknown ephemeral listeners stay in
+`Available` until explicitly included. The Ports screen groups recognized
+services, filters by name/category/port, and separates `Active`, `Available`
+and `Excluded` entries.
+
+A confirmed-live service opens as a full-screen app route, not inside the Ports
+sheet. Its browser can dock the bundled Chromium DevTools Frontend below the
+page and connects it to the inspected WebView through the real Chrome DevTools
+Protocol. Elements, Console, Sources, Network, Application and the Performance
+panel therefore use WebView's native CDP implementation rather than an injected
+JavaScript console. A separate Android WebView trace control records all native
+tracing categories as a fallback. Browser-shell features that Android WebView
+does not implement remain unavailable; this is the maximum page-level surface,
+not an emulation of desktop Chrome.
+
 Each accepted phone TCP connection gets one authenticated binary WebSocket at
 `/v1/port-forwards/<remote-port>`. The companion opens only its own
 `127.0.0.1:<remote-port>` and forwards opaque bytes, so HTTP keep-alive,
@@ -251,6 +300,11 @@ endpoint requires a short-lived session with `localhost.forward`, rejects
 browser-origin upgrades, expires streams with their session, and never accepts
 an arbitrary target host. The older bounded path-based preview endpoint remains
 available for compatibility.
+
+A phone listener is not enough to claim that a forward is usable. Discovery
+marks a saved mapping `Unavailable` when its remote listener has disappeared;
+that row opens the editor rather than a dead URL. Confirmed-live HTTP services
+open in CodeWide's built-in browser, including its bundled developer tools.
 
 The phone listener is loopback-only, but another local app that discovers its
 port could connect to it. Prefer automatic high ports and stop profiles that are
@@ -296,13 +350,29 @@ Uploads require `X-Content-SHA256`, use bounded resumable chunks and cannot leav
 a configured root through `..` or symlinks. Downloads resume through byte ranges;
 both directions verify the final SHA-256 before publishing the destination.
 
-Release builds never fall back to the debug signing key. `assembleRelease` and
-`bundleRelease` require all four variables:
+Release builds never fall back to the debug signing key. The normal release path
+is one command:
+
+```sh
+./scripts/release-apk
+```
+
+It discovers the private signing material, increments the patch version,
+version code and native runtime together, runs the release checks, builds and
+verifies the signed arm64 APK, publishes it to the build shelf, downloads it
+through the public endpoint, verifies its SHA-256, and prints the release data
+as JSON. Source versions roll back if the build fails before publication. Use
+`--dry-run` to inspect the next version and validate credentials without
+changing files or publishing. `--version X.Y.Z` overrides the automatic patch
+version while the version code still increments by one.
+
+The low-level Gradle/signing variables below remain available for debugging or
+nonstandard builds:
 
 ```sh
 set -lx CODEWIDE_RELEASE_STORE_FILE /absolute/path/to/release.keystore
 set -lx CODEWIDE_RELEASE_STORE_PASSWORD '...'
-set -lx CODEWIDE_RELEASE_KEY_ALIAS codewide-v1
+set -lx CODEWIDE_RELEASE_KEY_ALIAS codex-remote-v1
 set -lx CODEWIDE_RELEASE_KEY_PASSWORD '...'
 ```
 

@@ -18,6 +18,8 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Owns authenticated, certificate-pinned interactive terminal sockets. */
@@ -54,6 +56,9 @@ internal class NativeTerminalSessionManager(
     }
 
     @Synchronized
+    fun length(): Long = length
+
+    @Synchronized
     fun read(offset: Long, maxBytes: Int): OutputChunk {
       require(offset in 0..length) { "Terminal output offset is invalid" }
       require(maxBytes in 1..MAX_READ_BYTES) { "Terminal output read size is invalid" }
@@ -87,17 +92,27 @@ internal class NativeTerminalSessionManager(
     val id: String,
     val connectionId: String,
     val threadId: String,
+    val cwd: String?,
+    @Volatile var cols: Int,
+    @Volatile var rows: Int,
     val transcript: Transcript,
     val disposed: AtomicBoolean = AtomicBoolean(false),
     val pending: ArrayDeque<ByteString> = ArrayDeque(),
     var pendingBytes: Long = 0,
     var socket: WebSocket? = null,
     var open: Boolean = false,
+    var serverSessionCreated: Boolean = false,
+    var reconnectScheduled: Boolean = false,
+    var reconnectAttempt: Int = 0,
+    var generation: Long = 0,
     @Volatile var finished: Boolean = false,
   )
 
   private val sessions = ConcurrentHashMap<String, Session>()
   private val transcriptDirectory = File(cacheDirectory, "terminal-sessions")
+  private val reconnectExecutor = ScheduledThreadPoolExecutor(1).apply {
+    removeOnCancelPolicy = true
+  }
 
   init {
     transcriptDirectory.listFiles { file -> file.isFile && file.extension == "ansi" }
@@ -117,16 +132,13 @@ internal class NativeTerminalSessionManager(
       id = sessionId,
       connectionId = connectionId,
       threadId = threadId,
+      cwd = cwd,
+      cols = cols,
+      rows = rows,
       transcript = Transcript(transcriptDirectory, sessionId),
     )
     check(sessions.putIfAbsent(session.id, session) == null) { "Could not allocate terminal session" }
-    emit(session, "connecting")
-    SessionCredentialClient.mint(credentialClient, saved.endpoint, saved.token, saved.tlsPinSha256) { result ->
-      result.fold(
-        onSuccess = { credential -> connect(session, saved, credential, cwd, cols, rows) },
-        onFailure = { error -> fail(session, error.message ?: "Terminal authorization failed") },
-      )
-    }
+    beginConnect(session, 0)
   }
 
   fun write(sessionId: String, base64: String) {
@@ -146,6 +158,9 @@ internal class NativeTerminalSessionManager(
       .putShort(cols.toShort())
       .putShort(rows.toShort())
       .array()
+    val session = sessions[sessionId] ?: error("Terminal session is closed")
+    session.cols = cols
+    session.rows = rows
     send(sessionId, payload.toByteString())
   }
 
@@ -184,16 +199,60 @@ internal class NativeTerminalSessionManager(
     sessions.keys.toList().forEach(::close)
   }
 
+  fun destroy() {
+    closeAll()
+    reconnectExecutor.shutdownNow()
+  }
+
+  private fun beginConnect(session: Session, delayMillis: Long) {
+    val generation = synchronized(session) {
+      if (session.disposed.get() || session.finished || session.reconnectScheduled) return
+      session.reconnectScheduled = true
+      session.generation += 1
+      session.generation
+    }
+    emit(session, if (delayMillis == 0L) "connecting" else "reconnecting")
+    reconnectExecutor.schedule({
+      synchronized(session) {
+        if (session.disposed.get() || session.finished || session.generation != generation) return@schedule
+        session.reconnectScheduled = false
+      }
+      val saved = credentialsStore.get(session.connectionId)
+      if (saved == null || !saved.enabled) {
+        fail(session, "Saved server credentials are unavailable")
+        return@schedule
+      }
+      SessionCredentialClient.mint(
+        credentialClient,
+        saved.endpoint,
+        saved.token,
+        saved.tlsPinSha256,
+      ) { result ->
+        if (session.disposed.get() || session.finished || session.generation != generation) return@mint
+        result.fold(
+          onSuccess = { credential -> connect(session, saved, credential, generation) },
+          onFailure = { scheduleReconnect(session, it.message ?: "Terminal authorization failed") },
+        )
+      }
+    }, delayMillis, TimeUnit.MILLISECONDS)
+  }
+
   private fun connect(
     session: Session,
     saved: StoredNativeSession,
     credential: MintedSessionCredential,
-    cwd: String?,
-    cols: Int,
-    rows: Int,
+    generation: Long,
   ) {
-    if (session.disposed.get()) return
-    val endpoint = terminalEndpoint(saved.endpoint, cwd, cols, rows)
+    if (session.disposed.get() || session.finished || session.generation != generation) return
+    val endpoint = terminalEndpoint(
+      saved.endpoint,
+      session.cwd,
+      session.cols,
+      session.rows,
+      session.id,
+      session.transcript.length(),
+      !session.serverSessionCreated,
+    )
     val request = Request.Builder()
       .url(endpoint)
       .header("Authorization", "Bearer ${credential.token}")
@@ -205,12 +264,18 @@ internal class NativeTerminalSessionManager(
     }
     val socket = client.newWebSocket(request, object : WebSocketListener() {
       override fun onOpen(socket: WebSocket, response: Response) {
-        if (session.disposed.get() || session.finished) {
+        if (session.disposed.get() || session.finished || session.generation != generation) {
           socket.close(1000, "terminal_closed")
           return
         }
         synchronized(session) {
+          if (session.socket !== socket) {
+            socket.close(1000, "terminal_replaced")
+            return
+          }
           session.open = true
+          session.serverSessionCreated = true
+          session.reconnectAttempt = 0
           while (session.pending.isNotEmpty()) {
             val pending = session.pending.removeFirst()
             session.pendingBytes -= pending.size
@@ -224,6 +289,7 @@ internal class NativeTerminalSessionManager(
       }
 
       override fun onMessage(socket: WebSocket, bytes: ByteString) {
+        if (session.socket !== socket || session.generation != generation) return
         try {
           val offset = session.transcript.append(bytes)
           emit(session, "output", offset = offset)
@@ -233,33 +299,59 @@ internal class NativeTerminalSessionManager(
       }
 
       override fun onMessage(socket: WebSocket, text: String) {
+        if (session.socket !== socket || session.generation != generation) return
         fail(session, "Terminal server returned an invalid text frame")
       }
 
       override fun onClosed(socket: WebSocket, code: Int, reason: String) {
-        if (!session.disposed.get()) {
-          synchronized(session) {
-            session.socket = null
-            session.open = false
-            session.finished = true
-          }
-          session.transcript.finish()
-          emit(session, "closed", code = code, message = reason)
+        if (session.disposed.get() || session.socket !== socket || session.generation != generation) return
+        synchronized(session) {
+          session.socket = null
+          session.open = false
+        }
+        if (code == TERMINAL_EXITED_CODE) {
+          finish(session, "closed", code, reason)
+        } else if (code == TERMINAL_REPLAY_UNAVAILABLE_CODE) {
+          fail(session, "Terminal output replay is no longer available")
+        } else {
+          scheduleReconnect(session, reason.ifBlank { "Terminal connection closed" })
         }
       }
 
       override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) {
+        if (session.disposed.get() || session.socket !== socket || session.generation != generation) return
+        synchronized(session) {
+          session.socket = null
+          session.open = false
+        }
         val message = when (response?.code) {
           403 -> "Terminal access requires the shell.explicit device scope"
           400 -> "Terminal working directory or size was rejected"
+          404 -> "Remote terminal session no longer exists"
+          409 -> "Terminal output replay is no longer available"
           else -> error.message ?: "Terminal connection failed"
         }
-        fail(session, message)
+        if (response?.code in setOf(400, 403, 404, 409)) fail(session, message)
+        else scheduleReconnect(session, message)
       }
     })
     synchronized(session) {
       if (session.disposed.get()) socket.close(1000, "terminal_closed") else session.socket = socket
     }
+  }
+
+  private fun scheduleReconnect(session: Session, reason: String) {
+    val delay = synchronized(session) {
+      if (session.disposed.get() || session.finished || session.reconnectScheduled) return
+      session.socket?.cancel()
+      session.socket = null
+      session.open = false
+      val attempt = session.reconnectAttempt.coerceAtMost(RECONNECT_DELAYS_MILLIS.lastIndex)
+      session.reconnectAttempt += 1
+      RECONNECT_DELAYS_MILLIS[attempt]
+    }
+    emit(session, "reconnecting", message = reason.take(500))
+    beginConnect(session, delay)
   }
 
   private fun send(sessionId: String, bytes: ByteString) {
@@ -289,6 +381,17 @@ internal class NativeTerminalSessionManager(
     }
     session.transcript.finish()
     emit(session, "error", message = message.take(500))
+  }
+
+  private fun finish(session: Session, type: String, code: Int, message: String) {
+    if (session.disposed.get() || session.finished) return
+    synchronized(session) {
+      session.socket = null
+      session.open = false
+      session.finished = true
+    }
+    session.transcript.finish()
+    emit(session, type, code = code, message = message)
   }
 
   private fun emit(
@@ -325,6 +428,9 @@ internal class NativeTerminalSessionManager(
     private const val MAX_READ_BYTES = 256 * 1024
     private const val TRANSCRIPT_WRITE_BUFFER_BYTES = 64 * 1024
     private const val MAX_SESSIONS = 8
+    private const val TERMINAL_EXITED_CODE = 4000
+    private const val TERMINAL_REPLAY_UNAVAILABLE_CODE = 4004
+    private val RECONNECT_DELAYS_MILLIS = longArrayOf(250, 500, 1_000, 2_000, 5_000)
     private val SESSION_ID = Regex("terminal-[0-9a-fA-F-]{36}")
 
     private fun frame(opcode: Byte, payload: ByteArray): ByteString =
@@ -333,7 +439,15 @@ internal class NativeTerminalSessionManager(
         payload.copyInto(frame, 1)
       }.toByteString()
 
-    internal fun terminalEndpoint(syncEndpoint: String, cwd: String?, cols: Int, rows: Int): String {
+    internal fun terminalEndpoint(
+      syncEndpoint: String,
+      cwd: String?,
+      cols: Int,
+      rows: Int,
+      sessionId: String,
+      offset: Long,
+      create: Boolean,
+    ): String {
       val websocketScheme = when {
         syncEndpoint.startsWith("wss://") -> "wss"
         syncEndpoint.startsWith("ws://") -> "ws"
@@ -351,6 +465,9 @@ internal class NativeTerminalSessionManager(
         .apply { if (cwd != null) addQueryParameter("cwd", cwd) }
         .addQueryParameter("cols", cols.toString())
         .addQueryParameter("rows", rows.toString())
+        .addQueryParameter("sessionId", sessionId)
+        .addQueryParameter("offset", offset.toString())
+        .addQueryParameter("create", create.toString())
         .build()
         .toString()
       return terminal.replaceFirst(

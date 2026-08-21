@@ -50,6 +50,8 @@ pub struct OutboxCommand {
     pub state: OutboxState,
     #[serde(default)]
     pub presentation: OutboxPresentation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_request_id: Option<String>,
     pub order: u64,
     pub created_at: u64,
     pub updated_at: u64,
@@ -570,8 +572,36 @@ impl IndexStore {
         created_at: Option<u64>,
         presentation: OutboxPresentation,
     ) -> Result<OutboxCommand, StoreError> {
+        self.outbox_put_turn_start_with_workspace(
+            command_id,
+            remote_thread_id,
+            params,
+            created_at,
+            presentation,
+            None,
+        )
+    }
+
+    /// Inserts a durable turn command gated by an optional workspace operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error under the same conditions as
+    /// [`Self::outbox_put_turn_start_with_presentation`].
+    pub fn outbox_put_turn_start_with_workspace(
+        &self,
+        command_id: &str,
+        remote_thread_id: &str,
+        params: Value,
+        created_at: Option<u64>,
+        presentation: OutboxPresentation,
+        workspace_request_id: Option<&str>,
+    ) -> Result<OutboxCommand, StoreError> {
         validate_outbox_id(command_id, "command id")?;
         validate_outbox_id(remote_thread_id, "remote thread id")?;
+        if let Some(request_id) = workspace_request_id {
+            validate_outbox_id(request_id, "workspace request id")?;
+        }
         validate_turn_start_params(command_id, remote_thread_id, &params)?;
         let params_bytes = serde_json::to_vec(&params)?.len();
         if params_bytes > MAX_OUTBOX_COMMAND_BYTES {
@@ -588,6 +618,7 @@ impl IndexStore {
                     || existing.method != "turn/start"
                     || existing.params != params
                     || existing.presentation != presentation
+                    || existing.workspace_request_id.as_deref() != workspace_request_id
                 {
                     return Err(StoreError::CorruptedIndex(
                         "outbox command id already has a different payload".into(),
@@ -617,6 +648,7 @@ impl IndexStore {
                 params,
                 state: OutboxState::Queued,
                 presentation,
+                workspace_request_id: workspace_request_id.map(str::to_owned),
                 order: max_order.saturating_add(1),
                 created_at: created_at.unwrap_or(now),
                 updated_at: now,

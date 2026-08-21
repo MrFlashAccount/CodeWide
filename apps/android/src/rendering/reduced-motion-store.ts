@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { AccessibilityInfo, type EmitterSubscription } from "react-native";
 
+import { usePerformanceExperiment } from "../data/performance-experiments";
+
 let reducedMotion = false;
 let nativeSubscription: EmitterSubscription | null = null;
 let generation = 0;
@@ -43,5 +45,7 @@ function getSnapshot(): boolean {
 }
 
 export function useReducedMotionPreference(): boolean {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const nativePreference = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const experimentPreference = usePerformanceExperiment("reduceCustomMotion");
+  return nativePreference || experimentPreference;
 }

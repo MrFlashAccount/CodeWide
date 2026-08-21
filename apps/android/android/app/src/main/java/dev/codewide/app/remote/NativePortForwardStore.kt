@@ -10,6 +10,8 @@ internal data class StoredPortForward(
   val label: String,
   val remotePort: Int,
   val preferredLocalPort: Int?,
+  val serviceKey: String?,
+  val preference: String,
   val enabled: Boolean,
   val updatedAt: Long,
 )
@@ -71,6 +73,10 @@ internal class NativePortForwardStore(context: Context) {
             label = value.getString("label"),
             remotePort = value.getInt("remotePort"),
             preferredLocalPort = if (value.isNull("preferredLocalPort")) null else value.getInt("preferredLocalPort"),
+            serviceKey = if (!value.has("serviceKey") || value.isNull("serviceKey")) null else value.getString("serviceKey"),
+            // Profiles created before service discovery were explicit manual
+            // includes. Preserve that contract during the additive migration.
+            preference = value.optString("preference", "included"),
             enabled = value.optBoolean("enabled", false),
             updatedAt = value.getLong("updatedAt"),
           )
@@ -97,6 +103,8 @@ internal class NativePortForwardStore(context: Context) {
         put("label", profile.label)
         put("remotePort", profile.remotePort)
         put("preferredLocalPort", profile.preferredLocalPort ?: JSONObject.NULL)
+        put("serviceKey", profile.serviceKey ?: JSONObject.NULL)
+        put("preference", profile.preference)
         put("enabled", profile.enabled)
         put("updatedAt", profile.updatedAt)
       })
@@ -120,6 +128,8 @@ internal class NativePortForwardStore(context: Context) {
       require(profile.label.isNotBlank() && profile.label.length <= 80 && !profile.label.any { it.code < 32 || it.code == 127 }) { "Label is invalid" }
       require(profile.remotePort in 1..65_535) { "Remote port is invalid" }
       require(profile.preferredLocalPort == null || profile.preferredLocalPort in 1..65_535) { "Local port is invalid" }
+      require(profile.serviceKey == null || profile.serviceKey.matches(Regex("^[a-f0-9]{64}$"))) { "Service key is invalid" }
+      require(profile.preference in setOf("automatic", "included", "excluded")) { "Forwarding preference is invalid" }
     }
   }
 }

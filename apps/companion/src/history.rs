@@ -555,13 +555,24 @@ impl SummaryBuilder {
                 .fallback_agent_phase
                 .take()
                 .map_or(Value::Null, Value::String);
-            self.agent = Some(json!({
-                "type": "agentMessage",
-                "id": format!("{}:agent", self.id),
-                "text": text,
-                "phase": phase,
-                "memoryCitation": Value::Null
-            }));
+            if let Some(agent) = self.agent.as_mut().and_then(Value::as_object_mut) {
+                // event_msg/task_complete is the authoritative text fallback,
+                // but response_item owns item identity. Replacing the whole
+                // value here used to rotate a canonical message id into the
+                // synthetic `<turn>:agent` id on every history refresh. A
+                // subsequent live replay then appended the canonical item and
+                // rendered the same message twice.
+                agent.insert("text".into(), Value::String(text));
+                agent.insert("phase".into(), phase);
+            } else {
+                self.agent = Some(json!({
+                    "type": "agentMessage",
+                    "id": format!("{}:agent", self.id),
+                    "text": text,
+                    "phase": phase,
+                    "memoryCitation": Value::Null
+                }));
+            }
         }
         let mut items = Vec::with_capacity(2);
         if let Some(user) = self.user {
@@ -733,6 +744,7 @@ mod tests {
         assert_eq!(projected["items"][0]["content"][0]["text"], "hello");
         assert_eq!(projected["items"][0]["content"][1]["type"], "image");
         assert_eq!(projected["items"][0]["clientId"], "android-command");
+        assert_eq!(projected["items"][1]["id"], "agent-id");
         assert_eq!(projected["items"][1]["text"], "final");
         assert_eq!(projected["items"][1]["phase"], "final_answer");
         assert_eq!(projected["codewide"]["activity"]["kinds"][0], "reasoning");

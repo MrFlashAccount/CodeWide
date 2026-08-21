@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import type { PerformanceMetricsSnapshot } from "./performance-metrics.native";
+import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
 
 const snapshot: PerformanceMetricsSnapshot = {
   available: false,
@@ -24,6 +25,18 @@ export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
   return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
 }
 
+export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
+  return snapshot;
+}
+
 export async function setPerformanceMonitoringEnabled(_enabled: boolean): Promise<void> {}
+
+export async function beginNavigationFrameTrace(_traceId: string): Promise<boolean> {
+  return false;
+}
+
+export async function endNavigationFrameTrace(_traceId: string): Promise<ThreadNavigationFrameProfile | null> {
+  return null;
+}
 
 export type { PerformanceMetricsSnapshot } from "./performance-metrics.native";

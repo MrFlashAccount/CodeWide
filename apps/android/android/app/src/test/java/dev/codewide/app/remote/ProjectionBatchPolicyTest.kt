@@ -19,15 +19,15 @@ class ProjectionBatchPolicyTest {
   }
 
   @Test
-  fun givesStreamedTextAHalfFrameDeadline() {
+  fun boundsDurableGroupCommitLatencyWithoutWritingEveryFrame() {
     assertTrue(
       ProjectionBatchPolicy.flushDelayMs("item/agentMessage/delta") <
         ProjectionBatchPolicy.flushDelayMs("item/commandExecution/outputDelta"),
     )
-    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/agentMessage/delta") == 8L)
-    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/plan/delta") == 8L)
-    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/reasoning/summaryTextDelta") == 8L)
-    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/reasoning/textDelta") == 8L)
-    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/commandExecution/outputDelta") == 40L)
+    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/agentMessage/delta") == 12L)
+    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/plan/delta") == 12L)
+    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/reasoning/summaryTextDelta") == 12L)
+    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/reasoning/textDelta") == 12L)
+    assertTrue(ProjectionBatchPolicy.flushDelayMs("item/commandExecution/outputDelta") == 16L)
   }
 }

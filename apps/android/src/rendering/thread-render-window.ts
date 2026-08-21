@@ -16,6 +16,19 @@ export function isTurnActivityItem(item: Turn["items"][number]): boolean {
 }
 
 /**
+ * An active turn can contain several already-completed agent updates followed
+ * by tool activity. Only the newest agent item may still receive text deltas;
+ * older messages must expose their full tail instead of looking truncated for
+ * the remainder of a long-running tool call.
+ */
+export function isAgentMessageStillStreaming(turn: Turn, itemId: string): boolean {
+  if (turn.status !== "inProgress") return false;
+  const itemIndex = turn.items.findIndex((item) => item.id === itemId && item.type === "agentMessage");
+  if (itemIndex < 0) return false;
+  return !turn.items.slice(itemIndex + 1).some((item) => item.type !== "userMessage");
+}
+
+/**
  * Selects the bounded part of a turn that must be materialized as rich UI.
  * Completed turns keep only the final agent message outside collapsed history.
  * Active turns keep every textual agent update visible in wire order while
@@ -28,6 +41,7 @@ export function selectTurnRenderWindow(
   turn: Turn,
   liveActivityLimit = LIVE_ACTIVITY_WINDOW,
 ): TurnRenderWindow {
+  const hiddenPlaceholderIndexes = matchingAgentPlaceholderIndexes(turn);
   const userItemIndexes: number[] = [];
   let latestAgentIndex = -1;
   let explicitFinalAgentIndex = -1;
@@ -36,7 +50,7 @@ export function selectTurnRenderWindow(
   for (let index = 0; index < turn.items.length; index += 1) {
     const item = turn.items[index];
     if (item?.type === "userMessage") userItemIndexes.push(index);
-    else if (item !== undefined) {
+    else if (item !== undefined && !hiddenPlaceholderIndexes.has(index)) {
       latestNonUserIndex = index;
       if (item.type === "agentMessage" && item.text.trim() !== "") {
         latestAgentIndex = index;
@@ -52,7 +66,7 @@ export function selectTurnRenderWindow(
   const materializedIndexes: number[] = [];
   for (let index = 0; index < turn.items.length; index += 1) {
     const item = turn.items[index];
-    if (item === undefined || !isTurnActivityItem(item)) continue;
+    if (item === undefined || hiddenPlaceholderIndexes.has(index) || !isTurnActivityItem(item)) continue;
     // Thinking is ephemeral presentation state, not historical activity. Keep
     // the underlying item in storage, but only materialize it while it is the
     // newest thing in an active turn. The first tool or agent message that
@@ -91,4 +105,24 @@ export function selectTurnRenderWindow(
     collapsedActivityIndexes: activityIndexes.filter((index) => !liveIndexSet.has(index)),
     liveActivityIndexes,
   };
+}
+
+function matchingAgentPlaceholderIndexes(turn: Turn): Set<number> {
+  const hidden = new Set<number>();
+  const placeholderId = `${turn.id}:agent`;
+  const placeholderIndex = turn.items.findIndex((item) => (
+    item.type === "agentMessage" && item.id === placeholderId
+  ));
+  if (placeholderIndex === -1) return hidden;
+  const placeholder = turn.items[placeholderIndex];
+  if (placeholder?.type !== "agentMessage") return hidden;
+  const hasCanonicalMatch = turn.items.some((item, index) => (
+    index !== placeholderIndex
+    && item.type === "agentMessage"
+    && item.id !== placeholderId
+    && (item.text === placeholder.text
+      || (item.phase === "final_answer" && placeholder.phase === "final_answer"))
+  ));
+  if (hasCanonicalMatch) hidden.add(placeholderIndex);
+  return hidden;
 }

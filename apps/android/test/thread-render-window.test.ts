@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { LIVE_ACTIVITY_WINDOW, selectTurnRenderWindow } from "../src/rendering/thread-render-window";
+import { isAgentMessageStillStreaming, LIVE_ACTIVITY_WINDOW, selectTurnRenderWindow } from "../src/rendering/thread-render-window";
+import { turnProjectionTopologyRevision } from "../src/rendering/turn-projection-cache";
 
 type FakeItem = {
   type: "userMessage" | "agentMessage" | "commandExecution" | "reasoning";
@@ -11,6 +12,7 @@ type FakeItem = {
 
 function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgress") {
   return {
+    id: "turn",
     items: items.map((item) => item.type === "agentMessage"
       ? { ...item, text: item.text ?? item.id, phase: item.phase ?? null }
       : item),
@@ -19,6 +21,21 @@ function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgres
 }
 
 describe("thread render window", () => {
+  it("invalidates a cached empty agent boundary when history fills its final text", () => {
+    const empty = turn([
+      { type: "userMessage", id: "user" },
+      { type: "agentMessage", id: "agent", text: "" },
+    ], "completed");
+    const populated = turn([
+      { type: "userMessage", id: "user" },
+      { type: "agentMessage", id: "agent", text: "Recovered final answer" },
+    ], "completed");
+
+    expect(selectTurnRenderWindow(empty).latestAgentIndex).toBe(-1);
+    expect(turnProjectionTopologyRevision(populated)).not.toBe(turnProjectionTopologyRevision(empty));
+    expect(selectTurnRenderWindow(populated).latestAgentIndex).toBe(1);
+  });
+
   it("keeps every active progress message visible while bounding activity cards", () => {
     const items: FakeItem[] = [
       { type: "userMessage", id: "user" },
@@ -54,6 +71,29 @@ describe("thread render window", () => {
     expect(window.liveActivityIndexes).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it("stops treating an agent update as streaming once later activity starts", () => {
+    const value = turn([
+      { type: "userMessage", id: "user" },
+      { type: "agentMessage", id: "progress", text: "This fix will ship." },
+      { type: "commandExecution", id: "build" },
+    ]);
+
+    expect(isAgentMessageStillStreaming(value, "progress")).toBe(false);
+    expect(isAgentMessageStillStreaming(value, "missing")).toBe(false);
+  });
+
+  it("keeps only the trailing agent update mutable while its turn is active", () => {
+    const value = turn([
+      { type: "userMessage", id: "user" },
+      { type: "agentMessage", id: "progress", text: "First update." },
+      { type: "agentMessage", id: "current", text: "Still stream" },
+    ]);
+
+    expect(isAgentMessageStillStreaming(value, "progress")).toBe(false);
+    expect(isAgentMessageStillStreaming(value, "current")).toBe(true);
+    expect(isAgentMessageStillStreaming(turn(value.items as FakeItem[], "completed"), "current")).toBe(false);
+  });
+
   it("streams a phased final answer before the turn completes", () => {
     const items: FakeItem[] = [
       { type: "userMessage", id: "user" },
@@ -66,6 +106,31 @@ describe("thread render window", () => {
 
     expect(window.latestAgentIndex).toBe(3);
     expect(window.liveActivityIndexes).toEqual([1, 2, 3]);
+  });
+
+  it("hides a matching rollout placeholder while the canonical agent item is live", () => {
+    const items: FakeItem[] = [
+      { type: "userMessage", id: "user" },
+      { type: "agentMessage", id: "turn:agent", text: "Fresh progress" },
+      { type: "commandExecution", id: "tool-1" },
+      { type: "agentMessage", id: "live-agent", text: "Fresh progress" },
+      { type: "commandExecution", id: "tool-2" },
+    ];
+
+    const window = selectTurnRenderWindow(turn(items));
+
+    expect(window.latestAgentIndex).toBe(3);
+    expect(window.liveActivityIndexes).toEqual([2, 3, 4]);
+  });
+
+  it("keeps repeated canonical agent messages visible", () => {
+    const items: FakeItem[] = [
+      { type: "userMessage", id: "user" },
+      { type: "agentMessage", id: "first", text: "Again" },
+      { type: "agentMessage", id: "second", text: "Again" },
+    ];
+
+    expect(selectTurnRenderWindow(turn(items)).liveActivityIndexes).toEqual([1, 2]);
   });
 
   it("keeps intermediate agent messages inside completed Activity", () => {

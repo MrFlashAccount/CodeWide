@@ -1,0 +1,1518 @@
+diff --git a/android/CMakeLists.txt b/android/CMakeLists.txt
+index e5690606e9e50870850b4af15d4be92cc734bb79..23f3b5976f7714b3699a1308e5f94550cbf377d3 100644
+--- a/android/CMakeLists.txt
++++ b/android/CMakeLists.txt
+@@ -28,4 +28,4 @@ if(ANDROID_ABI STREQUAL "x86_64")
+   target_link_options(expolibghostty PRIVATE -Wl,-z,undefs)
+ endif()
+ 
+-target_link_libraries(expolibghostty ghostty-vt log)
++target_link_libraries(expolibghostty ghostty-vt jnigraphics log)
+diff --git a/android/src/main/cpp/ghostty_jni.cpp b/android/src/main/cpp/ghostty_jni.cpp
+index b9c118ee074ba100136c20cc6fd5896b15c4bb33..ce79ceacc95967ff61da0d99cde95e6b6948d8cb 100644
+--- a/android/src/main/cpp/ghostty_jni.cpp
++++ b/android/src/main/cpp/ghostty_jni.cpp
+@@ -26,12 +26,16 @@
+ //     u16 text[textUnits], zero-padded to a 4-byte boundary
+ 
+ #include <jni.h>
++#include <android/bitmap.h>
++#include <android/imagedecoder.h>
+ #include <android/input.h>
+ #include <android/keycodes.h>
+ #include <android/log.h>
+ 
+ #include <cstdint>
+ #include <cstring>
++#include <limits>
++#include <mutex>
+ #include <vector>
+ 
+ #include <ghostty/vt.h>
+@@ -58,14 +62,117 @@ constexpr size_t kRowHeaderBytes = 4 * sizeof(int32_t);
+ constexpr size_t kCellRecordBytes = 16;
+ // Cap per-cell grapheme text; anything longer is truncated (degenerate input).
+ constexpr uint32_t kMaxCellTextUnits = 32;
++constexpr uint64_t kKittyImageStorageLimit = 64ULL * 1024ULL * 1024ULL;
++constexpr size_t kKittyPlacementFields = 17;
++
++std::once_flag kGhosttySysOnce;
++
++void logImageDecoderError(const char* operation, int result) {
++  const char* detail = AImageDecoder_resultToString(result);
++  __android_log_print(ANDROID_LOG_WARN, kLogTag, "%s failed: %s (%d)", operation,
++                      detail == nullptr ? "unknown error" : detail, result);
++}
++
++bool decodePng(void*, const GhosttyAllocator* allocator, const uint8_t* data, size_t dataLen,
++               GhosttySysImage* out) {
++  if (data == nullptr || dataLen == 0 || out == nullptr) return false;
++
++  AImageDecoder* decoder = nullptr;
++  int result = AImageDecoder_createFromBuffer(data, dataLen, &decoder);
++  if (result != ANDROID_IMAGE_DECODER_SUCCESS || decoder == nullptr) {
++    logImageDecoderError("AImageDecoder_createFromBuffer", result);
++    return false;
++  }
++
++  const auto cleanup = [&]() { AImageDecoder_delete(decoder); };
++  const AImageDecoderHeaderInfo* header = AImageDecoder_getHeaderInfo(decoder);
++  if (header == nullptr) {
++    cleanup();
++    return false;
++  }
++  const int32_t width = AImageDecoderHeaderInfo_getWidth(header);
++  const int32_t height = AImageDecoderHeaderInfo_getHeight(header);
++  if (width <= 0 || height <= 0) {
++    cleanup();
++    return false;
++  }
++
++  const uint64_t pixelLen64 = static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 4ULL;
++  if (pixelLen64 == 0 || pixelLen64 > kKittyImageStorageLimit ||
++      pixelLen64 > std::numeric_limits<size_t>::max()) {
++    cleanup();
++    return false;
++  }
++
++  result = AImageDecoder_setAndroidBitmapFormat(decoder, ANDROID_BITMAP_FORMAT_RGBA_8888);
++  if (result != ANDROID_IMAGE_DECODER_SUCCESS) {
++    logImageDecoderError("AImageDecoder_setAndroidBitmapFormat", result);
++    cleanup();
++    return false;
++  }
++  result = AImageDecoder_setUnpremultipliedRequired(decoder, true);
++  if (result != ANDROID_IMAGE_DECODER_SUCCESS) {
++    logImageDecoderError("AImageDecoder_setUnpremultipliedRequired", result);
++    cleanup();
++    return false;
++  }
++
++  const size_t stride = AImageDecoder_getMinimumStride(decoder);
++  const size_t expectedStride = static_cast<size_t>(width) * 4;
++  if (stride != expectedStride) {
++    cleanup();
++    return false;
++  }
++
++  const size_t pixelLen = static_cast<size_t>(pixelLen64);
++  uint8_t* pixels = ghostty_alloc(allocator, pixelLen);
++  if (pixels == nullptr) {
++    cleanup();
++    return false;
++  }
++  result = AImageDecoder_decodeImage(decoder, pixels, stride, pixelLen);
++  cleanup();
++  if (result != ANDROID_IMAGE_DECODER_SUCCESS) {
++    logImageDecoderError("AImageDecoder_decodeImage", result);
++    ghostty_free(allocator, pixels, pixelLen);
++    return false;
++  }
++
++  out->width = static_cast<uint32_t>(width);
++  out->height = static_cast<uint32_t>(height);
++  out->data = pixels;
++  out->data_len = pixelLen;
++  return true;
++}
++
++void installGhosttySystemCallbacks() {
++  ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, reinterpret_cast<const void*>(decodePng));
++}
++
++size_t kittyBytesPerPixel(GhosttyKittyImageFormat format) {
++  switch (format) {
++    case GHOSTTY_KITTY_IMAGE_FORMAT_RGB: return 3;
++    case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA: return 4;
++    case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: return 2;
++    case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: return 1;
++    default: return 0;
++  }
++}
++
++uint8_t premultiply(uint8_t color, uint8_t alpha) {
++  return static_cast<uint8_t>((static_cast<uint16_t>(color) * alpha + 127) / 255);
++}
+ 
+ struct Session {
+   GhosttyTerminal term = nullptr;
+   GhosttyRenderState renderState = nullptr;
+   GhosttyRenderStateRowIterator rowIter = nullptr;
+   GhosttyRenderStateRowCells cells = nullptr;
++  GhosttyKittyGraphicsPlacementIterator kittyIterator = nullptr;
+   GhosttyKeyEncoder encoder = nullptr;
+   GhosttyKeyEvent keyEvent = nullptr;
++  GhosttyMouseEncoder mouseEncoder = nullptr;
++  GhosttyMouseEvent mouseEvent = nullptr;
+   // Query responses emitted by the terminal during vt_write; forwarded to the
+   // PTY by the caller after each write.
+   std::vector<uint8_t> ptyOut;
+@@ -125,8 +232,11 @@ bool parseColor(JNIEnv* env, jstring str, GhosttyColorRgb* out) {
+ 
+ void destroySession(Session* session) {
+   if (session == nullptr) return;
++  ghostty_mouse_event_free(session->mouseEvent);
++  ghostty_mouse_encoder_free(session->mouseEncoder);
+   ghostty_key_event_free(session->keyEvent);
+   ghostty_key_encoder_free(session->encoder);
++  ghostty_kitty_graphics_placement_iterator_free(session->kittyIterator);
+   ghostty_render_state_row_cells_free(session->cells);
+   ghostty_render_state_row_iterator_free(session->rowIter);
+   ghostty_render_state_free(session->renderState);
+@@ -232,6 +342,7 @@ extern "C" {
+ JNIEXPORT jlong JNICALL
+ Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
+     JNIEnv*, jobject, jint cols, jint rows, jlong maxScrollback) {
++  std::call_once(kGhosttySysOnce, installGhosttySystemCallbacks);
+   auto* session = new Session();
+   GhosttyTerminalOptions opts{};
+   opts.cols = static_cast<uint16_t>(cols);
+@@ -242,8 +353,12 @@ Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
+       ghostty_render_state_new(nullptr, &session->renderState) != GHOSTTY_SUCCESS ||
+       ghostty_render_state_row_iterator_new(nullptr, &session->rowIter) != GHOSTTY_SUCCESS ||
+       ghostty_render_state_row_cells_new(nullptr, &session->cells) != GHOSTTY_SUCCESS ||
++      ghostty_kitty_graphics_placement_iterator_new(nullptr, &session->kittyIterator) !=
++          GHOSTTY_SUCCESS ||
+       ghostty_key_encoder_new(nullptr, &session->encoder) != GHOSTTY_SUCCESS ||
+-      ghostty_key_event_new(nullptr, &session->keyEvent) != GHOSTTY_SUCCESS) {
++      ghostty_key_event_new(nullptr, &session->keyEvent) != GHOSTTY_SUCCESS ||
++      ghostty_mouse_encoder_new(nullptr, &session->mouseEncoder) != GHOSTTY_SUCCESS ||
++      ghostty_mouse_event_new(nullptr, &session->mouseEvent) != GHOSTTY_SUCCESS) {
+     __android_log_print(ANDROID_LOG_ERROR, kLogTag, "failed to create terminal session");
+     destroySession(session);
+     return 0;
+@@ -253,6 +368,26 @@ Java_expo_modules_libghostty_GhosttyVt_nativeCreate(
+   ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+                        reinterpret_cast<const void*>(&writePtyCallback));
+ 
++  bool kittyGraphicsAvailable = false;
++  if (ghostty_build_info(GHOSTTY_BUILD_INFO_KITTY_GRAPHICS, &kittyGraphicsAvailable) ==
++          GHOSTTY_SUCCESS &&
++      kittyGraphicsAvailable) {
++    if (ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
++                             &kKittyImageStorageLimit) != GHOSTTY_SUCCESS) {
++      __android_log_print(ANDROID_LOG_WARN, kLogTag, "failed to enable Kitty graphics storage");
++    }
++    const bool remoteMediumDisabled = false;
++    ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE,
++                         &remoteMediumDisabled);
++    ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
++                         &remoteMediumDisabled);
++    ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM,
++                         &remoteMediumDisabled);
++  } else {
++    __android_log_print(ANDROID_LOG_WARN, kLogTag,
++                        "vendored libghostty-vt was built without Kitty graphics");
++  }
++
+   GhosttyColorRgb bg{0x00, 0x00, 0x00};
+   GhosttyColorRgb fg{0xFF, 0xFF, 0xFF};
+   ghostty_terminal_set(session->term, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &bg);
+@@ -303,6 +438,13 @@ Java_expo_modules_libghostty_GhosttyVt_nativeResize(
+   ghostty_terminal_resize(session->term, static_cast<uint16_t>(cols),
+                           static_cast<uint16_t>(rows), static_cast<uint32_t>(cellWidthPx),
+                           static_cast<uint32_t>(cellHeightPx));
++  GhosttyMouseEncoderSize mouseSize{};
++  mouseSize.size = sizeof(mouseSize);
++  mouseSize.screen_width = static_cast<uint32_t>(cols * cellWidthPx);
++  mouseSize.screen_height = static_cast<uint32_t>(rows * cellHeightPx);
++  mouseSize.cell_width = static_cast<uint32_t>(cellWidthPx);
++  mouseSize.cell_height = static_cast<uint32_t>(cellHeightPx);
++  ghostty_mouse_encoder_setopt(session->mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &mouseSize);
+   // The renderer discards its bitmap on every resize; a same-grid resize
+   // (font-size change landing on identical cols/rows) would otherwise leave
+   // no dirty rows to repaint it with.
+@@ -399,6 +541,201 @@ Java_expo_modules_libghostty_GhosttyVt_nativeScrollbar(
+   return out;
+ }
+ 
++// Fixed-width placement records returned to Kotlin:
++// image id, placement id, image generation, image width, image height, image format,
++// rendered width, rendered height, viewport column, viewport row,
++// source x, source y, source width, source height, x offset, y offset, z-index.
++JNIEXPORT jlongArray JNICALL
++Java_expo_modules_libghostty_GhosttyVt_nativeKittyPlacements(
++    JNIEnv* env, jobject, jlong handle) {
++  auto* session = fromHandle(handle);
++  if (session == nullptr) return nullptr;
++
++  GhosttyKittyGraphics graphics = nullptr;
++  if (ghostty_terminal_get(session->term, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &graphics) !=
++          GHOSTTY_SUCCESS ||
++      graphics == nullptr || session->kittyIterator == nullptr) {
++    return env->NewLongArray(0);
++  }
++  if (ghostty_kitty_graphics_get(graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR,
++                                 &session->kittyIterator) != GHOSTTY_SUCCESS) {
++    return env->NewLongArray(0);
++  }
++
++  std::vector<jlong> records;
++  records.reserve(kKittyPlacementFields * 8);
++  while (ghostty_kitty_graphics_placement_next(session->kittyIterator)) {
++    uint32_t imageId = 0;
++    uint32_t placementId = 0;
++    uint32_t xOffset = 0;
++    uint32_t yOffset = 0;
++    int32_t z = 0;
++    if (ghostty_kitty_graphics_placement_get(
++            session->kittyIterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID,
++            &imageId) != GHOSTTY_SUCCESS ||
++        ghostty_kitty_graphics_placement_get(
++            session->kittyIterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_PLACEMENT_ID,
++            &placementId) != GHOSTTY_SUCCESS ||
++        ghostty_kitty_graphics_placement_get(
++            session->kittyIterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET,
++            &xOffset) != GHOSTTY_SUCCESS ||
++        ghostty_kitty_graphics_placement_get(
++            session->kittyIterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET,
++            &yOffset) != GHOSTTY_SUCCESS ||
++        ghostty_kitty_graphics_placement_get(
++            session->kittyIterator, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Z, &z) !=
++            GHOSTTY_SUCCESS) {
++      continue;
++    }
++
++    GhosttyKittyGraphicsImage image = ghostty_kitty_graphics_image(graphics, imageId);
++    if (image == nullptr) continue;
++    uint32_t imageWidth = 0;
++    uint32_t imageHeight = 0;
++    GhosttyKittyImageFormat imageFormat = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA;
++    uint64_t imageGeneration = 0;
++    if (ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_WIDTH,
++                                         &imageWidth) != GHOSTTY_SUCCESS ||
++        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_HEIGHT,
++                                         &imageHeight) != GHOSTTY_SUCCESS ||
++        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_FORMAT,
++                                         &imageFormat) != GHOSTTY_SUCCESS ||
++        ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_GENERATION,
++                                         &imageGeneration) != GHOSTTY_SUCCESS) {
++      continue;
++    }
++
++    GhosttyKittyGraphicsPlacementRenderInfo info{};
++    info.size = sizeof(info);
++    if (ghostty_kitty_graphics_placement_render_info(session->kittyIterator, image,
++                                                     session->term, &info) != GHOSTTY_SUCCESS ||
++        !info.viewport_visible) {
++      continue;
++    }
++
++    records.insert(records.end(), {
++        static_cast<jlong>(imageId),
++        static_cast<jlong>(placementId),
++        static_cast<jlong>(imageGeneration),
++        static_cast<jlong>(imageWidth),
++        static_cast<jlong>(imageHeight),
++        static_cast<jlong>(imageFormat),
++        static_cast<jlong>(info.pixel_width),
++        static_cast<jlong>(info.pixel_height),
++        static_cast<jlong>(info.viewport_col),
++        static_cast<jlong>(info.viewport_row),
++        static_cast<jlong>(info.source_x),
++        static_cast<jlong>(info.source_y),
++        static_cast<jlong>(info.source_width),
++        static_cast<jlong>(info.source_height),
++        static_cast<jlong>(xOffset),
++        static_cast<jlong>(yOffset),
++        static_cast<jlong>(z),
++    });
++  }
++
++  if (records.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) return nullptr;
++  jlongArray out = env->NewLongArray(static_cast<jsize>(records.size()));
++  if (out == nullptr || records.empty()) return out;
++  env->SetLongArrayRegion(out, 0, static_cast<jsize>(records.size()), records.data());
++  return out;
++}
++
++JNIEXPORT jboolean JNICALL
++Java_expo_modules_libghostty_GhosttyVt_nativeCopyKittyImage(
++    JNIEnv* env, jobject, jlong handle, jlong imageId, jlong expectedGeneration,
++    jobject bitmap) {
++  auto* session = fromHandle(handle);
++  if (session == nullptr || bitmap == nullptr || imageId < 0) return JNI_FALSE;
++
++  GhosttyKittyGraphics graphics = nullptr;
++  if (ghostty_terminal_get(session->term, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &graphics) !=
++          GHOSTTY_SUCCESS ||
++      graphics == nullptr) {
++    return JNI_FALSE;
++  }
++  GhosttyKittyGraphicsImage image =
++      ghostty_kitty_graphics_image(graphics, static_cast<uint32_t>(imageId));
++  if (image == nullptr) return JNI_FALSE;
++
++  uint32_t width = 0;
++  uint32_t height = 0;
++  GhosttyKittyImageFormat format = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA;
++  uint64_t generation = 0;
++  const uint8_t* source = nullptr;
++  size_t sourceLen = 0;
++  if (ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &width) !=
++          GHOSTTY_SUCCESS ||
++      ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &height) !=
++          GHOSTTY_SUCCESS ||
++      ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &format) !=
++          GHOSTTY_SUCCESS ||
++      ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_GENERATION,
++                                       &generation) != GHOSTTY_SUCCESS ||
++      ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, &source) !=
++          GHOSTTY_SUCCESS ||
++      ghostty_kitty_graphics_image_get(image, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &sourceLen) !=
++          GHOSTTY_SUCCESS ||
++      source == nullptr || generation != static_cast<uint64_t>(expectedGeneration)) {
++    return JNI_FALSE;
++  }
++
++  const size_t sourceBpp = kittyBytesPerPixel(format);
++  if (sourceBpp == 0 || width == 0 || height == 0 ||
++      static_cast<uint64_t>(width) * height * sourceBpp != sourceLen) {
++    return JNI_FALSE;
++  }
++
++  AndroidBitmapInfo bitmapInfo{};
++  if (AndroidBitmap_getInfo(env, bitmap, &bitmapInfo) != ANDROID_BITMAP_RESULT_SUCCESS ||
++      bitmapInfo.format != ANDROID_BITMAP_FORMAT_RGBA_8888 || bitmapInfo.width != width ||
++      bitmapInfo.height != height || bitmapInfo.stride < static_cast<uint64_t>(width) * 4) {
++    return JNI_FALSE;
++  }
++
++  void* pixels = nullptr;
++  if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS ||
++      pixels == nullptr) {
++    return JNI_FALSE;
++  }
++
++  auto* destination = static_cast<uint8_t*>(pixels);
++  for (uint32_t y = 0; y < height; y++) {
++    const uint8_t* src = source + static_cast<size_t>(y) * width * sourceBpp;
++    uint8_t* dst = destination + static_cast<size_t>(y) * bitmapInfo.stride;
++    for (uint32_t x = 0; x < width; x++) {
++      uint8_t red = 0;
++      uint8_t green = 0;
++      uint8_t blue = 0;
++      uint8_t alpha = 255;
++      switch (format) {
++        case GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
++          red = src[0]; green = src[1]; blue = src[2]; src += 3;
++          break;
++        case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA:
++          red = src[0]; green = src[1]; blue = src[2]; alpha = src[3]; src += 4;
++          break;
++        case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA:
++          red = green = blue = src[0]; alpha = src[1]; src += 2;
++          break;
++        case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY:
++          red = green = blue = src[0]; src += 1;
++          break;
++        default:
++          AndroidBitmap_unlockPixels(env, bitmap);
++          return JNI_FALSE;
++      }
++      dst[0] = premultiply(red, alpha);
++      dst[1] = premultiply(green, alpha);
++      dst[2] = premultiply(blue, alpha);
++      dst[3] = alpha;
++      dst += 4;
++    }
++  }
++  AndroidBitmap_unlockPixels(env, bitmap);
++  return JNI_TRUE;
++}
++
+ JNIEXPORT jint JNICALL
+ Java_expo_modules_libghostty_GhosttyVt_nativeSnapshot(
+     JNIEnv* env, jobject, jlong handle, jobject buffer) {
+@@ -826,4 +1163,65 @@ Java_expo_modules_libghostty_GhosttyVt_nativeEncodeKey(
+   return outArray;
+ }
+ 
++JNIEXPORT jbyteArray JNICALL
++Java_expo_modules_libghostty_GhosttyVt_nativeEncodeMouseTap(
++    JNIEnv* env, jobject, jlong handle, jfloat x, jfloat y, jint metaState) {
++  auto* session = fromHandle(handle);
++  if (session == nullptr) return nullptr;
++
++  bool tracking = false;
++  if (ghostty_terminal_get(session->term, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, &tracking) !=
++          GHOSTTY_SUCCESS ||
++      !tracking) {
++    return nullptr;
++  }
++
++  ghostty_mouse_encoder_setopt_from_terminal(session->mouseEncoder, session->term);
++  ghostty_mouse_encoder_reset(session->mouseEncoder);
++  ghostty_mouse_event_set_button(session->mouseEvent, GHOSTTY_MOUSE_BUTTON_LEFT);
++  ghostty_mouse_event_set_mods(session->mouseEvent, mapMods(metaState));
++  ghostty_mouse_event_set_position(session->mouseEvent, GhosttyMousePosition{x, y});
++
++  std::vector<uint8_t> encoded;
++  encoded.reserve(64);
++  const auto appendAction = [&](GhosttyMouseAction action, bool anyButtonPressed) -> bool {
++    ghostty_mouse_encoder_setopt(
++        session->mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &anyButtonPressed);
++    ghostty_mouse_event_set_action(session->mouseEvent, action);
++    char stackBuf[64];
++    size_t written = 0;
++    GhosttyResult result = ghostty_mouse_encoder_encode(
++        session->mouseEncoder, session->mouseEvent, stackBuf, sizeof(stackBuf), &written);
++    std::vector<char> heapBuf;
++    const char* bytes = stackBuf;
++    if (result == GHOSTTY_OUT_OF_SPACE) {
++      heapBuf.resize(written);
++      result = ghostty_mouse_encoder_encode(
++          session->mouseEncoder, session->mouseEvent, heapBuf.data(), heapBuf.size(), &written);
++      bytes = heapBuf.data();
++    }
++    if (result != GHOSTTY_SUCCESS) return false;
++    encoded.insert(encoded.end(), bytes, bytes + written);
++    return true;
++  };
++
++  if (!appendAction(GHOSTTY_MOUSE_ACTION_PRESS, false) ||
++      !appendAction(GHOSTTY_MOUSE_ACTION_RELEASE, true)) {
++    const bool released = false;
++    ghostty_mouse_encoder_setopt(
++        session->mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &released);
++    return nullptr;
++  }
++  const bool released = false;
++  ghostty_mouse_encoder_setopt(
++      session->mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &released);
++  if (encoded.empty()) return nullptr;
++
++  jbyteArray out = env->NewByteArray(static_cast<jsize>(encoded.size()));
++  if (out == nullptr) return nullptr;
++  env->SetByteArrayRegion(out, 0, static_cast<jsize>(encoded.size()),
++                          reinterpret_cast<const jbyte*>(encoded.data()));
++  return out;
++}
++
+ }  // extern "C"
+diff --git a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt
+index 1516400296a26128222f73aa35b79104d5a12fb0..a14cfb1250d607834d67824d015a0a2f93cfde0e 100644
+--- a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt
++++ b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyModule.kt
+@@ -2,6 +2,7 @@ package expo.modules.libghostty
+ 
+ import android.util.Base64
+ import expo.modules.kotlin.exception.CodedException
++import expo.modules.kotlin.functions.Queues
+ import expo.modules.kotlin.modules.Module
+ import expo.modules.kotlin.modules.ModuleDefinition
+ import expo.modules.kotlin.records.Field
+@@ -14,6 +15,11 @@ class ExpoLibghosttyModule : Module() {
+     View(ExpoLibghosttyView::class) {
+       Events("onInput", "onResize")
+ 
++      // Android-only renderer retention across temporary React unmounts.
++      Prop("persistentSessionId") { view: ExpoLibghosttyView, id: String? ->
++        view.setPersistentSessionId(id)
++      }
++
+       // Base font size in dp (default 14); applied live, the grid reflows.
+       Prop("fontSize") { view: ExpoLibghosttyView, size: Float ->
+         view.setFontSize(size)
+@@ -44,10 +50,19 @@ class ExpoLibghosttyModule : Module() {
+         view.finish(exitCode)
+       }
+ 
++      // Reconcile retained geometry after the host modal reaches final bounds.
++      AsyncFunction("reconcileLayout") { view: ExpoLibghosttyView ->
++        view.reconcileLayout()
++      }
++
+       OnViewDestroys { view: ExpoLibghosttyView ->
+         view.destroy()
+       }
+     }
++
++    AsyncFunction("releasePersistentSession") { id: String ->
++      PersistentTerminalRegistry.release(id)
++    }.runOnQueue(Queues.MAIN)
+   }
+ }
+ 
+diff --git a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt
+index 2d3ed62314e39fd1ade0fa5d3d007d414c948600..aa58b3fa6cf7f6acb42811178d11c600383dfa56 100644
+--- a/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt
++++ b/android/src/main/java/expo/modules/libghostty/ExpoLibghosttyView.kt
+@@ -3,6 +3,7 @@ package expo.modules.libghostty
+ import android.content.Context
+ import android.util.Base64
+ import androidx.core.view.ViewCompat
++import androidx.core.view.WindowInsetsAnimationCompat
+ import androidx.core.view.WindowInsetsCompat
+ import expo.modules.kotlin.AppContext
+ import expo.modules.kotlin.viewevent.EventDispatcher
+@@ -20,7 +21,11 @@ class ExpoLibghosttyView(context: Context, appContext: AppContext) :
+   private val onInput by EventDispatcher<Map<String, Any>>()
+   private val onResize by EventDispatcher<Map<String, Any>>()
+ 
+-  private val terminal = GhosttyTerminalView(context).also { view ->
++  private var persistentSessionId: String? = null
++  private var terminal = GhosttyTerminalView(context)
++  private var lastImeAnimationInsets: WindowInsetsCompat? = null
++
++  private fun bindTerminal(view: GhosttyTerminalView) {
+     view.onInputBytes = { bytes ->
+       onInput(
+         mapOf(
+@@ -38,26 +43,105 @@ class ExpoLibghosttyView(context: Context, appContext: AppContext) :
+     bar.onKey = { keyCode -> terminal.sendAccessoryKey(keyCode) }
+     bar.onText = { text -> terminal.sendAccessoryText(text) }
+     bar.onPaste = { terminal.requestPaste() }
+-    bar.visibility = GONE
++    bar.onKeyboard = { terminal.showKeyboard() }
++    bar.visibility = VISIBLE
+   }
+ 
+   init {
+     orientation = VERTICAL
++    bindTerminal(terminal)
+     terminal.accessoryBar = accessoryBar
+     addView(terminal, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+     addView(accessoryBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+-    // The bar rides the soft keyboard: visible only while the IME is up.
++    // The terminal controls are part of the workspace and stay visible. When
++    // the IME appears, insets only move the bar above it and resize the grid.
+     // React Native does not reliably dispatch insets down to nested native
+-    // views, so also re-check on every size change (the keyboard resizes us).
++    // views, so also re-check on every size change.
+     ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
+       syncAccessoryBar(insets)
+       insets
+     }
++    // Some Android window modes (notably Samsung DeX / floating windows) can
++    // finish hiding the IME without delivering one last insets pass to this
++    // nested native view. Request the authoritative final state when the
++    // animation ends; the resulting layout pass also resizes the PTY grid.
++    ViewCompat.setWindowInsetsAnimationCallback(
++      this,
++      object : WindowInsetsAnimationCompat.Callback(
++        WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE
++      ) {
++        override fun onProgress(
++          insets: WindowInsetsCompat,
++          runningAnimations: MutableList<WindowInsetsAnimationCompat>
++        ): WindowInsetsCompat {
++          if (runningAnimations.any { it.typeMask and WindowInsetsCompat.Type.ime() != 0 }) {
++            lastImeAnimationInsets = insets
++            syncAccessoryBar(insets)
++          }
++          return insets
++        }
++
++        override fun onEnd(animation: WindowInsetsAnimationCompat) {
++          if (animation.typeMask and WindowInsetsCompat.Type.ime() == 0) return
++          val finalInsets = lastImeAnimationInsets
++          lastImeAnimationInsets = null
++          post {
++            if (!isAttachedToWindow) return@post
++            // Use the animation's final frame instead of asking rootWindowInsets
++            // for a value that Android may keep cached after a tab transition.
++            if (finalInsets == null) reconcileLayout() else syncAccessoryBar(finalInsets)
++            terminal.prepareForReattach()
++            requestLayout()
++          }
++        }
++      }
++    )
++  }
++
++  /**
++   * Preserve the live Android renderer across a React unmount/remount. Raw PTY
++   * output cannot be replayed safely into a fresh terminal after its geometry
++   * changed, because cursor movement and redraw sequences are stateful.
++   */
++  fun setPersistentSessionId(id: String?) {
++    if (persistentSessionId == id) return
++    val previousId = persistentSessionId
++    if (previousId != null) {
++      terminal.releaseKeyboard()
++      terminal.onInputBytes = null
++      terminal.onGridResize = null
++      terminal.accessoryBar = null
++      removeView(terminal)
++      PersistentTerminalRegistry.detach(previousId, terminal)
++      terminal = GhosttyTerminalView(context)
++    }
++    persistentSessionId = id
++    if (id != null) {
++      val candidate = terminal
++      val acquired = PersistentTerminalRegistry.acquire(id, candidate)
++      if (acquired !== candidate) candidate.destroy()
++      terminal = acquired
++    }
++    bindTerminal(terminal)
++    terminal.accessoryBar = accessoryBar
++    if (terminal.parent !== this) {
++      addView(terminal, 0, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
++    }
++    // The retained native view may have exactly the same measured bounds it
++    // had before unmounting. In that case Android will not call onSizeChanged,
++    // so explicitly bind the PTY grid to the first layout in this new parent.
++    terminal.prepareForReattach()
++    resetImeLayout()
++    requestLayout()
++    post {
++      if (isAttachedToWindow) ViewCompat.requestApplyInsets(this)
++    }
+   }
+ 
+   private fun syncAccessoryBar(insets: WindowInsetsCompat) {
+     val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
+-    accessoryBar.visibility = if (imeVisible) VISIBLE else GONE
++    val terminalOwnsIme = terminal.isAttachedToWindow && terminal.isFocused && hasWindowFocus()
++    accessoryBar.visibility = VISIBLE
+     // Edge-to-edge windows don't resize for the keyboard — it just covers us.
+     // Pad our bottom by the covered amount so the bar sits above the IME and
+     // the terminal shrinks (regaining the hidden rows). Hosts that already
+@@ -66,13 +150,55 @@ class ExpoLibghosttyView(context: Context, appContext: AppContext) :
+     val location = IntArray(2)
+     getLocationInWindow(location)
+     val gapBelow = rootView.height - (location[1] + height)
+-    val overlap = if (imeVisible) (imeBottom - gapBelow).coerceAtLeast(0) else 0
++    val overlap = if (imeVisible && terminalOwnsIme) (imeBottom - gapBelow).coerceAtLeast(0) else 0
+     if (paddingBottom != overlap) {
+       setPadding(0, 0, 0, overlap)
+       requestLayout()
+     }
+   }
+ 
++  private fun resetImeLayout() {
++    accessoryBar.visibility = VISIBLE
++    if (paddingBottom != 0) {
++      setPadding(0, 0, 0, 0)
++      requestLayout()
++    }
++  }
++
++  fun reconcileLayout() {
++    resetImeLayout()
++    terminal.prepareForReattach()
++    requestLayout()
++    ViewCompat.requestApplyInsets(this)
++    post {
++      if (!isAttachedToWindow) return@post
++      terminal.prepareForReattach()
++      requestLayout()
++      ViewCompat.requestApplyInsets(this)
++    }
++  }
++
++  override fun onAttachedToWindow() {
++    super.onAttachedToWindow()
++    post {
++      if (isAttachedToWindow) ViewCompat.requestApplyInsets(this)
++    }
++  }
++
++  override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
++    super.onWindowFocusChanged(hasWindowFocus)
++    if (hasWindowFocus) {
++      post {
++        if (isAttachedToWindow && hasWindowFocus()) ViewCompat.requestApplyInsets(this)
++      }
++    } else {
++      // In multi-window mode the keyboard may disappear because another
++      // window gained focus. Android can leave the previous IME inset cached;
++      // retaining it would permanently shrink the terminal until remount.
++      resetImeLayout()
++    }
++  }
++
+   override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+     super.onSizeChanged(w, h, oldw, oldh)
+     val rootInsets = rootWindowInsets ?: return
+@@ -98,5 +224,17 @@ class ExpoLibghosttyView(context: Context, appContext: AppContext) :
+   /** Mark the underlying PTY as exited (terminal.exit on the wire). */
+   fun finish(exitCode: Int) = terminal.finish(exitCode)
+ 
+-  internal fun destroy() = terminal.destroy()
++  internal fun destroy() {
++    terminal.releaseKeyboard()
++    terminal.onInputBytes = null
++    terminal.onGridResize = null
++    terminal.accessoryBar = null
++    val id = persistentSessionId
++    if (id == null) {
++      terminal.destroy()
++    } else {
++      if (terminal.parent === this) removeView(terminal)
++      PersistentTerminalRegistry.detach(id, terminal)
++    }
++  }
+ }
+diff --git a/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt b/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt
+index 9d6ad1671c843b7cd75e08639906a9065b984210..156043122125920588bb53b74be60c3d4d1b9b43 100644
+--- a/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt
++++ b/android/src/main/java/expo/modules/libghostty/GhosttyTerminalView.kt
+@@ -6,12 +6,16 @@ import android.content.ClipboardManager
+ import android.content.Context
+ import android.graphics.Bitmap
+ import android.graphics.Canvas
++import android.graphics.Color
+ import android.graphics.Paint
+ import android.graphics.Path
++import android.graphics.PorterDuff
+ import android.graphics.Rect
++import android.graphics.RectF
+ import android.graphics.Typeface
+ import android.provider.Settings
+ import android.text.InputType
++import android.util.Log
+ import android.view.ActionMode
+ import android.view.Choreographer
+ import android.view.GestureDetector
+@@ -36,16 +40,48 @@ import kotlin.math.hypot
+ import kotlin.math.max
+ import kotlin.math.roundToInt
+ 
++private data class KittyPlacement(
++  val imageId: Long,
++  val placementId: Long,
++  val imageGeneration: Long,
++  val imageWidth: Int,
++  val imageHeight: Int,
++  val imageFormat: Int,
++  val pixelWidth: Int,
++  val pixelHeight: Int,
++  val viewportCol: Int,
++  val viewportRow: Int,
++  val sourceX: Int,
++  val sourceY: Int,
++  val sourceWidth: Int,
++  val sourceHeight: Int,
++  val xOffset: Int,
++  val yOffset: Int,
++  val z: Int
++)
++
++private data class CachedKittyImage(
++  val generation: Long,
++  val bitmap: Bitmap
++)
++
+ /**
+  * Canvas-backed ghostty terminal grid.
+  *
+  * Owns a libghostty-vt session via [GhosttyVt]. PTY output is fed in with
+  * [write]; user input (IME text, key escape sequences, VT query responses)
+  * comes back through [onInputBytes]. Rendering pulls flattened dirty-row
+- * snapshots from JNI once per Choreographer frame and patches them onto a
+- * grid-sized bitmap; [onDraw] blits the bitmap and overlays the cursor.
++ * snapshots from JNI once per Choreographer frame and patches them onto
++ * background/text bitmaps. Kitty placements are composited between those
++ * layers according to z-index, then [onDraw] overlays the cursor.
+  */
+ internal class GhosttyTerminalView(context: Context) : View(context) {
++  // A persistent renderer can move between React Native parents without its
++  // pixel dimensions changing. Android then skips onSizeChanged(), even
++  // though the PTY may still have the smaller grid last reported while the
++  // IME was visible. Force one authoritative resize from the first layout in
++  // the new parent.
++  private var forceGridGeometryOnNextLayout = false
+   var onInputBytes: ((ByteArray) -> Unit)? = null
+   var onGridResize: ((cols: Int, rows: Int) -> Unit)? = null
+ 
+@@ -57,19 +93,22 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+ 
+   // ── Cell metrics ──
+   private var fontSizeDp = FONT_SIZE_DP
+-  private val textPaint = newTextPaint(Typeface.MONOSPACE)
+-  private val boldPaint = newTextPaint(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD))
+-  private val italicPaint = newTextPaint(Typeface.create(Typeface.MONOSPACE, Typeface.ITALIC))
+-  private val boldItalicPaint =
+-    newTextPaint(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD_ITALIC))
+-
+-  // Nerd Font private-use glyphs (powerline, devicons, …) are absent from the
+-  // system fallback chain; route those cells to the bundled symbols-only font.
+-  private val symbolsPaint: Paint? = try {
+-    newTextPaint(Typeface.createFromAsset(context.assets, SYMBOLS_FONT_ASSET))
+-  } catch (e: RuntimeException) {
+-    null
++  private val terminalTypeface = try {
++    Typeface.createFromAsset(context.assets, TERMINAL_FONT_ASSET)
++  } catch (error: RuntimeException) {
++    Log.e(TAG, "Bundled terminal font is unavailable; falling back to Android monospace", error)
++    Typeface.MONOSPACE
+   }
++  private val textPaint = newTextPaint(terminalTypeface)
++  private val boldPaint = newTextPaint(Typeface.create(terminalTypeface, Typeface.BOLD))
++  private val italicPaint = newTextPaint(Typeface.create(terminalTypeface, Typeface.ITALIC))
++  private val boldItalicPaint =
++    newTextPaint(Typeface.create(terminalTypeface, Typeface.BOLD_ITALIC))
++
++  // Use the same full Nerd Font face for private-use glyphs. A symbols-only
++  // fallback has different metrics and makes Powerline/devicon cells drift
++  // relative to ordinary terminal text.
++  private val symbolsPaint = newTextPaint(terminalTypeface)
+   private val fillPaint = Paint()
+   private val cursorPaint = Paint()
+   private var cellWidth = textPaint.measureText("M")
+@@ -82,8 +121,10 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+   // ── Grid state ──
+   private var cols = INITIAL_COLS
+   private var rows = INITIAL_ROWS
+-  private var bitmap: Bitmap? = null
+-  private var bitmapCanvas: Canvas? = null
++  private var backgroundBitmap: Bitmap? = null
++  private var backgroundCanvas: Canvas? = null
++  private var textBitmap: Bitmap? = null
++  private var textCanvas: Canvas? = null
+   private var snapshotBuf: ByteBuffer? = null
+   private var rowChars = CharArray(0)
+   private var cellFg = IntArray(0)
+@@ -94,6 +135,9 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+   private var rowSelStart = IntArray(0)
+   private var rowSelEnd = IntArray(0)
+   private var rowSelEndWide = BooleanArray(0)
++  private var kittyPlacements = emptyList<KittyPlacement>()
++  private val kittyImages = mutableMapOf<Long, CachedKittyImage>()
++  private val kittyPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+ 
+   // ── Selection state ──
+   private var selectionMode = false
+@@ -193,9 +237,16 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+           clearSelection()
+           return true
+         }
+-        requestFocus()
+-        context.getSystemService(InputMethodManager::class.java)
+-          ?.showSoftInput(this@GhosttyTerminalView, 0)
++        val mouseInput = GhosttyVt.nativeEncodeMouseTap(handle, e.x, e.y, e.metaState)
++        if (mouseInput != null) {
++          // TUI applications opt into terminal mouse tracking. Only then does
++          // a touchscreen tap become a primary-button click; ordinary shells
++          // retain the familiar tap-to-focus-and-open-keyboard behavior.
++          requestFocus()
++          onInputBytes?.invoke(mouseInput)
++          return true
++        }
++        showKeyboard()
+         return true
+       }
+ 
+@@ -361,6 +412,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+     scroller.abortAnimation()
+     removeCallbacks(flingRunnable)
+     actionMode?.finish()
++    kittyImages.values.forEach { it.bitmap.recycle() }
++    kittyImages.clear()
++    kittyPlacements = emptyList()
++    backgroundBitmap?.recycle()
++    backgroundBitmap = null
++    backgroundCanvas = null
++    textBitmap?.recycle()
++    textBitmap = null
++    textCanvas = null
+     if (handle != 0L) {
+       GhosttyVt.nativeFree(handle)
+       handle = 0
+@@ -419,6 +479,26 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+   /** Paste the clipboard, same confirmation flow as the selection menu. */
+   fun requestPaste() = pasteFromClipboard()
+ 
++  /** Explicitly focus the terminal and show the Android IME. */
++  fun showKeyboard() {
++    requestFocus()
++    post {
++      if (!isAttachedToWindow || !isFocused) return@post
++      context.getSystemService(InputMethodManager::class.java)
++        ?.showSoftInput(this@GhosttyTerminalView, InputMethodManager.SHOW_IMPLICIT)
++    }
++  }
++
++  /** Stop owning the window IME before this persistent view changes parents. */
++  fun releaseKeyboard() {
++    val token = windowToken
++    clearFocus()
++    if (token != null) {
++      context.getSystemService(InputMethodManager::class.java)
++        ?.hideSoftInputFromWindow(token, 0)
++    }
++  }
++
+   private fun charToKeyCode(char: Char): Int {
+     val lower = char.lowercaseChar()
+     return when (lower) {
+@@ -442,6 +522,18 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+ 
+   // ── Layout / resize ──
+ 
++  internal fun prepareForReattach() {
++    forceGridGeometryOnNextLayout = true
++    requestLayout()
++  }
++
++  override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
++    super.onLayout(changed, left, top, right, bottom)
++    if (!forceGridGeometryOnNextLayout) return
++    forceGridGeometryOnNextLayout = false
++    updateGridGeometry(force = true)
++  }
++
+   override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+     super.onSizeChanged(w, h, oldw, oldh)
+     updateGridGeometry(force = false)
+@@ -454,7 +546,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+     val changed = newCols != cols || newRows != rows
+     cols = newCols
+     rows = newRows
+-    if (changed || force || bitmap == null) {
++    if (changed || force || backgroundBitmap == null || textBitmap == null) {
+       GhosttyVt.nativeResize(handle, cols, rows, cellWidth.roundToInt(), cellHeight)
+       allocateGridBuffers()
+       onGridResize?.invoke(cols, rows)
+@@ -465,9 +557,15 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+   private fun allocateGridBuffers() {
+     val widthPx = max(1, ceil(cols * cellWidth).toInt())
+     val heightPx = max(1, rows * cellHeight)
+-    bitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also {
+-      bitmapCanvas = Canvas(it)
+-      bitmapCanvas?.drawColor(defaultBg)
++    backgroundBitmap?.recycle()
++    textBitmap?.recycle()
++    backgroundBitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also {
++      backgroundCanvas = Canvas(it)
++      backgroundCanvas?.drawColor(defaultBg)
++    }
++    textBitmap = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888).also {
++      textCanvas = Canvas(it)
++      it.eraseColor(Color.TRANSPARENT)
+     }
+     val capacity = HEADER_BYTES +
+       rows * (ROW_HEADER_BYTES + cols * CELL_RECORD_BYTES + cols * MAX_CELL_TEXT_UNITS * 2 + 4)
+@@ -493,7 +591,8 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+ 
+   private fun renderFrame() {
+     val buf = snapshotBuf ?: return
+-    val canvas = bitmapCanvas ?: return
++    val background = backgroundCanvas ?: return
++    val text = textCanvas ?: return
+     if (handle == 0L) return
+ 
+     val rowCount = GhosttyVt.nativeSnapshot(handle, buf)
+@@ -520,12 +619,133 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+     cursorColor = buf.int
+     syncBlinkTimer()
+ 
+-    if (dirtyKind == DIRTY_FULL) canvas.drawColor(defaultBg)
+-    repeat(rowCount) { drawRowRecord(buf, canvas, snapCols) }
++    if (dirtyKind == DIRTY_FULL) {
++      background.drawColor(defaultBg)
++      text.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
++    }
++    repeat(rowCount) { drawRowRecord(buf, background, text, snapCols) }
++    syncKittyGraphics()
+     syncSelectionUi()
+     invalidate()
+   }
+ 
++  private fun syncKittyGraphics() {
++    val raw = GhosttyVt.nativeKittyPlacements(handle) ?: LongArray(0)
++    if (raw.size % KITTY_PLACEMENT_FIELDS != 0) {
++      Log.w(TAG, "Ignoring malformed Kitty placement snapshot (${raw.size} fields)")
++      return
++    }
++
++    val placements = ArrayList<KittyPlacement>(raw.size / KITTY_PLACEMENT_FIELDS)
++    var offset = 0
++    while (offset < raw.size) {
++      val placement = KittyPlacement(
++        imageId = raw[offset],
++        placementId = raw[offset + 1],
++        imageGeneration = raw[offset + 2],
++        imageWidth = raw[offset + 3].toInt(),
++        imageHeight = raw[offset + 4].toInt(),
++        imageFormat = raw[offset + 5].toInt(),
++        pixelWidth = raw[offset + 6].toInt(),
++        pixelHeight = raw[offset + 7].toInt(),
++        viewportCol = raw[offset + 8].toInt(),
++        viewportRow = raw[offset + 9].toInt(),
++        sourceX = raw[offset + 10].toInt(),
++        sourceY = raw[offset + 11].toInt(),
++        sourceWidth = raw[offset + 12].toInt(),
++        sourceHeight = raw[offset + 13].toInt(),
++        xOffset = raw[offset + 14].toInt(),
++        yOffset = raw[offset + 15].toInt(),
++        z = raw[offset + 16].toInt()
++      )
++      offset += KITTY_PLACEMENT_FIELDS
++      if (
++        placement.imageWidth in 1..MAX_KITTY_IMAGE_DIMENSION &&
++        placement.imageHeight in 1..MAX_KITTY_IMAGE_DIMENSION &&
++        placement.pixelWidth > 0 && placement.pixelHeight > 0 &&
++        placement.sourceWidth > 0 && placement.sourceHeight > 0
++      ) {
++        placements += placement
++      }
++    }
++
++    val visibleImageIds = placements.mapTo(mutableSetOf()) { it.imageId }
++    val obsoleteImageIds = kittyImages.keys.filterNot(visibleImageIds::contains)
++    for (imageId in obsoleteImageIds) {
++      kittyImages.remove(imageId)?.bitmap?.recycle()
++    }
++
++    for (placement in placements) {
++      val cached = kittyImages[placement.imageId]
++      if (
++        cached?.generation == placement.imageGeneration &&
++        cached.bitmap.width == placement.imageWidth &&
++        cached.bitmap.height == placement.imageHeight
++      ) {
++        continue
++      }
++
++      val candidate = if (
++        cached != null &&
++        cached.bitmap.width == placement.imageWidth &&
++        cached.bitmap.height == placement.imageHeight
++      ) {
++        cached.bitmap
++      } else {
++        Bitmap.createBitmap(placement.imageWidth, placement.imageHeight, Bitmap.Config.ARGB_8888)
++      }
++      candidate.setHasAlpha(true)
++      candidate.isPremultiplied = true
++      if (
++        GhosttyVt.nativeCopyKittyImage(
++          handle,
++          placement.imageId,
++          placement.imageGeneration,
++          candidate
++        )
++      ) {
++        if (cached != null && cached.bitmap !== candidate) cached.bitmap.recycle()
++        kittyImages[placement.imageId] = CachedKittyImage(placement.imageGeneration, candidate)
++      } else if (cached?.bitmap !== candidate) {
++        candidate.recycle()
++      }
++    }
++
++    kittyPlacements = placements.filter { placement ->
++      kittyImages[placement.imageId]?.generation == placement.imageGeneration
++    }
++  }
++
++  private fun drawKittyLayer(canvas: Canvas, layer: Int) {
++    if (kittyPlacements.isEmpty()) return
++    val save = canvas.save()
++    canvas.clipRect(0f, 0f, cols * cellWidth, (rows * cellHeight).toFloat())
++    for (placement in kittyPlacements) {
++      val placementLayer = when {
++        placement.z < KITTY_BELOW_BACKGROUND_Z -> KITTY_LAYER_BELOW_BACKGROUND
++        placement.z < 0 -> KITTY_LAYER_BELOW_TEXT
++        else -> KITTY_LAYER_ABOVE_TEXT
++      }
++      if (placementLayer != layer) continue
++      val image = kittyImages[placement.imageId]?.bitmap ?: continue
++      val sourceLeft = placement.sourceX.coerceIn(0, image.width)
++      val sourceTop = placement.sourceY.coerceIn(0, image.height)
++      val sourceRight = (placement.sourceX + placement.sourceWidth).coerceIn(sourceLeft, image.width)
++      val sourceBottom = (placement.sourceY + placement.sourceHeight).coerceIn(sourceTop, image.height)
++      if (sourceRight <= sourceLeft || sourceBottom <= sourceTop) continue
++
++      val left = placement.viewportCol * cellWidth + placement.xOffset
++      val top = placement.viewportRow * cellHeight + placement.yOffset
++      canvas.drawBitmap(
++        image,
++        Rect(sourceLeft, sourceTop, sourceRight, sourceBottom),
++        RectF(left, top.toFloat(), left + placement.pixelWidth, top + placement.pixelHeight.toFloat()),
++        kittyPaint
++      )
++    }
++    canvas.restoreToCount(save)
++  }
++
+   // ── Selection ──
+ 
+   /** Top-left / bottom-right cells of the rendered selection, or null. */
+@@ -777,7 +997,12 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+     syncBlinkTimer()
+   }
+ 
+-  private fun drawRowRecord(buf: ByteBuffer, canvas: Canvas, snapCols: Int) {
++  private fun drawRowRecord(
++    buf: ByteBuffer,
++    backgroundCanvas: Canvas,
++    textCanvas: Canvas,
++    snapCols: Int
++  ) {
+     val rowIndex = buf.int
+     val selStart = buf.int
+     val selEnd = buf.int
+@@ -841,25 +1066,28 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+ 
+     // Background pass: row clear, then per-cell backgrounds.
+     fillPaint.color = defaultBg
+-    canvas.drawRect(0f, top, canvas.width.toFloat(), bottom, fillPaint)
++    backgroundCanvas.drawRect(0f, top, backgroundCanvas.width.toFloat(), bottom, fillPaint)
+     for (col in 0 until colCount) {
+       val bg = cellBg[col]
+       if (bg == defaultBg) continue
+       val width = if (cellFlags[col] and FLAG_WIDE != 0) cellWidth * 2 else cellWidth
+       val x = col * cellWidth
+       fillPaint.color = bg
+-      canvas.drawRect(x, top, x + width, bottom, fillPaint)
++      backgroundCanvas.drawRect(x, top, x + width, bottom, fillPaint)
+     }
+ 
+     // Text pass.
++    val save = textCanvas.save()
++    textCanvas.clipRect(0f, top, textCanvas.width.toFloat(), bottom)
++    textCanvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
++    textCanvas.restoreToCount(save)
+     for (col in 0 until colCount) {
+       val flags = cellFlags[col]
+       val len = cellTextLen[col]
+       if (len == 0 || flags and FLAG_SPACER != 0 || flags and FLAG_INVISIBLE != 0) continue
+       val codepoint = Character.codePointAt(rowChars, cellTextOff[col])
+       val paint = when {
+-        symbolsPaint != null &&
+-          (codepoint in PUA_BMP_FIRST..PUA_BMP_LAST || codepoint >= PUA_SUPPLEMENTARY_FIRST) ->
++        codepoint in PUA_BMP_FIRST..PUA_BMP_LAST || codepoint >= PUA_SUPPLEMENTARY_FIRST ->
+           symbolsPaint
+         flags and FLAG_BOLD != 0 && flags and FLAG_ITALIC != 0 -> boldItalicPaint
+         flags and FLAG_BOLD != 0 -> boldPaint
+@@ -869,14 +1097,20 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+       paint.color = cellFg[col]
+       if (flags and FLAG_FAINT != 0) paint.alpha = 160
+       val x = col * cellWidth
+-      canvas.drawText(rowChars, cellTextOff[col], len, x, top + baseline, paint)
++      textCanvas.drawText(rowChars, cellTextOff[col], len, x, top + baseline, paint)
+       val runWidth = if (flags and FLAG_WIDE != 0) cellWidth * 2 else cellWidth
+       if (flags and FLAG_UNDERLINE != 0) {
+-        canvas.drawRect(x, bottom - underlineThickness, x + runWidth, bottom, paint)
++        textCanvas.drawRect(x, bottom - underlineThickness, x + runWidth, bottom, paint)
+       }
+       if (flags and FLAG_STRIKETHROUGH != 0) {
+         val mid = top + cellHeight / 2f
+-        canvas.drawRect(x, mid - underlineThickness / 2, x + runWidth, mid + underlineThickness / 2, paint)
++        textCanvas.drawRect(
++          x,
++          mid - underlineThickness / 2,
++          x + runWidth,
++          mid + underlineThickness / 2,
++          paint
++        )
+       }
+       paint.alpha = 255
+     }
+@@ -884,7 +1118,11 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+ 
+   override fun onDraw(canvas: Canvas) {
+     canvas.drawColor(defaultBg)
+-    bitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
++    drawKittyLayer(canvas, KITTY_LAYER_BELOW_BACKGROUND)
++    backgroundBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
++    drawKittyLayer(canvas, KITTY_LAYER_BELOW_TEXT)
++    textBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
++    drawKittyLayer(canvas, KITTY_LAYER_ABOVE_TEXT)
+     drawCursor(canvas)
+     drawSelectionHandles(canvas)
+     drawScrollIndicator(canvas)
+@@ -1095,6 +1333,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+   }
+ 
+   private companion object {
++    const val TAG = "GhosttyTerminalView"
+     const val FONT_SIZE_DP = 14f
+     // Same bounds and step as the iOS pinch-zoom (UITerminalView).
+     const val MIN_FONT_SIZE_DP = 4f
+@@ -1104,7 +1343,7 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+     const val INITIAL_ROWS = 24
+     const val MAX_SCROLLBACK = 10_000L
+     const val BLINK_INTERVAL_MS = 600L
+-    const val SYMBOLS_FONT_ASSET = "SymbolsNerdFontMono-Regular.ttf"
++    const val TERMINAL_FONT_ASSET = "fonts/JetBrainsMonoNerdFontMono-Regular.ttf"
+ 
+     // Nerd Font glyph ranges: BMP private-use area plus the supplementary
+     // private-use planes (material icons live at U+F0000+ since v3).
+@@ -1135,6 +1374,13 @@ internal class GhosttyTerminalView(context: Context) : View(context) {
+     const val CELL_RECORD_BYTES = 16
+     const val MAX_CELL_TEXT_UNITS = 32
+ 
++    const val KITTY_PLACEMENT_FIELDS = 17
++    const val MAX_KITTY_IMAGE_DIMENSION = 16_384
++    const val KITTY_BELOW_BACKGROUND_Z = Int.MIN_VALUE / 2
++    const val KITTY_LAYER_BELOW_BACKGROUND = 0
++    const val KITTY_LAYER_BELOW_TEXT = 1
++    const val KITTY_LAYER_ABOVE_TEXT = 2
++
+     const val DIRTY_FULL = 2
+ 
+     const val CURSOR_STYLE_BAR = 0
+diff --git a/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt b/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt
+index 8cfe86e9277f7a773b1749be2dbd9f9921354ae7..8395076acf58444554113a29fc5b5116a5d95363 100644
+--- a/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt
++++ b/android/src/main/java/expo/modules/libghostty/GhosttyVt.kt
+@@ -51,6 +51,20 @@ internal object GhosttyVt {
+   /** Viewport scrollbar as [total, offset, len] rows, or null. */
+   external fun nativeScrollbar(handle: Long): LongArray?
+ 
++  /**
++   * Visible Kitty image placements as fixed-width records. Pixel data stays
++   * native-owned and is copied into a cached Android bitmap on demand.
++   */
++  external fun nativeKittyPlacements(handle: Long): LongArray?
++
++  /** Copy one Kitty image generation into a same-sized ARGB_8888 bitmap. */
++  external fun nativeCopyKittyImage(
++    handle: Long,
++    imageId: Long,
++    expectedGeneration: Long,
++    bitmap: android.graphics.Bitmap
++  ): Boolean
++
+   /**
+    * Update the render state and flatten dirty rows into [buffer] (direct,
+    * little-endian; layout documented in ghostty_jni.cpp). Returns the number
+@@ -72,6 +86,17 @@ internal object GhosttyVt {
+     utf8: ByteArray?
+   ): ByteArray?
+ 
++  /**
++   * Encode a primary-button tap when the running terminal application has
++   * enabled mouse tracking. Returns null when mouse tracking is disabled.
++   */
++  external fun nativeEncodeMouseTap(
++    handle: Long,
++    x: Float,
++    y: Float,
++    metaState: Int
++  ): ByteArray?
++
+   /** Select the word at a viewport cell; false when there is nothing there. */
+   external fun nativeSelectWord(handle: Long, col: Int, row: Int): Boolean
+ 
+diff --git a/android/src/main/java/expo/modules/libghostty/PersistentTerminalRegistry.kt b/android/src/main/java/expo/modules/libghostty/PersistentTerminalRegistry.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..02fa70d547c7c6bb8254b7772d2c4e06efa44ffa
+--- /dev/null
++++ b/android/src/main/java/expo/modules/libghostty/PersistentTerminalRegistry.kt
+@@ -0,0 +1,47 @@
++package expo.modules.libghostty
++
++/**
++ * Keeps Android terminal renderers alive while their React view is temporarily
++ * unmounted. A terminal screen is stateful: replaying its raw PTY byte stream
++ * into a new grid is not a valid restore operation after a resize.
++ *
++ * All calls happen on the Android main thread through Expo view props or the
++ * module function registered with runOnQueue(.main).
++ */
++internal object PersistentTerminalRegistry {
++  private data class Entry(
++    val terminal: GhosttyTerminalView,
++    var attached: Boolean,
++  )
++
++  private val entries = LinkedHashMap<String, Entry>()
++
++  fun acquire(id: String, candidate: GhosttyTerminalView): GhosttyTerminalView {
++    require(id.isNotBlank() && id.length <= MAX_ID_CHARS) { "Persistent terminal id is invalid" }
++    val existing = entries[id]
++    if (existing == null) {
++      check(entries.size < MAX_RETAINED_TERMINALS) { "Too many persistent terminals are retained" }
++      entries[id] = Entry(candidate, attached = true)
++      return candidate
++    }
++    check(!existing.attached) { "Persistent terminal is already attached" }
++    existing.attached = true
++    return existing.terminal
++  }
++
++  fun detach(id: String, terminal: GhosttyTerminalView) {
++    val entry = entries[id]
++    if (entry == null || entry.terminal !== terminal) {
++      terminal.destroy()
++      return
++    }
++    entry.attached = false
++  }
++
++  fun release(id: String) {
++    entries.remove(id)?.terminal?.destroy()
++  }
++
++  private const val MAX_ID_CHARS = 128
++  private const val MAX_RETAINED_TERMINALS = 8
++}
+diff --git a/android/src/main/java/expo/modules/libghostty/TerminalAccessoryBar.kt b/android/src/main/java/expo/modules/libghostty/TerminalAccessoryBar.kt
+index 37c1702466e889572ed7f13fed5d38c62861b4c3..b8d8b4b6ee99b6ebdd4df921fe73730a3d1ae548 100644
+--- a/android/src/main/java/expo/modules/libghostty/TerminalAccessoryBar.kt
++++ b/android/src/main/java/expo/modules/libghostty/TerminalAccessoryBar.kt
+@@ -26,6 +26,7 @@ internal class TerminalAccessoryBar(context: Context) : HorizontalScrollView(con
+   var onKey: ((keyCode: Int) -> Unit)? = null
+   var onText: ((text: String) -> Unit)? = null
+   var onPaste: (() -> Unit)? = null
++  var onKeyboard: (() -> Unit)? = null
+ 
+   private enum class Activation { INACTIVE, ARMED, LOCKED }
+ 
+@@ -48,6 +49,8 @@ internal class TerminalAccessoryBar(context: Context) : HorizontalScrollView(con
+     minimumHeight = dp(BAR_HEIGHT_DP)
+     addView(row, LayoutParams(LayoutParams.WRAP_CONTENT, dp(BAR_HEIGHT_DP)))
+ 
++    addKey("⌨") { onKeyboard?.invoke() }
++    addDivider()
+     addKey("⎋") { onKey?.invoke(KeyEvent.KEYCODE_ESCAPE) }
+     addKey("⇥") { onKey?.invoke(KeyEvent.KEYCODE_TAB) }
+     ctrlButton = addKey("⌃") { toggleCtrl() }
+diff --git a/build/ExpoLibghostty.types.d.ts b/build/ExpoLibghostty.types.d.ts
+index 0969f137ea5482158fb577ef3eee6c9192b1da2e..cf0323801b837aab8dd11e5c631785f71a99b6ec 100644
+--- a/build/ExpoLibghostty.types.d.ts
++++ b/build/ExpoLibghostty.types.d.ts
+@@ -12,6 +12,8 @@ export type TerminalResizeEvent = {
+     rows: number;
+ };
+ export type TerminalViewRef = {
++    /** Re-read final window insets and grid geometry after a host transition. */
++    reconcileLayout?(): Promise<void>;
+     /** Feed base64-encoded PTY output into the terminal grid. */
+     write(base64: string): Promise<void>;
+     /** Feed PTY output as UTF-8 text, for string-based wires. */
+@@ -39,6 +41,12 @@ export type TerminalTheme = {
+     palette?: (string | null)[];
+ };
+ export type TerminalViewProps = {
++    /**
++     * Android-only stable renderer identity. The native VT grid is retained
++     * across temporary React unmounts instead of reconstructing it by replaying
++     * raw PTY bytes.
++     */
++    persistentSessionId?: string;
+     /**
+      * Base font size in density-independent units (default 14, clamped to
+      * 4–64); pinch-to-zoom steps from this value. Android applies changes
+diff --git a/build/ExpoLibghosttyModule.d.ts b/build/ExpoLibghosttyModule.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..3784a6f55e9dd83f90c5848048f863931efcf33a
+--- /dev/null
++++ b/build/ExpoLibghosttyModule.d.ts
+@@ -0,0 +1,3 @@
++/** Release an Android renderer previously retained by persistentSessionId. */
++export declare function releasePersistentTerminalSession(id: string): Promise<void>;
++//# sourceMappingURL=ExpoLibghosttyModule.d.ts.map
+diff --git a/build/ExpoLibghosttyModule.js b/build/ExpoLibghosttyModule.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..d714ae437e12fcd75b79ed9bf0445971c3b1c257
+--- /dev/null
++++ b/build/ExpoLibghosttyModule.js
+@@ -0,0 +1,10 @@
++import { requireNativeModule } from 'expo';
++import { Platform } from 'react-native';
++const nativeModule = requireNativeModule('ExpoLibghostty');
++/** Release an Android renderer previously retained by persistentSessionId. */
++export async function releasePersistentTerminalSession(id) {
++    if (Platform.OS !== 'android')
++        return;
++    await nativeModule.releasePersistentSession(id);
++}
++//# sourceMappingURL=ExpoLibghosttyModule.js.map
+diff --git a/build/ExpoLibghosttyView.js b/build/ExpoLibghosttyView.js
+index e3bf3b8973c565cccfea1982e498d5d23bac1d8c..33d798d7676b110983b8cc7caf65d2e006ea66cc 100644
+--- a/build/ExpoLibghosttyView.js
++++ b/build/ExpoLibghosttyView.js
+@@ -19,6 +19,9 @@ export default function TerminalView({ ref, onResize, ...props }) {
+             });
+         };
+         return {
++            // This command creates the first resize event after a retained view is
++            // reattached, so gating it on readiness would deadlock the queue.
++            reconcileLayout: () => native.current.reconcileLayout(),
+             write: whenReady((base64) => native.current.write(base64)),
+             writeText: whenReady((text) => native.current.writeText(text)),
+             finish: whenReady((exitCode) => native.current.finish(exitCode)),
+diff --git a/build/index.d.ts b/build/index.d.ts
+index ddce6e63f0b4e87b5e3f38af27b05b57ad32fdd8..b3eaec70bc75de62b5ee161a271c1f7fc41ff3ce 100644
+--- a/build/index.d.ts
++++ b/build/index.d.ts
+@@ -1,3 +1,4 @@
+ export { default as TerminalView } from './ExpoLibghosttyView';
++export { releasePersistentTerminalSession } from './ExpoLibghosttyModule';
+ export * from './ExpoLibghostty.types';
+ //# sourceMappingURL=index.d.ts.map
+\ No newline at end of file
+diff --git a/build/index.js b/build/index.js
+index 2a5471a9fcdf4691e6a1bcbeb03d67e12ecb48f9..9f1d2212a89bf62fa637b7af54ffc247b9e64165 100644
+--- a/build/index.js
++++ b/build/index.js
+@@ -1,3 +1,4 @@
+ export { default as TerminalView } from './ExpoLibghosttyView';
++export { releasePersistentTerminalSession } from './ExpoLibghosttyModule';
+ export * from './ExpoLibghostty.types';
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/src/ExpoLibghostty.types.ts b/src/ExpoLibghostty.types.ts
+index cbd0ab4128aa22b18c65f633dd81cbd0d737f51b..c10463453f326dd17ef3d97094f989615822f375 100644
+--- a/src/ExpoLibghostty.types.ts
++++ b/src/ExpoLibghostty.types.ts
+@@ -15,6 +15,8 @@ export type TerminalResizeEvent = {
+ };
+ 
+ export type TerminalViewRef = {
++  /** Re-read final window insets and grid geometry after a host transition. */
++  reconcileLayout?(): Promise<void>;
+   /** Feed base64-encoded PTY output into the terminal grid. */
+   write(base64: string): Promise<void>;
+   /** Feed PTY output as UTF-8 text, for string-based wires. */
+@@ -44,6 +46,12 @@ export type TerminalTheme = {
+ };
+ 
+ export type TerminalViewProps = {
++  /**
++   * Android-only stable renderer identity. The native VT grid is retained
++   * across temporary React unmounts instead of reconstructing it by replaying
++   * raw PTY bytes.
++   */
++  persistentSessionId?: string;
+   /**
+    * Base font size in density-independent units (default 14, clamped to
+    * 4–64); pinch-to-zoom steps from this value. Android applies changes
+diff --git a/src/ExpoLibghosttyModule.ts b/src/ExpoLibghosttyModule.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..418a59084b68df272bc8e0f3a1c204673f7f39e7
+--- /dev/null
++++ b/src/ExpoLibghosttyModule.ts
+@@ -0,0 +1,14 @@
++import { requireNativeModule } from 'expo';
++import { Platform } from 'react-native';
++
++type ExpoLibghosttyNativeModule = {
++  releasePersistentSession(id: string): Promise<void>;
++};
++
++const nativeModule = requireNativeModule<ExpoLibghosttyNativeModule>('ExpoLibghostty');
++
++/** Release an Android renderer previously retained by persistentSessionId. */
++export async function releasePersistentTerminalSession(id: string): Promise<void> {
++  if (Platform.OS !== 'android') return;
++  await nativeModule.releasePersistentSession(id);
++}
+diff --git a/src/ExpoLibghosttyView.tsx b/src/ExpoLibghosttyView.tsx
+index 80ad4b1600444c2fe9cc1e1bfd8058fba98e9546..916749b53692b47a1e85abb8856e067ebefa3af6 100644
+--- a/src/ExpoLibghosttyView.tsx
++++ b/src/ExpoLibghosttyView.tsx
+@@ -25,6 +25,9 @@ export default function TerminalView({ ref, onResize, ...props }: TerminalViewPr
+         });
+       };
+     return {
++      // This command creates the first resize event after a retained view is
++      // reattached, so gating it on readiness would deadlock the queue.
++      reconcileLayout: () => native.current!.reconcileLayout!(),
+       write: whenReady((base64: string) => native.current!.write(base64)),
+       writeText: whenReady((text: string) => native.current!.writeText(text)),
+       finish: whenReady((exitCode: number) => native.current!.finish(exitCode)),
+diff --git a/src/index.ts b/src/index.ts
+index d79c69b25d82e796253a904cd2572d6ce8d4f40d..cbf9d59c75235bed2fdbb1902bf0f83009d823e1 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,2 +1,3 @@
+ export { default as TerminalView } from './ExpoLibghosttyView';
++export { releasePersistentTerminalSession } from './ExpoLibghosttyModule';
+ export * from './ExpoLibghostty.types';

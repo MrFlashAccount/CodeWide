@@ -60,7 +60,7 @@ await mkdir(dirname(stagingRoot), { recursive: true });
 try {
   const exported = spawnSync(
     "pnpm",
-    ["exec", "expo", "export", "--platform", "android", "--output-dir", stagingRoot, "--dump-assetmap"],
+    ["exec", "expo", "export", "--platform", "android", "--output-dir", stagingRoot],
     { cwd: appRoot, stdio: "inherit", env: { ...process.env, NODE_ENV: "production" } },
   );
   if (exported.status !== 0) throw new Error(`expo export failed with status ${exported.status ?? "unknown"}`);

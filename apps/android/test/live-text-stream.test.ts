@@ -7,6 +7,7 @@ import {
   LIVE_TEXT_MAX_PENDING_CHARS,
   LIVE_TEXT_TARGET_SEGMENT_CHARS,
   liveTextProjectionCacheStats,
+  projectCachedLiveMarkdown,
   projectCachedLiveText,
   projectLiveTextAppend,
   type LiveTextProjection,
@@ -47,6 +48,26 @@ describe("append-only live text projection", () => {
     expect(second.segments).toBe(first.segments);
     expect(second.remainder).toBe("mutable tail");
     expect([...second.segments, second.remainder].join("")).toBe(`${firstSource} tail`);
+  });
+
+  it("projects one visible Markdown snapshot for both layout and rendering", () => {
+    clearLiveTextProjectionCache();
+    const first = projectCachedLiveMarkdown("agent", "Hello streaming wor");
+    const second = projectCachedLiveMarkdown("agent", "Hello streaming word ");
+
+    expect(first.visibleSource).toBe("Hello streaming ");
+    expect(first.visibleRemainder).toBe("Hello streaming ");
+    expect(second.visibleSource).toBe("Hello streaming word ");
+    expect([...second.segments, second.remainder].join("")).toBe(second.source);
+  });
+
+  it("reveals the final word when the agent item has completed", () => {
+    clearLiveTextProjectionCache();
+    const streaming = projectCachedLiveMarkdown("completed-agent", "This fix will ship.");
+    const completed = projectCachedLiveMarkdown("completed-agent", "This fix will ship.", true);
+
+    expect(streaming.visibleSource).toBe("This fix will ");
+    expect(completed.visibleSource).toBe("This fix will ship.");
   });
 
   it("bounds a pathological long line without losing its text", () => {

@@ -17,6 +17,7 @@ describe("usage popover session summary", () => {
     expect(usagePopover).not.toContain('"compact —"');
     expect(usagePopover).not.toContain('"cost —"');
     expect(usagePopover).toContain('testID="usage-session-tokens"');
+    expect(usagePopover).toContain("prefix={TOKEN_SYMBOL}");
     expect(usagePopover).toContain('testID="usage-session-cost"');
     expect(usagePopover).toMatch(/sessionCostText: \{ flexShrink: 0,/);
   });

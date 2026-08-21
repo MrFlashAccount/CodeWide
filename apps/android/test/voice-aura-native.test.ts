@@ -8,10 +8,21 @@ const nativeModule = readFileSync(new URL("../android/app/src/main/java/dev/code
 const nativeVoiceAura = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/VoiceAuraRenderEffect.kt", import.meta.url), "utf8");
 const nativeTransport = readFileSync(new URL("../src/native/native-transport.native.ts", import.meta.url), "utf8");
 const voiceAura = readFileSync(new URL("../src/ui/VoiceAura.native.tsx", import.meta.url), "utf8");
+const fullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url), "utf8");
 
 describe("native Android voice aura", () => {
   it("requires the RuntimeShader-capable Android baseline", () => {
     expect(rootGradle).toContain("ext.minSdkVersion = 34");
+  });
+
+  it("moves the same shader into the Android window used by fullscreen review", () => {
+    expect(fullscreenModal).toContain("setNativeVoiceAuraTarget(reactTag)");
+    expect(fullscreenModal).toContain("setNativeVoiceAuraTarget(null)");
+    expect(fullscreenModal).toContain("collapsable={false}");
+    expect(nativeTransport).toContain("export function setNativeVoiceAuraTarget");
+    expect(nativeModule).toContain("fun setVoiceAuraTarget(reactTag: Double?)");
+    expect(nativeVoiceAura).toContain("fun setTarget(view: View?)");
+    expect(nativeVoiceAura).toContain("requestedRootView?.get()");
   });
 
   it("applies the original shader to the live Android view tree", () => {

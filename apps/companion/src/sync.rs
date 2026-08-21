@@ -17,17 +17,22 @@ use crate::{
     dictation::DictationService,
     files::FileService,
     history_service::HistoryService,
+    projects::ProjectService,
     remote_inputs::{RemoteInputError, prepare_remote_file_inputs},
     resources::ResourceService,
     store::{IndexStore, OutboxCommand, OutboxPresentation, OutboxState},
     thread_view::ThreadViewService,
     upstream::{ConnectionStatus, UpstreamError, UpstreamHandle},
+    workspaces::{WorkspacePhase, WorkspaceService},
 };
 
 const MAX_REPLAY_ENTRIES: usize = 2_048;
 const MAX_REPLAY_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_LIVE_SIGNALS: usize = 128;
 const MAX_REPLAY_BATCH_ENTRIES: usize = 256;
 const REPLAY_BATCH_DELAY: Duration = Duration::from_millis(16);
+const MAX_COALESCED_TEXT_DELTA_BYTES: usize = 64 * 1024;
+const MAX_STREAM_DIAGNOSTIC_TURNS: usize = 4_096;
 const MAX_PENDING_SERVER_REQUESTS: usize = 1_024;
 const MAX_PENDING_SERVER_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SINGLE_SERVER_REQUEST_BYTES: usize = 1024 * 1024;
@@ -55,7 +60,7 @@ pub struct SyncHub {
     store: Arc<IndexStore>,
     history: HistoryService,
     thread_view: ThreadViewService,
-    events: tokio::sync::broadcast::Sender<DurableEvent>,
+    events: tokio::sync::broadcast::Sender<DurableSignal>,
     local_events: tokio::sync::mpsc::Sender<Value>,
     server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
     recent_turn_starts: Arc<tokio::sync::Mutex<RecentTurnStarts>>,
@@ -66,6 +71,8 @@ pub struct SyncHub {
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
     account_pool: Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
+    projects: Arc<std::sync::RwLock<Option<Arc<ProjectService>>>>,
+    workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,14 +82,15 @@ enum MutationMode {
 }
 
 #[derive(Clone)]
-enum DurableEvent {
-    Entry(u64, Value),
+enum DurableSignal {
+    Committed(u64),
     Failed,
 }
 
 struct InitialSession {
     ready: bool,
     snapshot_cursor: Option<u64>,
+    delivered_cursor: u64,
 }
 
 enum AuthorizationChangeOutcome {
@@ -101,6 +109,12 @@ enum OutboxDeliveryError {
     Uncertain(String),
 }
 
+enum LiveReplayError {
+    Journal,
+    SnapshotRequired,
+    Socket,
+}
+
 #[derive(Default)]
 struct PendingServerRequests {
     requests: HashMap<String, Value>,
@@ -112,6 +126,95 @@ struct PendingServerRequests {
 struct RecentTurnStarts {
     keys: HashSet<String>,
     order: VecDeque<String>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct AgentStreamKey {
+    thread_id: String,
+    turn_id: String,
+}
+
+#[derive(Default)]
+struct AgentStreamTurnDiagnostics {
+    first_delta_at: Option<Instant>,
+    input_delta_events: u64,
+    emitted_delta_events: u64,
+    delta_chars: u64,
+    delta_bytes: u64,
+    ingest_batches: u64,
+}
+
+#[derive(Default)]
+struct AgentStreamDiagnostics {
+    turns: HashMap<AgentStreamKey, AgentStreamTurnDiagnostics>,
+}
+
+impl AgentStreamDiagnostics {
+    fn observe_input_batch(&mut self, payloads: &[Value]) {
+        let mut batch_keys = HashSet::new();
+        for payload in payloads {
+            let Some((key, delta)) = agent_message_delta(payload) else {
+                continue;
+            };
+            let entry = self.turns.entry(key.clone()).or_default();
+            entry.first_delta_at.get_or_insert_with(Instant::now);
+            entry.input_delta_events = entry.input_delta_events.saturating_add(1);
+            entry.delta_chars = entry
+                .delta_chars
+                .saturating_add(u64::try_from(delta.chars().count()).unwrap_or(u64::MAX));
+            entry.delta_bytes = entry
+                .delta_bytes
+                .saturating_add(u64::try_from(delta.len()).unwrap_or(u64::MAX));
+            batch_keys.insert(key);
+        }
+        for key in batch_keys {
+            if let Some(entry) = self.turns.get_mut(&key) {
+                entry.ingest_batches = entry.ingest_batches.saturating_add(1);
+            }
+        }
+        if self.turns.len() > MAX_STREAM_DIAGNOSTIC_TURNS {
+            warn!(
+                turns = self.turns.len(),
+                "agent stream diagnostic state exceeded its bound; resetting aggregates"
+            );
+            self.turns.clear();
+        }
+    }
+
+    fn observe_emitted_batch(&mut self, payloads: &[Value]) {
+        for payload in payloads {
+            let Some((key, _)) = agent_message_delta(payload) else {
+                continue;
+            };
+            let entry = self.turns.entry(key).or_default();
+            entry.emitted_delta_events = entry.emitted_delta_events.saturating_add(1);
+        }
+    }
+
+    fn finish_completed_turns(&mut self, payloads: &[Value]) {
+        for payload in payloads {
+            if payload.get("method").and_then(Value::as_str) != Some("turn/completed") {
+                continue;
+            }
+            let Some(key) = agent_stream_key(payload) else {
+                continue;
+            };
+            let Some(diagnostic) = self.turns.remove(&key) else {
+                continue;
+            };
+            info!(
+                thread_id = %key.thread_id,
+                turn_id = %key.turn_id,
+                input_delta_events = diagnostic.input_delta_events,
+                emitted_delta_events = diagnostic.emitted_delta_events,
+                delta_chars = diagnostic.delta_chars,
+                delta_bytes = diagnostic.delta_bytes,
+                ingest_batches = diagnostic.ingest_batches,
+                stream_duration_ms = diagnostic.first_delta_at.map_or(0, |started| u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
+                "agent stream completed"
+            );
+        }
+    }
 }
 
 impl RecentTurnStarts {
@@ -161,7 +264,11 @@ impl SyncHub {
         mutation_mode: MutationMode,
     ) -> Self {
         let thread_view = ThreadViewService::new(upstream.clone(), history.clone());
-        let (events, _) = tokio::sync::broadcast::channel(MAX_REPLAY_ENTRIES);
+        // The durable replay journal owns payload bytes. The live channel is
+        // only a wake-up edge; tokio broadcast retains its full ring even
+        // after every receiver has consumed an entry, so putting JSON Values
+        // here would pin the last 2,048 events in RSS indefinitely.
+        let (events, _) = tokio::sync::broadcast::channel(MAX_LIVE_SIGNALS);
         let (local_events, ingest_rx) = tokio::sync::mpsc::channel(MAX_REPLAY_ENTRIES);
         let server_requests = Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default()));
         let recent_turn_starts = Arc::new(tokio::sync::Mutex::new(RecentTurnStarts::default()));
@@ -171,6 +278,8 @@ impl SyncHub {
         let files = Arc::new(std::sync::RwLock::new(None));
         let resources = Arc::new(std::sync::RwLock::new(None));
         let account_pool = Arc::new(std::sync::RwLock::new(None));
+        let projects = Arc::new(std::sync::RwLock::new(None));
+        let workspaces = Arc::new(std::sync::RwLock::new(None));
         let usage_projector = Arc::new(std::sync::Mutex::new(
             crate::usage::LiveUsageProjector::new(store.clone()),
         ));
@@ -214,6 +323,7 @@ impl SyncHub {
                 local_events.clone(),
                 files.clone(),
                 account_pool.clone(),
+                workspaces.clone(),
             ));
         }
         Self {
@@ -232,6 +342,8 @@ impl SyncHub {
             files,
             resources,
             account_pool,
+            projects,
+            workspaces,
         }
     }
 
@@ -302,6 +414,27 @@ impl SyncHub {
         self
     }
 
+    /// Installs the companion-owned explicit project registry.
+    #[must_use]
+    pub fn with_projects(self, projects: Arc<ProjectService>) -> Self {
+        match self.projects.write() {
+            Ok(mut slot) => *slot = Some(projects),
+            Err(poisoned) => *poisoned.into_inner() = Some(projects),
+        }
+        self
+    }
+
+    /// Installs application-level workspace orchestration. Provider-specific
+    /// checkout logic remains behind the VCS plugin capability contract.
+    #[must_use]
+    pub fn with_workspaces(self, workspaces: Arc<WorkspaceService>) -> Self {
+        match self.workspaces.write() {
+            Ok(mut slot) => *slot = Some(workspaces),
+            Err(poisoned) => *poisoned.into_inner() = Some(workspaces),
+        }
+        self
+    }
+
     fn projector(&self) -> Option<Arc<ContentProjector>> {
         match self.content_projector.read() {
             Ok(slot) => slot.clone(),
@@ -332,6 +465,20 @@ impl SyncHub {
 
     fn account_pool(&self) -> Option<Arc<AccountPoolService>> {
         match self.account_pool.read() {
+            Ok(slot) => slot.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    fn projects(&self) -> Option<Arc<ProjectService>> {
+        match self.projects.read() {
+            Ok(slot) => slot.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    fn workspaces(&self) -> Option<Arc<WorkspaceService>> {
+        match self.workspaces.read() {
             Ok(slot) => slot.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         }
@@ -448,6 +595,7 @@ impl SyncHub {
         Some(InitialSession {
             ready,
             snapshot_cursor: snapshot_required.then_some(head),
+            delivered_cursor: head,
         })
     }
 
@@ -456,12 +604,13 @@ impl SyncHub {
         &self,
         mut socket: WebSocket,
         session: InitialSession,
-        mut events: tokio::sync::broadcast::Receiver<DurableEvent>,
+        mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
         authorization: AuthorizationContext,
         mut authorization_changes: Option<tokio::sync::broadcast::Receiver<AuthorizationChange>>,
     ) {
         let mut ready = session.ready;
         let mut snapshot_cursor = session.snapshot_cursor;
+        let mut delivered_cursor = session.delivered_cursor;
         let mut upstream_status = self.upstream.subscribe_status();
         loop {
             tokio::select! {
@@ -540,6 +689,7 @@ impl SyncHub {
                                     }
                                     if send_json(&mut socket, &json!({ "type": "caughtUp", "cursor": head })).await.is_err() { break; }
                                     snapshot_cursor = None;
+                                    delivered_cursor = head;
                                     ready = true;
                                 }
                                 Some("ack") => {}
@@ -576,17 +726,34 @@ impl SyncHub {
                 }
                 event = events.recv(), if ready => {
                     match event {
-                        Ok(DurableEvent::Entry(cursor, payload)) => {
-                            if ready && send_json(&mut socket, &json!({ "type": "event", "cursor": cursor, "payload": payload })).await.is_err() { break; }
+                        Ok(DurableSignal::Committed(head)) => {
+                            if head <= delivered_cursor { continue; }
+                            match send_live_replay_after(&mut socket, self.store.clone(), delivered_cursor).await {
+                                Ok(cursor) => delivered_cursor = cursor,
+                                Err(LiveReplayError::SnapshotRequired) => {
+                                    warn!(delivered_cursor, head, "sync client fell behind durable replay window");
+                                    let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
+                                    break;
+                                }
+                                Err(LiveReplayError::Journal) => {
+                                    let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
+                                    break;
+                                }
+                                Err(LiveReplayError::Socket) => break,
+                            }
                         }
-                        Ok(DurableEvent::Failed) => {
+                        Ok(DurableSignal::Failed) => {
                             let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
                             break;
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            warn!(skipped, "sync client lagged behind upstream broadcast");
-                            let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
-                            break;
+                            debug!(skipped, "sync client coalesced live wake-up signals");
+                            if let Ok(cursor) = send_live_replay_after(&mut socket, self.store.clone(), delivered_cursor).await {
+                                delivered_cursor = cursor;
+                            } else {
+                                let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
+                                break;
+                            }
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
@@ -852,6 +1019,32 @@ impl SyncHub {
             }
             return Ok(true);
         }
+        if ProjectService::handles(method) {
+            if self.mutation_mode != MutationMode::Active && method != "companion/project/list" {
+                send_rpc_error(socket, id.clone(), -32010, "companion is read-only").await?;
+                return Ok(true);
+            }
+            let Some(projects) = self.projects() else {
+                send_rpc_error(
+                    socket,
+                    id.clone(),
+                    -32050,
+                    "Project registry is unavailable",
+                )
+                .await?;
+                return Ok(true);
+            };
+            match projects.handle(method, params).await {
+                Ok(result) => send_local_rpc_result(socket, id, result).await?,
+                Err(error) => {
+                    send_rpc_error(socket, id.clone(), -32050, &error.to_string()).await?;
+                }
+            }
+            return Ok(true);
+        }
+        if WorkspaceService::handles(method) {
+            return self.handle_workspace_rpc(socket, id, method, params).await;
+        }
         if !AccountPoolService::handles(method) {
             return Ok(false);
         }
@@ -867,6 +1060,42 @@ impl SyncHub {
             Ok(result) => send_local_rpc_result(socket, id, result).await?,
             Err(error) => {
                 send_rpc_error(socket, id.clone(), -32040, &error.to_string()).await?;
+            }
+        }
+        Ok(true)
+    }
+
+    async fn handle_workspace_rpc(
+        &self,
+        socket: &mut WebSocket,
+        id: &Value,
+        method: &str,
+        params: &Value,
+    ) -> Result<bool, ()> {
+        if self.mutation_mode != MutationMode::Active
+            && !matches!(
+                method,
+                "companion/workspace/inspect" | "companion/workspace/read"
+            )
+        {
+            send_rpc_error(socket, id.clone(), -32010, "companion is read-only").await?;
+            return Ok(true);
+        }
+        let Some(workspaces) = self.workspaces() else {
+            send_rpc_error(
+                socket,
+                id.clone(),
+                -32060,
+                "Workspace service is unavailable",
+            )
+            .await?;
+            return Ok(true);
+        };
+        match workspaces.handle(method, params).await {
+            Ok(result) => send_local_rpc_result(socket, id, result).await?,
+            Err(error) => {
+                warn!(method, %error, "workspace RPC failed");
+                send_rpc_error(socket, id.clone(), -32060, &error.to_string()).await?;
             }
         }
         Ok(true)
@@ -1068,6 +1297,31 @@ impl SyncHub {
     }
 }
 
+async fn send_live_replay_after(
+    socket: &mut WebSocket,
+    store: Arc<IndexStore>,
+    cursor: u64,
+) -> Result<u64, LiveReplayError> {
+    let replay = tokio::task::spawn_blocking(move || store.replay_after(Some(cursor)))
+        .await
+        .map_err(|_| LiveReplayError::Journal)?
+        .map_err(|_| LiveReplayError::Journal)?;
+    if replay.snapshot_required {
+        return Err(LiveReplayError::SnapshotRequired);
+    }
+    for (event_cursor, payload) in replay.entries {
+        let payload =
+            serde_json::from_slice::<Value>(&payload).map_err(|_| LiveReplayError::Journal)?;
+        send_json(
+            socket,
+            &json!({ "type": "event", "cursor": event_cursor, "payload": payload }),
+        )
+        .await
+        .map_err(|_| LiveReplayError::Socket)?;
+    }
+    Ok(replay.head_cursor)
+}
+
 async fn forward_upstream_events(
     mut upstream: tokio::sync::broadcast::Receiver<Value>,
     ingest: tokio::sync::mpsc::Sender<Value>,
@@ -1257,12 +1511,13 @@ async fn forward_account_pool_events(
 async fn ingest_events(
     mut ingest: tokio::sync::mpsc::Receiver<Value>,
     store: Arc<IndexStore>,
-    events: tokio::sync::broadcast::Sender<DurableEvent>,
+    events: tokio::sync::broadcast::Sender<DurableSignal>,
     server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
     content_projector: Arc<std::sync::RwLock<Option<Arc<ContentProjector>>>>,
     resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
     usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
 ) {
+    let mut stream_diagnostics = AgentStreamDiagnostics::default();
     while let Some(first) = ingest.recv().await {
         let mut payloads = vec![first];
         let deadline = tokio::time::Instant::now() + REPLAY_BATCH_DELAY;
@@ -1281,7 +1536,7 @@ async fn ingest_events(
             .is_err()
         {
             warn!("pending App Server request limits exceeded");
-            let _ = events.send(DurableEvent::Failed);
+            let _ = events.send(DurableSignal::Failed);
             break;
         }
         let resource_service = match resources.read() {
@@ -1303,6 +1558,9 @@ async fn ingest_events(
                 .map(|payload| projector.project_notification(payload))
                 .collect();
         }
+        stream_diagnostics.observe_input_batch(&payloads);
+        payloads = coalesce_stream_text_deltas(payloads);
+        stream_diagnostics.observe_emitted_batch(&payloads);
         let mut projected_payloads = Vec::with_capacity(payloads.len());
         for payload in payloads {
             let usage = match usage_projector.lock() {
@@ -1311,7 +1569,7 @@ async fn ingest_events(
             };
             let Ok(usage) = usage else {
                 warn!("usage projection persistence failed");
-                let _ = events.send(DurableEvent::Failed);
+                let _ = events.send(DurableSignal::Failed);
                 return;
             };
             projected_payloads.push(crate::thread_patch::attach_thread_patch_with_usage(
@@ -1325,7 +1583,7 @@ async fn ingest_events(
             .collect::<Result<Vec<Vec<u8>>, _>>()
         else {
             warn!("replay payload serialization failed");
-            let _ = events.send(DurableEvent::Failed);
+            let _ = events.send(DurableSignal::Failed);
             break;
         };
         let durable_store = store.clone();
@@ -1335,13 +1593,141 @@ async fn ingest_events(
         .await;
         let Ok(Ok(cursors)) = committed else {
             warn!("durable replay journal failed");
-            let _ = events.send(DurableEvent::Failed);
+            let _ = events.send(DurableSignal::Failed);
             break;
         };
-        for (cursor, payload) in cursors.into_iter().zip(payloads) {
-            let _ = events.send(DurableEvent::Entry(cursor, payload));
+        stream_diagnostics.finish_completed_turns(&payloads);
+        if let Some(cursor) = cursors.last().copied() {
+            let _ = events.send(DurableSignal::Committed(cursor));
         }
     }
+}
+
+fn coalesce_stream_text_deltas(payloads: Vec<Value>) -> Vec<Value> {
+    let mut coalesced = Vec::with_capacity(payloads.len());
+    for payload in payloads {
+        if let Some(previous) = coalesced.last_mut()
+            && merge_adjacent_stream_text_delta(previous, &payload)
+        {
+            continue;
+        }
+        coalesced.push(payload);
+    }
+    coalesced
+}
+
+fn merge_adjacent_stream_text_delta(previous: &mut Value, next: &Value) -> bool {
+    if !same_stream_text_delta_envelope(previous, next) {
+        return false;
+    }
+    let Some(next_delta) = next
+        .get("params")
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("delta"))
+        .and_then(Value::as_str)
+    else {
+        return false;
+    };
+    let Some(previous_delta) = previous
+        .get_mut("params")
+        .and_then(Value::as_object_mut)
+        .and_then(|params| params.get_mut("delta"))
+        .and_then(|delta| delta.as_str())
+    else {
+        return false;
+    };
+    if previous_delta.len().saturating_add(next_delta.len()) > MAX_COALESCED_TEXT_DELTA_BYTES {
+        return false;
+    }
+    let mut merged = String::with_capacity(previous_delta.len() + next_delta.len());
+    merged.push_str(previous_delta);
+    merged.push_str(next_delta);
+    if let Some(delta) = previous
+        .get_mut("params")
+        .and_then(Value::as_object_mut)
+        .and_then(|params| params.get_mut("delta"))
+    {
+        *delta = Value::String(merged);
+        return true;
+    }
+    false
+}
+
+fn same_stream_text_delta_envelope(left: &Value, right: &Value) -> bool {
+    let left_method = left.get("method").and_then(Value::as_str);
+    let right_method = right.get("method").and_then(Value::as_str);
+    if left_method != right_method || !left_method.is_some_and(is_coalescible_text_delta_method) {
+        return false;
+    }
+    let (Some(left), Some(right)) = (left.as_object(), right.as_object()) else {
+        return false;
+    };
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter().all(|(key, left_value)| {
+        let Some(right_value) = right.get(key) else {
+            return false;
+        };
+        if key == "params" {
+            same_stream_text_delta_params(left_value, right_value)
+        } else {
+            left_value == right_value
+        }
+    })
+}
+
+fn same_stream_text_delta_params(left: &Value, right: &Value) -> bool {
+    let (Some(left), Some(right)) = (left.as_object(), right.as_object()) else {
+        return false;
+    };
+    if left.len() != right.len()
+        || left.get("delta").and_then(Value::as_str).is_none()
+        || right.get("delta").and_then(Value::as_str).is_none()
+    {
+        return false;
+    }
+    left.iter().all(|(key, left_value)| {
+        key == "delta"
+            || right
+                .get(key)
+                .is_some_and(|right_value| right_value == left_value)
+    })
+}
+
+fn is_coalescible_text_delta_method(method: &str) -> bool {
+    matches!(
+        method,
+        "item/agentMessage/delta"
+            | "item/plan/delta"
+            | "item/reasoning/summaryTextDelta"
+            | "item/reasoning/textDelta"
+    )
+}
+
+fn agent_message_delta(payload: &Value) -> Option<(AgentStreamKey, &str)> {
+    if payload.get("method").and_then(Value::as_str) != Some("item/agentMessage/delta") {
+        return None;
+    }
+    let key = agent_stream_key(payload)?;
+    let delta = payload.get("params")?.get("delta")?.as_str()?;
+    Some((key, delta))
+}
+
+fn agent_stream_key(payload: &Value) -> Option<AgentStreamKey> {
+    let params = payload.get("params")?.as_object()?;
+    let thread_id = params.get("threadId")?.as_str()?;
+    let turn_id = params.get("turnId").and_then(Value::as_str).or_else(|| {
+        params
+            .get("turn")
+            .and_then(Value::as_object)
+            .and_then(|turn| turn.get("id"))
+            .and_then(Value::as_str)
+    })?;
+    Some(AgentStreamKey {
+        thread_id: thread_id.to_owned(),
+        turn_id: turn_id.to_owned(),
+    })
 }
 
 async fn observe_server_requests(
@@ -1602,6 +1988,7 @@ fn queue_put(
     }
     let rpc_params = command.get("params").cloned().unwrap_or_else(|| json!({}));
     let created_at = command.get("createdAt").and_then(Value::as_u64);
+    let workspace_request_id = command.get("workspaceRequestId").and_then(Value::as_str);
     let presentation = match command.get("presentation").and_then(Value::as_str) {
         None | Some("queue") => OutboxPresentation::Queue,
         Some("delivery") => OutboxPresentation::Delivery,
@@ -1611,12 +1998,13 @@ fn queue_put(
             ));
         }
     };
-    serde_json::to_value(store.outbox_put_turn_start_with_presentation(
+    serde_json::to_value(store.outbox_put_turn_start_with_workspace(
         command_id,
         thread_id,
         rpc_params,
         created_at,
         presentation,
+        workspace_request_id,
     )?)
     .map_err(Into::into)
 }
@@ -1705,6 +2093,7 @@ async fn run_outbox_pump(
     local_events: tokio::sync::mpsc::Sender<Value>,
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     account_pool: Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
+    workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
 ) {
     let mut status = upstream.subscribe_status();
     let recovery_store = store.clone();
@@ -1741,6 +2130,7 @@ async fn run_outbox_pump(
                             &local_events,
                             &files,
                             &account_pool,
+                            &workspaces,
                             command,
                         )
                         .await;
@@ -1769,8 +2159,84 @@ async fn reconcile_outbox_command(
     local_events: &tokio::sync::mpsc::Sender<Value>,
     files: &Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     account_pool: &Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
+    workspaces: &Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
     command: OutboxCommand,
 ) {
+    if let Some(request_id) = command.workspace_request_id.as_deref() {
+        let workspace_service = match workspaces.read() {
+            Ok(slot) => slot.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let Some(workspace_service) = workspace_service else {
+            wait_outbox(
+                store,
+                local_events,
+                &command.remote_thread_id,
+                &command.command_id,
+                OutboxState::Queued,
+                None,
+                u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
+            )
+            .await;
+            return;
+        };
+        match workspace_service.operation_status(request_id).await {
+            Ok(Some(operation)) if operation.phase == WorkspacePhase::Ready => {}
+            Ok(Some(operation)) if operation.phase == WorkspacePhase::Failed => {
+                set_outbox_state(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Failed,
+                    operation
+                        .error
+                        .as_deref()
+                        .or(Some("workspace preparation failed")),
+                )
+                .await;
+                return;
+            }
+            Ok(Some(_)) => {
+                wait_outbox(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    None,
+                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
+                )
+                .await;
+                return;
+            }
+            Ok(None) => {
+                set_outbox_state(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Failed,
+                    Some("workspace operation was not found"),
+                )
+                .await;
+                return;
+            }
+            Err(error) => {
+                defer_outbox(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    &error.to_string(),
+                    retry_delay_ms(command.attempts),
+                )
+                .await;
+                return;
+            }
+        }
+    }
     let account_pool_service = match account_pool.read() {
         Ok(slot) => slot.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
@@ -2258,6 +2724,8 @@ fn is_read_only_method(method: &str) -> bool {
     matches!(
         method,
         "account/rateLimits/read"
+            | "config/read"
+            | "fs/readDirectory"
             | "app/installed"
             | "app/list"
             | "app/read"
@@ -2290,6 +2758,21 @@ fn is_read_only_method(method: &str) -> bool {
 fn required_scope_for_rpc(method: &str) -> Option<&'static str> {
     if matches!(
         method,
+        "companion/workspace/inspect" | "companion/workspace/read"
+    ) {
+        return Some("threads.read");
+    }
+    if method == "companion/workspace/create" {
+        return Some("threads.write");
+    }
+    if method == "companion/project/list" {
+        return Some("threads.read");
+    }
+    if method == "companion/project/add" {
+        return Some("threads.write");
+    }
+    if matches!(
+        method,
         "companion/accountPool/list" | "companion/accountPool/refresh"
     ) {
         return Some("threads.read");
@@ -2299,7 +2782,10 @@ fn required_scope_for_rpc(method: &str) -> Option<&'static str> {
     }
     if matches!(
         method,
-        "companion/threadResources/read" | "companion/threadChange/read"
+        "companion/threadResources/read"
+            | "companion/threadChanges/read"
+            | "companion/threadAttachments/read"
+            | "companion/threadChange/read"
     ) || is_read_only_method(method)
     {
         return Some("threads.read");
@@ -2480,6 +2966,9 @@ mod tests {
     #[test]
     fn read_only_mode_refuses_mutations() {
         assert!(is_read_only_method("thread/list"));
+        assert!(is_read_only_method("fs/readDirectory"));
+        assert!(is_read_only_method("config/read"));
+        assert_eq!(contract_scope_for_rpc("config/read"), Some("threads.read"));
         assert!(!is_read_only_method("turn/start"));
         assert!(!is_read_only_method("thread/delete"));
     }
@@ -2520,6 +3009,85 @@ mod tests {
             })),
             Some("projected")
         );
+    }
+
+    #[test]
+    fn live_broadcast_signal_cannot_retain_event_payloads() {
+        assert!(
+            std::mem::size_of::<DurableSignal>() <= 16,
+            "the live ring must contain only a cursor-sized wake-up signal"
+        );
+    }
+
+    #[test]
+    fn coalesces_only_adjacent_stream_text_deltas_for_the_same_envelope() {
+        let delta = |item_id: &str, text: &str| {
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "itemId": item_id,
+                    "delta": text,
+                },
+                "subscriptionId": "live",
+            })
+        };
+        let payloads = coalesce_stream_text_deltas(vec![
+            delta("message", "one "),
+            delta("message", "two"),
+            delta("other", "separate"),
+            delta("message", " tail"),
+            json!({"method": "item/completed", "params": {"threadId": "thread"}}),
+        ]);
+
+        assert_eq!(payloads.len(), 4);
+        assert_eq!(payloads[0]["params"]["delta"], "one two");
+        assert_eq!(payloads[1]["params"]["delta"], "separate");
+        assert_eq!(payloads[2]["params"]["delta"], " tail");
+        assert_eq!(payloads[3]["method"], "item/completed");
+    }
+
+    #[test]
+    fn coalesces_reasoning_text_without_crossing_a_method_boundary() {
+        let payloads = coalesce_stream_text_deltas(vec![
+            json!({
+                "method": "item/reasoning/textDelta",
+                "params": {"threadId": "thread", "turnId": "turn", "itemId": "reasoning", "delta": "one"},
+            }),
+            json!({
+                "method": "item/reasoning/textDelta",
+                "params": {"threadId": "thread", "turnId": "turn", "itemId": "reasoning", "delta": "two"},
+            }),
+            json!({
+                "method": "item/reasoning/summaryTextDelta",
+                "params": {"threadId": "thread", "turnId": "turn", "itemId": "reasoning", "delta": "summary"},
+            }),
+        ]);
+
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["params"]["delta"], "onetwo");
+        assert_eq!(payloads[1]["params"]["delta"], "summary");
+    }
+
+    #[test]
+    fn preserves_unknown_stream_delta_envelope_fields() {
+        let payloads = coalesce_stream_text_deltas(vec![
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {"threadId": "thread", "turnId": "turn", "itemId": "message", "delta": "one"},
+                "futureField": 1,
+            }),
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {"threadId": "thread", "turnId": "turn", "itemId": "message", "delta": "two"},
+                "futureField": 2,
+            }),
+        ]);
+
+        assert_eq!(payloads.len(), 2);
+        assert_eq!(payloads[0]["futureField"], 1);
+        assert_eq!(payloads[1]["futureField"], 2);
     }
 
     #[test]

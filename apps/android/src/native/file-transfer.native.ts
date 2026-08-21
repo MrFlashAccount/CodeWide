@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { Directory, File, FileMode, Paths } from "expo-file-system";
+import { Linking, NativeModules } from "react-native";
 
 import {
   fetchPrivateAsset,
@@ -11,7 +12,22 @@ import {
 export type TransferProgress = { transferred: number; total: number; phase: "hashing" | "transferring" | "verifying" };
 export type SelectedUpload = { name: string; size: number; mimeType: string; native: File };
 export type SelectedDirectory = { name: string; native: Directory };
-export type RunningTransfer = { promise: Promise<{ bytes: number; sha256: string; uri?: string }>; cancel(): void };
+export type RunningTransfer = { promise: Promise<{ bytes: number; sha256: string; uri?: string; mimeType?: string }>; cancel(): void };
+
+type FileViewerBridge = {
+  openDocument?(uri: string, mimeType: string | null): Promise<void>;
+};
+
+const fileViewerBridge = NativeModules.CodeWideNative as FileViewerBridge | undefined;
+
+export async function openDownloadedFile(uri: string, mimeType?: string): Promise<void> {
+  if (fileViewerBridge?.openDocument !== undefined) {
+    await fileViewerBridge.openDocument(uri, mimeType ?? null);
+    return;
+  }
+  // Compatibility for OTA clients whose native runtime predates openDocument.
+  await Linking.openURL(uri);
+}
 
 export async function pickUploadFile(): Promise<SelectedUpload | null> {
   const picked = await File.pickFileAsync({ mimeTypes: "*/*" });
@@ -248,8 +264,23 @@ function startDownloadFromUrl(
       destination.delete();
       throw new Error("Downloaded file failed SHA-256 integrity verification");
     }
-    destination.rename(filename);
-    return { bytes: expectedBytes, sha256: actualHash, uri: destination.uri };
+    destination = await finalizeDownloadedFile(
+      directory.native,
+      destination,
+      filename,
+      head.headers.get("content-type"),
+      expectedBytes,
+      expectedHash,
+      onProgress,
+      () => cancelled,
+    );
+    const mimeType = head.headers.get("content-type");
+    return {
+      bytes: expectedBytes,
+      sha256: actualHash,
+      uri: destination.uri,
+      ...(mimeType === null ? {} : { mimeType }),
+    };
   })();
   return {
     promise,
@@ -258,6 +289,102 @@ function startDownloadFromUrl(
       activeRequest?.abort();
     },
   };
+}
+
+async function finalizeDownloadedFile(
+  directory: Directory,
+  partial: File,
+  filename: string,
+  mimeType: string | null,
+  expectedBytes: number,
+  expectedHash: string,
+  onProgress: (progress: TransferProgress) => void,
+  cancelled: () => boolean,
+): Promise<File> {
+  if (!partial.uri.startsWith("content://")) {
+    partial.rename(filename);
+    return partial;
+  }
+
+  const existing = directory.list().find((entry) => entry.name === filename);
+  if (existing !== undefined) {
+    if (existing instanceof File && existing.size === expectedBytes) {
+      const existingHash = await hashFile(
+        existing,
+        (transferred) => onProgress({ transferred, total: expectedBytes, phase: "verifying" }),
+        cancelled,
+      );
+      if (existingHash === expectedHash) {
+        deleteBestEffort(partial);
+        return existing;
+      }
+    }
+    throw new Error(`A file named "${filename}" already exists in the selected folder`);
+  }
+
+  const completed = directory.createFile(filename, mimeType);
+  if (completed.name !== filename) {
+    deleteBestEffort(completed);
+    throw new Error(`The selected folder could not create a file named "${filename}"`);
+  }
+  try {
+    await copyFileContents(
+      partial,
+      completed,
+      expectedBytes,
+      (transferred) => onProgress({ transferred, total: expectedBytes, phase: "verifying" }),
+      cancelled,
+    );
+    const completedHash = await hashFile(
+      completed,
+      (transferred) => onProgress({ transferred, total: expectedBytes, phase: "verifying" }),
+      cancelled,
+    );
+    if (completed.size !== expectedBytes || completedHash !== expectedHash) {
+      throw new Error("Saved file failed SHA-256 integrity verification");
+    }
+  } catch (cause) {
+    deleteBestEffort(completed);
+    throw cause;
+  }
+  deleteBestEffort(partial);
+  return completed;
+}
+
+async function copyFileContents(
+  source: File,
+  target: File,
+  expectedBytes: number,
+  progress: (bytes: number) => void,
+  cancelled: () => boolean,
+): Promise<void> {
+  const input = source.open(FileMode.ReadOnly);
+  const output = target.open(FileMode.WriteOnly);
+  let copied = 0;
+  try {
+    while (copied < expectedBytes) {
+      if (cancelled()) throw new Error("Transfer cancelled");
+      const chunk = input.readBytes(Math.min(1024 * 1024, expectedBytes - copied));
+      if (chunk.length === 0) throw new Error("Could not copy the complete downloaded file");
+      output.writeBytes(chunk);
+      copied += chunk.length;
+      progress(copied);
+      if (copied % (8 * 1024 * 1024) === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  } finally {
+    input.close();
+    output.close();
+  }
+  if (copied !== expectedBytes) throw new Error("Could not copy the complete downloaded file");
+}
+
+function deleteBestEffort(file: File): void {
+  try {
+    if (file.exists) file.delete();
+  } catch {
+    // The completed file is already durable. A provider-specific cleanup
+    // failure must not turn a successful user-visible save into an error.
+  }
 }
 
 async function hashFile(file: File, progress: (bytes: number) => void, cancelled: () => boolean): Promise<string> {

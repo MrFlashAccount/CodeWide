@@ -1,6 +1,11 @@
 import { NativeEventEmitter, NativeModules } from "react-native";
 import { useSyncExternalStore } from "react";
 
+import { setOperationalDiagnosticsEnabled } from "../data/operational-metrics";
+import { resetPerformanceExperiments } from "../data/performance-experiments";
+import { setTelemetryEnabled } from "../data/telemetry";
+import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
+
 export type PerformanceMetricPoint = {
   sampledAtMs: number;
   cpuPercent: number;
@@ -19,6 +24,13 @@ export type CurrentPerformanceMetrics = PerformanceMetricPoint & {
   javaHeapBytes: number;
   javaHeapLimitBytes: number;
   nativeHeapBytes: number;
+  javaHeapPssBytes: number;
+  nativeHeapPssBytes: number;
+  codePssBytes: number;
+  stackPssBytes: number;
+  graphicsPssBytes: number;
+  privateOtherPssBytes: number;
+  systemPssBytes: number;
   rxSessionBytes: number;
   txSessionBytes: number;
   renderedFrames: number;
@@ -48,6 +60,8 @@ export type PerformanceMetricsSnapshot = {
 type PerformanceBridge = {
   getPerformanceSnapshot(): Promise<PerformanceMetricsSnapshot>;
   setPerformanceMonitoringEnabled(enabled: boolean): Promise<PerformanceMetricsSnapshot>;
+  beginNavigationTrace?(traceId: string): Promise<boolean>;
+  endNavigationTrace?(traceId: string): Promise<ThreadNavigationFrameProfile | null>;
 };
 
 const EVENT_NAME = "CodexPerformanceSnapshot";
@@ -74,6 +88,8 @@ let snapshot: PerformanceMetricsSnapshot = {
 
 function publish(next: PerformanceMetricsSnapshot): void {
   snapshot = next;
+  setOperationalDiagnosticsEnabled(next.enabled);
+  setTelemetryEnabled(next.enabled);
   listeners.forEach((listener) => listener());
 }
 
@@ -89,6 +105,11 @@ function ensureNativeSubscription(): void {
       .finally(() => { loading = null; });
   }
 }
+
+// Restore the persisted Data for geeks state during app bootstrap. Navigation
+// may happen before Settings is ever opened, so diagnostics cannot be lazily
+// enabled by the settings screen itself.
+ensureNativeSubscription();
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
@@ -106,7 +127,23 @@ export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
   return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
 }
 
+export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
+  return snapshot;
+}
+
 export async function setPerformanceMonitoringEnabled(enabled: boolean): Promise<void> {
   if (bridge === undefined) return;
-  publish(await bridge.setPerformanceMonitoringEnabled(enabled));
+  const next = await bridge.setPerformanceMonitoringEnabled(enabled);
+  if (!next.enabled) resetPerformanceExperiments();
+  publish(next);
+}
+
+export async function beginNavigationFrameTrace(traceId: string): Promise<boolean> {
+  if (bridge === undefined || !snapshot.enabled || typeof bridge.beginNavigationTrace !== "function") return false;
+  return await bridge.beginNavigationTrace(traceId).catch(() => false);
+}
+
+export async function endNavigationFrameTrace(traceId: string): Promise<ThreadNavigationFrameProfile | null> {
+  if (bridge === undefined || typeof bridge.endNavigationTrace !== "function") return null;
+  return await bridge.endNavigationTrace(traceId).catch(() => null);
 }

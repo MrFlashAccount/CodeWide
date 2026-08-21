@@ -18,6 +18,15 @@ export type AppFullscreenOverlayLifecycle = {
 
 export type AppFullscreenOverlayRender = (controls: { close(): void }) => ReactNode;
 
+export type AppFullscreenOverlayOptions = {
+  /**
+   * Keep the overlay mounted through a transient responsive-layout boundary
+   * replacement. Explicit scope dismissal (for example, changing threads)
+   * still closes it.
+   */
+  dismissOnScopeUnmount?: boolean;
+};
+
 export type AppFullscreenOverlayHandle = {
   id: string;
   close(): void;
@@ -31,12 +40,14 @@ type OverlayBinding = {
 type OverlayEntry = OverlayBinding & {
   id: string;
   content: ReactNode;
+  dismissOnScopeUnmount: boolean;
   shown: boolean;
 };
 
 type OverlayHostController = {
-  present(binding: OverlayBinding, render: AppFullscreenOverlayRender): AppFullscreenOverlayHandle;
+  present(binding: OverlayBinding, render: AppFullscreenOverlayRender, options?: AppFullscreenOverlayOptions): AppFullscreenOverlayHandle;
   dismissScope(scope: string): void;
+  dismissUnmountedScope(scope: string): void;
 };
 
 type OverlayPresentation = {
@@ -46,7 +57,7 @@ type OverlayPresentation = {
 };
 
 export type AppFullscreenOverlayController = {
-  present(render: AppFullscreenOverlayRender): AppFullscreenOverlayHandle;
+  present(render: AppFullscreenOverlayRender, options?: AppFullscreenOverlayOptions): AppFullscreenOverlayHandle;
   dismissAll(): void;
   dismissScope(scope: string): void;
 };
@@ -93,7 +104,7 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
   };
 
   const [controller] = useState<OverlayHostController>(() => ({
-    present(binding, render) {
+    present(binding, render, options) {
       sequenceRef.current += 1;
       const id = `fullscreen-overlay-${sequenceRef.current}`;
       binding.lifecycle?.willOpen?.(id);
@@ -101,6 +112,7 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
         ...binding,
         id,
         content: render({ close: () => close(id) }),
+        dismissOnScopeUnmount: options?.dismissOnScopeUnmount ?? true,
         shown: false,
       };
       const nativeModalAlreadyOpen = entriesRef.current.length > 0;
@@ -115,6 +127,13 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
       if (matching.length === 0) return;
       const next = entriesRef.current.filter((entry) => entry.scope !== scope);
       publish(next);
+      for (const entry of matching.reverse()) entry.lifecycle?.didClose?.(entry.id);
+    },
+    dismissUnmountedScope(scope) {
+      const matching = entriesRef.current.filter((entry) => entry.scope === scope && entry.dismissOnScopeUnmount);
+      if (matching.length === 0) return;
+      const matchingIds = new Set(matching.map((entry) => entry.id));
+      publish(entriesRef.current.filter((entry) => !matchingIds.has(entry.id)));
       for (const entry of matching.reverse()) entry.lifecycle?.didClose?.(entry.id);
     },
   }));
@@ -182,7 +201,7 @@ export function AppFullscreenOverlayBoundary({
 }) {
   const host = useContext(AppFullscreenOverlayHostContext);
   if (host === null) throw new Error("AppFullscreenOverlayBoundary must be used inside AppFullscreenOverlayProvider");
-  useLayoutEffect(() => () => host.dismissScope(scope), [host, scope]);
+  useLayoutEffect(() => () => host.dismissUnmountedScope(scope), [host, scope]);
 
   return (
     <AppFullscreenOverlayBindingContext.Provider value={{ scope, lifecycle }}>
@@ -202,7 +221,7 @@ export function useAppFullscreenOverlay(
     lifecycle: override?.lifecycle === undefined ? inherited.lifecycle : override.lifecycle,
   };
   return {
-    present: (render) => host.present(binding, render),
+    present: (render, options) => host.present(binding, render, options),
     dismissAll: () => host.dismissScope(binding.scope),
     dismissScope: (scope) => host.dismissScope(scope),
   };

@@ -1,8 +1,14 @@
 use std::{
-    env,
+    collections::{HashMap, VecDeque},
+    env, fmt,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::mpsc as std_mpsc,
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc as std_mpsc,
+    },
+    time::{Duration, Instant},
 };
 
 use axum::{
@@ -12,7 +18,7 @@ use axum::{
 use futures_util::SinkExt;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc, watch};
 
 use crate::auth::AuthorizationChange;
 
@@ -22,27 +28,45 @@ const MAX_COLS: u16 = 500;
 const MAX_ROWS: u16 = 300;
 const MAX_INPUT_BYTES: usize = 1024 * 1024;
 const OUTPUT_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_REPLAY_BYTES: usize = 32 * 1024 * 1024;
+const COMPLETED_RETENTION: Duration = Duration::from_mins(15);
+const DETACHED_IDLE_TTL: Duration = Duration::from_hours(24);
+const TERMINAL_EXITED_CLOSE_CODE: u16 = 4000;
+const TERMINAL_REPLAY_CLOSE_CODE: u16 = 4004;
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalQuery {
     pub cwd: Option<String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
+    pub session_id: Option<String>,
+    pub offset: Option<u64>,
+    pub create: Option<bool>,
 }
 
 #[derive(Debug)]
 pub enum TerminalError {
     InvalidSize,
     InvalidCwd,
-    SpawnFailed,
+    InvalidSession,
+    SessionNotFound,
+    SessionOwnedByAnotherDevice,
+    SessionLimitReached,
+    ReplayUnavailable,
+    SpawnFailed { stage: &'static str, reason: String },
 }
 
 impl TerminalError {
     #[must_use]
     pub const fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidSize | Self::InvalidCwd => StatusCode::BAD_REQUEST,
-            Self::SpawnFailed => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::InvalidSize | Self::InvalidCwd | Self::InvalidSession => StatusCode::BAD_REQUEST,
+            Self::SessionNotFound => StatusCode::NOT_FOUND,
+            Self::SessionOwnedByAnotherDevice => StatusCode::FORBIDDEN,
+            Self::SessionLimitReached => StatusCode::TOO_MANY_REQUESTS,
+            Self::ReplayUnavailable => StatusCode::CONFLICT,
+            Self::SpawnFailed { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -51,9 +75,57 @@ impl TerminalError {
         match self {
             Self::InvalidSize => "terminal_size_invalid",
             Self::InvalidCwd => "terminal_cwd_invalid",
-            Self::SpawnFailed => "terminal_spawn_failed",
+            Self::InvalidSession => "terminal_session_invalid",
+            Self::SessionNotFound => "terminal_session_not_found",
+            Self::SessionOwnedByAnotherDevice => "terminal_session_owner_mismatch",
+            Self::SessionLimitReached => "terminal_limit_reached",
+            Self::ReplayUnavailable => "terminal_replay_unavailable",
+            Self::SpawnFailed { .. } => "terminal_spawn_failed",
         }
     }
+
+    fn spawn_failed(stage: &'static str, error: impl fmt::Display) -> Self {
+        Self::SpawnFailed {
+            stage,
+            reason: error.to_string(),
+        }
+    }
+}
+
+impl fmt::Display for TerminalError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidSize => formatter.write_str("terminal size is invalid"),
+            Self::InvalidCwd => formatter.write_str("terminal working directory is invalid"),
+            Self::InvalidSession => formatter.write_str("terminal session id is invalid"),
+            Self::SessionNotFound => formatter.write_str("terminal session was not found"),
+            Self::SessionOwnedByAnotherDevice => {
+                formatter.write_str("terminal session belongs to another device")
+            }
+            Self::SessionLimitReached => formatter.write_str("terminal session limit reached"),
+            Self::ReplayUnavailable => formatter.write_str("terminal replay cursor is unavailable"),
+            Self::SpawnFailed { stage, reason } => {
+                write!(formatter, "terminal {stage} failed: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TerminalError {}
+
+/// Verifies that the host can allocate a pseudo-terminal before the companion
+/// advertises a healthy terminal transport.
+///
+/// # Errors
+///
+/// Returns the underlying PTY allocation failure with its startup stage.
+pub fn preflight() -> Result<(), TerminalError> {
+    let size = validate_size(None, None)?;
+    let pair = native_pty_system()
+        .openpty(size)
+        .map_err(|error| TerminalError::spawn_failed("openpty preflight", error))?;
+    drop(pair);
+    Ok(())
 }
 
 pub struct TerminalSession {
@@ -91,7 +163,7 @@ impl TerminalSession {
         let cwd = resolve_cwd(query.cwd.as_deref())?;
         let pair = native_pty_system()
             .openpty(size)
-            .map_err(|_| TerminalError::SpawnFailed)?;
+            .map_err(|error| TerminalError::spawn_failed("openpty", error))?;
         let shell = resolve_shell();
         let mut command = CommandBuilder::new(shell);
         command.cwd(cwd);
@@ -101,16 +173,16 @@ impl TerminalSession {
         let child = pair
             .slave
             .spawn_command(command)
-            .map_err(|_| TerminalError::SpawnFailed)?;
+            .map_err(|error| TerminalError::spawn_failed("shell spawn", error))?;
         drop(pair.slave);
         let reader = pair
             .master
             .try_clone_reader()
-            .map_err(|_| TerminalError::SpawnFailed)?;
+            .map_err(|error| TerminalError::spawn_failed("reader clone", error))?;
         let writer = pair
             .master
             .take_writer()
-            .map_err(|_| TerminalError::SpawnFailed)?;
+            .map_err(|error| TerminalError::spawn_failed("writer acquisition", error))?;
         Ok(Self {
             master: pair.master,
             child,
@@ -120,8 +192,379 @@ impl TerminalSession {
     }
 }
 
+#[derive(Clone)]
+pub struct TerminalRegistry {
+    inner: Arc<TerminalRegistryInner>,
+}
+
+struct TerminalRegistryInner {
+    sessions: Mutex<HashMap<String, Arc<LiveTerminal>>>,
+    slots: Arc<Semaphore>,
+}
+
+pub struct LiveTerminal {
+    id: String,
+    owner: String,
+    commands: std_mpsc::SyncSender<WriterCommand>,
+    output: broadcast::Sender<ReplayChunk>,
+    state: watch::Sender<TerminalState>,
+    replay: Mutex<ReplayBuffer>,
+    attached: AtomicUsize,
+    exited: AtomicBool,
+    last_activity: Mutex<Instant>,
+    permit: Mutex<Option<OwnedSemaphorePermit>>,
+}
+
+#[derive(Clone)]
+struct ReplayChunk {
+    start: u64,
+    bytes: Arc<[u8]>,
+}
+
+#[derive(Default)]
+struct ReplayBuffer {
+    start: u64,
+    end: u64,
+    bytes: usize,
+    chunks: VecDeque<ReplayChunk>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalState {
+    Running,
+    Exited,
+}
+
+struct AttachmentGuard {
+    terminal: Arc<LiveTerminal>,
+}
+
+impl Drop for AttachmentGuard {
+    fn drop(&mut self) {
+        self.terminal.attached.fetch_sub(1, Ordering::AcqRel);
+        self.terminal.touch();
+    }
+}
+
+impl TerminalRegistry {
+    #[must_use]
+    pub fn new(max_sessions: usize) -> Self {
+        Self {
+            inner: Arc::new(TerminalRegistryInner {
+                sessions: Mutex::new(HashMap::new()),
+                slots: Arc::new(Semaphore::new(max_sessions)),
+            }),
+        }
+    }
+
+    /// Reserves one process slot for a legacy socket-owned terminal.
+    ///
+    /// # Errors
+    ///
+    /// Returns `terminal_limit_reached` when all process slots are occupied.
+    pub fn legacy_permit(&self) -> Result<OwnedSemaphorePermit, TerminalError> {
+        self.inner
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| TerminalError::SessionLimitReached)
+    }
+
+    /// Finds or creates a companion-owned terminal process.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid identifiers, owner mismatches, missing sessions and
+    /// process allocation failures.
+    pub fn attach_or_create(
+        &self,
+        owner: &str,
+        query: &TerminalQuery,
+        authorization: Option<TerminalAuthorization>,
+    ) -> Result<Arc<LiveTerminal>, TerminalError> {
+        let session_id = query
+            .session_id
+            .as_deref()
+            .filter(|value| valid_session_id(value))
+            .ok_or(TerminalError::InvalidSession)?;
+
+        if let Some(existing) = lock(&self.inner.sessions).get(session_id).cloned() {
+            if existing.owner != owner {
+                return Err(TerminalError::SessionOwnedByAnotherDevice);
+            }
+            if !existing.exited.load(Ordering::Acquire) {
+                existing.resize(validate_size(query.cols, query.rows)?)?;
+            }
+            return Ok(existing);
+        }
+        if query.create == Some(false) {
+            return Err(TerminalError::SessionNotFound);
+        }
+
+        let permit = self.legacy_permit()?;
+        let session = TerminalSession::spawn(query)?;
+        let live = LiveTerminal::start(session_id.to_owned(), owner.to_owned(), session, permit);
+        {
+            let mut sessions = lock(&self.inner.sessions);
+            if let Some(existing) = sessions.get(session_id) {
+                live.close();
+                if existing.owner != owner {
+                    return Err(TerminalError::SessionOwnedByAnotherDevice);
+                }
+                return Ok(Arc::clone(existing));
+            }
+            sessions.insert(session_id.to_owned(), Arc::clone(&live));
+        }
+        if let Some(authorization) = authorization {
+            live.watch_authorization(authorization);
+        }
+        self.schedule_cleanup(&live);
+        Ok(live)
+    }
+
+    fn schedule_cleanup(&self, terminal: &Arc<LiveTerminal>) {
+        let registry = Arc::downgrade(&self.inner);
+        let terminal = Arc::downgrade(terminal);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_mins(1)).await;
+                let Some(terminal) = terminal.upgrade() else {
+                    return;
+                };
+                let elapsed = lock(&terminal.last_activity).elapsed();
+                if terminal.exited.load(Ordering::Acquire) {
+                    if elapsed < COMPLETED_RETENTION {
+                        continue;
+                    }
+                } else if terminal.attached.load(Ordering::Acquire) == 0
+                    && elapsed >= DETACHED_IDLE_TTL
+                {
+                    terminal.close();
+                    continue;
+                } else {
+                    continue;
+                }
+                let Some(registry) = registry.upgrade() else {
+                    return;
+                };
+                let mut sessions = lock(&registry.sessions);
+                if sessions
+                    .get(&terminal.id)
+                    .is_some_and(|candidate| Arc::ptr_eq(candidate, &terminal))
+                {
+                    sessions.remove(&terminal.id);
+                }
+                return;
+            }
+        });
+    }
+}
+
+impl LiveTerminal {
+    fn start(
+        id: String,
+        owner: String,
+        session: TerminalSession,
+        permit: OwnedSemaphorePermit,
+    ) -> Arc<Self> {
+        let (commands, command_rx) = std_mpsc::sync_channel(64);
+        let (output, _) = broadcast::channel(128);
+        let (state, _) = watch::channel(TerminalState::Running);
+        let terminal = Arc::new(Self {
+            id,
+            owner,
+            commands,
+            output,
+            state,
+            replay: Mutex::new(ReplayBuffer::default()),
+            attached: AtomicUsize::new(0),
+            exited: AtomicBool::new(false),
+            last_activity: Mutex::new(Instant::now()),
+            permit: Mutex::new(Some(permit)),
+        });
+
+        let reader_terminal = Arc::downgrade(&terminal);
+        let mut reader = session.reader;
+        std::thread::spawn(move || {
+            let mut buffer = vec![0_u8; OUTPUT_CHUNK_BYTES];
+            loop {
+                let count = match reader.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => count,
+                };
+                let Some(terminal) = reader_terminal.upgrade() else {
+                    break;
+                };
+                terminal.append_output(&buffer[..count]);
+            }
+            if let Some(terminal) = reader_terminal.upgrade() {
+                terminal.mark_exited();
+            }
+        });
+
+        let control_terminal = Arc::downgrade(&terminal);
+        std::thread::spawn(move || {
+            let master = session.master;
+            let mut writer = session.writer;
+            let mut child = session.child;
+            loop {
+                match command_rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(WriterCommand::Input(bytes)) => {
+                        if writer
+                            .write_all(&bytes)
+                            .and_then(|()| writer.flush())
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(WriterCommand::Resize(size)) => {
+                        if master.resize(size).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(WriterCommand::Close) | Err(std_mpsc::RecvTimeoutError::Disconnected) => {
+                        let _ = child.kill();
+                        break;
+                    }
+                    Err(std_mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                match child.try_wait() {
+                    Ok(Some(_)) | Err(_) => break,
+                    Ok(None) => {}
+                }
+            }
+            let _ = child.wait();
+            if let Some(terminal) = control_terminal.upgrade() {
+                terminal.mark_exited();
+            }
+            drop(master);
+        });
+
+        terminal
+    }
+
+    fn append_output(&self, bytes: &[u8]) {
+        if bytes.is_empty() || self.exited.load(Ordering::Acquire) {
+            return;
+        }
+        let chunk = {
+            let mut replay = lock(&self.replay);
+            replay.append(bytes)
+        };
+        self.touch();
+        let _ = self.output.send(chunk);
+    }
+
+    fn resize(&self, size: PtySize) -> Result<(), TerminalError> {
+        self.commands
+            .try_send(WriterCommand::Resize(size))
+            .map_err(|_| TerminalError::SessionNotFound)
+    }
+
+    fn close(&self) {
+        let _ = self.commands.try_send(WriterCommand::Close);
+    }
+
+    fn mark_exited(&self) {
+        if self.exited.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        self.touch();
+        lock(&self.permit).take();
+        self.state.send_replace(TerminalState::Exited);
+    }
+
+    fn touch(&self) {
+        *lock(&self.last_activity) = Instant::now();
+    }
+
+    fn attach(self: &Arc<Self>) -> AttachmentGuard {
+        self.attached.fetch_add(1, Ordering::AcqRel);
+        self.touch();
+        AttachmentGuard {
+            terminal: Arc::clone(self),
+        }
+    }
+
+    fn watch_authorization(self: &Arc<Self>, mut authorization: TerminalAuthorization) {
+        let terminal = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                match authorization.changes.recv().await {
+                    Ok(change) if change.device_id == authorization.device_id => {
+                        if let Some(terminal) = terminal.upgrade() {
+                            terminal.close();
+                        }
+                        return;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        if let Some(terminal) = terminal.upgrade() {
+                            terminal.close();
+                        }
+                        return;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                    Ok(_) => {}
+                }
+            }
+        });
+    }
+}
+
+impl ReplayBuffer {
+    fn append(&mut self, bytes: &[u8]) -> ReplayChunk {
+        let chunk = ReplayChunk {
+            start: self.end,
+            bytes: Arc::from(bytes),
+        };
+        self.end += u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        self.bytes += bytes.len();
+        self.chunks.push_back(chunk.clone());
+        while self.bytes > MAX_REPLAY_BYTES && self.chunks.len() > 1 {
+            if let Some(removed) = self.chunks.pop_front() {
+                self.bytes -= removed.bytes.len();
+                self.start = removed.start + u64::try_from(removed.bytes.len()).unwrap_or(0);
+            }
+        }
+        chunk
+    }
+
+    fn snapshot(&self, offset: u64) -> Result<Vec<ReplayChunk>, TerminalError> {
+        if offset < self.start || offset > self.end {
+            return Err(TerminalError::ReplayUnavailable);
+        }
+        Ok(self
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.start + u64::try_from(chunk.bytes.len()).unwrap_or(0) > offset)
+            .cloned()
+            .collect())
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn valid_session_id(value: &str) -> bool {
+    value.len() == 45
+        && value.starts_with("terminal-")
+        && value[9..]
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| match index {
+                8 | 13 | 18 | 23 => byte == b'-',
+                _ => byte.is_ascii_hexdigit(),
+            })
+}
+
 enum WriterCommand {
     Input(Vec<u8>),
+    Resize(PtySize),
     Close,
 }
 
@@ -174,6 +617,7 @@ pub async fn bridge(
                         break;
                     }
                 }
+                WriterCommand::Resize(_) => {}
                 WriterCommand::Close => break,
             }
         }
@@ -233,6 +677,136 @@ pub async fn bridge(
     reader_task.abort();
     writer_task.abort();
     let _ = socket.close().await;
+}
+
+/// Attaches a WebSocket to a companion-owned process without tying the process
+/// lifetime to that socket. Output produced while detached is replayed from the
+/// requested byte offset.
+pub async fn bridge_resumable(mut socket: WebSocket, terminal: Arc<LiveTerminal>, offset: u64) {
+    let _attachment = terminal.attach();
+    let mut output = terminal.output.subscribe();
+    let mut state = terminal.state.subscribe();
+    let mut cursor = offset;
+    let replay = lock(&terminal.replay).snapshot(cursor);
+    let Ok(replay) = replay else {
+        close_socket(
+            &mut socket,
+            TERMINAL_REPLAY_CLOSE_CODE,
+            "terminal_replay_unavailable",
+        )
+        .await;
+        return;
+    };
+    for chunk in replay {
+        if send_replay_chunk(&mut socket, &chunk, &mut cursor)
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+    if *state.borrow() == TerminalState::Exited {
+        close_socket(&mut socket, TERMINAL_EXITED_CLOSE_CODE, "terminal_exited").await;
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            phone = socket.recv() => match phone {
+                Some(Ok(Message::Binary(bytes))) => match parse_client_frame(&bytes) {
+                    Ok(ClientFrame::Input(input)) => {
+                        if terminal.commands.try_send(WriterCommand::Input(input.to_vec())).is_err() {
+                            break;
+                        }
+                        terminal.touch();
+                    }
+                    Ok(ClientFrame::Resize(size)) => {
+                        if terminal.commands.try_send(WriterCommand::Resize(size)).is_err() {
+                            break;
+                        }
+                        terminal.touch();
+                    }
+                    Ok(ClientFrame::Close) => {
+                        terminal.close();
+                        break;
+                    }
+                    Err(()) => {
+                        close_socket(&mut socket, 1003, "invalid_terminal_frame").await;
+                        return;
+                    }
+                },
+                Some(Ok(Message::Ping(bytes))) => {
+                    if socket.send(Message::Pong(bytes)).await.is_err() {
+                        return;
+                    }
+                }
+                Some(Ok(Message::Pong(_))) => {}
+                Some(Ok(Message::Close(_)) | Err(_)) | None => return,
+                Some(Ok(Message::Text(_))) => {
+                    close_socket(&mut socket, 1003, "binary_frames_required").await;
+                    return;
+                }
+            },
+            received = output.recv() => match received {
+                Ok(chunk) => {
+                    if send_replay_chunk(&mut socket, &chunk, &mut cursor).await.is_err() {
+                        return;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    let replay = lock(&terminal.replay).snapshot(cursor);
+                    let Ok(replay) = replay else {
+                        close_socket(
+                            &mut socket,
+                            TERMINAL_REPLAY_CLOSE_CODE,
+                            "terminal_replay_unavailable",
+                        ).await;
+                        return;
+                    };
+                    for chunk in replay {
+                        if send_replay_chunk(&mut socket, &chunk, &mut cursor).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            },
+            changed = state.changed() => {
+                if changed.is_err() || *state.borrow() == TerminalState::Exited {
+                    break;
+                }
+            }
+        }
+    }
+
+    close_socket(&mut socket, TERMINAL_EXITED_CLOSE_CODE, "terminal_exited").await;
+}
+
+async fn send_replay_chunk(
+    socket: &mut WebSocket,
+    chunk: &ReplayChunk,
+    cursor: &mut u64,
+) -> Result<(), ()> {
+    let chunk_end = chunk.start + u64::try_from(chunk.bytes.len()).map_err(|_| ())?;
+    if chunk_end <= *cursor {
+        return Ok(());
+    }
+    let skip = usize::try_from(cursor.saturating_sub(chunk.start)).map_err(|_| ())?;
+    socket
+        .send(Message::Binary(chunk.bytes[skip..].to_vec().into()))
+        .await
+        .map_err(|_| ())?;
+    *cursor = chunk_end;
+    Ok(())
+}
+
+async fn close_socket(socket: &mut WebSocket, code: u16, reason: &'static str) {
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: reason.into(),
+        })))
+        .await;
 }
 
 async fn receive_authorization_change(
@@ -350,5 +924,32 @@ mod tests {
         assert!(parse_client_frame(&[]).is_err());
         assert!(parse_client_frame(&[1, 0, 1, 0, 24]).is_err());
         assert!(parse_client_frame(&[2, 0]).is_err());
+    }
+
+    #[test]
+    fn terminal_preflight_allocates_a_pty() {
+        preflight().unwrap_or_else(|error| panic!("{error}"));
+    }
+
+    #[test]
+    fn validates_stable_terminal_session_ids() {
+        assert!(valid_session_id(
+            "terminal-12345678-1234-1234-1234-123456789abc"
+        ));
+        assert!(!valid_session_id("terminal-not-a-uuid"));
+        assert!(!valid_session_id(
+            "terminal-12345678-1234-1234-1234-123456789abz"
+        ));
+    }
+
+    #[test]
+    fn replays_from_inside_an_output_chunk() {
+        let mut replay = ReplayBuffer::default();
+        replay.append(b"hello");
+        replay.append(b" world");
+        let chunks = replay.snapshot(3).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].start, 0);
+        assert_eq!(chunks[1].start, 5);
     }
 }

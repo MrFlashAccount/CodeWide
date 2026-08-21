@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { effectiveComposerSendPreference, resolveComposerSendMode } from "../src/data/composer-delivery-mode";
+
+const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
 
 describe("composer delivery mode", () => {
   it("queues the normal send mode while a turn is active", () => {
@@ -27,5 +30,10 @@ describe("composer delivery mode", () => {
   it("falls back to start when stale turn detail survives an idle lifecycle", () => {
     expect(resolveComposerSendMode("steer", false, null)).toEqual({ type: "start" });
     expect(resolveComposerSendMode("steer", false, "stale-turn")).toEqual({ type: "start" });
+  });
+
+  it("finishes active voice input before applying a long-press delivery choice", () => {
+    expect(screen).toContain('if (voicePhase !== "idle") void finishVoice(true, id);');
+    expect(screen).toContain("voiceController?.finish(sendAfter, (text) => send(text, preference))");
   });
 });

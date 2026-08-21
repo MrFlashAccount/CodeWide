@@ -124,6 +124,31 @@ describe("VoiceInputController", () => {
     expect(sent).toEqual([draft]);
   });
 
+  it("finishes transcription before using a custom delivery action", async () => {
+    const { database } = resources();
+    const controller = new VoiceInputController(database);
+    let draft = "";
+    const defaultSent: string[] = [];
+    const steered: string[] = [];
+    controller.bind({
+      scope: "thread",
+      source: () => draft,
+      selection: () => ({ start: draft.length, end: draft.length }),
+      thread: null,
+      updateDraft: (next) => { draft = next; },
+      send: (text) => defaultSent.push(text),
+      startRemote: async (listener) => remoteSession(listener, ["voice command"]),
+    });
+
+    await controller.toggle();
+    emitAudio();
+    await controller.finish(true, (text) => steered.push(text));
+
+    expect(draft).toContain("voice command");
+    expect(defaultSent).toEqual([]);
+    expect(steered).toEqual([draft]);
+  });
+
   it("keeps retryable audio and retries locally without recording again", async () => {
     const { database, rows } = resources();
     const controller = new VoiceInputController(database);
@@ -148,6 +173,32 @@ describe("VoiceInputController", () => {
     expect(draft).toContain("recovered transcript");
     expect(sent).toEqual([draft]);
     expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: false, error: null });
+  });
+
+  it("preserves a custom delivery action across a transcription retry", async () => {
+    const { database, rows } = resources();
+    const controller = new VoiceInputController(database);
+    let draft = "";
+    const defaultSent: string[] = [];
+    const queued: string[] = [];
+    controller.bind({
+      scope: "thread",
+      source: () => draft,
+      selection: () => ({ start: draft.length, end: draft.length }),
+      thread: null,
+      updateDraft: (next) => { draft = next; },
+      send: (text) => defaultSent.push(text),
+      startRemote: async (listener) => remoteSession(listener, ["recovered queue transcript"], 1),
+    });
+
+    await controller.toggle();
+    emitAudio();
+    await controller.finish(true, (text) => queued.push(text));
+    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: true });
+
+    await controller.retry();
+    expect(defaultSent).toEqual([]);
+    expect(queued).toEqual([draft]);
   });
 
   it("retries session startup three times and keeps captured audio for a manual retry", async () => {

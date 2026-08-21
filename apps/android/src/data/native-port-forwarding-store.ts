@@ -10,6 +10,7 @@ import {
   upsertNativePortForward,
   type NativePortForwardProfile,
   type NativeDiscoveredPort,
+  type NativePortForwardingPreference,
 } from "../native/native-transport";
 
 type Listener = () => void;
@@ -22,8 +23,9 @@ class PortForwardScope {
   #loading: Promise<void> | null = null;
   #discoveryLoading: Promise<void> | null = null;
   #discoveredAt = 0;
+  #pollTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(connectionId: string) {
+  constructor(connectionId: string, private readonly onDiscovered: (ports: readonly NativeDiscoveredPort[]) => Promise<void>) {
     this.connectionId = connectionId;
   }
 
@@ -31,7 +33,14 @@ class PortForwardScope {
     this.#listeners.add(listener);
     void this.load();
     if (Date.now() - this.#discoveredAt > DISCOVERY_STALE_MS) void this.refreshDiscovery();
-    return () => this.#listeners.delete(listener);
+    this.#pollTimer ??= setInterval(() => void this.refreshDiscovery(), DISCOVERY_POLL_MS);
+    return () => {
+      this.#listeners.delete(listener);
+      if (this.#listeners.size === 0 && this.#pollTimer !== null) {
+        clearInterval(this.#pollTimer);
+        this.#pollTimer = null;
+      }
+    };
   };
 
   readonly getSnapshot = (): NativePortForwardingSnapshot => this.#snapshot;
@@ -53,9 +62,10 @@ class PortForwardScope {
     if (this.#discoveryLoading !== null) return await this.#discoveryLoading;
     this.#replace({ ...this.#snapshot, discoveryStatus: "loading", discoveryError: null });
     this.#discoveryLoading = discoverNativePorts(this.connectionId)
-      .then(({ ports, scannedAt }) => {
+      .then(async ({ ports, scannedAt }) => {
         this.#discoveredAt = scannedAt;
         this.#replace({ ...this.#snapshot, discoveredPorts: ports, discoveryStatus: "ready", discoveryError: null });
+        await this.onDiscovered(ports);
       })
       .catch((cause: unknown) => {
         this.#replace({
@@ -71,7 +81,7 @@ class PortForwardScope {
   async waitUntilLive(profileId: string, timeoutMs = 10_000): Promise<NativePortForwardProfile> {
     const ready = (): NativePortForwardProfile | null => {
       const profile = this.#snapshot.profiles.find((candidate) => candidate.id === profileId);
-      if (profile?.status === "error") throw new Error(profile.error ?? "Could not open phone port");
+      if (profile?.status === "error" || profile?.status === "unavailable") throw new Error(profile.error ?? "Remote port is unavailable");
       return profile?.status === "live" && profile.localPort !== null ? profile : null;
     };
     const current = ready();
@@ -114,8 +124,8 @@ class PortForwardScope {
     // Promise carrying the older connecting projection back to JavaScript.
     // Never let that stale method result overwrite the authoritative event.
     if (profile.status === "connecting"
-      && current?.status === "live"
-      && current.localPort !== null
+      && current !== undefined
+      && ["live", "unavailable", "error"].includes(current.status)
       && current.updatedAt >= profile.updatedAt) return current;
     this.apply(profile);
     return profile;
@@ -144,10 +154,12 @@ export type NativePortForwardingSnapshot = {
 };
 
 const DISCOVERY_STALE_MS = 60_000;
+const DISCOVERY_POLL_MS = 5_000;
 
 class NativePortForwardingStore {
   #scopes = new Map<string, PortForwardScope>();
   #starting = new Map<string, Promise<NativePortForwardProfile>>();
+  #reconciling = new Map<string, Promise<void>>();
 
   constructor() {
     subscribeNativePortForwards((event) => {
@@ -159,7 +171,7 @@ class NativePortForwardingStore {
   scope(connectionId: string): PortForwardScope {
     let scope = this.#scopes.get(connectionId);
     if (scope === undefined) {
-      scope = new PortForwardScope(connectionId);
+      scope = new PortForwardScope(connectionId, async (ports) => await this.#reconcileDiscovered(connectionId, ports));
       this.#scopes.set(connectionId, scope);
     }
     return scope;
@@ -172,8 +184,14 @@ class NativePortForwardingStore {
     remotePort: number;
     preferredLocalPort: number | null;
     startImmediately: boolean;
+    serviceKey?: string | null;
+    preference?: NativePortForwardingPreference;
   }): Promise<NativePortForwardProfile> {
-    const profile = await upsertNativePortForward(input);
+    const profile = await upsertNativePortForward({
+      ...input,
+      serviceKey: input.serviceKey ?? null,
+      preference: input.preference ?? "included",
+    });
     this.scope(input.connectionId).apply(profile);
     const next = input.startImmediately
       ? await startNativePortForward(input.profileId)
@@ -203,6 +221,19 @@ class NativePortForwardingStore {
 
   async refreshDiscovery(connectionId: string): Promise<void> {
     await this.scope(connectionId).refreshDiscovery();
+  }
+
+  async setPreference(input: {
+    connectionId: string;
+    profileId: string;
+    label: string;
+    remotePort: number;
+    preferredLocalPort: number | null;
+    serviceKey: string | null;
+    preference: NativePortForwardingPreference;
+    startImmediately: boolean;
+  }): Promise<NativePortForwardProfile> {
+    return await this.upsert(input);
   }
 
   async ensureStarted(input: {
@@ -239,6 +270,8 @@ class NativePortForwardingStore {
         label: input.label,
         remotePort: input.remotePort,
         preferredLocalPort: null,
+        serviceKey: null,
+        preference: "included",
       });
       scope.apply(saved);
     }
@@ -247,6 +280,53 @@ class NativePortForwardingStore {
     if (projected.status === "error") throw new Error(projected.error ?? "Could not open phone port");
     if (projected.status === "live" && projected.localPort !== null) return projected;
     return await scope.waitUntilLive(profileId);
+  }
+
+  async #reconcileDiscovered(connectionId: string, ports: readonly NativeDiscoveredPort[]): Promise<void> {
+    const running = this.#reconciling.get(connectionId);
+    if (running !== undefined) return await running;
+    const task = this.#reconcileDiscoveredInner(connectionId, ports)
+      .finally(() => this.#reconciling.delete(connectionId));
+    this.#reconciling.set(connectionId, task);
+    await task;
+  }
+
+  async #reconcileDiscoveredInner(connectionId: string, ports: readonly NativeDiscoveredPort[]): Promise<void> {
+    const scope = this.scope(connectionId);
+    await scope.load();
+    for (const candidate of ports) {
+      const profiles = scope.getSnapshot().profiles;
+      const existing = profiles.find((profile) => profile.serviceKey === candidate.forwardingKey);
+      if (existing === undefined) {
+        if (!candidate.defaultForwardingEnabled) continue;
+        await this.upsert({
+          connectionId,
+          profileId: automaticProfileId(candidate.forwardingKey),
+          label: candidate.name,
+          remotePort: candidate.port,
+          preferredLocalPort: null,
+          serviceKey: candidate.forwardingKey,
+          preference: "automatic",
+          startImmediately: true,
+        });
+        continue;
+      }
+      if (existing.preference === "excluded") continue;
+      if (existing.serviceKey !== null && (existing.remotePort !== candidate.port || (existing.preference === "automatic" && existing.label !== candidate.name))) {
+        await this.upsert({
+          connectionId,
+          profileId: existing.id,
+          label: existing.preference === "automatic" ? candidate.name : existing.label,
+          remotePort: candidate.port,
+          preferredLocalPort: existing.preferredLocalPort,
+          serviceKey: candidate.forwardingKey,
+          preference: existing.preference,
+          startImmediately: existing.enabled || existing.preference === "automatic",
+        });
+      } else if (existing.preference === "automatic" && !existing.enabled) {
+        await this.start(connectionId, existing.id);
+      }
+    }
   }
 }
 
@@ -264,4 +344,8 @@ export function useNativePortForwarding(connectionId: string): NativePortForward
 
 export function createNativePortForwardId(): string {
   return `forward-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function automaticProfileId(forwardingKey: string): string {
+  return `auto-${forwardingKey.slice(0, 40)}`;
 }

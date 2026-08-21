@@ -29,9 +29,17 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors, radii, spacing, touchTarget } from "../theme";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
+import { useAppDialog } from "../ui/AppDialog";
 import { useAppFullscreenOverlay, type AppFullscreenOverlayController } from "../ui/AppFullscreenOverlay";
 import { AppText as Text, AppTextInput as TextInput } from "../ui/Typography";
-import { clampNormalizedCoordinate, formatImageAnnotations, type ImagePointAnnotation } from "./image-annotations";
+import {
+  AppVoiceInputProvider,
+  reviewVoiceInputScope,
+  useAppVoiceInputRuntime,
+  useVoiceInputResource,
+  type AppVoiceInputRuntime,
+} from "../ui/VoiceInputRuntime";
+import { clampNormalizedCoordinate, serializeImageReviewAttachment, type ImagePointAnnotation } from "./image-annotations";
 
 export type ImagePreviewItem = {
   id: string;
@@ -49,10 +57,14 @@ export type ImagePreviewRequest = ImagePreviewItem & {
 
 type PreviewSession = { items: ImagePreviewItem[]; index: number };
 type RegisteredPreviewItem = ImagePreviewItem & { sequence: number };
+type AnnotationRegistration = {
+  handler(text: string): Promise<boolean>;
+  voiceRuntime: AppVoiceInputRuntime | null;
+};
 type PreviewController = {
   open(request: ImagePreviewRequest, fullscreen: AppFullscreenOverlayController): void;
   register(groupId: string, item: ImagePreviewItem): () => void;
-  registerAnnotationHandler(handler: (text: string) => void): () => void;
+  registerAnnotationHandler(handler: (text: string) => Promise<boolean>, voiceRuntime: AppVoiceInputRuntime | null): () => void;
 };
 
 const ImagePreviewContext = createContext<PreviewController>({
@@ -72,7 +84,7 @@ export function ImagePreviewHost({
   children: ReactNode;
 }) {
   const registryRef = useRef(new Map<string, Map<string, RegisteredPreviewItem>>());
-  const annotationHandlerRef = useRef<((text: string) => void) | null>(null);
+  const annotationRegistrationRef = useRef<AnnotationRegistration | null>(null);
   const sequenceRef = useRef(0);
   const [controller] = useState<PreviewController>(() => ({
     register(groupId, item) {
@@ -102,16 +114,18 @@ export function ImagePreviewHost({
       fullscreen.present(({ close }) => (
         <ImagePreviewSession
           initialSession={{ items, index }}
-          getAnnotationHandler={() => annotationHandlerRef.current}
+          voiceRuntime={annotationRegistrationRef.current?.voiceRuntime ?? null}
+          getAnnotationHandler={() => annotationRegistrationRef.current?.handler ?? null}
           onClose={close}
         />
       ));
     },
-    registerAnnotationHandler(handler) {
-      annotationHandlerRef.current = handler;
+    registerAnnotationHandler(handler, voiceRuntime) {
+      const registration = { handler, voiceRuntime };
+      annotationRegistrationRef.current = registration;
       return () => {
-        if (annotationHandlerRef.current !== handler) return;
-        annotationHandlerRef.current = null;
+        if (annotationRegistrationRef.current !== registration) return;
+        annotationRegistrationRef.current = null;
       };
     },
   }));
@@ -125,38 +139,60 @@ export function ImagePreviewHost({
 
 function ImagePreviewSession({
   initialSession,
+  voiceRuntime,
   getAnnotationHandler,
   onClose,
 }: {
   initialSession: PreviewSession;
-  getAnnotationHandler(): ((text: string) => void) | null;
+  voiceRuntime: AppVoiceInputRuntime | null;
+  getAnnotationHandler(): ((text: string) => Promise<boolean>) | null;
   onClose(): void;
 }) {
+  const dialog = useAppDialog();
   const [session, setSession] = useState(initialSession);
   const [annotations, setAnnotations] = useState<Record<string, ImagePointAnnotation[]>>({});
+  const [attaching, setAttaching] = useState(false);
+  const voiceScope = voiceRuntime === null ? null : reviewVoiceInputScope(voiceRuntime);
+  const stopVoice = () => {
+    if (voiceScope === null) return;
+    const resource = voiceRuntime?.resources?.voiceInputs.get(voiceScope) ?? null;
+    if (resource?.phase !== undefined && resource.phase !== "idle") void voiceRuntime?.controller?.finish(false);
+    voiceRuntime?.controller?.unbind(voiceScope);
+  };
+  const stopVoiceOnUnmount = useEffectEvent(stopVoice);
+  useEffect(() => () => stopVoiceOnUnmount(), []);
   const close = () => {
+    stopVoice();
     onClose();
   };
   const annotationCount = session.items.reduce((count, item) => count + (annotations[item.id]?.length ?? 0), 0);
-  const submitAnnotations = () => {
+  const submitAnnotations = async () => {
     const annotationHandler = getAnnotationHandler();
-    if (annotationHandler === null) return;
-    const text = formatImageAnnotations(session.items.map((item) => ({
+    if (annotationHandler === null || attaching) return;
+    const text = serializeImageReviewAttachment(session.items.map((item) => ({
       label: item.label,
       reference: item.reference ?? item.link ?? null,
       annotations: annotations[item.id] ?? [],
     })));
     if (text === "") return;
-    annotationHandler(text);
-    setAnnotations({});
-    close();
+    setAttaching(true);
+    const attached = await annotationHandler(text).catch((cause: unknown) => {
+      dialog.alert("Could not attach review", cause instanceof Error ? cause.message : "Review upload failed");
+      return false;
+    });
+    setAttaching(false);
+    if (attached) {
+      setAnnotations({});
+      close();
+    }
   };
-  return (
+  const preview = (
     <GestureHandlerRootView style={styles.overlay}>
       <ImageViewer
         session={session}
         annotations={annotations}
         annotationCount={annotationCount}
+        annotationSubmitting={attaching}
         onChangeIndex={(index) => setSession((current) => ({ ...current, index }))}
         onChangeAnnotations={(itemId, points) => setAnnotations((current) => ({ ...current, [itemId]: points }))}
         onClose={close}
@@ -164,6 +200,9 @@ function ImagePreviewSession({
       />
     </GestureHandlerRootView>
   );
+  return voiceRuntime === null
+    ? preview
+    : <AppVoiceInputProvider runtime={voiceRuntime}>{preview}</AppVoiceInputProvider>;
 }
 
 export function ImagePreviewGroup({ id, children }: { id: string; children: ReactNode }) {
@@ -180,10 +219,14 @@ export function useImagePreviewGroup(): string | null {
   return useContext(ImagePreviewGroupContext);
 }
 
-export function useImagePreviewAnnotationHandler(handler: (text: string) => void): void {
+export function useImagePreviewAnnotationHandler(handler: (text: string) => Promise<boolean>): void {
   const { registerAnnotationHandler } = useContext(ImagePreviewContext);
+  const voiceRuntime = useAppVoiceInputRuntime();
   const handleAnnotation = useEffectEvent(handler);
-  useEffect(() => registerAnnotationHandler((text) => handleAnnotation(text)), [registerAnnotationHandler]);
+  useEffect(
+    () => registerAnnotationHandler((text) => handleAnnotation(text), voiceRuntime),
+    [registerAnnotationHandler, voiceRuntime],
+  );
 }
 
 export function useRegisterImagePreviewItem(groupId: string | null, item: ImagePreviewItem): void {
@@ -202,6 +245,7 @@ function ImageViewer({
   session,
   annotations,
   annotationCount,
+  annotationSubmitting,
   onChangeIndex,
   onChangeAnnotations,
   onClose,
@@ -210,12 +254,17 @@ function ImageViewer({
   session: PreviewSession;
   annotations: Record<string, ImagePointAnnotation[]>;
   annotationCount: number;
+  annotationSubmitting: boolean;
   onChangeIndex(index: number): void;
   onChangeAnnotations(itemId: string, points: ImagePointAnnotation[]): void;
   onClose(): void;
   onSubmitAnnotations?(): void;
 }) {
   const insets = useSafeAreaInsets();
+  const voiceRuntime = useAppVoiceInputRuntime();
+  const voiceScope = voiceRuntime === null ? null : reviewVoiceInputScope(voiceRuntime);
+  const voiceResource = useVoiceInputResource(voiceRuntime, voiceScope);
+  const voicePhase = voiceResource?.phase ?? "idle";
   const item = session.items[session.index];
   const [annotating, setAnnotating] = useState(false);
   const [pendingPoint, setPendingPoint] = useState<{ x: number; y: number } | null>(null);
@@ -228,7 +277,7 @@ function ImageViewer({
   ];
   const savePoint = () => {
     const text = caption.trim();
-    if (pendingPoint === null || text === "") return;
+    if (pendingPoint === null || text === "" || voicePhase !== "idle") return;
     onChangeAnnotations(item.id, [...points, {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       x: pendingPoint.x,
@@ -304,9 +353,11 @@ function ImageViewer({
             <Ionicons name="arrow-undo" size={17} color="#ffffff" />
           </Pressable>
           {onSubmitAnnotations !== undefined && (
-            <Pressable accessibilityRole="button" accessibilityLabel="Add image annotations to message" onPress={onSubmitAnnotations} style={styles.submitButton}>
-              <Ionicons name="return-down-back" size={18} color="#0b0b0b" />
-              <Text style={styles.submitText}>Add to message</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Attach image review" disabled={annotationSubmitting} onPress={onSubmitAnnotations} style={[styles.submitButton, annotationSubmitting && styles.disabled]}>
+              {annotationSubmitting
+                ? <ActivityIndicator size="small" color="#0b0b0b" />
+                : <Ionicons name="attach" size={18} color="#0b0b0b" />}
+              <Text style={styles.submitText}>Attach review</Text>
             </Pressable>
           )}
         </View>
@@ -324,6 +375,8 @@ function ImageViewer({
         <View style={styles.captionEditor}> 
           <TextInput
             autoFocus
+            voiceInput
+            {...(voiceScope === null ? {} : { voiceScope })}
             value={caption}
             onChangeText={setCaption}
             onSubmitEditing={savePoint}
@@ -332,13 +385,19 @@ function ImageViewer({
             placeholderTextColor="#8f8f8f"
             style={styles.captionInput}
           />
-          <Pressable accessibilityRole="button" accessibilityLabel="Cancel annotation" onPress={() => setPendingPoint(null)} style={styles.smallButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Cancel annotation" onPress={() => {
+            if (voicePhase !== "idle") void voiceRuntime?.controller?.finish(false);
+            setPendingPoint(null);
+          }} style={styles.smallButton}>
             <Ionicons name="close" size={19} color="#ffffff" />
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Save annotation" disabled={caption.trim() === ""} onPress={savePoint} style={[styles.captionSave, caption.trim() === "" && styles.disabled]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Save annotation" disabled={caption.trim() === "" || voicePhase !== "idle"} onPress={savePoint} style={[styles.captionSave, (caption.trim() === "" || voicePhase !== "idle") && styles.disabled]}>
             <Ionicons name="checkmark" size={20} color="#0b0b0b" />
           </Pressable>
         </View>
+        {voiceResource?.error !== null && voiceResource?.error !== undefined && (
+          <Text style={styles.captionVoiceError}>{voiceResource.error}</Text>
+        )}
         </KeyboardStickyView>
       )}
     </View>
@@ -617,6 +676,7 @@ const styles = StyleSheet.create({
   captionEditorSticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
   captionEditor: { marginHorizontal: spacing.sm, minHeight: touchTarget + spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.large, backgroundColor: "#1c1c1c", padding: spacing.xs },
   captionInput: { minWidth: 0, flex: 1, minHeight: touchTarget, borderRadius: touchTarget / 2, backgroundColor: "#292929", color: "#ffffff", paddingHorizontal: 14, paddingVertical: spacing.xs, fontSize: 14 },
+  captionVoiceError: { marginHorizontal: spacing.lg, marginTop: spacing.xxs, color: colors.red, fontSize: 12 },
   captionSave: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
   disabled: { opacity: 0.4 },
 });

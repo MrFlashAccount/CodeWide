@@ -1,5 +1,7 @@
 import type {
   AccountRateLimitsUpdatedNotification,
+  ConfigReadResponse,
+  FsReadDirectoryResponse,
   GetAccountRateLimitsResponse,
   ModelListResponse,
   PermissionProfileListResponse,
@@ -22,8 +24,9 @@ import type {
   Turn,
 } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { Personality } from "@codewide/codex-protocol/v0.147.0";
-import { createTextOutboxCommand, MAX_TURN_TEXT_CHARS, RpcResponseError, seedThreadExecutionSettings, threadIdFromEvent, threadProjectionPatchFromEvent, type RemoteFileAttachment, type RpcClient, type SyncEvent } from "@codewide/sync-client";
+import { createTextOutboxCommand, MAX_TURN_TEXT_CHARS, RpcResponseError, seedThreadExecutionSettings, threadIdFromEvent, threadProjectionPatchFromEvent, type RemoteConnection, type RemoteFileAttachment, type RpcClient } from "@codewide/sync-client";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
+import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { createOptimisticAction, useLiveQuery } from "@tanstack/react-db";
 import { useSyncExternalStore } from "react";
@@ -31,6 +34,7 @@ import { AppState, PermissionsAndroid, Platform } from "react-native";
 
 import { validateConnectionInput, validateConnectionRuntimeUpdate, type ConnectionInput, type ConnectionUpdateInput } from "./connection-validation";
 import { commitNativeThenProject } from "./durable-command-boundary";
+import { operationConfirmsDeliveredCommand } from "./command-receipt-evidence";
 import { accountRateLimitsStale } from "./account-rate-limits";
 import type { AccountLoginStart, AccountPoolSnapshot } from "./account-pool";
 import { createAccountRateLimitsDatabase, type AccountRateLimitsDatabase } from "./account-rate-limits-database";
@@ -42,7 +46,10 @@ import type { PendingTimelineMutation } from "./thread-detail-projection";
 import { projectThreadHotStates } from "./thread-hot-state";
 import { createThreadUiStateDatabase, type ThreadUiStateDatabase } from "./thread-ui-state-database";
 import { incrementMetric, recordTiming } from "./operational-metrics";
+import { configureTelemetryAppVersion, configureTelemetryTransport, recordTelemetryEvent, type TelemetryBatch } from "./telemetry";
 import { hasAcceptedPendingDelivery, parseHostQueueSnapshot } from "./queue-event";
+import { parseAddedRemoteProject, parseRemoteDirectory, parseRemoteProjects, type RemoteDirectoryEntry, type RemoteProject } from "./remote-projects";
+import { parseCreatedWorkspace, parseWorkspaceSupport, startThreadInCreatedWorkspace, type CreatedWorkspace, type WorkspaceSupport } from "./workspace-creation";
 import { queuedInputPayload } from "./queued-input";
 import { createPendingRequestDatabase, type PendingRequestDatabase } from "./pending-request-database";
 import type { PendingServerRequest } from "./pending-request-types";
@@ -53,6 +60,7 @@ import { createThreadProjectionStore } from "./thread-projection-store";
 import { streamRepairThreadIds, terminalProjectionMatches, terminalProjectionProofs } from "./stream-recovery";
 import { materializeLegacyThreadWindow, materializeResumedThread, type CompanionThreadResumeResponse } from "./thread-read-model";
 import { shouldRefreshInvalidatedThread } from "./thread-detail-invalidation";
+import { projectThreadResourcePatch } from "./thread-resource-projection";
 import { SubagentListProjection } from "./subagent-projection";
 import { loadSubagentDescendants, subagentActivityRootThreadId } from "./subagent-loader";
 import { ThreadListProjection } from "./thread-list-projection";
@@ -60,8 +68,8 @@ import type { StoredThreadSummary } from "./thread-summary-types";
 import type { StoredComposerPreferences } from "./thread-ui-state-types";
 import { buildThreadForkParams, type ThreadForkOptions } from "./thread-fork";
 import { THREAD_HISTORY_PAGE_SIZE, THREAD_TURN_PAGE_SIZE } from "./thread-pagination";
-import { cloneTurnControls, loadTurnControlsIncrementally } from "./turn-controls-loader";
-import { createWorkspaceResourceDatabase, threadResourceKey, tunnelResourceKey, turnControlsResourceKey, type BackgroundTerminalValue, type ThreadResourcesValue, type TunnelValue, type TurnControlsValue, type WorkspaceResourceDatabase } from "./workspace-resource-database";
+import { cloneTurnControls, isTurnControlsCacheFresh, loadTurnControlsIncrementally } from "./turn-controls-loader";
+import { createWorkspaceResourceDatabase, threadResourceKey, tunnelResourceKey, turnControlsResourceKey, type BackgroundTerminalValue, type ThreadChangeScope, type ThreadResourceKind, type ThreadResourcesValue, type TunnelValue, type TurnControlsValue, type WorkspaceResourceDatabase } from "./workspace-resource-database";
 import { RetryableVoiceTranscriptionError, UnretryableVoiceTranscriptionError, VoiceInputController, type VoiceTranscriptionEvent, type VoiceTranscriptionOptions, type VoiceTranscriptionSession } from "./voice-input-controller";
 import { FileTransferController } from "./file-transfer-controller";
 import type { TransferAccess } from "./private-transfer";
@@ -93,6 +101,12 @@ export type RemoteWorkspace = {
   updateConnection(connectionId: string, input: ConnectionUpdateInput): Promise<void>;
   moveConnection(connectionId: string, direction: -1 | 1): Promise<void>;
   searchThreads(query: string, connectionId?: string | null): Promise<StoredThreadSummary[]>;
+  listProjects(connectionId: string): Promise<RemoteProject[]>;
+  addProject(connectionId: string, path: string): Promise<RemoteProject>;
+  readDirectory(connectionId: string, path: string): Promise<RemoteDirectoryEntry[]>;
+  inspectWorkspace(connectionId: string, workspace: string): Promise<WorkspaceSupport | null>;
+  createWorkspace(connectionId: string, workspace: string, requestId: string): Promise<CreatedWorkspace>;
+  startThreadInWorkspace(connectionId: string, workspace: string, requestId: string): Promise<string>;
   setThreadPinned(connectionId: string, threadId: string, pinned: boolean): Promise<void>;
   startThread(connectionId: string, cwd?: string): Promise<string>;
   renameThread(connectionId: string, threadId: string, name: string): Promise<void>;
@@ -118,8 +132,8 @@ export type RemoteWorkspace = {
   readThread(connectionId: string, threadId: string, cachedThread?: Thread | null): Promise<ThreadWindow | null>;
   readSubagentThread(connectionId: string, threadId: string): Promise<ThreadWindow | null>;
   refreshSubagents(connectionId: string, rootThreadId: string): Promise<void>;
-  loadThreadResources(connectionId: string, threadId: string): Promise<ThreadResourcesValue>;
-  loadThreadChangeDiff(connectionId: string, threadId: string, path: string): Promise<ThreadChangeDiffValue>;
+  loadThreadResources(connectionId: string, threadId: string, scope?: ThreadChangeScope, kind?: ThreadResourceLoadKind): Promise<ThreadResourcesValue>;
+  loadThreadChangeDiff(connectionId: string, threadId: string, path: string, scope?: ThreadChangeScope): Promise<ThreadChangeDiffValue>;
   reconcileThreadLifecycle(connectionId: string, threadId: string, turnId: string, cachedThread: Thread): Promise<void>;
   loadOlderTurns(connectionId: string, threadId: string, cursor: string): Promise<ThreadTurnPage>;
   loadTurnItems(connectionId: string, threadId: string, turnId: string): Promise<Turn["items"]>;
@@ -154,6 +168,7 @@ export type ThreadGoalInput = { objective: string; status: ThreadGoalStatus; tok
 export type TurnSendOptions = ThreadSettings & {
   skills?: Array<{ name: string; path: string }>;
   attachments?: RemoteFileAttachment[];
+  workspaceRequestId?: string;
 };
 export type ComposerAttachment = RemoteFileAttachment;
 export type TurnControls = TurnControlsValue;
@@ -164,8 +179,21 @@ export type ThreadTurnPage = { turns: Turn[]; nextCursor: string | null };
 export type ThreadChangeDiffValue = {
   threadId: string;
   path: string;
+  changeScope: ThreadChangeScope;
   patches: Array<{ turnId: string; itemId: string; kind: "add" | "delete" | "update"; diff: string }>;
+  source: string | null;
   truncated: boolean;
+};
+
+type WorkspaceSyncSession = RpcClient & {
+  stop(): void;
+  respondToServerRequest?(id: string | number, result: unknown): Promise<void>;
+};
+
+type WorkspaceSyncSupervisor = {
+  replaceConnections(connections: RemoteConnection[]): void;
+  session(connectionId: string): WorkspaceSyncSession | undefined;
+  stop(): void;
 };
 export type VoiceAudioChunk = { data: string; sampleRate: number; numChannels: number; samplesPerChannel: number };
 export type { VoiceTranscriptionEvent, VoiceTranscriptionOptions, VoiceTranscriptionSession } from "./voice-input-controller";
@@ -195,7 +223,12 @@ const CONNECTION_PROFILE_MIGRATION_KEY = "codex-remote-connection-profiles-v1-mi
 const CONNECTION_PROFILE_STORAGE_MIGRATION_KEY = "codex-remote-connection-profiles-cache-split-v1-migrated";
 const NATIVE_CREDENTIAL_MIGRATION_KEY = "codex-remote-native-credentials-v1-migrated";
 const TURN_CONTROLS_FRESH_MS = 6 * 60 * 60 * 1_000;
-const EMPTY_TURN_CONTROLS: TurnControls = { models: [], skills: [], permissions: [] };
+const EMPTY_TURN_CONTROLS: TurnControls = {
+  models: [],
+  skills: [],
+  permissions: [],
+  defaults: { model: null, effort: null, permissions: null },
+};
 
 type WorkspaceRuntimeSnapshot = {
   ready: boolean;
@@ -245,7 +278,7 @@ class WorkspaceRuntime {
   readonly turnControlsInFlight = new Map<string, Promise<TurnControls>>();
   readonly accountRateLimitsInFlight = new Map<string, Promise<GetAccountRateLimitsResponse>>();
   readonly connectionAttemptStartedAt = new Map<string, number>();
-  supervisor: NativeEngineSupervisor | null = null;
+  supervisor: WorkspaceSyncSupervisor | null = null;
   voiceController: VoiceInputController | null = null;
   fileTransferController: FileTransferController | null = null;
   startPromise: Promise<void> | null = null;
@@ -281,6 +314,50 @@ const workspaceRuntime = new WorkspaceRuntime();
 
 function currentConnections(): StoredConnection[] {
   return workspaceRuntime.snapshot.connectionProfiles?.project() ?? [];
+}
+
+configureTelemetryTransport(uploadTelemetryBatch);
+configureTelemetryAppVersion(Constants.expoConfig?.version);
+
+async function scopedHttpAuthorization(connection: StoredConnection, forceRefresh = false): Promise<string> {
+  const cached = workspaceRuntime.httpSessions.get(connection.id);
+  const credentialKey = `${connection.endpoint}\u0000${connection.tlsPinSha256 ?? ""}`;
+  if (!forceRefresh && cached !== undefined && cached.credentialKey === credentialKey && cached.expiresAt > Date.now() + 30_000) {
+    return `Bearer ${cached.sessionToken}`;
+  }
+  const existingMint = workspaceRuntime.httpSessionMintInFlight.get(connection.id);
+  if (!forceRefresh && existingMint !== undefined && existingMint.credentialKey === credentialKey) {
+    return `Bearer ${(await existingMint.promise).sessionToken}`;
+  }
+  if (forceRefresh) workspaceRuntime.httpSessions.delete(connection.id);
+  const promise = mintNativeSession(connection.id);
+  const pending = { credentialKey, promise };
+  workspaceRuntime.httpSessionMintInFlight.set(connection.id, pending);
+  try {
+    const minted = await promise;
+    workspaceRuntime.httpSessions.set(connection.id, { credentialKey, ...minted });
+    return `Bearer ${minted.sessionToken}`;
+  } finally {
+    if (workspaceRuntime.httpSessionMintInFlight.get(connection.id) === pending) {
+      workspaceRuntime.httpSessionMintInFlight.delete(connection.id);
+    }
+  }
+}
+
+async function uploadTelemetryBatch(connectionId: string, batch: TelemetryBatch): Promise<void> {
+  const connection = currentConnections().find((candidate) => candidate.id === connectionId);
+  if (connection === undefined || !connection.enabled) throw new Error("Telemetry connection is unavailable");
+  const send = async (forceRefresh: boolean) => await fetch(companionHttpUrl(connection.endpoint, "/v1/telemetry/events"), {
+    method: "POST",
+    headers: {
+      authorization: await scopedHttpAuthorization(connection, forceRefresh),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(batch),
+  });
+  let response = await send(false);
+  if (response.status === 401) response = await send(true);
+  if (!response.ok) throw new Error(`Telemetry upload failed (${response.status})`);
 }
 
 // Runtime startup belongs to the application module, not to the lifetime of a
@@ -521,6 +598,37 @@ function createWorkspaceActions(): WorkspaceActions {
         workspaceRuntime.snapshot.pendingRequests?.collection.toArray ?? [],
       );
     };
+
+    const listProjects = async (connectionId: string): Promise<RemoteProject[]> => {
+      const session = workspaceRuntime.supervisor?.session(connectionId);
+      if (session === undefined) throw new Error("Connection is not enabled");
+      return parseRemoteProjects(await rpcAfterAttach(session, "companion/project/list", {}));
+    };
+
+    const addProject = async (connectionId: string, path: string): Promise<RemoteProject> => {
+      const session = workspaceRuntime.supervisor?.session(connectionId);
+      if (session === undefined) throw new Error("Connection is not enabled");
+      return parseAddedRemoteProject(await rpcAfterAttach(session, "companion/project/add", { path }));
+    };
+
+    const readDirectory = async (connectionId: string, path: string): Promise<RemoteDirectoryEntry[]> => {
+      const session = workspaceRuntime.supervisor?.session(connectionId);
+      if (session === undefined) throw new Error("Connection is not enabled");
+      const response = await rpcAfterAttach<FsReadDirectoryResponse>(session, "fs/readDirectory", { path });
+      return parseRemoteDirectory(response);
+    };
+
+    const inspectWorkspace = async (connectionId: string, workspace: string): Promise<WorkspaceSupport | null> => {
+      const session = workspaceRuntime.supervisor?.session(connectionId);
+      if (session === undefined) throw new Error("Connection is not enabled");
+      return parseWorkspaceSupport(await rpcAfterAttach(session, "companion/workspace/inspect", { workspace }));
+    };
+
+    const createWorkspace = async (connectionId: string, workspace: string, requestId: string): Promise<CreatedWorkspace> => {
+      const session = workspaceRuntime.supervisor?.session(connectionId);
+      if (session === undefined) throw new Error("Connection is not enabled");
+      return parseCreatedWorkspace(await rpcAfterAttach(session, "companion/workspace/create", { workspace, requestId }));
+    };
   
     const setThreadPinned = async (connectionId: string, threadId: string, pinned: boolean) => {
       await requireThreadSummaryDatabase(workspaceRuntime.snapshot.threadSummaries).updatePinned(connectionId, threadId, pinned);
@@ -546,6 +654,18 @@ function createWorkspaceActions(): WorkspaceActions {
       // the shell exists instead of waiting for thread/resume after a message.
       void loadTurnControls(connectionId, started.cwd).catch(() => undefined);
       return started.id;
+    };
+
+    const startThreadInWorkspace = async (
+      connectionId: string,
+      workspace: string,
+      requestId: string,
+    ): Promise<string> => {
+      const started = await startThreadInCreatedWorkspace({
+        createWorkspace: () => createWorkspace(connectionId, workspace, requestId),
+        startThread: (cwd) => startThread(connectionId, cwd),
+      });
+      return started.threadId;
     };
   
     const renameThread = async (connectionId: string, threadId: string, name: string): Promise<void> => {
@@ -761,12 +881,34 @@ function createWorkspaceActions(): WorkspaceActions {
       return response.terminated;
     };
 
-    const loadThreadResources = async (connectionId: string, threadId: string): Promise<ThreadResourcesValue> => {
+    const loadThreadResources = async (
+      connectionId: string,
+      threadId: string,
+      scope?: ThreadChangeScope,
+      kind: ThreadResourceLoadKind = "all",
+    ): Promise<ThreadResourcesValue> => {
       const key = threadResourceKey(connectionId, threadId);
-      const pending = workspaceRuntime.threadResourcesInFlight.get(key);
+      const inFlightKey = `${key}\u0000${kind}\u0000${scope ?? "initial"}`;
+      const pending = workspaceRuntime.threadResourcesInFlight.get(inFlightKey);
       if (pending !== undefined) return await pending;
+      const conflict = [...workspaceRuntime.threadResourcesInFlight.entries()].find(([candidate]) => {
+        if (!candidate.startsWith(`${key}\u0000`)) return false;
+        const candidateKind = candidate.slice(`${key}\u0000`.length).split("\u0000", 1)[0];
+        return kind === "all" || candidateKind === "all" || candidateKind === kind;
+      })?.[1];
+      if (conflict !== undefined) {
+        try {
+          await conflict;
+        } catch {
+          // The requested resource still deserves its own retry after a
+          // conflicting refresh failed.
+        }
+        return await loadThreadResources(connectionId, threadId, scope, kind);
+      }
       const operation = (async () => {
-        const previous = workspaceRuntime.resourceDatabase.threadResources.get(key)?.value ?? null;
+        const previousRow = workspaceRuntime.resourceDatabase.threadResources.get(key);
+        const previous = previousRow?.value ?? null;
+        const requestedKinds = threadResourceKinds(kind);
         workspaceRuntime.resourceDatabase.putThreadResources({
           id: key,
           connectionId,
@@ -774,6 +916,9 @@ function createWorkspaceActions(): WorkspaceActions {
           status: "loading",
           value: previous,
           error: null,
+          pendingKinds: mergeThreadResourceKinds(previousRow?.pendingKinds ?? [], requestedKinds),
+          readyKinds: initializedThreadResourceKinds(previousRow),
+          resourceErrors: clearThreadResourceErrors(previousRow?.resourceErrors, requestedKinds),
         });
         try {
           const session = workspaceRuntime.supervisor?.session(connectionId);
@@ -781,38 +926,67 @@ function createWorkspaceActions(): WorkspaceActions {
           const expectedRecencyAt = workspaceRuntime.snapshot.threadSummaries?.collection.toArray.find((summary) => (
             summary.connectionId === connectionId && summary.remoteThreadId === threadId
           ))?.recencyAt ?? null;
-          const response = await rpcAfterAttach<unknown>(session, "companion/threadResources/read", {
+          const method = kind === "changes"
+            ? "companion/threadChanges/read"
+            : kind === "attachments"
+              ? "companion/threadAttachments/read"
+              : "companion/threadResources/read";
+          const response = await rpcAfterAttach<unknown>(session, method, {
             threadId,
+            ...(scope === undefined ? {} : { changeScope: scope }),
             ...(expectedRecencyAt === null ? {} : { expectedRecencyAt }),
           });
-          const value = parseThreadResources(response, threadId);
-          workspaceRuntime.resourceDatabase.putThreadResources({ id: key, connectionId, threadId, status: "ready", value, error: null });
-          return value;
-        } catch (cause) {
+          const patch = parseThreadResourcesPatch(response, threadId, kind);
+          const current = workspaceRuntime.resourceDatabase.threadResources.get(key);
+          const value = mergeThreadResources(current?.value ?? previous, patch);
+          const pendingKinds = subtractThreadResourceKinds(current?.pendingKinds ?? requestedKinds, requestedKinds);
           workspaceRuntime.resourceDatabase.putThreadResources({
             id: key,
             connectionId,
             threadId,
-            status: "error",
-            value: previous,
-            error: errorMessage(cause),
+            status: pendingKinds.length > 0 ? "loading" : "ready",
+            value,
+            error: null,
+            pendingKinds,
+            readyKinds: mergeThreadResourceKinds(initializedThreadResourceKinds(current), requestedKinds),
+            resourceErrors: clearThreadResourceErrors(current?.resourceErrors, requestedKinds),
+          });
+          return value;
+        } catch (cause) {
+          const current = workspaceRuntime.resourceDatabase.threadResources.get(key);
+          const pendingKinds = subtractThreadResourceKinds(current?.pendingKinds ?? requestedKinds, requestedKinds);
+          const message = errorMessage(cause);
+          workspaceRuntime.resourceDatabase.putThreadResources({
+            id: key,
+            connectionId,
+            threadId,
+            status: pendingKinds.length > 0 ? "loading" : "error",
+            value: current?.value ?? previous,
+            error: message,
+            pendingKinds,
+            readyKinds: initializedThreadResourceKinds(current),
+            resourceErrors: setThreadResourceErrors(current?.resourceErrors, requestedKinds, message),
           });
           throw cause;
         }
       })();
-      workspaceRuntime.threadResourcesInFlight.set(key, operation);
+      workspaceRuntime.threadResourcesInFlight.set(inFlightKey, operation);
       try {
         return await operation;
       } finally {
-        if (workspaceRuntime.threadResourcesInFlight.get(key) === operation) workspaceRuntime.threadResourcesInFlight.delete(key);
+        if (workspaceRuntime.threadResourcesInFlight.get(inFlightKey) === operation) workspaceRuntime.threadResourcesInFlight.delete(inFlightKey);
       }
     };
 
-    const loadThreadChangeDiff = async (connectionId: string, threadId: string, path: string): Promise<ThreadChangeDiffValue> => {
+    const loadThreadChangeDiff = async (connectionId: string, threadId: string, path: string, scope?: ThreadChangeScope): Promise<ThreadChangeDiffValue> => {
       const session = workspaceRuntime.supervisor?.session(connectionId);
       if (session === undefined) throw new Error("Connection is not enabled");
-      const response = await rpcAfterAttach<unknown>(session, "companion/threadChange/read", { threadId, path });
-      return parseThreadChangeDiff(response, threadId, path);
+      const response = await rpcAfterAttach<unknown>(session, "companion/threadChange/read", {
+        threadId,
+        path,
+        ...(scope === undefined ? {} : { changeScope: scope }),
+      });
+      return parseThreadChangeDiff(response, threadId, path, scope);
     };
 
     const refreshSubagents = (connectionId: string, rootThreadId: string): Promise<void> => {
@@ -917,7 +1091,6 @@ function createWorkspaceActions(): WorkspaceActions {
           );
           await persistHydratedThread(hydrated);
           void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
-          void loadThreadResources(connectionId, threadId).catch(() => undefined);
           return { thread: hydrated, nextCursor: page?.nextCursor ?? null };
         } catch (cause) {
           console.warn("CodeWide thread refresh failed:", cause instanceof Error ? cause.message : "unknown error");
@@ -939,7 +1112,6 @@ function createWorkspaceActions(): WorkspaceActions {
             const hydrated = materializeLegacyThreadWindow(read.thread, [...page.data].reverse(), cached);
             await persistHydratedThread(hydrated);
             void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
-            void loadThreadResources(connectionId, threadId).catch(() => undefined);
             return { thread: hydrated, nextCursor: page.nextCursor };
           } catch (fallbackCause) {
             console.warn("CodeWide read-only thread fallback failed:", fallbackCause instanceof Error ? fallbackCause.message : "unknown error");
@@ -1075,6 +1247,7 @@ function createWorkspaceActions(): WorkspaceActions {
         commandId: command.commandId,
         method: command.method,
         presentation,
+        workspaceRequestId: options.workspaceRequestId ?? null,
         text,
         attachments: options.attachments ?? [],
         state: "queued",
@@ -1088,9 +1261,13 @@ function createWorkspaceActions(): WorkspaceActions {
         mutationFn: async ({ row }) => {
           await commitNativeThenProject(
             async () => {
-              if (presentation === "queue") {
+              if (presentation === "queue" || options.workspaceRequestId !== undefined) {
                 await enqueueNativeCommand(connectionId, `queue-put-${randomUUID()}`, "companion/queue/put", {
-                  command: { ...command, presentation },
+                  command: {
+                    ...command,
+                    presentation,
+                    ...(options.workspaceRequestId === undefined ? {} : { workspaceRequestId: options.workspaceRequestId }),
+                  },
                 });
               } else {
                 await enqueueNativeCommand(connectionId, command.commandId, command.method, command.params);
@@ -1142,10 +1319,8 @@ function createWorkspaceActions(): WorkspaceActions {
       const cachedValue = cached?.value === null || cached?.value === undefined
         ? null
         : cloneTurnControls(cached.value);
-      const cacheFresh = cached?.status === "ready"
-        && cachedValue !== null
-        && Date.now() - cached.updatedAt < TURN_CONTROLS_FRESH_MS;
-      if (cacheFresh) return cachedValue;
+      const cacheFresh = isTurnControlsCacheFresh(cached, Date.now(), TURN_CONTROLS_FRESH_MS);
+      if (cacheFresh && cachedValue !== null) return cachedValue;
       if (session === undefined) {
         if (cachedValue !== null) return cachedValue;
         throw new Error("Connection is not enabled");
@@ -1171,6 +1346,7 @@ function createWorkspaceActions(): WorkspaceActions {
                   defaultEffort: model.defaultReasoningEffort,
                   efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
                   supportsPersonality: model.supportsPersonality,
+                  isDefault: model.isDefault,
                 }));
               },
               skills: async () => {
@@ -1186,6 +1362,23 @@ function createWorkspaceActions(): WorkspaceActions {
                 const response = await rpcAfterAttach<PermissionProfileListResponse>(session, "permissionProfile/list", { cursor: null, limit: 100, cwd });
                 return response.data;
               },
+              defaults: async () => {
+                const response = await rpcAfterAttach<ConfigReadResponse>(session, "config/read", { cwd, includeLayers: false });
+                const configuredPermissions = typeof response.config.permissions === "string"
+                  ? response.config.permissions
+                  : response.config.sandbox_mode === "danger-full-access"
+                    ? ":danger-full-access"
+                    : response.config.sandbox_mode === "workspace-write"
+                      ? ":workspace"
+                      : response.config.sandbox_mode === "read-only"
+                        ? ":read-only"
+                        : null;
+                return {
+                  model: response.config.model,
+                  effort: response.config.model_reasoning_effort,
+                  permissions: configuredPermissions,
+                };
+              },
             },
             (value) => resources?.putTurnControls({
               id: cacheKey,
@@ -1197,7 +1390,7 @@ function createWorkspaceActions(): WorkspaceActions {
             }),
           );
           if (result.loadedSections === 0 && cachedValue === null) {
-            throw result.errors[0] ?? new Error("Could not load model, skill, or permission controls");
+            throw result.errors[0] ?? new Error("Could not load model, skill, permission, or default controls");
           }
           const partialError = result.errors.length === 0
             ? null
@@ -1396,31 +1589,6 @@ function createWorkspaceActions(): WorkspaceActions {
       return snapshot;
     };
   
-    const scopedHttpAuthorization = async (connection: StoredConnection, forceRefresh = false): Promise<string> => {
-      const cached = workspaceRuntime.httpSessions.get(connection.id);
-      const credentialKey = `${connection.endpoint}\u0000${connection.tlsPinSha256 ?? ""}`;
-      if (!forceRefresh && cached !== undefined && cached.credentialKey === credentialKey && cached.expiresAt > Date.now() + 30_000) {
-        return `Bearer ${cached.sessionToken}`;
-      }
-      const existingMint = workspaceRuntime.httpSessionMintInFlight.get(connection.id);
-      if (!forceRefresh && existingMint !== undefined && existingMint.credentialKey === credentialKey) {
-        return `Bearer ${(await existingMint.promise).sessionToken}`;
-      }
-      if (forceRefresh) workspaceRuntime.httpSessions.delete(connection.id);
-      const promise = mintNativeSession(connection.id);
-      const pending = { credentialKey, promise };
-      workspaceRuntime.httpSessionMintInFlight.set(connection.id, pending);
-      try {
-        const minted = await promise;
-        workspaceRuntime.httpSessions.set(connection.id, { credentialKey, ...minted });
-        return `Bearer ${minted.sessionToken}`;
-      } finally {
-        if (workspaceRuntime.httpSessionMintInFlight.get(connection.id) === pending) {
-          workspaceRuntime.httpSessionMintInFlight.delete(connection.id);
-        }
-      }
-    };
-  
     const createLocalhostTunnel = async (connectionId: string, port: number, ttlSeconds: number): Promise<TunnelPreview> => {
       if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error("Port must be between 1 and 65535");
       if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 30 || ttlSeconds > 3_600) throw new Error("TTL must be 30–3600 seconds");
@@ -1501,6 +1669,12 @@ function createWorkspaceActions(): WorkspaceActions {
     updateConnection,
     moveConnection,
     searchThreads,
+    listProjects,
+    addProject,
+    readDirectory,
+    inspectWorkspace,
+    createWorkspace,
+    startThreadInWorkspace,
     setThreadPinned,
     startThread,
     renameThread,
@@ -1814,7 +1988,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     const projection = createThreadProjectionStore({ summaries, details });
 
     startupStage = "connection engine";
-    const supervisor = new NativeEngineSupervisor({
+    const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
         setConnectionState(connectionId, state, diagnostic) {
           connectionStates.setState(connectionId, state, diagnostic);
@@ -1829,23 +2003,35 @@ async function startWorkspaceRuntime(): Promise<void> {
           );
         },
         async applyEvents(connectionId, events) {
-          const repairThreadIds = streamRepairThreadIds(connectionId, events, (candidateConnectionId, threadId) => (
-            details.getThread(candidateConnectionId, threadId)
-          ));
           const terminalProofs = terminalProjectionProofs(events);
-          await projection.applyEvents(connectionId, events);
+          const projected = await projection.applyEvents(connectionId, events);
+          const projectedThreads = new Map([...projected.threads].map(([threadId, thread]) => [threadId, thread.after]));
+          const repairThreadIds = streamRepairThreadIds(events, projected.threads);
           for (const threadId of repairThreadIds) {
             const repaired = await workspaceActions.readThreadAuthoritatively(connectionId, threadId);
             if (repaired === null) throw new Error(`Authoritative stream repair returned no thread for ${threadId}`);
             for (const proof of terminalProofs.filter((candidate) => candidate.threadId === threadId)) {
               if (!terminalProjectionMatches(repaired.thread, proof)) {
-                throw new Error(`Authoritative stream repair did not match terminal projection for ${threadId}`);
+                // `thread/resume` is the recovery authority and has already
+                // been durably projected. A witness mismatch is integrity
+                // telemetry, not a reason to reject the cursor forever: the
+                // native checkpoint would otherwise replay this deterministic
+                // event and reconnect in a permanent loop.
+                incrementMetric("stream_repair_mismatches");
+                recordTelemetryEvent(connectionId, {
+                  name: "stream.authoritative_repair_mismatch",
+                  sessionId: threadId,
+                  threadId,
+                  turnId: proof.turnId,
+                  tags: { witness: "agent_message_hash" },
+                });
+                console.warn(`Authoritative stream repair witness mismatch for ${threadId}`);
               }
             }
+            projectedThreads.set(threadId, repaired.thread);
           }
           if (repairThreadIds.length > 0) incrementMetric("stream_repairs", repairThreadIds.length);
-          const projectedThreadIds = new Set<string>();
-          const changedThreads = new Set<string>();
+          const receiptThreadIds = new Set<string>();
           const deliveredReceiptThreads = new Set<string>();
           const subagentRoots = new Set<string>();
           for (const event of events) {
@@ -1881,24 +2067,35 @@ async function startWorkspaceRuntime(): Promise<void> {
             if (subagentRoot !== null) subagentRoots.add(subagentRoot);
             const threadId = threadIdFromEvent(event.payload);
             if (threadId === null) continue;
-            projectedThreadIds.add(threadId);
             const patch = threadProjectionPatchFromEvent(event.payload);
-            if (patch?.operation.kind === "turnStarted" || patch?.operation.kind === "turnCompleted") {
-              changedThreads.add(threadId);
-            } else if (patch === null && (event.payload.method === "turn/started" || event.payload.method === "turn/completed")) {
-              changedThreads.add(threadId);
+            if (patch !== null) {
+              if (operationConfirmsDeliveredCommand(patch.operation)) receiptThreadIds.add(threadId);
+              const key = threadResourceKey(connectionId, threadId);
+              const current = workspaceRuntime.resourceDatabase.threadResources.get(key);
+              const cwd = projectedThreads.get(threadId)?.cwd;
+              if (current?.value !== null && current?.value !== undefined && typeof cwd === "string") {
+                const value = projectThreadResourcePatch(current.value, cwd, patch, event.cursor);
+                if (value !== current.value) workspaceRuntime.resourceDatabase.putThreadResources({
+                  id: key,
+                  connectionId,
+                  threadId,
+                  status: current.status,
+                  value,
+                  error: current.error,
+                  ...(current.pendingKinds === undefined ? {} : { pendingKinds: current.pendingKinds }),
+                  ...(current.readyKinds === undefined ? {} : { readyKinds: current.readyKinds }),
+                  ...(current.resourceErrors === undefined ? {} : { resourceErrors: current.resourceErrors }),
+                });
+              }
             }
           }
           await reconcileDeliveredCommandReceipts(
             connectionId,
-            [...projectedThreadIds].flatMap((threadId) => {
-              const thread = details.getThread(connectionId, threadId);
-              return thread === null ? [] : [thread];
+            [...receiptThreadIds].flatMap((threadId) => {
+              const thread = projectedThreads.get(threadId);
+              return thread === undefined ? [] : [thread];
             }),
           );
-          for (const threadId of changedThreads) {
-            void workspaceActions.loadThreadResources(connectionId, threadId).catch(() => undefined);
-          }
           for (const threadId of deliveredReceiptThreads) {
             // Companion delivery means App Server accepted turn/start. Refresh
             // the bounded authoritative window so its user item replaces the
@@ -1912,6 +2109,7 @@ async function startWorkspaceRuntime(): Promise<void> {
               console.warn("CodeWide subagent event refresh failed:", cause instanceof Error ? cause.message : "unknown error");
             });
           }
+          return projected;
         },
       },
       onPendingRequests: (connectionId, requests) => pendingRequests.replace(connectionId, requests),
@@ -1923,7 +2121,8 @@ async function startWorkspaceRuntime(): Promise<void> {
           console.error("Thread delete projection failed", cause);
         });
       },
-    });
+    };
+    const supervisor: WorkspaceSyncSupervisor = new NativeEngineSupervisor(nativeSupervisorOptions);
     workspaceRuntime.supervisor = supervisor;
     connectionStates.reconcileProfiles(initialProfiles.map((connection) => ({
       id: connection.id,
@@ -1960,12 +2159,12 @@ async function startWorkspaceRuntime(): Promise<void> {
       resources,
       accountRateLimits,
     });
-    const wakeEnabledConnections = () => {
+    const activateConnections = () => {
       for (const connectionId of workspaceRuntime.enabledConnectionIds()) wakeNativeConnection(connectionId);
     };
-    AppState.addEventListener("focus", wakeEnabledConnections);
+    AppState.addEventListener("focus", activateConnections);
     AppState.addEventListener("change", (state) => {
-      if (state === "active") wakeEnabledConnections();
+      if (state === "active") activateConnections();
     });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "unknown startup error";
@@ -2051,7 +2250,43 @@ async function seedThreadUiState(
 }
 
 async function rpcAfterAttach<T>(session: RpcClient, method: string, params: unknown): Promise<T> {
-  return await session.rpc<T>(method, params);
+  const connectionId = session.connectionId;
+  if (connectionId === undefined) return await session.rpc<T>(method, params);
+  const paramsRecord = asRecord(params);
+  const requestId = typeof paramsRecord?.requestId === "string" && paramsRecord.requestId.length > 0
+    ? paramsRecord.requestId
+    : `rpc-${randomUUID()}`;
+  const threadId = typeof paramsRecord?.threadId === "string" ? paramsRecord.threadId : undefined;
+  const startedAt = performance.now();
+  recordTelemetryEvent(connectionId, {
+    name: "rpc.lifecycle",
+    requestId,
+    ...(threadId === undefined ? {} : { sessionId: threadId, threadId }),
+    tags: { method, phase: "started" },
+  });
+  try {
+    const result = await session.rpc<T>(method, params);
+    recordTelemetryEvent(connectionId, {
+      name: "rpc.lifecycle",
+      requestId,
+      ...(threadId === undefined ? {} : { sessionId: threadId, threadId }),
+      values: { durationMs: performance.now() - startedAt },
+      tags: { method, phase: "completed" },
+    });
+    return result;
+  } catch (cause) {
+    recordTelemetryEvent(connectionId, {
+      name: "rpc.lifecycle",
+      requestId,
+      ...(threadId === undefined ? {} : { sessionId: threadId, threadId }),
+      values: {
+        durationMs: performance.now() - startedAt,
+        ...(cause instanceof RpcResponseError ? { errorCode: cause.code } : {}),
+      },
+      tags: { method, phase: "failed", errorKind: cause instanceof RpcResponseError ? "rpc" : "transport" },
+    });
+    throw cause;
+  }
 }
 
 const AUDIO_UPLOAD_RETRY_BASE_MS = 250;
@@ -2284,7 +2519,20 @@ async function runOptimisticPendingMutation(
   await submit({ mutation }).isPersisted.promise;
 }
 
+type ThreadResourceLoadKind = "all" | "changes" | "attachments";
+
+type ThreadResourcesPatch = Pick<ThreadResourcesValue, "threadId" | "revision"> & {
+  changeScope?: ThreadResourcesValue["changeScope"];
+  changeScopes?: ThreadResourcesValue["changeScopes"];
+  changes?: ThreadResourcesValue["changes"];
+  attachments?: ThreadResourcesValue["attachments"];
+};
+
 function parseThreadResources(value: unknown, expectedThreadId: string): ThreadResourcesValue {
+  return mergeThreadResources(null, parseThreadResourcesPatch(value, expectedThreadId, "all"));
+}
+
+function parseThreadResourcesPatch(value: unknown, expectedThreadId: string, kind: ThreadResourceLoadKind): ThreadResourcesPatch {
   const source = asRecord(value);
   if (source === null || source.threadId !== expectedThreadId || typeof source.revision !== "string") {
     throw new Error("Companion returned invalid thread resources");
@@ -2306,6 +2554,7 @@ function parseThreadResources(value: unknown, expectedThreadId: string): ThreadR
       availability: parseChangeAvailability(item.availability, item.kind),
       additions: Math.max(0, Math.trunc(item.additions)),
       deletions: Math.max(0, Math.trunc(item.deletions)),
+      binary: item.binary === true,
       turnId: item.turnId,
       itemId: item.itemId,
     }];
@@ -2334,10 +2583,82 @@ function parseThreadResources(value: unknown, expectedThreadId: string): ThreadR
       itemId: item.itemId,
     }];
   }) : [];
-  return { threadId: expectedThreadId, revision: source.revision, changes, attachments };
+  const changeScope = parseThreadChangeScope(source.changeScope) ?? (kind === "attachments" ? null : "session");
+  const changeScopes = changeScope === null
+    ? null
+    : Array.isArray(source.changeScopes)
+    ? source.changeScopes.flatMap((scope) => {
+        const parsed = parseThreadChangeScope(scope);
+        return parsed === null ? [] : [parsed];
+      }).filter((scope, index, scopes) => scopes.indexOf(scope) === index)
+    : [changeScope];
+  if (changeScope !== null && changeScopes !== null && !changeScopes.includes(changeScope)) changeScopes.unshift(changeScope);
+  return {
+    threadId: expectedThreadId,
+    revision: source.revision,
+    ...(changeScope === null ? {} : { changeScope }),
+    ...(changeScopes === null ? {} : { changeScopes }),
+    ...(kind === "attachments" ? {} : { changes }),
+    ...(kind === "changes" ? {} : { attachments }),
+  };
 }
 
-function parseThreadChangeDiff(value: unknown, expectedThreadId: string, requestedPath: string): ThreadChangeDiffValue {
+function mergeThreadResources(previous: ThreadResourcesValue | null, patch: ThreadResourcesPatch): ThreadResourcesValue {
+  return {
+    threadId: patch.threadId,
+    revision: patch.revision,
+    changeScope: patch.changeScope ?? previous?.changeScope ?? "session",
+    changeScopes: patch.changeScopes ?? previous?.changeScopes ?? [patch.changeScope ?? "session"],
+    changes: patch.changes ?? previous?.changes ?? [],
+    attachments: patch.attachments ?? previous?.attachments ?? [],
+  };
+}
+
+function threadResourceKinds(kind: ThreadResourceLoadKind): readonly ThreadResourceKind[] {
+  return kind === "all" ? ["changes", "attachments"] : [kind];
+}
+
+function mergeThreadResourceKinds(
+  current: readonly ThreadResourceKind[],
+  requested: readonly ThreadResourceKind[],
+): ThreadResourceKind[] {
+  return [...new Set([...current, ...requested])];
+}
+
+function initializedThreadResourceKinds(
+  row: { value: ThreadResourcesValue | null; readyKinds?: readonly ThreadResourceKind[] } | undefined,
+): readonly ThreadResourceKind[] {
+  if (row?.readyKinds !== undefined) return row.readyKinds;
+  return row?.value == null ? [] : ["changes", "attachments"];
+}
+
+function subtractThreadResourceKinds(
+  current: readonly ThreadResourceKind[],
+  completed: readonly ThreadResourceKind[],
+): ThreadResourceKind[] {
+  return current.filter((kind) => !completed.includes(kind));
+}
+
+function clearThreadResourceErrors(
+  current: Partial<Record<ThreadResourceKind, string>> | undefined,
+  requested: readonly ThreadResourceKind[],
+): Partial<Record<ThreadResourceKind, string>> {
+  const next = { ...current };
+  for (const kind of requested) delete next[kind];
+  return next;
+}
+
+function setThreadResourceErrors(
+  current: Partial<Record<ThreadResourceKind, string>> | undefined,
+  requested: readonly ThreadResourceKind[],
+  message: string,
+): Partial<Record<ThreadResourceKind, string>> {
+  const next = { ...current };
+  for (const kind of requested) next[kind] = message;
+  return next;
+}
+
+function parseThreadChangeDiff(value: unknown, expectedThreadId: string, requestedPath: string, requestedScope?: ThreadChangeScope): ThreadChangeDiffValue {
   const source = asRecord(value);
   if (
     source === null
@@ -2362,7 +2683,16 @@ function parseThreadChangeDiff(value: unknown, expectedThreadId: string, request
   if (normalizedReturned !== requestedPath.replaceAll("\\", "/") && !normalizedReturned.endsWith(`/${normalizedRequested}`)) {
     throw new Error("Companion returned a diff for a different path");
   }
-  return { threadId: expectedThreadId, path: source.path, patches, truncated: source.truncated };
+  const changeScope = parseThreadChangeScope(source.changeScope) ?? requestedScope ?? "session";
+  if (requestedScope !== undefined && changeScope !== requestedScope) {
+    throw new Error("Companion returned a diff for a different change scope");
+  }
+  const scopedSource = typeof source.source === "string" ? source.source : null;
+  return { threadId: expectedThreadId, path: source.path, changeScope, patches, source: scopedSource, truncated: source.truncated };
+}
+
+function parseThreadChangeScope(value: unknown): ThreadChangeScope | null {
+  return value === "session" || value === "lastTurn" || value === "staged" || value === "unstaged" || value === "branch" ? value : null;
 }
 
 function parseChangeAvailability(value: unknown, kind: unknown): ThreadResourcesValue["changes"][number]["availability"] {

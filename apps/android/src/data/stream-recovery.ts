@@ -12,7 +12,9 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 export type TerminalProjectionProof = {
   threadId: string;
   turnId: string;
-  agentMessage: { utf8Bytes: number; sha256: string } | null;
+  /** A positive content witness. Sparse App Server notifications cannot prove
+   * that an authoritative turn has no agent message. */
+  agentMessage: { utf8Bytes: number; sha256: string };
 };
 
 /**
@@ -20,9 +22,8 @@ export type TerminalProjectionProof = {
  * an authoritative thread read has replaced the local projection.
  */
 export function streamRepairThreadIds(
-  connectionId: string,
   events: SyncEvent[],
-  getThread: (connectionId: string, threadId: string) => Thread | null,
+  projectedThreads: ReadonlyMap<string, { before: Thread }>,
 ): string[] {
   const patchesByThread = new Map<string, ThreadProjectionPatchV1[]>();
   for (const event of events) {
@@ -35,8 +36,8 @@ export function streamRepairThreadIds(
   }
   const repair = new Set<string>();
   for (const [threadId, patches] of patchesByThread) {
-    const thread = getThread(connectionId, threadId);
-    if (thread !== null && threadProjectionNeedsAuthoritativeRepair(thread, patches)) {
+    const thread = projectedThreads.get(threadId)?.before;
+    if (thread !== undefined && threadProjectionNeedsAuthoritativeRepair(thread, patches)) {
       repair.add(threadId);
     }
   }
@@ -44,24 +45,29 @@ export function streamRepairThreadIds(
 }
 
 export function terminalProjectionProofs(events: SyncEvent[]): TerminalProjectionProof[] {
-  const proofs: TerminalProjectionProof[] = [];
+  // A reconnect can replay many completed turns while the authoritative
+  // repair intentionally materializes only the newest bounded history page.
+  // Older proofs are therefore outside that page, not evidence of corruption.
+  // Verifying the newest terminal turn per thread proves that the repaired
+  // head matches the ordered event stream without requiring full history.
+  const proofs = new Map<string, TerminalProjectionProof | null>();
   for (const event of events) {
     const patch = threadProjectionPatchFromEvent(event.payload);
     if (patch === null || patch.operation.kind !== "turnCompleted") continue;
+    // Every newer completion supersedes an older witness, even when the newer
+    // sparse notification has no usable witness of its own. Retaining the old
+    // proof could compare a turn outside the bounded authoritative page.
+    proofs.set(patch.threadId, null);
     const proof = asRecord(patch.operation.terminalProjection);
     const agentMessage = asRecord(proof?.agentMessage);
     if (proof?.version !== 1 || typeof proof.turnId !== "string") continue;
-    if (proof.agentMessage === null) {
-      proofs.push({ threadId: patch.threadId, turnId: proof.turnId, agentMessage: null });
-      continue;
-    }
     if (
       !Number.isSafeInteger(agentMessage?.utf8Bytes)
       || (agentMessage?.utf8Bytes as number) < 0
       || typeof agentMessage?.sha256 !== "string"
       || !/^[a-f0-9]{64}$/.test(agentMessage.sha256)
     ) continue;
-    proofs.push({
+    proofs.set(patch.threadId, {
       threadId: patch.threadId,
       turnId: proof.turnId,
       agentMessage: {
@@ -70,7 +76,7 @@ export function terminalProjectionProofs(events: SyncEvent[]): TerminalProjectio
       },
     });
   }
-  return proofs;
+  return [...proofs.values()].filter((proof): proof is TerminalProjectionProof => proof !== null);
 }
 
 export function terminalProjectionMatches(thread: Thread, proof: TerminalProjectionProof): boolean {
@@ -80,7 +86,6 @@ export function terminalProjectionMatches(thread: Thread, proof: TerminalProject
   const agentMessages = turn.items.filter((item) => item.type === "agentMessage");
   const message = [...agentMessages].reverse().find((item) => item.phase === "final_answer")
     ?? agentMessages.at(-1);
-  if (proof.agentMessage === null) return message === undefined;
   if (message === undefined) return false;
   const bytes = new TextEncoder().encode(message.text);
   return bytes.length === proof.agentMessage.utf8Bytes

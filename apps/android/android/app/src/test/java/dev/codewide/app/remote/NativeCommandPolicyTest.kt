@@ -18,6 +18,10 @@ class NativeCommandPolicyTest {
   @Test
   fun ambiguousSideEffectsHaveExplicitReconciliation() {
     assertEquals(
+      NativeCommandReconciliation.IDEMPOTENT_RETRY,
+      NativeCommandPolicy.reconciliation("turn/start"),
+    )
+    assertEquals(
       NativeCommandReconciliation.TURN_BY_CLIENT_MESSAGE,
       NativeCommandPolicy.reconciliation("turn/steer"),
     )

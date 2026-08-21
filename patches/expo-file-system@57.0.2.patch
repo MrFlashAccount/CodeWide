@@ -1,0 +1,61 @@
+diff --git a/android/src/main/java/expo/modules/filesystem/FileSystemFileHandle.kt b/android/src/main/java/expo/modules/filesystem/FileSystemFileHandle.kt
+index a39dfeb96731d8c75afa084742573ae0cebb0bc7..70df8286043a9d45a9220ab354b3e1449626e629 100644
+--- a/android/src/main/java/expo/modules/filesystem/FileSystemFileHandle.kt
++++ b/android/src/main/java/expo/modules/filesystem/FileSystemFileHandle.kt
+@@ -2,12 +2,12 @@ package expo.modules.filesystem
+ 
+ import android.content.ContentResolver
+ import android.net.Uri
++import android.os.ParcelFileDescriptor
+ import expo.modules.kotlin.exception.Exceptions
+ import expo.modules.kotlin.sharedobjects.SharedRef
+ import expo.modules.kotlin.types.Enumerable
++import java.io.Closeable
+ import java.io.File
+-import java.io.FileInputStream
+-import java.io.FileOutputStream
+ import java.io.RandomAccessFile
+ import java.nio.ByteBuffer
+ import java.nio.channels.FileChannel
+@@ -51,7 +51,8 @@ enum class FileMode(val descriptor: String) : Enumerable {
+ 
+ class FileSystemFileHandle private constructor(
+   channel: FileChannel,
+-  private val mode: FileMode
++  private val mode: FileMode,
++  private val resourceOwner: Closeable? = null
+ ) : SharedRef<FileChannel>(channel), AutoCloseable {
+   companion object {
+     fun forJavaFile(file: File, mode: FileMode): FileSystemFileHandle {
+@@ -75,13 +76,17 @@ class FileSystemFileHandle private constructor(
+       val pfd = contentResolver.openFileDescriptor(uri, mode.descriptor)
+         ?: throw Exceptions.IllegalStateException("Could not open file descriptor for uri: $uri")
+ 
+-      val channel = when (mode) {
+-        FileMode.READ -> FileInputStream(pfd.fileDescriptor).channel
+-        FileMode.WRITE, FileMode.APPEND, FileMode.TRUNCATE -> FileOutputStream(pfd.fileDescriptor).channel
+-        else -> throw Exceptions.IllegalArgument("Unsupported file mode: '$mode'")
++      val (channel, owner) = when (mode) {
++        FileMode.READ -> ParcelFileDescriptor.AutoCloseInputStream(pfd).let { it.channel to it }
++        FileMode.WRITE, FileMode.APPEND, FileMode.TRUNCATE ->
++          ParcelFileDescriptor.AutoCloseOutputStream(pfd).let { it.channel to it }
++        else -> {
++          pfd.close()
++          throw Exceptions.IllegalArgument("Unsupported file mode: '$mode'")
++        }
+       }
+ 
+-      return FileSystemFileHandle(channel, mode)
++      return FileSystemFileHandle(channel, mode, owner)
+     }
+   }
+ 
+@@ -98,7 +103,7 @@ class FileSystemFileHandle private constructor(
+   }
+ 
+   override fun close() {
+-    fileChannel.close()
++    resourceOwner?.close() ?: fileChannel.close()
+   }
+ 
+   fun read(length: Long): ByteArray {

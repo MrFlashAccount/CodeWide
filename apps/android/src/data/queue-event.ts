@@ -3,6 +3,7 @@ export type HostQueuedPrompt = {
   remoteThreadId: string;
   params: Record<string, unknown>;
   presentation: "delivery" | "queue";
+  workspaceRequestId: string | null;
   state: "queued" | "uncertain" | "failed" | "delivered";
   order: number;
   createdAt: number;
@@ -23,6 +24,7 @@ export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | nul
       || !Number.isSafeInteger(command.order)
       || !Number.isSafeInteger(command.createdAt)
       || (command.presentation !== undefined && command.presentation !== "delivery" && command.presentation !== "queue")
+      || !(command.workspaceRequestId === undefined || command.workspaceRequestId === null || typeof command.workspaceRequestId === "string")
       || (command.state !== "queued" && command.state !== "uncertain" && command.state !== "failed" && command.state !== "delivered")
       || (command.lastError !== null && typeof command.lastError !== "string")
     ) return null;
@@ -31,6 +33,7 @@ export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | nul
       remoteThreadId: command.remoteThreadId,
       params,
       presentation: command.presentation === "delivery" ? "delivery" : "queue",
+      workspaceRequestId: typeof command.workspaceRequestId === "string" ? command.workspaceRequestId : null,
       state: command.state,
       order: command.order as number,
       createdAt: command.createdAt as number,

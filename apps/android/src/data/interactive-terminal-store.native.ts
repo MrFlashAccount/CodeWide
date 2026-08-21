@@ -1,4 +1,5 @@
 import * as Crypto from "expo-crypto";
+import { releasePersistentTerminalSession } from "expo-libghostty";
 import { useSyncExternalStore } from "react";
 
 import {
@@ -27,6 +28,7 @@ export type InteractiveTerminalWorkspace = {
 
 const EMPTY_WORKSPACE: InteractiveTerminalWorkspace = Object.freeze({ tabs: Object.freeze([]), activeId: null });
 const workspaces = new Map<string, InteractiveTerminalWorkspace>();
+const renderedOffsets = new Map<string, number>();
 const listeners = new Set<() => void>();
 
 subscribeNativeTerminal((event) => applyNativeEvent(event));
@@ -45,6 +47,16 @@ export function useInteractiveTerminalWorkspace(
 
 export function readInteractiveTerminalWorkspace(connectionId: string, threadId: string): InteractiveTerminalWorkspace {
   return workspaces.get(requiredWorkspaceKey(connectionId, threadId)) ?? EMPTY_WORKSPACE;
+}
+
+export function readInteractiveTerminalRenderedOffset(terminalId: string): number {
+  return renderedOffsets.get(terminalId) ?? 0;
+}
+
+export function commitInteractiveTerminalRenderedOffset(terminalId: string, offset: number): void {
+  const previous = readInteractiveTerminalRenderedOffset(terminalId);
+  if (!Number.isSafeInteger(offset) || offset < previous) throw new Error("Terminal render offset is invalid");
+  renderedOffsets.set(terminalId, offset);
 }
 
 export function createInteractiveTerminalTab(input: {
@@ -105,6 +117,7 @@ export function closeInteractiveTerminalTab(connectionId: string, threadId: stri
   } else {
     setWorkspace(key, { tabs, activeId });
   }
+  releaseTerminalRenderer(terminalId);
   closeNativeTerminal(terminalId);
 }
 
@@ -114,7 +127,10 @@ export function closeInteractiveTerminalWorkspace(connectionId: string, threadId
   if (current === undefined) return;
   workspaces.delete(key);
   emitChange();
-  current.tabs.forEach(({ id }) => closeNativeTerminal(id));
+  current.tabs.forEach(({ id }) => {
+    releaseTerminalRenderer(id);
+    closeNativeTerminal(id);
+  });
 }
 
 function applyNativeEvent(event: NativeTerminalEvent): void {
@@ -154,9 +170,17 @@ function removeTabById(id: string): void {
       tabs,
       activeId: workspace.activeId === id ? tabs[Math.min(index, tabs.length - 1)]?.id ?? null : workspace.activeId,
     });
+    releaseTerminalRenderer(id);
     if (tabs.length === 0) emitChange();
     return;
   }
+}
+
+function releaseTerminalRenderer(id: string): void {
+  renderedOffsets.delete(id);
+  void releasePersistentTerminalSession(id).catch((cause: unknown) => {
+    console.warn("Could not release persistent terminal renderer", cause);
+  });
 }
 
 function setWorkspace(key: string, workspace: InteractiveTerminalWorkspace): void {

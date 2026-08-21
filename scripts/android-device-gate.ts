@@ -361,6 +361,10 @@ async function pairTestServer(): Promise<void> {
   await step("one-time-pairing", async () => {
     const pairing = await readPairing(options.pairingFile!);
     adb(["shell", "pm", "grant", PACKAGE_NAME, "android.permission.POST_NOTIFICATIONS"], 60_000, true);
+    if (hasDescription("Choose server")) {
+      tapDescription("Choose server");
+      await delay(500);
+    }
     await tapDescriptionWhenReady("Add server", 15_000);
     await delay(500);
     if (hasDescription("Open manual server setup")) {

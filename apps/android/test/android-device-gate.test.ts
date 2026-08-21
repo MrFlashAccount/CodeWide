@@ -109,7 +109,7 @@ describe("Android device evidence parser", () => {
   it("selects a compact thread and validates list plus conversation geometry", () => {
     const compactList = `<hierarchy>
       <node text="" content-desc="Choose server" clickable="true" bounds="[0,20][300,70]" />
-      <node text="" content-desc="Add server" clickable="true" bounds="[900,20][960,70]" />
+      <node text="" content-desc="New thread" clickable="true" bounds="[900,20][960,70]" />
       <node text="" content-desc="Search threads" clickable="true" bounds="[30,90][930,140]" />
       <node text="" content-desc="Archived threads" clickable="true" bounds="[0,150][960,210]" />
       <node text="" content-desc="Private thread title" clickable="true" bounds="[0,210][960,410]" />
@@ -124,7 +124,9 @@ describe("Android device evidence parser", () => {
     expect(compactThreadControl(parseUiNodes(compactList))?.description).toBe("Private thread title");
     const evidence = analyzeAdaptiveLayout(compactList, compactConversation);
     expect(evidence.composer.inputShare).toBeGreaterThan(0.7);
+    expect(evidence.serverControls.add).toBeNull();
     expect(evidence.serverControls.settings).toBeNull();
+    expect(evidence.threadControls.newThread).not.toBeNull();
   });
 
   it("rejects a separate settings button in the compact server header", () => {

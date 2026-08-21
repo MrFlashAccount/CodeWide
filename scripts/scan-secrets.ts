@@ -121,7 +121,7 @@ run(gitleaks, ["git", "--no-banner", "--redact", "--timeout", "300", "."]);
 const snapshot = await createWorkingTreeSnapshot();
 try {
   console.log("Scanning tracked and untracked, non-ignored working-tree files with Gitleaks...");
-  run(gitleaks, ["dir", "--no-banner", "--redact", "--timeout", "300", snapshot]);
+  run(gitleaks, ["dir", "--no-banner", "--redact", "--timeout", "300", "."], snapshot);
 } finally {
   await rm(snapshot, { recursive: true, force: true });
 }

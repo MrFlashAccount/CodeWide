@@ -54,7 +54,7 @@ describe("tool output presentation", () => {
   });
 
   it("presents command output as a terminal both inline and in full content", () => {
-    expect(screen).toContain('block.kind === "commandExecution" ? { codeVariant: "terminal" as const }');
+    expect(screen).toContain('codeVariant="terminal"');
     expect(screen).toContain('reference.contentType.startsWith("text/x-ansi")');
     expect(screen).toContain('pointer.endsWith("/aggregatedOutput")');
   });

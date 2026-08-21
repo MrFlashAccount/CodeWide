@@ -13,9 +13,10 @@
     #root[data-mode="inline"] #stage, #root[data-mode="inline"] #canvas { width: 100%; height: auto; }
     #root[data-mode="inline"] #canvas svg { display: block; width: 100%; max-width: none; height: auto; }
     #root[data-mode="fullscreen"] { touch-action: none; }
-    #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; touch-action: none; }
+    #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; overflow: hidden; touch-action: none; }
     #root[data-mode="fullscreen"] #canvas { flex: 0 0 auto; touch-action: none; will-change: transform; transform-origin: 50% 50%; }
     #root[data-mode="fullscreen"] #canvas svg { display: block; width: 100%; height: 100%; max-width: none; }
+    #root[data-annotating="true"] #stage, #root[data-annotating="true"] #canvas { cursor: crosshair !important; }
   </style>
   <script src="mermaid.min.js"></script>
   <script src="panzoom.min.js"></script>
@@ -31,6 +32,10 @@
   let naturalWidth = 1;
   let naturalHeight = 1;
   let currentMode = 'inline';
+  let currentRequestId = -1;
+  let annotationEnabled = false;
+  let pointerStart = null;
+  let resizeFrame = null;
 
   mermaid.initialize({
     startOnLoad: false,
@@ -84,6 +89,64 @@
     reportSize(requestId, innerHeight);
   };
 
+  window.diagramSetAnnotationMode = function (enabled) {
+    annotationEnabled = enabled === true && currentMode === 'fullscreen';
+    root.dataset.annotating = annotationEnabled ? 'true' : 'false';
+    if (panzoom !== null) panzoom.setOptions({ disablePan: annotationEnabled });
+  };
+
+  window.diagramAddReviewPoint = function (x, y) {
+    const svg = canvas.querySelector('svg');
+    if (!svg) return;
+    const box = svg.viewBox && svg.viewBox.baseVal;
+    if (!box || box.width <= 0 || box.height <= 0) return;
+    let layer = svg.querySelector('[data-codewide-review-points]');
+    if (!layer) {
+      layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      layer.setAttribute('data-codewide-review-points', 'true');
+      layer.setAttribute('pointer-events', 'none');
+      svg.appendChild(layer);
+    }
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const radius = Math.max(4, Math.min(box.width, box.height) * .016);
+    circle.setAttribute('cx', String(box.x + Math.max(0, Math.min(1, x)) * box.width));
+    circle.setAttribute('cy', String(box.y + Math.max(0, Math.min(1, y)) * box.height));
+    circle.setAttribute('r', String(radius));
+    circle.setAttribute('fill', '#58c7ff');
+    circle.setAttribute('stroke', '#0b0b0b');
+    circle.setAttribute('stroke-width', String(Math.max(1.5, radius * .22)));
+    layer.appendChild(circle);
+  };
+
+  function reviewPointAt(clientX, clientY) {
+    const svg = canvas.querySelector('svg');
+    if (!svg || !svg.getScreenCTM()) return;
+    const box = svg.viewBox && svg.viewBox.baseVal;
+    if (!box || box.width <= 0 || box.height <= 0) return;
+    const point = svg.createSVGPoint();
+    point.x = clientX;
+    point.y = clientY;
+    const local = point.matrixTransform(svg.getScreenCTM().inverse());
+    send({
+      type: 'reviewPoint',
+      requestId: currentRequestId,
+      x: Math.max(0, Math.min(1, (local.x - box.x) / box.width)),
+      y: Math.max(0, Math.min(1, (local.y - box.y) / box.height))
+    });
+  }
+
+  stage.addEventListener('pointerdown', function (event) {
+    if (!annotationEnabled) return;
+    pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+  });
+  stage.addEventListener('pointercancel', function () { pointerStart = null; });
+  stage.addEventListener('pointerup', function (event) {
+    if (!annotationEnabled || !pointerStart || pointerStart.id !== event.pointerId) return;
+    const distance = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y);
+    pointerStart = null;
+    if (distance <= 10) reviewPointAt(event.clientX, event.clientY);
+  });
+
   function viewBoxSize(svg) {
     const viewBox = svg.viewBox && svg.viewBox.baseVal;
     if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
@@ -111,6 +174,16 @@
     reportSize(requestId, renderedHeight + 20);
   }
 
+  function fullscreenFitScale() {
+    const horizontalGutter = Math.min(160, Math.max(48, innerWidth * .14));
+    const verticalGutter = Math.min(180, Math.max(72, innerHeight * .16));
+    return Math.min(
+      1,
+      Math.max(.15, (innerWidth - horizontalGutter * 2) / naturalWidth),
+      Math.max(.15, (innerHeight - verticalGutter * 2) / naturalHeight)
+    );
+  }
+
   function layoutFullscreen(svg, requestId) {
     destroyPanzoom();
     const size = viewBoxSize(svg);
@@ -118,13 +191,7 @@
     naturalHeight = Math.max(1, Math.ceil(size.height));
     canvas.style.width = naturalWidth + 'px';
     canvas.style.height = naturalHeight + 'px';
-    const horizontalGutter = Math.min(160, Math.max(48, innerWidth * .14));
-    const verticalGutter = Math.min(180, Math.max(72, innerHeight * .16));
-    fitScale = Math.min(
-      1,
-      Math.max(.15, (innerWidth - horizontalGutter * 2) / naturalWidth),
-      Math.max(.15, (innerHeight - verticalGutter * 2) / naturalHeight)
-    );
+    fitScale = fullscreenFitScale();
     panzoom = Panzoom(canvas, {
       canvas: true,
       cursor: 'move',
@@ -139,12 +206,26 @@
     reportSize(requestId, innerHeight);
   }
 
+  window.addEventListener('resize', function () {
+    if (currentMode !== 'fullscreen' || panzoom === null) return;
+    if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+    resizeFrame = requestAnimationFrame(function () {
+      resizeFrame = null;
+      if (currentMode !== 'fullscreen' || panzoom === null) return;
+      const svg = canvas.querySelector('svg');
+      if (svg) layoutFullscreen(svg, currentRequestId);
+    });
+  });
+
   window.renderMermaid = async function (source, requestId, mode) {
     try {
       canvas.replaceChildren();
       destroyPanzoom();
       scale = 1;
       currentMode = mode === 'fullscreen' ? 'fullscreen' : 'inline';
+      currentRequestId = requestId;
+      annotationEnabled = false;
+      root.dataset.annotating = 'false';
       root.dataset.mode = currentMode;
       await waitForViewport(currentMode);
       const result = await mermaid.render('diagram-' + requestId, source, canvas);

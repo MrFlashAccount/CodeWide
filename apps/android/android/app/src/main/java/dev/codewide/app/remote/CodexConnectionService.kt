@@ -7,11 +7,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
@@ -38,6 +40,8 @@ class CodexConnectionService : Service() {
   private lateinit var terminalSessionManager: NativeTerminalSessionManager
   private lateinit var connectivityManager: ConnectivityManager
   private val handler = Handler(Looper.getMainLooper())
+  private val journalThread = HandlerThread("CodeWideJournal")
+  private lateinit var journalHandler: Handler
   private val sessions = ConcurrentHashMap<String, Session>()
   @Volatile private var activeDefaultNetwork: Network? = null
   private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -72,6 +76,8 @@ class CodexConnectionService : Service() {
   override fun onCreate() {
     super.onCreate()
     instance = this
+    journalThread.start()
+    journalHandler = Handler(journalThread.looper)
     frameStore = NativeFrameStore(this)
     commandStore = NativeCommandStore(this)
     credentialsStore = NativeSessionCredentialsStore(this)
@@ -102,12 +108,13 @@ class CodexConnectionService : Service() {
     sessions.values.forEach { it.close("service_destroyed") }
     sessions.clear()
     portForwardManager.close()
-    terminalSessionManager.closeAll()
+    terminalSessionManager.destroy()
     runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
     activeDefaultNetwork = null
     httpClient.dispatcher.executorService.shutdown()
     if (instance === this) instance = null
     commandStore.close()
+    journalThread.quitSafely()
     super.onDestroy()
   }
 
@@ -132,15 +139,42 @@ class CodexConnectionService : Service() {
   }
 
   fun acknowledgeThrough(connectionId: String, projectionCursor: Long) {
-    frameStore.acknowledgeThrough(connectionId, projectionCursor)
+    journalHandler.post { frameStore.acknowledgeThrough(connectionId, projectionCursor) }
+  }
+
+  internal fun readCommittedFrames(
+    connectionId: String,
+    afterCursor: Long?,
+    maxFrames: Int,
+    maxBytes: Int,
+    completion: (Result<CommittedFramePage>) -> Unit,
+  ) {
+    journalHandler.post {
+      completion(runCatching { frameStore.committedFrames(connectionId, afterCursor, maxFrames, maxBytes) })
+    }
   }
 
   internal fun listPortForwards(connectionId: String): List<PortForwardProjection> = portForwardManager.list(connectionId)
 
   internal fun discoverPorts(connectionId: String): String = portForwardManager.discover(connectionId)
 
-  internal fun upsertPortForward(connectionId: String, profileId: String, label: String, remotePort: Int, preferredLocalPort: Int?): PortForwardProjection =
-    portForwardManager.upsert(connectionId, profileId, label, remotePort, preferredLocalPort)
+  internal fun upsertPortForward(
+    connectionId: String,
+    profileId: String,
+    label: String,
+    remotePort: Int,
+    preferredLocalPort: Int?,
+    serviceKey: String?,
+    preference: String,
+  ): PortForwardProjection = portForwardManager.upsert(
+    connectionId,
+    profileId,
+    label,
+    remotePort,
+    preferredLocalPort,
+    serviceKey,
+    preference,
+  )
 
   internal fun startPortForward(profileId: String): PortForwardProjection = portForwardManager.start(profileId)
 
@@ -305,7 +339,7 @@ class CodexConnectionService : Service() {
       Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    return NotificationCompat.Builder(this, CHANNEL_ID)
+    return notificationBuilder(CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_stat_codewide)
       .setContentTitle("CodeWide")
       .setContentText(summary)
@@ -319,6 +353,9 @@ class CodexConnectionService : Service() {
   private fun updateNotification() {
     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification())
   }
+
+  private fun notificationBuilder(channelId: String): NotificationCompat.Builder =
+    NotificationCompat.Builder(this, channelId).setColor(Color.WHITE)
 
   private fun notifyTurnFinished(connectionId: String, threadId: String, failed: Boolean) {
     val deepLink = Uri.Builder()
@@ -334,12 +371,12 @@ class CodexConnectionService : Service() {
         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    val publicVersion = NotificationCompat.Builder(this, ACTIVITY_CHANNEL_ID)
+    val publicVersion = notificationBuilder(ACTIVITY_CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_stat_codewide)
       .setContentTitle("CodeWide")
       .setContentText("A remote turn finished")
       .build()
-    val notification = NotificationCompat.Builder(this, ACTIVITY_CHANNEL_ID)
+    val notification = notificationBuilder(ACTIVITY_CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_stat_codewide)
       .setContentTitle(if (failed) "Codex turn failed" else "Codex turn completed")
       .setContentText("Tap to open the thread")
@@ -370,12 +407,12 @@ class CodexConnectionService : Service() {
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
-    val publicVersion = NotificationCompat.Builder(this, ACTIVITY_CHANNEL_ID)
+    val publicVersion = notificationBuilder(ACTIVITY_CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_stat_codewide)
       .setContentTitle("CodeWide")
       .setContentText("A remote session needs attention")
       .build()
-    val notification = NotificationCompat.Builder(this, ACTIVITY_CHANNEL_ID)
+    val notification = notificationBuilder(ACTIVITY_CHANNEL_ID)
       .setSmallIcon(R.drawable.ic_stat_codewide)
       .setContentTitle("Codex needs approval")
       .setContentText("Open the thread to review the request")
@@ -422,6 +459,7 @@ class CodexConnectionService : Service() {
       id,
       frameStore,
       handler,
+      journalHandler,
       sendFrame = { payload -> socket?.send(payload) == true },
       resetTransport = { reason -> resetTransport("protocol:$reason") },
       onLive = { handler.post { drainOutbox() } },

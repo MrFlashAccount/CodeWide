@@ -10,7 +10,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::Semaphore;
 
 use crate::{
     auth::{AuthError, AuthorizationContext, DeviceRegistry, PairingClaim, SessionProof},
@@ -21,6 +20,9 @@ use crate::{
     ports,
     store::IndexStore,
     sync::SyncHub,
+    telemetry::{
+        TelemetryBatch, TelemetryError, TelemetryQuery, TelemetrySettings, TelemetryStore,
+    },
     terminal::{self, TerminalQuery},
     tunnels::{LocalhostTunnelService, TunnelError},
     upstream,
@@ -33,7 +35,7 @@ struct AppState {
     sync: SyncHub,
     services: CompanionServices,
     allow_admin_data_plane: bool,
-    terminal_slots: Arc<Semaphore>,
+    terminals: terminal::TerminalRegistry,
 }
 
 /// Separates the remotely reachable authenticated data plane from the
@@ -50,6 +52,7 @@ pub struct CompanionServices {
     pub content: Option<Arc<PrivateContentService>>,
     pub media: Option<Arc<MediaProxyService>>,
     pub tunnels: Option<Arc<LocalhostTunnelService>>,
+    pub telemetry: Option<Arc<TelemetryStore>>,
     pub app_server_socket_path: Option<PathBuf>,
     pub excluded_ports: HashSet<u16>,
 }
@@ -129,7 +132,7 @@ pub fn split_routers_with_registry_and_services(
         sync,
         services,
         allow_admin_data_plane: false,
-        terminal_slots: Arc::new(Semaphore::new(8)),
+        terminals: terminal::TerminalRegistry::new(8),
     };
     CompanionRouters {
         public: build_public_router(state.clone()),
@@ -149,7 +152,7 @@ fn build_router(
         sync,
         services,
         allow_admin_data_plane: true,
-        terminal_slots: Arc::new(Semaphore::new(8)),
+        terminals: terminal::TerminalRegistry::new(8),
     };
     let core = Router::new()
         .route("/healthz", get(health))
@@ -188,6 +191,16 @@ fn build_router(
         .route("/v1/media/materialize", post(media_materialize))
         .route("/v1/media/{id}", get(media_read).head(media_read))
         .layer(DefaultBodyLimit::max(20 * 1024));
+    let telemetry = Router::new()
+        .route(
+            "/v1/telemetry/events",
+            get(telemetry_query).post(telemetry_ingest),
+        )
+        .route(
+            "/v1/telemetry/settings",
+            get(telemetry_settings_read).patch(telemetry_settings_update),
+        )
+        .layer(DefaultBodyLimit::max(256 * 1024));
     let build_shelf = Router::new()
         .route("/", any(build_shelf_proxy))
         .route("/api/builds", any(build_shelf_proxy))
@@ -200,6 +213,7 @@ fn build_router(
         .route("/download/{*path}", any(build_shelf_proxy));
     core.merge(files)
         .merge(media)
+        .merge(telemetry)
         .merge(build_shelf)
         .with_state(state)
 }
@@ -231,6 +245,9 @@ fn build_public_router(state: AppState) -> Router {
         .route("/v1/media/materialize", post(media_materialize))
         .route("/v1/media/{id}", get(media_read).head(media_read))
         .layer(DefaultBodyLimit::max(20 * 1024));
+    let telemetry = Router::new()
+        .route("/v1/telemetry/events", post(telemetry_ingest))
+        .layer(DefaultBodyLimit::max(256 * 1024));
     let build_shelf = Router::new()
         .route("/", any(build_shelf_proxy))
         .route("/api/builds", any(build_shelf_proxy))
@@ -244,6 +261,7 @@ fn build_public_router(state: AppState) -> Router {
     transport
         .merge(files)
         .merge(media)
+        .merge(telemetry)
         .merge(build_shelf)
         .with_state(state)
 }
@@ -259,8 +277,116 @@ fn build_control_router(state: AppState) -> Router {
             "/v1/devices/{device_id}",
             patch(device_update).delete(device_revoke),
         )
+        .route("/v1/telemetry/events", get(telemetry_query))
+        .route(
+            "/v1/telemetry/settings",
+            get(telemetry_settings_read).patch(telemetry_settings_update),
+        )
         .layer(DefaultBodyLimit::max(8 * 1024))
         .with_state(state)
+}
+
+async fn telemetry_ingest(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(batch): Json<TelemetryBatch>,
+) -> Response {
+    let Some(store) = state.services.telemetry.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some() {
+        return json_error(StatusCode::UNAUTHORIZED, "session_authorization_required");
+    }
+    let Some(context) = authorization_for_scope(&state, &headers, "threads.read").await else {
+        return json_error(StatusCode::UNAUTHORIZED, "session_authorization_required");
+    };
+    if !store.enabled() {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    let device_id = context.device_id().unwrap_or("local-admin").to_owned();
+    match tokio::task::spawn_blocking(move || store.ingest(&device_id, batch)).await {
+        Ok(Ok(report)) => (StatusCode::ACCEPTED, Json(report)).into_response(),
+        Ok(Err(error)) => telemetry_error(&error),
+        Err(error) => {
+            tracing::error!(reason = %error, "telemetry ingest task failed");
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, "telemetry_store_failed")
+        }
+    }
+}
+
+async fn telemetry_settings_read(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(store) = state.services.telemetry.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    }
+    Json(TelemetrySettings {
+        enabled: store.enabled(),
+    })
+    .into_response()
+}
+
+async fn telemetry_settings_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(settings): Json<TelemetrySettings>,
+) -> Response {
+    let Some(store) = state.services.telemetry.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    }
+    match tokio::task::spawn_blocking(move || store.set_enabled(settings.enabled)).await {
+        Ok(Ok(())) => Json(settings).into_response(),
+        Ok(Err(error)) => telemetry_error(&error),
+        Err(error) => {
+            tracing::error!(reason = %error, "telemetry settings task failed");
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, "telemetry_store_failed")
+        }
+    }
+}
+
+async fn telemetry_query(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TelemetryQuery>,
+) -> Response {
+    let Some(store) = state.services.telemetry.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if headers.get("origin").is_some() || !authorize_admin(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    }
+    match tokio::task::spawn_blocking(move || store.query(&query)).await {
+        Ok(Ok(page)) => Json(page).into_response(),
+        Ok(Err(error)) => telemetry_error(&error),
+        Err(error) => {
+            tracing::error!(reason = %error, "telemetry query task failed");
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, "telemetry_store_failed")
+        }
+    }
+}
+
+fn telemetry_error(error: &TelemetryError) -> Response {
+    match error {
+        TelemetryError::Invalid(reason) => {
+            tracing::debug!(%reason, "invalid telemetry request");
+            json_error(StatusCode::BAD_REQUEST, "invalid_telemetry")
+        }
+        TelemetryError::Database(_)
+        | TelemetryError::DatabaseOpen(_)
+        | TelemetryError::Transaction(_)
+        | TelemetryError::Table(_)
+        | TelemetryError::Storage(_)
+        | TelemetryError::Commit(_)
+        | TelemetryError::Json(_)
+        | TelemetryError::Io(_) => {
+            tracing::error!(reason = %error, "telemetry store failed");
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, "telemetry_store_failed")
+        }
+    }
 }
 
 async fn build_shelf_proxy(State(state): State<AppState>, request: Request) -> Response {
@@ -531,6 +657,7 @@ async fn terminal_upgrade(
     let Some(authorization) = authorization else {
         return json_error(StatusCode::FORBIDDEN, "shell_explicit_scope_required");
     };
+    let owner = authorization.device_id().unwrap_or("admin").to_owned();
     let authorization_changes = match (&state.authorization, authorization.device_id()) {
         (Authorization::Registry(registry), Some(device_id)) => {
             Some(terminal::TerminalAuthorization::new(
@@ -540,12 +667,33 @@ async fn terminal_upgrade(
         }
         _ => None,
     };
-    let Ok(permit) = state.terminal_slots.clone().try_acquire_owned() else {
-        return json_error(StatusCode::TOO_MANY_REQUESTS, "terminal_limit_reached");
+    if query.session_id.is_some() {
+        let offset = query.offset.unwrap_or(0);
+        let session = match state
+            .terminals
+            .attach_or_create(&owner, &query, authorization_changes)
+        {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::error!(reason = %error, "resumable terminal attach failed");
+                return json_error(error.status(), error.code());
+            }
+        };
+        return upgrade
+            .max_message_size(1024 * 1024)
+            .on_upgrade(move |socket| terminal::bridge_resumable(socket, session, offset));
+    }
+
+    let permit = match state.terminals.legacy_permit() {
+        Ok(permit) => permit,
+        Err(error) => return json_error(error.status(), error.code()),
     };
     let session = match terminal::TerminalSession::spawn(&query) {
         Ok(session) => session,
-        Err(error) => return json_error(error.status(), error.code()),
+        Err(error) => {
+            tracing::error!(reason = %error, "terminal session spawn failed");
+            return json_error(error.status(), error.code());
+        }
     };
     upgrade
         .max_message_size(1024 * 1024)

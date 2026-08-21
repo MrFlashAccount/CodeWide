@@ -9,7 +9,7 @@ export function createTurnControlsCollection(): Collection<TurnControlsRow, stri
   return createCollection(
     persistedCollectionOptions<TurnControlsRow, string>({
       id: "workspace-turn-controls-v2",
-      schemaVersion: 1,
+      schemaVersion: 2,
       getKey: (row) => row.id,
       persistence: getUiCachePersistence(),
     }),

@@ -1,6 +1,6 @@
 import type { ThreadListParams, ThreadListResponse } from "@codewide/codex-protocol/v0.147.0/v2";
 
-import type { RemoteConnection, SocketFactory, SocketLike, SyncCache, SyncEvent, SyncServerRequest, SyncSnapshotThread } from "./types";
+import type { RemoteConnection, SocketFactory, SocketLike, SyncCache, SyncEvent, SyncEventIngress, SyncServerRequest, SyncSnapshotThread } from "./types";
 import { restoreSubagentParent } from "./thread-metadata";
 
 type RpcResponse = { id: unknown; result?: unknown; error?: { code: number; message: string } };
@@ -21,7 +21,7 @@ export type SyncSessionOptions = {
   connection: RemoteConnection;
   cache: SyncCache;
   socketFactory: SocketFactory;
-  onEvents?(connectionId: string, events: SyncEvent[]): void;
+  onEvents?(connectionId: string, events: SyncEvent[], ingress: SyncEventIngress): void;
   eventPersistenceIntervalMs?: number;
   rpcTimeoutMs?: number;
   longRunningRpcTimeoutMs?: number;
@@ -34,7 +34,7 @@ export class SyncSession {
   readonly #connection: RemoteConnection;
   readonly #cache: SyncCache;
   readonly #socketFactory: SocketFactory;
-  readonly #onEvents: ((connectionId: string, events: SyncEvent[]) => void) | undefined;
+  readonly #onEvents: ((connectionId: string, events: SyncEvent[], ingress: SyncEventIngress) => void) | undefined;
   readonly #eventPersistenceIntervalMs: number;
   readonly #rpcTimeoutMs: number;
   readonly #longRunningRpcTimeoutMs: number;
@@ -129,7 +129,7 @@ export class SyncSession {
   }
 
   async rpc<T>(method: string, params: unknown): Promise<T> {
-    const timeoutMs = method === "thread/fork"
+    const timeoutMs = method === "thread/fork" || method === "companion/workspace/create"
       ? this.#longRunningRpcTimeoutMs
       : this.#rpcTimeoutMs;
     return await this.#rpcWithTimeout<T>(method, params, timeoutMs);
@@ -175,7 +175,13 @@ export class SyncSession {
         this.#send({ type: "hello", protocolVersion: 1, cursor });
       });
     });
-    socket.addEventListener("message", (event) => this.#onMessage(socket, decodeSocketData(event.data)));
+    socket.addEventListener("message", (event) => {
+      const observedAtMs = performance.now();
+      const nativeToJsMs = typeof event.receivedAtUnixMs === "number" && Number.isFinite(event.receivedAtUnixMs)
+        ? Math.max(0, Date.now() - event.receivedAtUnixMs)
+        : undefined;
+      this.#onMessage(socket, decodeSocketData(event.data), observedAtMs, nativeToJsMs);
+    });
     socket.addEventListener("error", () => {
       if (this.#socket === socket) void this.#cache.setConnectionState(this.#connection.id, "degraded");
     });
@@ -193,7 +199,7 @@ export class SyncSession {
     });
   }
 
-  #onMessage(socket: SocketLike, raw: string): void {
+  #onMessage(socket: SocketLike, raw: string, observedAtMs: number, nativeToJsMs: number | undefined): void {
     if (this.#socket !== socket || this.#stopped) return;
     let message: Record<string, unknown>;
     try {
@@ -293,7 +299,11 @@ export class SyncSession {
       const event: SyncEvent = { cursor: cursor as number, payload: payload as Record<string, unknown> };
       this.#maximumObservedCursor = Math.max(this.#maximumObservedCursor, event.cursor);
       this.#eventBatch.push({ socket, event });
-      this.#onEvents?.(this.#connection.id, [event]);
+      this.#onEvents?.(this.#connection.id, [event], {
+        observedAtMs,
+        decodeDurationMs: Math.max(0, performance.now() - observedAtMs),
+        ...(nativeToJsMs === undefined ? {} : { nativeToJsMs }),
+      });
       this.#eventBatchBytes += frameBytes;
       this.#pendingApplyCount += 1;
       this.#pendingApplyBytes += frameBytes;
@@ -370,6 +380,11 @@ export class SyncSession {
             sortKey: "updated_at",
             sortDirection: "desc",
             archived,
+            // Omitting modelProviders scopes thread/list to the App Server's
+            // current provider. That hides history created before a provider
+            // migration (for example openai -> openai_no_ws). An explicit
+            // empty list means all providers.
+            modelProviders: [],
             useStateDbOnly: true,
             ...(sourceKinds === undefined ? {} : { sourceKinds }),
           }, this.#snapshotRpcTimeoutMs);

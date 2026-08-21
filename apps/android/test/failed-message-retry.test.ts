@@ -9,6 +9,8 @@ const workspace = readSource("../src/data/use-remote-workspace.ts");
 const nativeTransport = readSource("../src/native/native-transport.native.ts");
 const nativeModule = readSource("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
 const commandStore = readSource("../android/app/src/main/java/dev/codewide/app/remote/NativeCommandStore.kt");
+const commandPolicy = readSource("../android/app/src/main/java/dev/codewide/app/remote/NativeCommandPolicy.kt");
+const connectionService = readSource("../android/app/src/main/java/dev/codewide/app/remote/CodexConnectionService.kt");
 
 describe("failed message retry", () => {
   it("requeues the original durable command instead of creating a duplicate message", () => {
@@ -17,6 +19,12 @@ describe("failed message retry", () => {
     expect(nativeModule).toContain("fun engineRetryCommand(connectionId: String, commandId: String, promise: Promise)");
     expect(nativeTransport).toContain("retryNativeCommand(connectionId: string, commandId: string)");
     expect(workspace).toContain("retryFailedMessage = async (connectionId: string, commandId: string)");
+  });
+
+  it("retries an uncertain turn admission through the idempotent companion queue", () => {
+    expect(commandPolicy).toContain('"turn/start" to NativeCommandReconciliation.IDEMPOTENT_RETRY');
+    expect(connectionService).toContain('return "companion/queue/put" to JSONObject().put("command", queued)');
+    expect(connectionService).toContain('.put("commandId", command.commandId)');
   });
 
   it("places Retry beside the failed status", () => {

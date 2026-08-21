@@ -19,6 +19,7 @@ import { formatEstimatedTurnCost } from "../turn-cost";
 import { AnimatedNumber, compactNumberFormat, integerNumberFormat, usdNumberFormat } from "./AnimatedNumber";
 import { AnimatedBreakdownRow, BreakdownRow } from "./CostBreakdownPopover";
 import { AppText as Text } from "./Typography";
+import { TOKEN_SYMBOL } from "./token-display";
 
 type UsagePopoverAction = {
   id: string;
@@ -103,6 +104,7 @@ export function UsagePopover({
                         accessibilityLabel={`${context.usedTokens.toLocaleString()} of ${context.totalTokens.toLocaleString()} context tokens used`}
                         value={context.usedTokens}
                         format={compactNumberFormat}
+                        prefix={TOKEN_SYMBOL}
                         suffix={` / ${compactNumber(context.totalTokens)}`}
                         style={styles.primaryValue}
                       />
@@ -110,7 +112,7 @@ export function UsagePopover({
                     {context === null ? (
                       <Text numberOfLines={1} style={styles.secondaryValue}>No token data for this thread</Text>
                     ) : (
-                      <AnimatedNumber value={context.remainingTokens} format={compactNumberFormat} suffix=" available" style={styles.secondaryValue} />
+                      <AnimatedNumber value={context.remainingTokens} format={compactNumberFormat} prefix={TOKEN_SYMBOL} suffix=" available" style={styles.secondaryValue} />
                     )}
                     {model !== null && model !== undefined && <Text numberOfLines={1} style={styles.meta}>{model}</Text>}
                   </View>
@@ -202,7 +204,7 @@ export function UsagePopover({
                   <Text style={styles.title}>Session</Text>
                   <View style={styles.sessionSummaryValues}>
                     {sessionUsage !== null && (
-                      <AnimatedNumber value={sessionUsage.totalTokens} format={compactNumberFormat} style={styles.sessionSummaryText} testID="usage-session-tokens" />
+                      <AnimatedNumber value={sessionUsage.totalTokens} format={compactNumberFormat} prefix={TOKEN_SYMBOL} style={styles.sessionSummaryText} testID="usage-session-tokens" />
                     )}
                     {sessionUsage !== null && sessionCost !== null && <Text style={styles.sessionSummarySeparator}>·</Text>}
                     {sessionCost !== null && (
@@ -222,9 +224,9 @@ export function UsagePopover({
                       <>
                         {sessionCost === null ? (
                           <>
-                            <AnimatedBreakdownRow label="Input" value={sessionUsage.inputTokens} />
-                            <AnimatedBreakdownRow label="Output" value={sessionUsage.outputTokens} />
-                            <AnimatedBreakdownRow label="Total" value={sessionUsage.totalTokens} />
+                            <AnimatedBreakdownRow label="Input" value={sessionUsage.inputTokens} prefix={TOKEN_SYMBOL} />
+                            <AnimatedBreakdownRow label="Output" value={sessionUsage.outputTokens} prefix={TOKEN_SYMBOL} />
+                            <AnimatedBreakdownRow label="Total" value={sessionUsage.totalTokens} prefix={TOKEN_SYMBOL} />
                           </>
                         ) : (
                           <>
@@ -297,7 +299,7 @@ function SessionUsageRow({
     <View testID={testID} style={[styles.sessionUsageRow, emphasized && styles.sessionUsageTotalRow]}>
       <Text style={[styles.sessionUsageLabel, emphasized && styles.sessionUsageTotalText]}>{label}</Text>
       <View style={styles.sessionUsageValues}>
-        <AnimatedNumber value={tokens} format={integerNumberFormat} style={[styles.sessionUsageValue, emphasized && styles.sessionUsageTotalText]} />
+        <AnimatedNumber value={tokens} format={integerNumberFormat} prefix={TOKEN_SYMBOL} style={[styles.sessionUsageValue, emphasized && styles.sessionUsageTotalText]} />
         <Text style={[styles.sessionUsageValue, emphasized && styles.sessionUsageTotalText]}>·</Text>
         <AnimatedNumber value={costUsd} format={usdNumberFormat(costUsd)} style={[styles.sessionUsageValue, emphasized && styles.sessionUsageTotalText]} />
       </View>

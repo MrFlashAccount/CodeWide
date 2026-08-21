@@ -1,5 +1,6 @@
 import { isSafeLink, projectCompleteMarkdown } from "@codewide/rendering-core";
 import { Ionicons } from "@expo/vector-icons";
+import { Toast, useToast } from "heroui-native/toast";
 import {
   createContext,
   type ReactNode,
@@ -12,9 +13,9 @@ import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, View } f
 import { WebView } from "react-native-webview";
 
 import { colors, spacing } from "../theme";
-import { readPrivateAssetText, type GetTransferAccess } from "../data/private-transfer";
+import { readPrivateAssetText, type GetTransferAccess, type PrivateAssetSource } from "../data/private-transfer";
 import { documentReadingWidth, type DocumentLayoutMode } from "../data/user-preferences";
-import { pickDownloadDirectory, startPreviewDownload } from "../native/file-transfer";
+import { openDownloadedFile, pickDownloadDirectory, startDownload, startPreviewDownload, type RunningTransfer, type SelectedDirectory } from "../native/file-transfer";
 import { useAppFullscreenOverlay, type AppFullscreenOverlayController } from "../ui/AppFullscreenOverlay";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { AppSheet, AppSheetScrollView } from "../ui/AppSheet";
@@ -32,6 +33,7 @@ import { MarkdownLocalLinkProvider } from "./MarkdownLinkHandler";
 import { useImagePreview } from "./ImagePreviewHost";
 import { materializePrivateAsset } from "./private-asset";
 import { RichMarkdown, RichMarkdownTextScaleProvider } from "./RichMarkdown";
+import type { ContentReviewTarget } from "./content-review";
 import { RichContentWidthProvider } from "./RichContentLayout";
 import { useDocumentViewerPreferences } from "./use-document-viewer-preferences";
 
@@ -39,12 +41,25 @@ export type DocumentPreviewRequest = {
   kind: DocumentPreviewKind;
   name: string;
   path: string;
+  source?: PrivateAssetSource;
   line?: number;
   column?: number;
   getTransferAccess: GetTransferAccess;
 };
 
+function startDocumentDownload(request: DocumentPreviewRequest, directory: SelectedDirectory): RunningTransfer {
+  const source = request.source ?? { kind: "path" as const, path: request.path };
+  if (source.kind === "scoped") {
+    return startDownload(request.getTransferAccess, directory, source.rootId, source.path, () => undefined);
+  }
+  if (source.kind === "path") {
+    return startPreviewDownload(request.getTransferAccess, directory, source.path, () => undefined);
+  }
+  throw new Error("This attachment cannot be downloaded directly");
+}
+
 type PreviewState = DocumentPreviewRequest & { revision: number };
+type CompletedTransfer = Awaited<RunningTransfer["promise"]>;
 export type DocumentPreviewResult =
   | { phase: "loading" }
   | { phase: "ready"; source: string; segments: string[]; truncated: boolean }
@@ -63,18 +78,61 @@ const DocumentPreviewContext = createContext<DocumentPreviewController | null>(n
  * auth token is handed to a system browser. */
 export function DocumentPreviewHost({ children }: { children: ReactNode }) {
   const dialog = useAppDialog();
+  const { toast } = useToast();
   const openImagePreview = useImagePreview();
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [result, setResult] = useState<DocumentPreviewResult>({ phase: "loading" });
   const previewLoadRef = useRef<AbortController | null>(null);
   const fullscreenRef = useRef<AppFullscreenOverlayController | null>(null);
   const revisionRef = useRef(0);
+  const showDownloadComplete = (request: DocumentPreviewRequest, completed: CompletedTransfer) => {
+    const toastId = "document-download-complete";
+    const common = {
+      id: toastId,
+      variant: "success" as const,
+      label: "File saved",
+      description: request.name,
+      duration: 6000,
+      icon: <Ionicons name="checkmark-circle" size={22} color={colors.green} />,
+    };
+    if (completed.uri === undefined) {
+      toast.show(common);
+      return;
+    }
+    const uri = completed.uri;
+    toast.show({
+      id: toastId,
+      duration: common.duration,
+      component: (props) => (
+        <Toast variant="success" placement="bottom" className="flex-row items-center gap-3" {...props}>
+          {common.icon}
+          <View style={styles.downloadToastContent}>
+            <Toast.Title>{common.label}</Toast.Title>
+            <Toast.Description>{common.description}</Toast.Description>
+          </View>
+          <Toast.Action
+            variant="primary"
+            size="sm"
+            style={styles.downloadToastAction}
+            onPress={() => {
+              props.hide(toastId);
+              void openDownloadedFile(uri, completed.mimeType).catch((cause: unknown) => {
+                dialog.alert("Could not open file", cause instanceof Error ? cause.message : "No installed app can open this file");
+              });
+            }}
+          >
+            Open
+          </Toast.Action>
+        </Toast>
+      ),
+    });
+  };
   const downloadFile = async (request: DocumentPreviewRequest): Promise<void> => {
     try {
       const directory = await pickDownloadDirectory();
-      const transfer = startPreviewDownload(request.getTransferAccess, directory, request.path, () => undefined);
+      const transfer = startDocumentDownload(request, directory);
       const completed = await transfer.promise;
-      dialog.alert("Download complete", `Saved ${request.name} · ${completed.bytes.toLocaleString()} bytes`);
+      showDownloadComplete(request, completed);
     } catch (cause) {
       if (isPickerCancellation(cause)) return;
       dialog.alert(
@@ -97,7 +155,7 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
     if (request.kind === "image") {
       void (async () => {
         if (!isCurrent()) return;
-        const uri = await materializePrivateAsset({ kind: "path", path: request.path }, request.getTransferAccess);
+        const uri = await materializePrivateAsset(request.source ?? { kind: "path", path: request.path }, request.getTransferAccess);
         if (!isCurrent()) return;
         openImagePreview({
           id: `remote-file:${request.path}`,
@@ -269,6 +327,9 @@ function FullscreenDocumentPreview({
   const markdownTarget = request.kind === "markdown" && result.phase === "ready"
     ? markdownLineTarget(result.source, result.segments, request.line)
     : null;
+  const markdownReviewTarget: ContentReviewTarget | undefined = request.kind === "markdown"
+    ? { id: `markdown-document:${request.path}`, label: request.name, reference: request.path }
+    : undefined;
   const scrollToMarkdownTarget = (y: number) => {
     if (scrolledMarkdownRevisionRef.current === revision) return;
     scrolledMarkdownRevisionRef.current = revision;
@@ -359,6 +420,7 @@ function FullscreenDocumentPreview({
                     <MarkdownPreviewSegment
                       key={`${revision}:${index}`}
                       source={segment}
+                      {...(markdownReviewTarget === undefined ? {} : { reviewTarget: markdownReviewTarget, reviewPathPrefix: `segment-${index}` })}
                       {...(markdownTarget?.segmentIndex === index ? {
                         targetLine: markdownTarget.line,
                         onTargetLayout: scrollToMarkdownTarget,
@@ -380,10 +442,14 @@ function MarkdownPreviewSegment({
   source,
   targetLine,
   onTargetLayout,
+  reviewTarget,
+  reviewPathPrefix,
 }: {
   source: string;
   targetLine?: number;
   onTargetLayout?(y: number): void;
+  reviewTarget?: ContentReviewTarget;
+  reviewPathPrefix?: string;
 }) {
   const segmentYRef = useRef<number | null>(null);
   const targetYRef = useRef<number | null>(null);
@@ -402,6 +468,8 @@ function MarkdownPreviewSegment({
     >
       <RichMarkdown
         source={source}
+        {...(reviewTarget === undefined ? {} : { reviewTarget })}
+        {...(reviewPathPrefix === undefined ? {} : { reviewPathPrefix })}
         {...(targetLine === undefined ? {} : { targetLine })}
         {...(onTargetLayout === undefined ? {} : {
           onTargetLayout: (y: number) => {
@@ -552,7 +620,7 @@ function previewIcon(kind: DocumentPreviewKind | undefined): "document-text-outl
 
 export async function loadDocumentPreview(request: DocumentPreviewRequest, signal: AbortSignal): Promise<{ source: string; truncated: boolean }> {
   const loaded = await readPrivateAssetText(
-    { kind: "path", path: request.path },
+    request.source ?? { kind: "path", path: request.path },
     request.getTransferAccess,
     {
       limit: MAX_DOCUMENT_PREVIEW_BYTES,
@@ -568,6 +636,8 @@ export async function loadDocumentPreview(request: DocumentPreviewRequest, signa
 }
 
 const styles = StyleSheet.create({
+  downloadToastContent: { flex: 1, minWidth: 0 },
+  downloadToastAction: { backgroundColor: colors.primary },
   browser: { flex: 1, minHeight: 0, backgroundColor: colors.background },
   header: { width: "100%", minWidth: 0, minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
   title: { minWidth: 0, flex: 1, color: colors.text, fontSize: 17, lineHeight: 22, fontWeight: "700" },

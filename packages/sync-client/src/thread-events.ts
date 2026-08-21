@@ -6,7 +6,7 @@ export type ProjectedTurnMetadata = {
   usage?: TurnUsageProjection;
   diff?: string;
   plan?: { explanation: string | null; steps: TurnPlanStep[] };
-  activity?: { count: number; kinds: string[] };
+  activity?: { count: number; kinds: string[]; outputFootprint?: OutputFootprintProjection };
   execution?: {
     model: string;
     effort: string | null;
@@ -14,6 +14,44 @@ export type ProjectedTurnMetadata = {
     modelSource: "settings" | "reroute";
   };
 };
+
+export type OutputFootprintProjection = {
+  version: 1;
+  basis: "approxBytesPerToken";
+  bytes: number;
+  estimatedTokens: number;
+};
+
+export function projectedOutputFootprint(value: unknown): OutputFootprintProjection | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const bytes = candidate.bytes;
+  const estimatedTokens = candidate.estimatedTokens;
+  if (candidate.version !== 1
+    || candidate.basis !== "approxBytesPerToken"
+    || typeof bytes !== "number"
+    || !Number.isSafeInteger(bytes)
+    || bytes < 0
+    || typeof estimatedTokens !== "number"
+    || !Number.isSafeInteger(estimatedTokens)
+    || estimatedTokens < 0) return null;
+  return { version: 1, basis: "approxBytesPerToken", bytes, estimatedTokens };
+}
+
+export function sumOutputFootprints(values: readonly unknown[]): OutputFootprintProjection | null {
+  const total = values.reduce<{ bytes: number; estimatedTokens: number }>((sum, value) => {
+    const footprint = projectedOutputFootprint(value);
+    return footprint === null
+      ? sum
+      : {
+          bytes: Math.min(Number.MAX_SAFE_INTEGER, sum.bytes + footprint.bytes),
+          estimatedTokens: Math.min(Number.MAX_SAFE_INTEGER, sum.estimatedTokens + footprint.estimatedTokens),
+        };
+  }, { bytes: 0, estimatedTokens: 0 });
+  return total.bytes === 0 && total.estimatedTokens === 0
+    ? null
+    : { version: 1, basis: "approxBytesPerToken", ...total };
+}
 
 export type UsageTokenCounts = {
   totalTokens: number;
@@ -507,21 +545,27 @@ function upsertItem(thread: Thread, rawTurnId: unknown, value: unknown): void {
       return;
     }
   }
-  const targetIndex = index === -1 ? turn.items.length : index;
   if (index === -1) turn.items.push(nextItem);
   else turn.items[index] = nextItem;
   const lookup = eventIndex(thread);
-  if (nextItem.type === "agentMessage" && nextItem.id !== `${rawTurnId}:agent`) {
-    const placeholderIndex = turn.items.findIndex((candidate, candidateIndex) => (
-      candidateIndex !== targetIndex
-      && candidate.type === "agentMessage"
-      && candidate.id === `${rawTurnId}:agent`
-      && (candidate.text === nextItem.text
-        || (candidate.phase === "final_answer" && nextItem.phase === "final_answer"))
-    ));
-    if (placeholderIndex !== -1) turn.items.splice(placeholderIndex, 1);
-  }
+  removeMatchingAgentPlaceholder(turn, rawTurnId, nextItem.id);
   indexTurnItems(lookup, turn);
+}
+
+function removeMatchingAgentPlaceholder(turn: Turn, turnId: string, canonicalItemId: string): boolean {
+  const placeholderId = `${turnId}:agent`;
+  if (canonicalItemId === placeholderId) return false;
+  const canonicalItem = turn.items.find((candidate) => candidate.id === canonicalItemId);
+  if (canonicalItem?.type !== "agentMessage") return false;
+  const placeholderIndex = turn.items.findIndex((candidate) => (
+    candidate.type === "agentMessage"
+    && candidate.id === placeholderId
+    && (candidate.text === canonicalItem.text
+      || (candidate.phase === "final_answer" && canonicalItem.phase === "final_answer"))
+  ));
+  if (placeholderIndex === -1) return false;
+  turn.items.splice(placeholderIndex, 1);
+  return true;
 }
 
 function sameUserBoundary(
@@ -567,7 +611,15 @@ function appendText(
 ): void {
   if (typeof delta !== "string") return;
   const item = itemInTurn(thread, turnId, itemId);
-  if (kind === "agentMessage" && item?.type === kind) item.text = appendBoundedText(item.text, delta);
+  if (kind === "agentMessage" && item?.type === kind) {
+    item.text = appendBoundedText(item.text, delta);
+    if (typeof turnId === "string" && typeof itemId === "string") {
+      const turn = turnInThread(thread, turnId);
+      if (turn !== undefined && removeMatchingAgentPlaceholder(turn, turnId, itemId)) {
+        indexTurnItems(eventIndex(thread), turn);
+      }
+    }
+  }
   else if (kind === "plan" && item?.type === kind) item.text = appendBoundedText(item.text, delta);
   else if (kind === "commandExecution" && item?.type === kind) item.aggregatedOutput = appendBoundedText(item.aggregatedOutput ?? "", delta);
 }

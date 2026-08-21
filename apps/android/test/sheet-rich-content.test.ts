@@ -44,7 +44,8 @@ describe("document preview surfaces", () => {
   it("does not overlay diff fallback notices or late render spinners on code", () => {
     const editor = readSource("../src/rendering/CodeReviewEditor.native.tsx");
 
-    expect(editor).toContain("const showInitialLoading = document === null && loading && visibleError === null");
+    expect(editor).not.toContain("showInitialLoading");
+    expect(editor).not.toContain("<ActivityIndicator");
     expect(editor).not.toContain("visibleNotice");
     expect(editor).not.toContain("styles.notice");
     expect(editor).not.toContain("renderedRevision");

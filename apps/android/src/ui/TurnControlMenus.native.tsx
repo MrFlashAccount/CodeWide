@@ -295,7 +295,7 @@ export function PermissionsMenu({
 function permissionLabel(id: string): string {
   if (id === ":workspace") return "Workspace";
   if (id === ":read-only") return "Read only";
-  if (id === ":full-access") return "Full access";
+  if (id === ":full-access" || id === ":danger-full-access") return "Full access";
   return id.startsWith(":") ? id.slice(1).replaceAll("-", " ") : id;
 }
 

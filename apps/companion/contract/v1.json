@@ -52,7 +52,9 @@
     "GET /v1/media/{id}",
     "GET /v1/content/{digest}",
     "GET /v1/port-forwards/discovery",
-    "POST /v1/tunnels"
+    "POST /v1/tunnels",
+    "POST /v1/telemetry/events",
+    "GET /v1/telemetry/events"
   ],
   "publicBuildShelfPaths": [
     "/",
@@ -97,8 +99,16 @@
     "command/exec/resize",
     "command/exec/terminate",
     "command/exec/write",
+    "companion/project/add",
+    "companion/project/list",
+    "companion/workspace/create",
+    "companion/workspace/inspect",
+    "companion/workspace/read",
+    "companion/threadAttachments/read",
     "companion/threadChange/read",
+    "companion/threadChanges/read",
     "companion/threadResources/read",
+    "fs/readDirectory",
     "hooks/list",
     "initialize",
     "initialized",

@@ -8,6 +8,7 @@ import type {
   CodeReviewFileItem,
   CodeReviewViewMode,
 } from "./code-review-bridge";
+import { codeReviewDocumentEmptyState, EMPTY_CHANGES_STATE, EMPTY_CHANGES_TREE_STATE, type CodeReviewEmptyState } from "./code-review-empty-state";
 import type { CodeReviewComment, CodeReviewLineReference } from "./code-review";
 
 export type { CodeReviewDocument, CodeReviewFileItem, CodeReviewViewMode } from "./code-review-bridge";
@@ -63,11 +64,13 @@ export function CodeReviewEditor({
   onFileSelect(path: string): void;
 }) {
   const selectedFile = files.find((file) => file.path === selectedPath) ?? null;
+  const documentEmptyState = document === null ? null : codeReviewDocumentEmptyState(document, mode);
   return (
     <View style={[styles.workspace, compact && sidebarOpen && styles.compactSidebar]}>
       {sidebarOpen && (
         <View style={[styles.sidebar, compact && styles.sidebarCompact]}>
-          <ScrollView contentContainerStyle={styles.sidebarContent} keyboardShouldPersistTaps="handled">
+          <ScrollView style={styles.sidebarScroll} contentContainerStyle={styles.sidebarContent} keyboardShouldPersistTaps="handled">
+            {files.length === 0 && <ReviewEmptyState state={EMPTY_CHANGES_TREE_STATE} />}
             {files.map((file) => (
               <Pressable key={file.path} onPress={() => onFileSelect(file.path)} style={[styles.fileRow, file.path === selectedPath && styles.fileRowSelected]}>
                 <Ionicons name={file.status === "added" ? "add-circle-outline" : file.status === "deleted" ? "remove-circle-outline" : "document-text-outline"} size={16} color={colors.textMuted} />
@@ -82,8 +85,12 @@ export function CodeReviewEditor({
           {document === null ? (
             <View style={styles.empty}>
               {loading && <ActivityIndicator color={colors.accent} />}
-              <Text style={styles.muted}>{loadError ?? (loading ? "Loading file…" : "Select a changed file")}</Text>
+              {loadError !== null || loading
+                ? <Text style={styles.muted}>{loadError ?? "Loading file…"}</Text>
+                : <ReviewEmptyState state={files.length === 0 ? EMPTY_CHANGES_STATE : { title: "Select a file", message: "Choose a changed file from the tree." }} />}
             </View>
+          ) : documentEmptyState !== null ? (
+            <ReviewEmptyState state={documentEmptyState} />
           ) : (
             <ScrollView horizontal={!wrapLines} contentContainerStyle={styles.codeContent}>
               <View style={styles.lines}>
@@ -134,6 +141,16 @@ export function CodeReviewEditor({
   );
 }
 
+function ReviewEmptyState({ state }: { state: CodeReviewEmptyState }) {
+  return (
+    <View style={styles.emptyState}>
+      <View style={styles.emptyMark}><Text style={styles.emptyMarkText}>—</Text></View>
+      <Text style={styles.emptyTitle}>{state.title}</Text>
+      <Text style={styles.emptyMessage}>{state.message}</Text>
+    </View>
+  );
+}
+
 function sameReference(left: CodeReviewLineReference, right: CodeReviewLineReference): boolean {
   return left.path === right.path && left.line === right.line && left.side === right.side;
 }
@@ -143,12 +160,18 @@ const styles = StyleSheet.create({
   compactSidebar: { flexDirection: "column" },
   sidebar: { width: 300, minWidth: 220, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.outline },
   sidebarCompact: { width: "100%", flex: 1, borderRightWidth: 0 },
-  sidebarContent: { padding: spacing.sm, gap: 2 },
+  sidebarScroll: { flex: 1 },
+  sidebarContent: { flexGrow: 1, padding: spacing.sm, gap: 2 },
   fileRow: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, borderRadius: 10 },
   fileRowSelected: { backgroundColor: colors.surfaceContainerHighest },
   fileName: { flex: 1, color: colors.text, fontSize: 13 },
   preview: { flex: 1, minWidth: 0, minHeight: 0 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  emptyState: { flex: 1, minHeight: 160, alignItems: "center", justifyContent: "center", gap: 6, padding: spacing.lg },
+  emptyMark: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.outline, borderRadius: 14, backgroundColor: colors.surfaceContainer },
+  emptyMarkText: { color: colors.textDim, fontSize: 18, fontWeight: "600" },
+  emptyTitle: { color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "700", textAlign: "center" },
+  emptyMessage: { maxWidth: 340, color: colors.textMuted, fontSize: 13, lineHeight: 19, textAlign: "center" },
   muted: { color: colors.textMuted, padding: spacing.sm },
   codeContent: { flexGrow: 1, minWidth: "100%" },
   lines: { flex: 1, minWidth: "100%", paddingVertical: spacing.xs },

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check CodeWide Companion sustained RSS
+After=codewide-companion.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/lib/codewide/codewide-companion-memory-watch
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/codewide/companion

@@ -27,8 +27,11 @@ use codewide_companion::{
     state_migration::{StateMigrationPaths, migrate_legacy_installation},
     store::{IndexStore, TurnRef},
     sync::SyncHub,
+    telemetry::TelemetryStore,
+    terminal,
     tunnels::LocalhostTunnelService,
     upstream::UpstreamHandle,
+    vcs::{PluginRegistry, VcsPluginConfig, VcsScope, VcsService},
 };
 use rand::{TryRngCore, rngs::OsRng};
 use tokio::net::TcpListener;
@@ -37,6 +40,12 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 mod local_control;
+
+fn parse_vcs_scope(value: &str) -> Result<VcsScope, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_value(serde_json::Value::String(
+        value.to_owned(),
+    ))?)
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "codewide-companion")]
@@ -138,6 +147,115 @@ enum Command {
         scopes: String,
         #[command(flatten)]
         control: ControlOptions,
+    },
+    Telemetry(Box<TelemetryOptions>),
+    Vcs(VcsOptions),
+}
+
+#[derive(Debug, Args)]
+struct TelemetryOptions {
+    #[command(subcommand)]
+    command: TelemetryCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum TelemetryCommand {
+    Query {
+        #[command(flatten)]
+        control: ControlOptions,
+        #[arg(long)]
+        from_unix_ms: Option<u64>,
+        #[arg(long)]
+        to_unix_ms: Option<u64>,
+        #[arg(long)]
+        device_id: Option<String>,
+        #[arg(long)]
+        batch_id: Option<String>,
+        #[arg(long)]
+        client_session_id: Option<String>,
+        #[arg(long)]
+        event_id: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        request_id: Option<String>,
+        #[arg(long)]
+        connection_id: Option<String>,
+        #[arg(long)]
+        thread_id: Option<String>,
+        #[arg(long)]
+        turn_id: Option<String>,
+        #[arg(long)]
+        item_id: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long, requires = "tag_value")]
+        tag_name: Option<String>,
+        #[arg(long, requires = "tag_name")]
+        tag_value: Option<String>,
+        #[arg(long, default_value_t = 500)]
+        limit: usize,
+        #[arg(long, default_value_t = false)]
+        descending: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+struct VcsOptions {
+    #[command(subcommand)]
+    command: VcsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum VcsCommand {
+    Changes {
+        workspace: PathBuf,
+        #[arg(long, default_value = "branch")]
+        scope: String,
+        #[arg(long)]
+        registry: Option<PathBuf>,
+    },
+    Diff {
+        workspace: PathBuf,
+        path: PathBuf,
+        #[arg(long, default_value = "branch")]
+        scope: String,
+        #[arg(long)]
+        registry: Option<PathBuf>,
+    },
+    Plugin(VcsPluginOptions),
+}
+
+#[derive(Debug, Args)]
+struct VcsPluginOptions {
+    #[command(subcommand)]
+    command: VcsPluginCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum VcsPluginCommand {
+    List {
+        #[arg(long)]
+        registry: Option<PathBuf>,
+    },
+    Install {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        executable: PathBuf,
+        #[arg(long = "arg")]
+        args: Vec<String>,
+        #[arg(long, default_value_t = 100)]
+        priority: i32,
+        #[arg(long, default_value_t = true)]
+        enabled: bool,
+        #[arg(long)]
+        registry: Option<PathBuf>,
+    },
+    Remove {
+        id: String,
+        #[arg(long)]
+        registry: Option<PathBuf>,
     },
 }
 
@@ -330,6 +448,124 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 control_request(reqwest::Method::PATCH, &path, Some(&payload), control).await?;
             println!("{body}");
         }
+        Command::Telemetry(options) => match options.command {
+            TelemetryCommand::Query {
+                control,
+                from_unix_ms,
+                to_unix_ms,
+                device_id,
+                batch_id,
+                client_session_id,
+                event_id,
+                session_id,
+                request_id,
+                connection_id,
+                thread_id,
+                turn_id,
+                item_id,
+                name,
+                tag_name,
+                tag_value,
+                limit,
+                descending,
+            } => {
+                let mut query = url::form_urlencoded::Serializer::new(String::new());
+                if let Some(value) = from_unix_ms {
+                    query.append_pair("fromUnixMs", &value.to_string());
+                }
+                if let Some(value) = to_unix_ms {
+                    query.append_pair("toUnixMs", &value.to_string());
+                }
+                for (key, value) in [
+                    ("deviceId", device_id),
+                    ("batchId", batch_id),
+                    ("clientSessionId", client_session_id),
+                    ("eventId", event_id),
+                    ("sessionId", session_id),
+                    ("requestId", request_id),
+                    ("connectionId", connection_id),
+                    ("threadId", thread_id),
+                    ("turnId", turn_id),
+                    ("itemId", item_id),
+                    ("name", name),
+                    ("tagName", tag_name),
+                    ("tagValue", tag_value),
+                ] {
+                    if let Some(value) = value {
+                        query.append_pair(key, &value);
+                    }
+                }
+                query.append_pair("limit", &limit.to_string());
+                query.append_pair("descending", if descending { "true" } else { "false" });
+                let path = format!("/v1/telemetry/events?{}", query.finish());
+                let body = control_request(reqwest::Method::GET, &path, None, control).await?;
+                println!("{body}");
+            }
+        },
+        Command::Vcs(options) => match options.command {
+            VcsCommand::Changes {
+                workspace,
+                scope,
+                registry,
+            } => {
+                let service = VcsService::new(registry.unwrap_or_else(default_vcs_registry));
+                let scope = parse_vcs_scope(&scope)?;
+                let snapshot = service.changes(&workspace, scope).await?;
+                println!("{}", serde_json::to_string(&snapshot)?);
+            }
+            VcsCommand::Diff {
+                workspace,
+                path,
+                scope,
+                registry,
+            } => {
+                let service = VcsService::new(registry.unwrap_or_else(default_vcs_registry));
+                let scope = parse_vcs_scope(&scope)?;
+                let diff = service.diff(&workspace, &path, scope).await?;
+                println!("{}", serde_json::to_string(&diff)?);
+            }
+            VcsCommand::Plugin(options) => match options.command {
+                VcsPluginCommand::List { registry } => {
+                    let registry =
+                        PluginRegistry::new(registry.unwrap_or_else(default_vcs_registry));
+                    println!("{}", serde_json::to_string(&registry.list()?)?);
+                }
+                VcsPluginCommand::Install {
+                    id,
+                    executable,
+                    args,
+                    priority,
+                    enabled,
+                    registry,
+                } => {
+                    let registry =
+                        PluginRegistry::new(registry.unwrap_or_else(default_vcs_registry));
+                    registry.install(VcsPluginConfig {
+                        id,
+                        executable,
+                        args,
+                        enabled,
+                        priority,
+                    })?;
+                    println!(
+                        "{}",
+                        serde_json::json!({ "installed": true, "registry": registry.path() })
+                    );
+                }
+                VcsPluginCommand::Remove { id, registry } => {
+                    let registry =
+                        PluginRegistry::new(registry.unwrap_or_else(default_vcs_registry));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "removed": registry.remove(&id)?,
+                            "id": id,
+                            "registry": registry.path()
+                        })
+                    );
+                }
+            },
+        },
     }
     Ok(())
 }
@@ -584,6 +820,8 @@ struct ServeOptions {
 
 #[allow(clippy::too_many_lines)]
 async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> {
+    terminal::preflight().map_err(|error| format!("terminal preflight failed: {error}"))?;
+    info!("Terminal PTY preflight passed");
     let legacy_content_directory = options
         .token_file
         .parent()
@@ -603,6 +841,9 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         })
         .unwrap_or_else(|| PathBuf::from("."));
     tokio::fs::create_dir_all(&state_directory).await?;
+    let telemetry = Arc::new(TelemetryStore::open(
+        state_directory.join("telemetry.redb"),
+    )?);
     let account_pool = if options.enable_mutations {
         Some(
             AccountPoolService::open(
@@ -672,16 +913,29 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .await?,
     );
     let projector = Arc::new(ContentProjector::new(content.clone()));
-    let resources = Arc::new(ResourceService::open(
-        state_directory.join("resource-index.redb"),
-        catalog,
-        files.clone(),
-    )?);
+    let vcs = Arc::new(VcsService::new(state_directory.join("vcs-plugins.json")));
+    let resources = Arc::new(
+        ResourceService::open(
+            state_directory.join("resource-index.redb"),
+            catalog,
+            files.clone(),
+        )?
+        .with_vcs(vcs.clone()),
+    );
+    let workspaces = Arc::new(codewide_companion::workspaces::WorkspaceService::new(
+        vcs,
+        codex_home.join("worktrees"),
+    ));
+    let projects =
+        codewide_companion::projects::ProjectService::open(state_directory.join("projects.json"))
+            .await?;
     let mut sync = sync
         .with_content_projector(projector)
         .with_dictation(dictation)
         .with_files(files.clone())
-        .with_resources(resources);
+        .with_resources(resources)
+        .with_projects(projects)
+        .with_workspaces(workspaces);
     if let Some(account_pool) = account_pool {
         sync = sync.with_account_pool(&account_pool);
     }
@@ -691,6 +945,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         content: Some(content),
         media: Some(media),
         tunnels: Some(tunnels),
+        telemetry: Some(telemetry),
         app_server_socket_path: Some(app_server_socket),
         excluded_ports: HashSet::from([options.listen.port()]),
     };
@@ -810,6 +1065,20 @@ fn default_codex_home() -> PathBuf {
         },
         PathBuf::from,
     )
+}
+
+fn default_vcs_registry() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
+        .map_or_else(
+            || {
+                std::env::var_os("HOME").map_or_else(
+                    || PathBuf::from(".local/state"),
+                    |home| PathBuf::from(home).join(".local/state"),
+                )
+            },
+            PathBuf::from,
+        )
+        .join("codewide/companion/vcs-plugins.json")
 }
 
 fn default_control_endpoint() -> PathBuf {

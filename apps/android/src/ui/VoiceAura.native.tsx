@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import { setNativeVoiceAuraState } from "../native/native-transport.native";
 import type { VoiceInputController } from "../data/voice-input-controller";
+import { usePerformanceExperiment } from "../data/performance-experiments";
 import { useVoiceInputLevel } from "./VoiceInputRuntime";
 
 export type VoiceAuraPhase = "idle" | "recording" | "transcribing";
@@ -24,7 +25,8 @@ export function VoiceAura({
   reducedMotion: boolean;
   children: ReactNode;
 }) {
-  const active = phase !== "idle";
+  const motionExperimentDisabled = usePerformanceExperiment("reduceCustomMotion");
+  const active = phase !== "idle" && !motionExperimentDisabled;
   const level = useVoiceInputLevel(controller, active ? scope : null);
 
   useEffect(() => {

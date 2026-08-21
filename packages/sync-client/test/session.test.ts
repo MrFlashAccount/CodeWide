@@ -5,7 +5,7 @@ import { MemorySyncCache, MultiConnectionSupervisor, SyncSession, type SocketLik
 
 type ListenerMap = {
   open: Array<() => void>;
-  message: Array<(event: { data: unknown }) => void>;
+  message: Array<(event: { data: unknown; receivedAtUnixMs?: number }) => void>;
   close: Array<() => void>;
   error: Array<() => void>;
 };
@@ -73,12 +73,15 @@ class FakeSyncSocket implements SocketLike {
     for (const listener of this.#listeners.close) listener();
   }
 
-  emitServer(message: Record<string, unknown>): void {
-    this.#emit(message);
+  emitServer(message: Record<string, unknown>, receivedAtUnixMs?: number): void {
+    this.#emit(message, receivedAtUnixMs);
   }
 
-  #emit(message: Record<string, unknown>): void {
-    for (const listener of this.#listeners.message) listener({ data: JSON.stringify(message) });
+  #emit(message: Record<string, unknown>, receivedAtUnixMs?: number): void {
+    for (const listener of this.#listeners.message) listener({
+      data: JSON.stringify(message),
+      ...(receivedAtUnixMs === undefined ? {} : { receivedAtUnixMs }),
+    });
   }
 }
 
@@ -303,6 +306,13 @@ describe("MultiConnectionSupervisor", () => {
       .filter((message) => message.type === "rpc")
       .every((message) => ((message.request as Record<string, unknown>).params as Record<string, unknown>).useStateDbOnly === true)
     )).toBe(true);
+    expect(sockets.every((socket) => socket.sent
+      .filter((message) => message.type === "rpc")
+      .every((message) => {
+        const modelProviders = ((message.request as Record<string, unknown>).params as Record<string, unknown>).modelProviders;
+        return Array.isArray(modelProviders) && modelProviders.length === 0;
+      })
+    )).toBe(true);
     supervisor.stop();
   });
 
@@ -387,6 +397,31 @@ describe("MultiConnectionSupervisor", () => {
     await waitFor(() => cache.state("server") === "live");
 
     await expect(session.rpc("thread/fork", { threadId: "large-thread" })).resolves.toBeDefined();
+    session.stop();
+  });
+
+  it("allows workspace creation to outlive the interactive RPC timeout", async () => {
+    const cache = new MemorySyncCache();
+    const socket = new FakeSyncSocket("server", "accept", "accept", 25);
+    const session = new SyncSession({
+      connection: { id: "server", endpoint: "ws://server/v1/sync", token: "token", enabled: true },
+      cache,
+      socketFactory: () => {
+        queueMicrotask(() => socket.open());
+        return socket;
+      },
+      rpcTimeoutMs: 10,
+      longRunningRpcTimeoutMs: 100,
+      snapshotRpcTimeoutMs: 100,
+      reconnectBaseMs: 60_000,
+    });
+    session.start();
+    await waitFor(() => cache.state("server") === "live");
+
+    await expect(session.rpc("companion/workspace/create", {
+      workspace: "/workspace",
+      requestId: "new-chat",
+    })).resolves.toBeDefined();
     session.stop();
   });
 
@@ -613,6 +648,7 @@ describe("SyncSession event batching", () => {
     const cache = new BlockingEventCache();
     const socket = new FakeSyncSocket("server");
     const observed: Array<Record<string, unknown>> = [];
+    const observedIngress: Array<{ observedAtMs: number; decodeDurationMs: number; nativeToJsMs?: number }> = [];
     const session = new SyncSession({
       connection: { id: "server", endpoint: "ws://server/v1/sync", token: "token", enabled: true },
       cache,
@@ -620,16 +656,26 @@ describe("SyncSession event batching", () => {
         queueMicrotask(() => socket.open());
         return socket;
       },
-      onEvents: (_connectionId, events) => observed.push(...events.map((event) => event.payload)),
+      onEvents: (_connectionId, events, ingress) => {
+        observed.push(...events.map((event) => event.payload));
+        observedIngress.push(ingress);
+      },
       eventPersistenceIntervalMs: 500,
     });
     session.start();
     await waitFor(() => cache.state("server") === "live");
     const payload = { method: "item/agentMessage/delta", params: { threadId: "server-thread", turnId: "turn", itemId: "agent", delta: "hello" } };
 
-    socket.emitServer({ type: "event", cursor: 1, payload });
+    socket.emitServer({ type: "event", cursor: 1, payload }, Date.now() - 7);
 
     expect(observed).toEqual([payload]);
+    expect(observedIngress).toHaveLength(1);
+    expect(observedIngress[0]).toMatchObject({
+      observedAtMs: expect.any(Number),
+      decodeDurationMs: expect.any(Number),
+      nativeToJsMs: expect.any(Number),
+    });
+    expect(observedIngress[0]!.nativeToJsMs).toBeGreaterThanOrEqual(7);
     expect(await cache.getCursor("server")).toBe(0);
     cache.release();
     session.stop();

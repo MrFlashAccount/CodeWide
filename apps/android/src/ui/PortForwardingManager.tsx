@@ -6,8 +6,9 @@ import { colors, radii, spacing, touchTarget, typeScale } from "../theme";
 import { ActionMenu, type ActionMenuItem } from "./ActionMenu";
 import { AppText as Text, AppTextInput as TextInput } from "./Typography";
 
-export type PortForwardingStatus = "stopped" | "connecting" | "live" | "error";
+export type PortForwardingStatus = "stopped" | "connecting" | "live" | "unavailable" | "error";
 export type PortForwardingDiscoveryStatus = "idle" | "loading" | "ready" | "error";
+export type PortForwardingPreference = "automatic" | "included" | "excluded";
 
 export type PortForwardingProfile = {
   id: string;
@@ -15,7 +16,10 @@ export type PortForwardingProfile = {
   remoteHost: string;
   remotePort: number;
   preferredLocalPort: number | null;
+  serviceKey: string | null;
+  preference: PortForwardingPreference;
   localPort: number | null;
+  enabled: boolean;
   status: PortForwardingStatus;
   previewUrl: string | null;
   error: string | null;
@@ -24,10 +28,14 @@ export type PortForwardingProfile = {
 export type PortForwardingCandidate = {
   port: number;
   name: string;
+  group: string;
+  details: string;
   process: string | null;
   pid: number | null;
   cwd: string | null;
-  kind: "web" | "node" | "python" | "container" | "service";
+  kind: "docker" | "hermes" | "kubernetes" | "minikube" | "vite" | "node" | "python" | "zrok" | "process" | "system";
+  forwardingKey: string;
+  defaultForwardingEnabled: boolean;
 };
 
 export type PortForwardingDraft = {
@@ -44,22 +52,31 @@ export type PortForwardingManagerProps = {
   discoveredPorts: readonly PortForwardingCandidate[];
   discoveryStatus: PortForwardingDiscoveryStatus;
   discoveryError: string | null;
+  onOpen(profile: PortForwardingProfile): void;
   onRefresh(): Promise<void>;
   onSelectPort(port: PortForwardingCandidate): Promise<void>;
+  onExcludePort(port: PortForwardingCandidate): Promise<void>;
   onAdd(input: PortForwardingDraft): Promise<void>;
   onEdit(id: string, input: PortForwardingDraft): Promise<void>;
   onStart(id: string): Promise<void>;
   onStop(id: string): Promise<void>;
   onReconnect(id: string): Promise<void>;
   onRemove(id: string): Promise<void>;
-  onOpen(id: string): void;
+  onSetPreference(id: string, preference: PortForwardingPreference): Promise<void>;
 };
+
+type ServiceSegment = "active" | "available" | "excluded";
+type ServiceEntry =
+  | { type: "candidate"; group: string; candidate: PortForwardingCandidate }
+  | { type: "profile"; group: string; profile: PortForwardingProfile; kind: PortForwardingCandidate["kind"] };
 
 type FormState = { id: string | null; label: string; remotePort: string; localPort: string; startImmediately: boolean };
 const EMPTY_FORM: FormState = { id: null, label: "", remotePort: "3000", localPort: "", startImmediately: true };
 
 export function PortForwardingManager(props: PortForwardingManagerProps) {
   const [form, setForm] = useState<FormState | null>(null);
+  const [segment, setSegment] = useState<ServiceSegment>("active");
+  const [query, setQuery] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -75,7 +92,7 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
       label: profile.label,
       remotePort: String(profile.remotePort),
       localPort: profile.preferredLocalPort === null ? "" : String(profile.preferredLocalPort),
-      startImmediately: profile.status === "live" || profile.status === "connecting",
+      startImmediately: profile.enabled,
     });
     setFormError(null);
   };
@@ -112,6 +129,12 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
     catch (cause) { setActionError(message(cause, "Could not forward this port")); }
     setPendingPort((current) => current === candidate.port ? null : current);
   };
+  const excludePort = async (candidate: PortForwardingCandidate) => {
+    setPendingPort(candidate.port); setActionError(null);
+    try { await props.onExcludePort(candidate); }
+    catch (cause) { setActionError(message(cause, "Could not exclude this port")); }
+    setPendingPort((current) => current === candidate.port ? null : current);
+  };
 
   if (form !== null) return (
     <ManualPortForm
@@ -126,8 +149,20 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
     />
   );
 
+  const configuredKeys = new Set(props.profiles.map((profile) => profile.serviceKey).filter((key): key is string => key !== null));
   const configuredPorts = new Set(props.profiles.map((profile) => profile.remotePort));
-  const candidates = props.discoveredPorts.filter((candidate) => !configuredPorts.has(candidate.port));
+  const availableCandidates = props.discoveredPorts.filter((candidate) => !configuredKeys.has(candidate.forwardingKey) && !configuredPorts.has(candidate.port));
+  const activeProfiles = props.profiles.filter((profile) => profile.preference !== "excluded");
+  const excludedProfiles = props.profiles.filter((profile) => profile.preference === "excluded");
+  const entries: ServiceEntry[] = segment === "available"
+    ? availableCandidates.map((candidate) => ({ type: "candidate", group: candidate.group, candidate }))
+    : (segment === "active" ? activeProfiles : excludedProfiles).map((profile) => {
+        const candidate = props.discoveredPorts.find((value) => value.forwardingKey === profile.serviceKey || value.port === profile.remotePort);
+        return { type: "profile", group: candidate?.group ?? "Saved ports", profile, kind: candidate?.kind ?? "process" };
+      });
+  const needle = query.trim().toLocaleLowerCase();
+  const groups = groupEntries(entries.filter((entry) => serviceEntryMatches(entry, needle)));
+  const counts: Record<ServiceSegment, number> = { active: activeProfiles.length, available: availableCandidates.length, excluded: excludedProfiles.length };
   return (
     <View testID="port-forwarding-manager" style={styles.root}>
       <View style={styles.header}>
@@ -148,85 +183,109 @@ export function PortForwardingManager(props: PortForwardingManagerProps) {
         </Pressable>
       </View>
 
+      <View style={styles.filters}>
+        <View accessibilityRole="tablist" style={styles.segments}>
+          {(["active", "available", "excluded"] as const).map((value) => (
+            <Pressable
+              key={value}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: segment === value }}
+              onPress={() => setSegment(value)}
+              style={[styles.segment, segment === value && styles.segmentSelected]}
+            >
+              <Text style={[styles.segmentText, segment === value && styles.segmentTextSelected]}>{`${segmentTitle(value)} ${counts[value]}`}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.searchField}>
+          <Ionicons name="search" size={16} color={colors.textDim} />
+          <TextInput accessibilityLabel="Filter ports" value={query} onChangeText={setQuery} placeholder="Name, category or port" placeholderTextColor={colors.textDim} style={styles.searchInput} />
+          {query !== "" && <Pressable accessibilityLabel="Clear port filter" onPress={() => setQuery("")}><Ionicons name="close-circle" size={16} color={colors.textDim} /></Pressable>}
+        </View>
+      </View>
+
       <ScrollView nestedScrollEnabled contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
         {actionError !== null && <InlineError value={actionError} />}
-        {props.profiles.length > 0 && <SectionLabel value="FORWARDED" />}
-        {props.profiles.map((profile) => (
-          <ForwardingRow
-            key={profile.id}
-            profile={profile}
-            pending={pendingId === profile.id}
-            webMenuVisible={webMenuId === profile.id}
-            onToggleWebMenu={() => setWebMenuId((current) => current === profile.id ? null : profile.id)}
-            onEdit={() => openEdit(profile)}
-            onOpen={() => props.onOpen(profile.id)}
-            onStart={() => void runProfileAction(profile.id, () => props.onStart(profile.id))}
-            onStop={() => void runProfileAction(profile.id, () => props.onStop(profile.id))}
-            onReconnect={() => void runProfileAction(profile.id, () => props.onReconnect(profile.id))}
-            onRemove={() => void runProfileAction(profile.id, () => props.onRemove(profile.id))}
-          />
-        ))}
-
-        <SectionLabel value="OPEN ON SERVER" />
         {props.discoveryStatus === "loading" && props.discoveredPorts.length === 0 && (
           <InfoRow icon="scan-outline" title="Looking for open ports…" subtitle="Reading localhost listeners" loading />
         )}
         {props.discoveryStatus === "error" && props.discoveredPorts.length === 0 && (
           <InfoRow icon="alert-circle-outline" title="Could not scan ports" subtitle={props.discoveryError ?? "Tap refresh to try again"} />
         )}
-        {props.discoveryStatus === "ready" && candidates.length === 0 && (
-          <InfoRow icon="checkmark-circle-outline" title="No other open ports" subtitle="Everything discovered is already forwarded" />
+        {props.discoveryStatus === "ready" && groups.length === 0 && (
+          <InfoRow icon={segment === "excluded" ? "ban-outline" : "checkmark-circle-outline"} title={emptySegmentTitle(segment)} subtitle={query === "" ? emptySegmentSubtitle(segment) : "Try another name, category or port"} />
         )}
-        {candidates.map((candidate) => (
-          <CandidateRow key={candidate.port} candidate={candidate} pending={pendingPort === candidate.port} onPress={() => void choosePort(candidate)} />
-        ))}
-        <Pressable accessibilityRole="button" accessibilityLabel="Port not listed" onPress={openManual} style={({ pressed }) => [styles.serviceRow, pressed && styles.rowPressed]}>
-          <ServiceIcon name="keypad-outline" />
-          <View style={styles.rowText}>
-            <Text numberOfLines={1} style={styles.rowTitle}>Port not listed</Text>
-            <Text numberOfLines={1} style={styles.rowSubtitle}>Enter a localhost port manually</Text>
+        {groups.map(([group, groupEntries]) => (
+          <View key={group}>
+            <SectionLabel value={group} />
+            {groupEntries.map((entry) => entry.type === "candidate" ? (
+              <CandidateRow key={entry.candidate.forwardingKey} candidate={entry.candidate} pending={pendingPort === entry.candidate.port} onPress={() => void choosePort(entry.candidate)} onExclude={() => void excludePort(entry.candidate)} />
+            ) : (
+              <ForwardingRow
+                key={entry.profile.id}
+                profile={entry.profile}
+                kind={entry.kind}
+                pending={pendingId === entry.profile.id}
+                webMenuVisible={webMenuId === entry.profile.id}
+                onToggleWebMenu={() => setWebMenuId((current) => current === entry.profile.id ? null : entry.profile.id)}
+                onEdit={() => openEdit(entry.profile)}
+                onOpen={() => props.onOpen(entry.profile)}
+                onStart={() => void runProfileAction(entry.profile.id, () => props.onStart(entry.profile.id))}
+                onStop={() => void runProfileAction(entry.profile.id, () => props.onStop(entry.profile.id))}
+                onReconnect={() => void runProfileAction(entry.profile.id, () => props.onReconnect(entry.profile.id))}
+                onRemove={() => void runProfileAction(entry.profile.id, () => props.onRemove(entry.profile.id))}
+                onInclude={() => void runProfileAction(entry.profile.id, () => props.onSetPreference(entry.profile.id, "included"))}
+              />
+            ))}
           </View>
-          <Ionicons name="chevron-forward" size={17} color={colors.textDim} />
-        </Pressable>
+        ))}
+        {segment === "available" && query === "" && (
+          <Pressable accessibilityRole="button" accessibilityLabel="Port not listed" onPress={openManual} style={({ pressed }) => [styles.serviceRow, pressed && styles.rowPressed]}>
+            <ServiceIcon name="keypad-outline" />
+            <View style={styles.rowText}>
+              <Text numberOfLines={1} style={styles.rowTitle}>Port not listed</Text>
+              <Text numberOfLines={1} style={styles.rowSubtitle}>Enter a localhost port manually</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={17} color={colors.textDim} />
+          </Pressable>
+        )}
       </ScrollView>
     </View>
   );
 }
 
-function CandidateRow({ candidate, pending, onPress }: { candidate: PortForwardingCandidate; pending: boolean; onPress(): void }) {
+function CandidateRow({ candidate, pending, onPress, onExclude }: { candidate: PortForwardingCandidate; pending: boolean; onPress(): void; onExclude(): void }) {
   const detail = candidate.cwd === null ? candidate.process : shortCwd(candidate.cwd);
   return (
-    <Pressable
-      testID={`discovered-port-${candidate.port}`}
-      accessibilityRole="button"
-      accessibilityLabel={`Forward ${candidate.name} port ${candidate.port}`}
-      disabled={pending}
-      onPress={onPress}
-      style={({ pressed }) => [styles.serviceRow, pressed && styles.rowPressed]}
-    >
-      <ServiceIcon name={candidateIcon(candidate.kind)} />
-      <View style={styles.rowText}>
-        <Text numberOfLines={1} style={styles.rowTitle}>{candidate.name}</Text>
-        <Text numberOfLines={1} ellipsizeMode="middle" style={styles.rowSubtitle}>{`:${candidate.port}${detail === null ? "" : ` · ${detail}`}`}</Text>
-      </View>
-      {pending ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name="add" size={20} color={colors.textMuted} />}
-    </Pressable>
+    <View testID={`discovered-port-${candidate.port}`} style={styles.serviceRow}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Forward ${candidate.name} port ${candidate.port}`} disabled={pending} onPress={onPress} style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}>
+        <ServiceIcon name={candidateIcon(candidate.kind)} />
+        <View style={styles.rowText}>
+          <Text numberOfLines={1} style={styles.rowTitle}>{candidate.name}</Text>
+          <Text numberOfLines={1} ellipsizeMode="middle" style={styles.rowSubtitle}>{`:${candidate.port}${detail === null ? "" : ` · ${detail}`}`}</Text>
+        </View>
+        {pending ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name="add" size={20} color={colors.textMuted} />}
+      </Pressable>
+      {!pending && <Pressable accessibilityRole="button" accessibilityLabel={`Exclude ${candidate.name} port ${candidate.port}`} onPress={onExclude} style={styles.iconButton}><Ionicons name="ban-outline" size={18} color={colors.textDim} /></Pressable>}
+    </View>
   );
 }
 
 function ForwardingRow(props: {
-  profile: PortForwardingProfile; pending: boolean; webMenuVisible: boolean; onToggleWebMenu(): void;
-  onEdit(): void; onOpen(): void; onStart(): void; onStop(): void; onReconnect(): void; onRemove(): void;
+  profile: PortForwardingProfile; kind: PortForwardingCandidate["kind"]; pending: boolean; webMenuVisible: boolean; onToggleWebMenu(): void;
+  onEdit(): void; onOpen(): void; onStart(): void; onStop(): void; onReconnect(): void; onRemove(): void; onInclude(): void;
 }) {
   const { profile } = props;
   const live = profile.status === "live";
   const connecting = profile.status === "connecting";
+  const unavailable = profile.status === "unavailable";
   const errored = profile.status === "error";
-  const status = props.pending ? "Updating" : live ? "Live" : errored ? "Error" : connecting ? "Connecting" : "Stopped";
-  const color = live ? colors.green : errored ? colors.red : connecting ? colors.amber : colors.textDim;
-  const primary = live || connecting ? props.onStop : errored ? props.onReconnect : props.onStart;
-  const primaryId = live || connecting ? "stop" : errored ? "reconnect" : "start";
-  const primaryTitle = live || connecting ? "Stop" : errored ? "Reconnect" : "Start";
+  const excluded = profile.preference === "excluded";
+  const status = props.pending ? "Updating" : excluded ? "Excluded" : live ? "Live" : unavailable ? "Unavailable" : errored ? "Error" : connecting ? "Connecting" : "Stopped";
+  const color = live ? colors.green : unavailable || connecting ? colors.amber : errored ? colors.red : colors.textDim;
+  const primary = excluded ? props.onInclude : live || connecting ? props.onStop : errored ? props.onReconnect : props.onStart;
+  const primaryId = excluded ? "include" : live || connecting ? "stop" : errored ? "reconnect" : "start";
+  const primaryTitle = excluded ? "Include" : live || connecting ? "Stop" : errored ? "Reconnect" : "Start";
   const actions: ActionMenuItem[] = [
     { id: primaryId, label: primaryTitle, icon: live || connecting ? "stop-circle-outline" : "play-circle-outline" },
     { id: "edit", label: "Edit", icon: "pencil-outline" },
@@ -237,7 +296,7 @@ function ForwardingRow(props: {
     <View testID={`forwarding-profile-${profile.id}`}>
       <View style={styles.serviceRow}>
         <Pressable accessibilityRole="button" accessibilityLabel={`${profile.label}, ${status}`} onPress={live ? props.onOpen : props.onEdit} style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}>
-          <ServiceIcon name="globe-outline" live={live} />
+          <ServiceIcon name={candidateIcon(props.kind)} live={live} />
           <View style={styles.rowText}>
             <View style={styles.rowTitleLine}>
               <Text numberOfLines={1} style={styles.rowTitle}>{profile.label}</Text>
@@ -264,7 +323,7 @@ function ForwardingRow(props: {
           <SmallAction label={`Remove ${profile.label}`} title="Remove" onPress={props.onRemove} danger />
         </View>
       )}
-      {errored && profile.error !== null && <Text numberOfLines={2} style={styles.profileError}>{profile.error}</Text>}
+      {(errored || unavailable) && profile.error !== null && <Text numberOfLines={2} style={[styles.profileError, unavailable && styles.profileUnavailable]}>{profile.error}</Text>}
     </View>
   );
 }
@@ -319,7 +378,32 @@ export function parseForwardingDraft(form: Pick<FormState, "label" | "remotePort
 function parsePort(raw: string, label: string): number { const port = Number(raw); if (!/^\d{1,5}$/u.test(raw.trim()) || !Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new Error(`${label} must be between 1 and 65535`); return port; }
 function message(cause: unknown, fallback: string): string { return cause instanceof Error ? cause.message : fallback; }
 function shortCwd(cwd: string): string { const parts = cwd.split("/").filter(Boolean); return parts.at(-1) ?? cwd; }
-function candidateIcon(kind: PortForwardingCandidate["kind"]): ComponentProps<typeof Ionicons>["name"] { if (kind === "web") return "globe-outline"; if (kind === "node") return "logo-nodejs"; if (kind === "python") return "code-slash-outline"; if (kind === "container") return "cube-outline"; return "terminal-outline"; }
+function candidateIcon(kind: PortForwardingCandidate["kind"]): ComponentProps<typeof Ionicons>["name"] {
+  if (kind === "docker" || kind === "minikube") return "cube-outline";
+  if (kind === "kubernetes") return "git-network-outline";
+  if (kind === "node" || kind === "vite") return "logo-nodejs";
+  if (kind === "python") return "code-slash-outline";
+  if (kind === "zrok") return "globe-outline";
+  if (kind === "system") return "settings-outline";
+  if (kind === "hermes") return "chatbubble-ellipses-outline";
+  return "terminal-outline";
+}
+function groupEntries(entries: readonly ServiceEntry[]): Array<[string, ServiceEntry[]]> {
+  const groups = new Map<string, ServiceEntry[]>();
+  for (const entry of entries) groups.set(entry.group, [...(groups.get(entry.group) ?? []), entry]);
+  return [...groups].sort(([left], [right]) => left.localeCompare(right));
+}
+function serviceEntryMatches(entry: ServiceEntry, needle: string): boolean {
+  if (needle === "") return true;
+  if (entry.type === "candidate") {
+    const { candidate } = entry;
+    return [candidate.name, candidate.group, candidate.details, candidate.kind, String(candidate.port)].some((value) => value.toLocaleLowerCase().includes(needle));
+  }
+  return [entry.profile.label, entry.group, entry.kind, String(entry.profile.remotePort)].some((value) => value.toLocaleLowerCase().includes(needle));
+}
+function segmentTitle(segment: ServiceSegment): string { return segment === "active" ? "Active" : segment === "available" ? "Available" : "Excluded"; }
+function emptySegmentTitle(segment: ServiceSegment): string { return segment === "active" ? "No active ports" : segment === "available" ? "No available ports" : "No excluded ports"; }
+function emptySegmentSubtitle(segment: ServiceSegment): string { return segment === "active" ? "Include a discovered service or add a port manually" : segment === "available" ? "Every discovered service is active or excluded" : "Services you exclude will appear here"; }
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0, width: "100%", maxWidth: 560, alignSelf: "center" },
@@ -328,6 +412,14 @@ const styles = StyleSheet.create({
   title: { color: colors.text, ...typeScale.titleMedium, fontWeight: "600" },
   subtitle: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
   iconButton: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", borderRadius: radii.large },
+  filters: { gap: spacing.xs, paddingHorizontal: spacing.sm, paddingBottom: spacing.xs },
+  segments: { minHeight: 34, flexDirection: "row", padding: 2, borderRadius: radii.selected, backgroundColor: colors.surfaceContainerLow },
+  segment: { flex: 1, minHeight: 30, alignItems: "center", justifyContent: "center", borderRadius: radii.medium },
+  segmentSelected: { backgroundColor: colors.surfaceHover },
+  segmentText: { color: colors.textMuted, fontSize: 11, lineHeight: 15, fontWeight: "500" },
+  segmentTextSelected: { color: colors.text },
+  searchField: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, borderRadius: radii.selected, backgroundColor: colors.surfaceContainerLow },
+  searchInput: { flex: 1, minWidth: 0, minHeight: 38, paddingVertical: 0, color: colors.text, fontSize: 13 },
   listContent: { paddingBottom: spacing.md },
   sectionLabel: { marginTop: spacing.sm, marginBottom: 3, paddingHorizontal: spacing.sm, color: colors.textDim, fontSize: 10, lineHeight: 14, letterSpacing: 0.7, fontWeight: "600" },
   serviceRow: { width: "100%", minHeight: 62, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radii.selected },
@@ -341,6 +433,7 @@ const styles = StyleSheet.create({
   status: { flexShrink: 0, fontSize: 10, lineHeight: 14, fontWeight: "500" },
   menuAnchor: { width: touchTarget, height: touchTarget },
   profileError: { marginLeft: 60, marginRight: spacing.md, marginTop: -4, marginBottom: 5, color: colors.red, fontSize: 11, lineHeight: 15 },
+  profileUnavailable: { color: colors.amber },
   webActions: { minHeight: 38, flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: spacing.sm },
   smallAction: { minHeight: 38, justifyContent: "center", paddingHorizontal: spacing.sm },
   smallActionText: { color: colors.textMuted, ...typeScale.labelMedium },

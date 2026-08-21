@@ -14,14 +14,21 @@ import {
 import { BasicIndex, createCollection, type Collection } from "@tanstack/react-db";
 import { persistedCollectionOptions } from "@tanstack/react-native-db-sqlite-persistence";
 
-import { commitUiCacheSyncDurably, getUiCachePersistence } from "./ui-cache-persistence.native";
+import {
+  commitUiCacheMutationCheckpointed,
+  commitUiCacheSyncCheckpointed,
+  commitUiCacheSyncDurably,
+  getUiCachePersistence,
+} from "./ui-cache-persistence.native";
 import {
   compactCompletedTurnForStorage,
   authoritativeTimelineRowId,
   materializeThreadDetail,
+  mergePendingTimelineEntry,
   reconcileAuthoritativeThreadDetailRow,
   reconcileAuthoritativeThread,
   shouldWriteAuthoritativeThreadDetailRow,
+  shouldWriteHydratedActivityRow,
   shouldWriteThreadDetailRow,
   pendingTimelineRowId,
   planQueuedEditMutation,
@@ -33,11 +40,14 @@ import {
 } from "./thread-detail-projection";
 import type { HostQueuedPrompt } from "./queue-event";
 import type { NativeCommandDelivery } from "../native/native-transport";
+import type { ThreadEventProjection } from "./thread-projection-store";
 import { invalidationCanBeCleared, latestThreadInvalidations } from "./thread-detail-invalidation";
 import { parseQueuedInput } from "./queued-input";
 import { SerialTaskQueue } from "./serial-task-queue";
+import { createSyncControlLease } from "./sync-control-lease";
 
 const THREAD_DETAIL_COLLECTION_ID = "thread-details-v2";
+const THREAD_INVALIDATION_COLLECTION_ID = "thread-detail-invalidations-v1";
 const DURABLE_LIVE_BOUNDARIES = new Set([
   "turn/started",
   "turn/completed",
@@ -53,7 +63,7 @@ export type ThreadDetailDatabase = {
   collection: Collection<ThreadDetailRow, string>;
   prepare(): Promise<void>;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
-  applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;
+  applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
   captureRefreshCursor(connectionId: string, threadId: string): number;
   replaceThread(connectionId: string, thread: Thread, cleanThroughCursor?: number | null): Promise<void>;
   prependTurns(connectionId: string, threadId: string, turns: Turn[]): Promise<void>;
@@ -282,8 +292,14 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
 
 export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  let controls: SyncControls | null = null;
+  const controlLease = createSyncControlLease<SyncControls>();
   const source = new ThreadDetailSource();
+  // A new thread can receive its first turn before React switches from the
+  // synthetic New Chat scope to the real thread query. Keep only a bounded
+  // set of those empty shells so their live events can restart the on-demand
+  // controller instead of being reduced to an invalidation that appears only
+  // after reopening the conversation.
+  const startedThreadShells = new Map<string, Thread>();
   let disposed = false;
   const writes = new SerialTaskQueue();
 
@@ -306,9 +322,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       syncMode: "on-demand",
       sync: {
         sync: ({ begin, write, commit, markReady }) => {
-          controls = { begin, write, commit };
+          const release = controlLease.install({ begin, write, commit });
           markReady();
-          return { cleanup: () => { controls = null; } };
+          return { cleanup: release };
         },
       },
     }),
@@ -319,7 +335,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   collection.createIndex((row) => row.ordinal, { indexType: BasicIndex });
   const invalidations = createCollection(
     persistedCollectionOptions<ThreadInvalidationRow, string>({
-      id: "thread-detail-invalidations-v1",
+      id: THREAD_INVALIDATION_COLLECTION_ID,
       schemaVersion: 1,
       getKey: (row) => row.id,
       persistence: getUiCachePersistence(),
@@ -330,11 +346,26 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   // boundaries; live events then mutate this hot index incrementally.
   const refreshLoadedSource = (): void => source.replaceLoaded(collection.toArray);
 
+  const activeControls = (): SyncControls | null => controlLease.get();
+
+  const ensureControls = (): SyncControls => {
+    let controls = activeControls();
+    if (controls !== null) return controls;
+    // preload() is intentionally a data no-op for on-demand collections and
+    // its resolved promise may belong to an older lifecycle. We only need a
+    // fresh sync writer here; query-specific subset loading remains lazy.
+    collection.startSyncImmediate();
+    controls = activeControls();
+    if (controls === null) throw new Error("Thread detail database sync controller did not start");
+    return controls;
+  };
+
   const persistPendingMutation = async (
     mutation: PendingTimelineMutation,
     durable = false,
   ): Promise<boolean> => await writes.run(async () => {
-    if (disposed || controls === null) return false;
+    if (disposed) return false;
+    const controls = ensureControls();
     controls.begin({ immediate: true });
     let changed = false;
     for (const key of mutation.deletes) {
@@ -365,7 +396,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   );
 
   const applyCommandDelivery = async (delivery: NativeCommandDelivery): Promise<void> => {
-    if (disposed || controls === null) return;
+    if (disposed) return;
     const direct = delivery.method === "turn/start" || delivery.method === "turn/steer";
     if (direct && delivery.threadId !== null) {
       const existing = source.pendingRow(delivery.connectionId, delivery.commandId);
@@ -435,7 +466,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     preserveConcurrentHead = false,
   ): Promise<void> => {
     if (disposed) throw new Error("Thread detail database is closed");
-    if (controls === null) throw new Error("Thread detail database is not ready");
+    const controls = ensureControls();
     refreshLoadedSource();
     const currentSnapshot = materializeThreadDetail(source.rowsForThread(connectionId, incoming.id), connectionId, incoming.id, sessionId);
     const current = currentSnapshot?.thread;
@@ -475,11 +506,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     else await commitUiCacheSyncDurably(THREAD_DETAIL_COLLECTION_ID, controls.commit);
   };
 
-  const publishLiveSlice = async (connectionId: string, thread: Thread, durable: boolean): Promise<void> => {
-    if (disposed || controls === null) return;
+  const publishLiveSlice = (connectionId: string, thread: Thread, durable: boolean): Promise<void> => {
+    if (disposed) return Promise.resolve();
+    const controls = ensureControls();
     const metaKey = threadMetaKey(connectionId, thread.id);
     const previousMeta = source.get(metaKey);
-    if (previousMeta?.kind !== "thread") return;
+    if (previousMeta?.kind !== "thread") return Promise.resolve();
     let nextOrdinal = (source.ordinalBounds(connectionId, thread.id)?.max ?? -1) + 1;
     controls.begin({ immediate: true });
     let mutationCount = writeRow(source, controls, metaKey, threadRow(
@@ -507,8 +539,13 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         if (writeRow(source, controls, metadataRow.id, metadataRow)) mutationCount += 1;
       }
     }
-    if (mutationCount === 0 || !durable) controls.commit();
-    else await commitUiCacheSyncDurably(THREAD_DETAIL_COLLECTION_ID, controls.commit);
+    if (mutationCount === 0) {
+      controls.commit();
+      return Promise.resolve();
+    }
+    return durable
+      ? commitUiCacheSyncDurably(THREAD_DETAIL_COLLECTION_ID, controls.commit)
+      : commitUiCacheSyncCheckpointed(THREAD_DETAIL_COLLECTION_ID, controls.commit);
   };
 
   return {
@@ -521,7 +558,8 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     },
     async applySnapshot(connectionId, snapshots) {
       await writes.run(async () => {
-        if (disposed || controls === null) return;
+        if (disposed) return;
+        const controls = ensureControls();
         const byId = new Map(snapshots.map((snapshot) => [snapshot.thread.id, snapshot]));
         controls.begin({ immediate: true });
         let mutationCount = 0;
@@ -539,11 +577,36 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       });
     },
     async applyEvents(connectionId, events) {
-      await writes.run(async () => {
-        if (disposed || events.length === 0) return;
+      const startedThreadIds = new Set(events.flatMap((event) => {
+        const threadId = threadIdFromEvent(event.payload);
+        return threadId !== null && startedThreadShells.has(threadScope(connectionId, threadId))
+          ? [threadId]
+          : [];
+      }));
+      return await writes.run(async () => {
+        if (disposed || events.length === 0) {
+          return { checkpoint: Promise.resolve(), threads: new Map() };
+        }
         const durable = events.some((event) => DURABLE_LIVE_BOUNDARIES.has(String(event.payload.method ?? "")));
-        await persistInvalidations(invalidations, connectionId, events, durable);
-        if (controls === null) return;
+        const checkpoints: Promise<void>[] = [persistInvalidations(invalidations, connectionId, events, durable)];
+        const projectedThreads = new Map<string, { before: Thread; after: Thread }>();
+        const hasLoadedThread = events.some((event) => {
+          const threadId = threadIdFromEvent(event.payload);
+          return threadId !== null && source.has(threadMetaKey(connectionId, threadId));
+        });
+        if (!hasLoadedThread && startedThreadIds.size === 0) {
+          return { checkpoint: Promise.all(checkpoints).then(() => undefined), threads: projectedThreads };
+        }
+        // A loaded/new thread is a live UI projection. Never silently ACK it
+        // as an invalidation when TanStack has just recycled the on-demand
+        // controller: restart the writer synchronously or fail the batch so
+        // the native durable stream retries it.
+        const controls = ensureControls();
+        for (const threadId of startedThreadIds) {
+          if (source.has(threadMetaKey(connectionId, threadId))) continue;
+          const shell = startedThreadShells.get(threadScope(connectionId, threadId));
+          if (shell !== undefined) await publishThread(connectionId, shell, "live");
+        }
         const byThread = new Map<string, Record<string, unknown>[]>();
         for (const event of events) {
           const threadId = threadIdFromEvent(event.payload);
@@ -565,19 +628,37 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           const current = materializeThreadDetail(slice, connectionId, threadId, sessionId);
           if (current === null) continue;
           const next = applyThreadProjectionPatchesImmutable(current.thread, patches);
-          if (next !== current.thread) await publishLiveSlice(connectionId, next, durable);
+          projectedThreads.set(threadId, { before: current.thread, after: next });
+          if (next !== current.thread) checkpoints.push(publishLiveSlice(connectionId, next, durable));
         }
+        for (const event of events) {
+          const threadId = threadIdFromEvent(event.payload);
+          if (threadId === null) continue;
+          const method = String(event.payload.method ?? "");
+          if (method === "turn/completed" || method === "thread/deleted") {
+            startedThreadShells.delete(threadScope(connectionId, threadId));
+          }
+        }
+        return {
+          checkpoint: Promise.all(checkpoints).then(() => undefined),
+          threads: projectedThreads,
+        };
       });
     },
     captureRefreshCursor(connectionId, threadId) {
       return invalidations.get(invalidationKey(connectionId, threadId))?.cursor ?? 0;
     },
     async replaceThread(connectionId, thread, cleanThroughCursor = null) {
-      // An on-demand collection tears its sync controls down when the last
-      // query disappears. thread/start can create a shell before the new
-      // thread has a live query, so restart the controller without hydrating
-      // unrelated history before publishing that shell.
-      await collection.preload();
+      if (thread.turns.length === 0) {
+        const key = threadScope(connectionId, thread.id);
+        startedThreadShells.delete(key);
+        startedThreadShells.set(key, thread);
+        while (startedThreadShells.size > 32) {
+          const oldest = startedThreadShells.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          startedThreadShells.delete(oldest);
+        }
+      }
       await writes.run(async () => {
         const latestCursor = invalidations.get(invalidationKey(connectionId, thread.id))?.cursor ?? 0;
         const preserveConcurrentHead = cleanThroughCursor !== null && latestCursor > cleanThroughCursor;
@@ -588,14 +669,13 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       });
     },
     async prependTurns(connectionId, threadId, turns) {
-      await collection.preload();
       await writes.run(async () => {
         // The source owns every row written by this runtime. Rebuilding it from
         // collection.toArray here made successive history pages O(n²): page 20
         // rescanned all 19 preceding pages before inserting twelve rows.
         if (turns.length === 0) return;
         if (disposed) throw new Error("Thread detail database is closed");
-        if (controls === null) throw new Error("Thread detail database is not ready");
+        const controls = ensureControls();
         const additions = turns.filter((turn) => source.turnRowKey(connectionId, threadId, turn.id) === null);
         const firstOrdinal = (source.ordinalBounds(connectionId, threadId)?.min ?? 0) - additions.length;
         let additionIndex = 0;
@@ -631,11 +711,13 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       await writes.run(async () => {
         // Activity hydration addresses one already loaded turn. Never scan the
         // full retained history just to attach its lazily fetched tool output.
-        if (controls === null) return;
+        if (disposed) return;
         const contentKey = source.turnRowKey(connectionId, threadId, turnId);
         const turnContent = contentKey === null ? undefined : source.get(contentKey);
-        if (turnContent?.turn === null || turnContent?.turn === undefined || source.has(activityKey(connectionId, threadId, turnId))) return;
+        if (turnContent?.turn === null || turnContent?.turn === undefined) return;
         const row = activityRow(connectionId, threadId, turnId, turnContent.ordinal, items);
+        if (!shouldWriteHydratedActivityRow(source.get(row.id), row)) return;
+        const controls = ensureControls();
         controls.begin({ immediate: true });
         if (!writeRow(source, controls, row.id, row)) {
           controls.commit();
@@ -658,7 +740,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       await applyCommandDelivery(delivery);
     },
     async reconcileNativeCommands(connectionId, threadId, deliveries) {
-      if (disposed || controls === null || !source.has(threadMetaKey(connectionId, threadId))) return;
+      if (disposed || !source.has(threadMetaKey(connectionId, threadId))) return;
       for (const delivery of deliveries) {
         if (delivery.connectionId !== connectionId) continue;
         if (delivery.threadId !== threadId && source.pendingRow(connectionId, delivery.targetCommandId ?? "") === undefined) continue;
@@ -667,14 +749,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     },
     async replaceQueued(connectionId, threadId, commands, preserveCommandIds = new Set()) {
       const incoming = new Map(commands
-        .filter((command) => command.remoteThreadId === threadId && command.presentation === "queue" && command.state !== "delivered")
+        .filter((command) => command.remoteThreadId === threadId)
         .map((command) => {
           const existing = source.pendingRow(connectionId, command.commandId)?.pending;
           const queuedInput = parseQueuedInput(command.params);
           const entry: PendingTimelineEntry = {
             commandId: command.commandId,
             method: "turn/start",
-            presentation: "queue",
+            presentation: command.presentation,
+            workspaceRequestId: command.workspaceRequestId,
             text: queuedInput.text,
             attachments: queuedInput.attachments,
             state: command.state,
@@ -687,7 +770,8 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           return [command.commandId, pendingRow(connectionId, threadId, entry)] as const;
         }));
       await writes.run(async () => {
-        if (disposed || controls === null) return;
+        if (disposed) return;
+        const controls = ensureControls();
         controls.begin({ immediate: true });
         let changed = false;
         for (const row of source.rowsForThread(connectionId, threadId)) {
@@ -750,18 +834,21 @@ async function persistInvalidations(
   durable: boolean,
 ): Promise<void> {
   const latest = latestThreadInvalidations(events);
+  const checkpoints: Promise<void>[] = [];
   for (const [threadId, cursor] of latest) {
     const id = invalidationKey(connectionId, threadId);
     const current = collection.get(id);
     if (current !== undefined && current.cursor >= cursor) continue;
-    const transaction = current === undefined
-      ? collection.insert({ id, connectionId, threadId, cursor })
-      : collection.update(id, (draft) => { draft.cursor = cursor; });
-    if (durable) await transaction.isPersisted.promise;
-    else void transaction.isPersisted.promise.catch((cause: unknown) => {
-      console.warn("Thread invalidation persistence failed", cause);
-    });
+    const { checkpoint } = commitUiCacheMutationCheckpointed(
+      THREAD_INVALIDATION_COLLECTION_ID,
+      () => current === undefined
+        ? collection.insert({ id, connectionId, threadId, cursor })
+        : collection.update(id, (draft) => { draft.cursor = cursor; }),
+      { forceFlush: durable },
+    );
+    checkpoints.push(checkpoint);
   }
+  await Promise.all(checkpoints);
 }
 
 async function clearInvalidationThrough(
@@ -773,8 +860,12 @@ async function clearInvalidationThrough(
   const id = invalidationKey(connectionId, threadId);
   const current = collection.get(id);
   if (current === undefined || !invalidationCanBeCleared(current.cursor, cursor)) return;
-  const transaction = collection.delete(id);
-  await transaction.isPersisted.promise;
+  const { checkpoint } = commitUiCacheMutationCheckpointed(
+    THREAD_INVALIDATION_COLLECTION_ID,
+    () => collection.delete(id),
+    { forceFlush: true },
+  );
+  await checkpoint;
 }
 
 function invalidationKey(connectionId: string, threadId: string): string {
@@ -967,18 +1058,11 @@ function pendingCommandScope(connectionId: string, commandId: string): string {
   return `${connectionId}\u0000${commandId}`;
 }
 
-function mergePendingTimelineEntry(previous: PendingTimelineEntry, incoming: PendingTimelineEntry): PendingTimelineEntry {
-  if (incoming.updatedAt < previous.updatedAt) return previous;
-  if (incoming.updatedAt === previous.updatedAt && deliveryStateRank(incoming.state) < deliveryStateRank(previous.state)) return previous;
-  return incoming.attachments.length === 0 && previous.attachments.length > 0
-    ? { ...incoming, attachments: previous.attachments }
-    : incoming;
-}
-
 function samePendingTimelineEntry(left: PendingTimelineEntry, right: PendingTimelineEntry): boolean {
   return left.commandId === right.commandId
     && left.method === right.method
     && left.presentation === right.presentation
+    && left.workspaceRequestId === right.workspaceRequestId
     && left.text === right.text
     && JSON.stringify(left.attachments) === JSON.stringify(right.attachments)
     && left.state === right.state
@@ -987,15 +1071,4 @@ function samePendingTimelineEntry(left: PendingTimelineEntry, right: PendingTime
     && left.createdAt === right.createdAt
     && left.updatedAt === right.updatedAt
     && left.order === right.order;
-}
-
-function deliveryStateRank(state: PendingTimelineEntry["state"]): number {
-  switch (state) {
-    case "queued": return 0;
-    case "sending": return 1;
-    case "accepted": return 2;
-    case "uncertain": return 3;
-    case "failed": return 4;
-    case "delivered": return 5;
-  }
 }

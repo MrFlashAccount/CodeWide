@@ -6,6 +6,7 @@ import { colors, radii, spacing, typeScale } from "../theme";
 import { formatEstimatedTurnCost, type TokenCostEstimate } from "../turn-cost";
 import { AnimatedNumber, integerNumberFormat, usdNumberFormat } from "./AnimatedNumber";
 import { AppText as Text } from "./Typography";
+import { TOKEN_SYMBOL } from "./token-display";
 
 export function CostBreakdownPopover({ estimate, animated = false }: { estimate: TokenCostEstimate; animated?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -73,11 +74,11 @@ export function TokenCostRows({ estimate }: { estimate: TokenCostEstimate }) {
   );
 }
 
-export function AnimatedBreakdownRow({ label, value, format = integerNumberFormat, suffix }: { label: string; value: number; format?: Intl.NumberFormatOptions; suffix?: string }) {
+export function AnimatedBreakdownRow({ label, value, format = integerNumberFormat, prefix, suffix }: { label: string; value: number; format?: Intl.NumberFormatOptions; prefix?: string; suffix?: string }) {
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
-      <AnimatedNumber value={value} format={format} {...(suffix === undefined ? {} : { suffix })} style={styles.rowValue} />
+      <AnimatedNumber value={value} format={format} {...(prefix === undefined ? {} : { prefix })} {...(suffix === undefined ? {} : { suffix })} style={styles.rowValue} />
     </View>
   );
 }
@@ -96,7 +97,7 @@ function TokenCostRow({ label, tokens, costUsd }: { label: string; tokens: numbe
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={styles.tokenCostValue}>
-        <AnimatedNumber value={tokens} format={integerNumberFormat} style={styles.rowValue} />
+        <AnimatedNumber value={tokens} format={integerNumberFormat} prefix={TOKEN_SYMBOL} style={styles.rowValue} />
         <Text style={styles.rowValue}>·</Text>
         <AnimatedNumber value={costUsd} format={usdNumberFormat(costUsd)} style={styles.rowValue} />
       </View>
@@ -119,6 +120,6 @@ const styles = StyleSheet.create({
   totalLabel: { color: colors.text, ...typeScale.labelMedium },
   totalValue: { color: colors.text, ...typeScale.titleMedium, fontWeight: "700", fontVariant: ["tabular-nums"] },
   note: { color: colors.textDim, fontSize: 10, lineHeight: 14 },
-  trigger: { color: colors.textMuted, fontSize: 10, lineHeight: 14, textDecorationLine: "underline", textDecorationStyle: "dotted" },
+  trigger: { color: colors.textMuted, fontSize: 10, lineHeight: 14 },
   pressed: { opacity: 0.68 },
 });

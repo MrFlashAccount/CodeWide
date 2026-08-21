@@ -19,6 +19,7 @@ internal class NativeProtocolEngine(
   private val connectionId: String,
   private val frameStore: NativeFrameStore,
   private val handler: Handler,
+  private val journalHandler: Handler,
   private val sendFrame: (String) -> Boolean,
   private val resetTransport: (String) -> Unit,
   private val onLive: () -> Unit,
@@ -49,10 +50,10 @@ internal class NativeProtocolEngine(
   private var diagnostic: String? = null
   private var maximumObservedCursor = 0L
   private var lastAckCursor = 0L
-  private val projectionFrames = mutableListOf<StoredFrame>()
-  private var projectionBytes = 0
-  private var projectionFlush: Runnable? = null
-  private var projectionFlushAtMs: Long? = null
+  private val journalFrames = mutableListOf<IncomingJournalFrame>()
+  private var journalBytes = 0
+  private var journalFlush: Runnable? = null
+  private var journalFlushAtMs: Long? = null
 
   @Synchronized
   fun onSocketOpen() {
@@ -72,7 +73,7 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun onSocketClosed(message: String = "Connection interrupted") {
-    flushProjectionFrames()
+    flushJournalFrames()
     upstreamLive = false
     snapshotLoading = false
     snapshotHead = null
@@ -83,7 +84,7 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun close(message: String = "Connection session closed") {
-    flushProjectionFrames()
+    flushJournalFrames()
     upstreamLive = false
     rejectInFlight(message)
     rejectDeferred(message)
@@ -131,6 +132,7 @@ internal class NativeProtocolEngine(
   fun rpc(method: String, params: Any?, timeoutMs: Long = RPC_TIMEOUT_MS, completion: (Result<Any?>) -> Unit) {
     val effectiveTimeoutMs = when (method) {
       "companion/dictation/finish" -> maxOf(timeoutMs, DICTATION_FINISH_RPC_TIMEOUT_MS)
+      "companion/workspace/create" -> maxOf(timeoutMs, WORKSPACE_CREATE_RPC_TIMEOUT_MS)
       "thread/fork" -> maxOf(timeoutMs, THREAD_FORK_RPC_TIMEOUT_MS)
       else -> timeoutMs
     }
@@ -220,11 +222,7 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun attachRuntime() {
-    projectionFlush?.let(handler::removeCallbacks)
-    projectionFlush = null
-    projectionFlushAtMs = null
-    projectionFrames.clear()
-    projectionBytes = 0
+    flushJournalFrames()
     val checkpoint = frameStore.checkpoint(connectionId)
     if (checkpoint.snapshotCursor != null && checkpoint.snapshotJson != null) {
       CodeWideModule.emitEngineEvent(
@@ -236,7 +234,7 @@ internal class NativeProtocolEngine(
       )
     }
     CodeWideModule.emitEngineEvent(connectionId, "pendingRequests", checkpoint.pendingRequestsJson, null)
-    emitProjectionFramesBatched(checkpoint.frames, "checkpointEvents")
+    emitJournalAdvanced(checkpoint.journalHeadCursor, recovery = true)
     emitState(state, diagnostic)
   }
 
@@ -298,23 +296,12 @@ internal class NativeProtocolEngine(
       return
     }
     maximumObservedCursor = maxOf(maximumObservedCursor, cursor)
-    when (val frameId = frameStore.appendEvent(connectionId, cursor, text)) {
-      NativeFrameStore.OVERFLOW -> resetTransport("native_frame_journal_overflow")
-      NativeFrameStore.NON_CONTIGUOUS -> resetTransport("non_contiguous_sync_cursor")
-      NativeFrameStore.DUPLICATE -> acknowledge(cursor)
-      else -> {
-        acknowledge(cursor)
-        val method = payload.optString("method")
-        queueProjectionFrame(
-          StoredFrame(frameId, cursor, text),
-          ProjectionBatchPolicy.shouldFlushImmediately(method),
-          ProjectionBatchPolicy.flushDelayMs(method),
-        )
-        if (NativeFrameStore.changesPendingRequests(payload)) {
-          CodeWideModule.emitEngineEvent(connectionId, "pendingRequests", frameStore.pendingRequestsJson(connectionId), null)
-        }
-      }
-    }
+    val method = payload.optString("method")
+    queueJournalFrame(
+      IncomingJournalFrame(cursor, text, payload.takeIf(NativeFrameStore::changesPendingRequests)),
+      ProjectionBatchPolicy.shouldFlushImmediately(method),
+      ProjectionBatchPolicy.flushDelayMs(method),
+    )
   }
 
   private fun handleCaughtUp(envelope: JSONObject) {
@@ -325,7 +312,7 @@ internal class NativeProtocolEngine(
     }
     snapshotHead = null
     catchUpHead = null
-    flushProjectionFrames()
+    flushJournalFrames()
     emitState(if (upstreamLive) "live" else "connecting")
   }
 
@@ -375,6 +362,7 @@ internal class NativeProtocolEngine(
       .put("sortKey", "updated_at")
       .put("sortDirection", "desc")
       .put("archived", archived)
+      .put("modelProviders", JSONArray())
       .put("useStateDbOnly", true)
     rpc("thread/list", params, SNAPSHOT_RPC_TIMEOUT_MS) { result ->
       result.fold(
@@ -450,74 +438,82 @@ internal class NativeProtocolEngine(
     if (sendFrame(JSONObject().put("type", "ack").put("cursor", cursor).toString())) lastAckCursor = cursor
   }
 
-  private fun queueProjectionFrame(frame: StoredFrame, flushImmediately: Boolean, flushDelayMs: Long) {
+  @Synchronized
+  private fun queueJournalFrame(frame: IncomingJournalFrame, flushImmediately: Boolean, flushDelayMs: Long) {
     val bytes = frame.payload.toByteArray(Charsets.UTF_8).size
-    if (projectionFrames.isNotEmpty() && (projectionFrames.size >= MAX_PROJECTION_BATCH || projectionBytes + bytes > MAX_PROJECTION_BYTES)) {
-      flushProjectionFrames()
+    if (journalFrames.isNotEmpty() && (journalFrames.size >= MAX_JOURNAL_BATCH || journalBytes + bytes > MAX_JOURNAL_BYTES)) {
+      flushJournalFrames()
     }
-    projectionFrames += frame
-    projectionBytes += bytes
+    journalFrames += frame
+    journalBytes += bytes
     if (flushImmediately) {
-      flushProjectionFrames()
+      flushJournalFrames()
       return
     }
     val flushAtMs = SystemClock.uptimeMillis() + flushDelayMs
-    val scheduledAtMs = projectionFlushAtMs
-    if (projectionFlush != null && scheduledAtMs != null && scheduledAtMs <= flushAtMs) return
-    projectionFlush?.let(handler::removeCallbacks)
+    val scheduledAtMs = journalFlushAtMs
+    if (journalFlush != null && scheduledAtMs != null && scheduledAtMs <= flushAtMs) return
+    journalFlush?.let(journalHandler::removeCallbacks)
     val runnable = Runnable {
       synchronized(this@NativeProtocolEngine) {
-        projectionFlush = null
-        projectionFlushAtMs = null
-        flushProjectionFrames()
+        journalFlush = null
+        journalFlushAtMs = null
+        flushJournalFrames()
       }
     }
-    projectionFlush = runnable
-    projectionFlushAtMs = flushAtMs
-    handler.postDelayed(runnable, flushDelayMs)
+    journalFlush = runnable
+    journalFlushAtMs = flushAtMs
+    journalHandler.postDelayed(runnable, flushDelayMs)
   }
 
-  private fun flushProjectionFrames() {
-    projectionFlush?.let(handler::removeCallbacks)
-    projectionFlush = null
-    projectionFlushAtMs = null
-    if (projectionFrames.isEmpty()) return
-    val batch = projectionFrames.toList()
-    projectionFrames.clear()
-    projectionBytes = 0
-    emitProjectionFrames(batch, "events")
-  }
-
-  private fun emitProjectionFrames(frames: List<StoredFrame>, eventType: String) {
-    if (frames.isEmpty()) return
-    val payload = JSONArray()
-    frames.forEach { frame ->
-      payload.put(JSONObject().put("frameId", frame.id).put("frame", JSONObject(frame.payload)))
+  @Synchronized
+  private fun flushJournalFrames() {
+    journalFlush?.let(journalHandler::removeCallbacks)
+    journalFlush = null
+    journalFlushAtMs = null
+    if (journalFrames.isEmpty()) return
+    val batch = journalFrames.toList()
+    val batchBytes = journalBytes
+    journalFrames.clear()
+    journalBytes = 0
+    val commitStartedAt = SystemClock.elapsedRealtimeNanos()
+    val result = frameStore.appendEvents(connectionId, batch)
+    val commitMs = (SystemClock.elapsedRealtimeNanos() - commitStartedAt) / 1_000_000.0
+    when (result.status) {
+      JournalAppendStatus.OVERFLOW -> resetTransport("native_frame_journal_overflow")
+      JournalAppendStatus.NON_CONTIGUOUS -> resetTransport("non_contiguous_sync_cursor")
+      JournalAppendStatus.COMMITTED -> {
+        result.acknowledgedCursor?.let(::acknowledge)
+        result.frames.lastOrNull()?.cursor?.let {
+          emitJournalAdvanced(it, recovery = false, eventCount = result.frames.size, bytes = batchBytes, commitMs = commitMs)
+        }
+        if (result.frames.isNotEmpty() && batch.any { it.pendingRequestPayload != null }) {
+          CodeWideModule.emitEngineEvent(connectionId, "pendingRequests", frameStore.pendingRequestsJson(connectionId), null)
+        }
+      }
     }
+  }
+
+  private fun emitJournalAdvanced(
+    cursor: Long?,
+    recovery: Boolean,
+    eventCount: Int = 0,
+    bytes: Int = 0,
+    commitMs: Double = 0.0,
+  ) {
+    if (cursor == null) return
     CodeWideModule.emitEngineEvent(
       connectionId,
-      eventType,
-      payload.toString(),
-      frames.last().id,
-      frames.last().cursor,
+      "journalAdvanced",
+      JSONObject()
+        .put("recovery", recovery)
+        .put("eventCount", eventCount)
+        .put("bytes", bytes)
+        .put("commitMs", commitMs)
+        .toString(),
+      null,
+      cursor,
     )
-  }
-
-  private fun emitProjectionFramesBatched(frames: List<StoredFrame>, eventType: String) {
-    if (frames.isEmpty()) return
-    val batch = mutableListOf<StoredFrame>()
-    var bytes = 0
-    frames.forEach { frame ->
-      val frameBytes = frame.payload.toByteArray(Charsets.UTF_8).size
-      if (batch.isNotEmpty() && (batch.size >= MAX_PROJECTION_BATCH || bytes + frameBytes > MAX_PROJECTION_BYTES)) {
-        emitProjectionFrames(batch.toList(), eventType)
-        batch.clear()
-        bytes = 0
-      }
-      batch += frame
-      bytes += frameBytes
-    }
-    emitProjectionFrames(batch, eventType)
   }
 
   private fun emitState(next: String, error: String? = null) {
@@ -561,12 +557,13 @@ internal class NativeProtocolEngine(
   companion object {
     private const val RPC_TIMEOUT_MS = 30_000L
     private const val DICTATION_FINISH_RPC_TIMEOUT_MS = 5 * 60_000L
+    private const val WORKSPACE_CREATE_RPC_TIMEOUT_MS = 10 * 60_000L
     private const val THREAD_FORK_RPC_TIMEOUT_MS = 10 * 60_000L
     private const val RPC_LIVE_WAIT_TIMEOUT_MS = 12_000L
     private const val SNAPSHOT_RPC_TIMEOUT_MS = 120_000L
     private const val MAX_DEFERRED_RPCS = 128
-    private const val MAX_PROJECTION_BATCH = 128
-    private const val MAX_PROJECTION_BYTES = 512 * 1024
+    private const val MAX_JOURNAL_BATCH = 128
+    private const val MAX_JOURNAL_BYTES = 512 * 1024
     private val EPHEMERAL_CONTROL_METHODS = setOf("turn/interrupt")
   }
 }

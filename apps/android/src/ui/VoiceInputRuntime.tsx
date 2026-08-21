@@ -22,6 +22,10 @@ export function useAppVoiceInputRuntime(): AppVoiceInputRuntime | null {
   return useContext(VoiceInputRuntimeContext);
 }
 
+export function reviewVoiceInputScope(runtime: AppVoiceInputRuntime): string {
+  return `${runtime.scopePrefix}\u0000review`;
+}
+
 export function useVoiceInputResource(runtime: AppVoiceInputRuntime | null, scope: string | null): VoiceInputRow | null {
   return useSyncExternalStore(
     (notify) => {

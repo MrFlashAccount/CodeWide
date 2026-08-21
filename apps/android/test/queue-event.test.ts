@@ -21,11 +21,16 @@ describe("companion queue events", () => {
       remoteThreadId: "thread-1",
       params: { threadId: "thread-1", input: [{ type: "text", text: "direct" }] },
       presentation: "delivery",
+      workspaceRequestId: "workspace-1",
       state: "queued",
       order: 1,
       createdAt: 10,
       lastError: null,
-    }])).toMatchObject([{ commandId: "direct-1", presentation: "delivery" }]);
+    }])).toMatchObject([{
+      commandId: "direct-1",
+      presentation: "delivery",
+      workspaceRequestId: "workspace-1",
+    }]);
   });
 
   it("rejects a malformed snapshot instead of poisoning the local projection", () => {

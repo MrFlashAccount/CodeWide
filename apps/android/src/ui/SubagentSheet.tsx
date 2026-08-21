@@ -45,7 +45,7 @@ export function SubagentSheet({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [loadedThread, setLoadedThread] = useState<{ id: string; thread: Thread } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<{ threadId: string; message: string } | null>(null);
   const openedInitialThreadRef = useRef(false);
   const summaryQuery = useLiveQuery(
     (query) => summaryDatabase === null
@@ -75,11 +75,14 @@ export function SubagentSheet({
         .find((snapshot) => snapshot.connectionId === connectionId && snapshot.thread.id === selectedId)?.thread ?? null;
   const thread = materializedThread ?? (loadedThread?.id === selectedId ? loadedThread.thread : null);
   const conversation = thread === null ? null : projectSubagentConversation(thread, parentThread);
+  const selectedError = loadError?.threadId === selectedId && conversation === null
+    ? loadError.message
+    : null;
 
   useEffect(() => {
     if (onRefresh === undefined) return;
-    void onRefresh().catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : "Could not refresh subagents");
+    void onRefresh().catch(() => {
+      // Keep the live cached list usable when its background refresh fails.
     });
   }, [onRefresh]);
 
@@ -87,7 +90,7 @@ export function SubagentSheet({
     setSelectedId(null);
     setLoadingId(null);
     setLoadedThread(null);
-    setError(null);
+    setLoadError(null);
   };
   const close = () => {
     resetSelection();
@@ -97,12 +100,15 @@ export function SubagentSheet({
     setSelectedId(threadId);
     setLoadingId(threadId);
     setLoadedThread(null);
-    setError(null);
+    setLoadError(null);
     void onReadThread(connectionId, threadId)
       .then((window) => {
         if (window !== null) setLoadedThread({ id: threadId, thread: window.thread });
       })
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not load subagent"))
+      .catch((cause: unknown) => setLoadError({
+        threadId,
+        message: cause instanceof Error ? cause.message : "Could not load subagent",
+      }))
       .finally(() => setLoadingId((current) => current === threadId ? null : current));
   }, [connectionId, onReadThread]);
   const open = (summary: StoredThreadSummary) => openById(summary.remoteThreadId);
@@ -118,7 +124,7 @@ export function SubagentSheet({
       subagents={subagents}
       selected={selected}
       loading={selected !== null && thread === null && loadingId === selected.remoteThreadId}
-      error={error}
+      error={selectedError}
       onSelect={open}
       onBack={resetSelection}
       onClose={close}

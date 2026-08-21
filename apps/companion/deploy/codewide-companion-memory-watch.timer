@@ -1,0 +1,12 @@
+[Unit]
+Description=Monitor CodeWide Companion memory
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=codewide-companion-memory-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -6,8 +6,10 @@ package dev.codewide.app.remote
  * count/byte ceiling or the normal frame deadline.
  */
 internal object ProjectionBatchPolicy {
-  const val NORMAL_FLUSH_DELAY_MS = 40L
-  const val TEXT_FLUSH_DELAY_MS = 8L
+  // These deadlines now bound durable group commits, not React renders. The
+  // JS projection may still coalesce work when it falls behind.
+  const val NORMAL_FLUSH_DELAY_MS = 16L
+  const val TEXT_FLUSH_DELAY_MS = 12L
 
   private val immediateMethods = setOf(
     "turn/started",

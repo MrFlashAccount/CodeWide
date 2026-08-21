@@ -19,7 +19,7 @@ describe("stream recovery", () => {
       delta: "lost prefix",
     })];
 
-    expect(streamRepairThreadIds("server", events, () => value)).toEqual(["thread"]);
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value }]]))).toEqual(["thread"]);
   });
 
   it("does not repair an ordinary contiguous delta batch", () => {
@@ -36,7 +36,7 @@ describe("stream recovery", () => {
       delta: " world",
     })];
 
-    expect(streamRepairThreadIds("server", events, () => value)).toEqual([]);
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value }]]))).toEqual([]);
   });
 
   it("always reconciles a terminal turn before projection ACK", () => {
@@ -47,7 +47,7 @@ describe("stream recovery", () => {
       turn: completed,
     })];
 
-    expect(streamRepairThreadIds("server", events, () => value)).toEqual(["thread"]);
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value }]]))).toEqual(["thread"]);
   });
 
   it("verifies the authoritative terminal text against the companion hash", () => {
@@ -72,6 +72,74 @@ describe("stream recovery", () => {
     expect(terminalProjectionMatches(value, proof!)).toBe(true);
     (value.turns[0]!.items[0] as Extract<Thread["turns"][number]["items"][number], { type: "agentMessage" }>).text = "truncated";
     expect(terminalProjectionMatches(value, proof!)).toBe(false);
+  });
+
+  it("verifies only the newest completed turn from a replay batch", () => {
+    const older = syncEvent("turn/completed", {}, {
+      kind: "turnCompleted",
+      terminalProjection: {
+        version: 1,
+        turnId: "older-turn-outside-the-window",
+        agentMessage: null,
+      },
+    });
+    const newest = syncEvent("turn/completed", {}, {
+      kind: "turnCompleted",
+      terminalProjection: {
+        version: 1,
+        turnId: "newest-turn-in-the-window",
+        agentMessage: {
+          utf8Bytes: 5,
+          sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        },
+      },
+    });
+
+    expect(terminalProjectionProofs([older, newest])).toEqual([{
+      threadId: "thread",
+      turnId: "newest-turn-in-the-window",
+      agentMessage: {
+        utf8Bytes: 5,
+        sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      },
+    }]);
+  });
+
+  it("does not treat a legacy null witness as proof that the turn has no agent message", () => {
+    const events = [syncEvent("turn/completed", {}, {
+      kind: "turnCompleted",
+      terminalProjection: {
+        version: 1,
+        turnId: "interrupted-turn",
+        agentMessage: null,
+      },
+    })];
+
+    expect(terminalProjectionProofs(events)).toEqual([]);
+  });
+
+  it("lets an unwitnessed newer completion supersede an older replay witness", () => {
+    const older = syncEvent("turn/completed", {}, {
+      kind: "turnCompleted",
+      terminalProjection: {
+        version: 1,
+        turnId: "older-turn",
+        agentMessage: {
+          utf8Bytes: 5,
+          sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        },
+      },
+    });
+    const newest = syncEvent("turn/completed", {}, {
+      kind: "turnCompleted",
+      terminalProjection: {
+        version: 1,
+        turnId: "interrupted-turn",
+        agentMessage: null,
+      },
+    });
+
+    expect(terminalProjectionProofs([older, newest])).toEqual([]);
   });
 });
 

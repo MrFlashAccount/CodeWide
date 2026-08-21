@@ -1,5 +1,5 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
-import { projectedTurnMetadata, reconcileTurnItems, type ProjectedTurnMetadata, type RemoteFileAttachment } from "@codewide/sync-client";
+import { projectedOutputFootprint, projectedTurnMetadata, reconcileTurnItems, sumOutputFootprints, type ProjectedTurnMetadata, type RemoteFileAttachment } from "@codewide/sync-client";
 
 import { deduplicateThreadTurns } from "./thread-partitions";
 
@@ -29,6 +29,7 @@ export type PendingTimelineEntry = {
   commandId: string;
   method: "turn/start" | "turn/steer";
   presentation: "delivery" | "queue";
+  workspaceRequestId?: string | null;
   text: string;
   attachments: RemoteFileAttachment[];
   state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
@@ -44,6 +45,41 @@ export type PendingTimelineMutation = {
   deletes: readonly string[];
   beforeCommandId?: string | null;
 };
+
+/**
+ * Merges native delivery observations with the optimistic JS transaction.
+ * Native delivery can finish before the JS mutation records `accepted`, so a
+ * later timestamp alone must not revive `Sending` after delivery was proven.
+ * Other transitions remain timestamp-driven so retries can leave a failed or
+ * uncertain state.
+ */
+export function mergePendingTimelineEntry(
+  previous: PendingTimelineEntry,
+  incoming: PendingTimelineEntry,
+): PendingTimelineEntry {
+  if (incoming.state === "delivered") {
+    return incoming.attachments.length === 0 && previous.attachments.length > 0
+      ? { ...incoming, attachments: previous.attachments }
+      : incoming;
+  }
+  if (previous.state === "delivered") return previous;
+  if (incoming.updatedAt < previous.updatedAt) return previous;
+  if (incoming.updatedAt === previous.updatedAt && deliveryStateRank(incoming.state) < deliveryStateRank(previous.state)) return previous;
+  return incoming.attachments.length === 0 && previous.attachments.length > 0
+    ? { ...incoming, attachments: previous.attachments }
+    : incoming;
+}
+
+function deliveryStateRank(state: PendingTimelineEntry["state"]): number {
+  switch (state) {
+    case "queued": return 0;
+    case "sending": return 1;
+    case "accepted": return 2;
+    case "uncertain": return 3;
+    case "failed": return 4;
+    case "delivered": return 5;
+  }
+}
 
 export function planQueuedEditMutation(
   row: ThreadDetailRow | undefined,
@@ -253,11 +289,23 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
   const kinds = turn.items.flatMap((item, index) => item.type === "userMessage" || index === finalAgentIndex ? [] : [item.type]);
   if (kinds.length === 0) return turn;
   const metadata = projectedTurnMetadata(turn) ?? {};
+  const outputFootprint = sumOutputFootprints(turn.items.map((item) => {
+    const value = item as unknown as Record<string, unknown>;
+    return projectedOutputFootprint(value.codewideOutputFootprint);
+  }));
   return {
     ...turn,
     items: retained,
     itemsView: "summary",
-    codewide: { ...metadata, activity: { count: kinds.length, kinds } },
+    codewide: {
+      ...metadata,
+      activity: {
+        ...metadata.activity,
+        count: kinds.length,
+        kinds,
+        ...(outputFootprint === null ? {} : { outputFootprint }),
+      },
+    },
   } as Turn;
 }
 
@@ -374,6 +422,17 @@ export function shouldWriteThreadDetailRow(previous: ThreadDetailRow | undefined
   if (next.kind === "turn") return previous?.sealed !== true;
   if (next.kind === "activity") return previous === undefined;
   return true;
+}
+
+/**
+ * An explicit per-turn hydration is also the repair path for evicted private
+ * assets. Unlike passive history refreshes, it must be allowed to replace an
+ * already cached activity row when the companion returns a fresh projection.
+ */
+export function shouldWriteHydratedActivityRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
+  if (next.kind !== "activity") return false;
+  if (previous?.kind !== "activity") return true;
+  return JSON.stringify(previous.activityItems) !== JSON.stringify(next.activityItems);
 }
 
 function chatBoundaryScore(turn: Turn | null): number {

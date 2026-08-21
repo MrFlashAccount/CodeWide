@@ -15,7 +15,9 @@
     "patchedDependencies": {
       "@legendapp/list@3.3.5": "patches/@legendapp__list@3.3.5.patch",
       "expo-asset@57.0.9": "patches/expo-asset@57.0.9.patch",
-      "heroui-native@1.0.8": "patches/heroui-native@1.0.8.patch"
+      "heroui-native@1.0.8": "patches/heroui-native@1.0.8.patch",
+      "expo-libghostty@0.8.1": "patches/expo-libghostty@0.8.1.patch",
+      "expo-file-system@57.0.2": "patches/expo-file-system@57.0.2.patch"
     }
   },
   "scripts": {
@@ -34,7 +36,10 @@
     "test:android-device": "tsx scripts/android-device-gate.ts",
     "android:gradle": "sh scripts/android-gradle.sh",
     "dev:android": "sh scripts/android-fast-refresh.sh",
-    "ota:publish": "tsx scripts/publish-android-ota.ts",
+    "ota:publish": "tsx scripts/release-android.ts ota",
+    "ota:publish:raw": "tsx scripts/publish-android-ota.ts",
+    "release:ota": "tsx scripts/release-android.ts ota",
+    "release:apk": "tsx scripts/release-android.ts apk",
     "test:ota": "python3 scripts/test-ota-server.py",
     "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",

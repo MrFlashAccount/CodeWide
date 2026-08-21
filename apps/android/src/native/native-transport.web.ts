@@ -16,6 +16,8 @@ export type NativeConnectionConfig = {
   tlsPinSha256: string | null;
   enabled: boolean;
 };
+export type NativeBrowserDevToolsBridge = { host: "127.0.0.1"; port: number; token: string; tracingSupported: boolean };
+export type NativeBrowserTrace = { path: string; size: number };
 export type NativePortForwardProfile = {
   id: string;
   connectionId: string;
@@ -23,13 +25,16 @@ export type NativePortForwardProfile = {
   remoteHost: "127.0.0.1";
   remotePort: number;
   preferredLocalPort: number | null;
+  serviceKey: string | null;
+  preference: NativePortForwardingPreference;
   localPort: number | null;
   enabled: boolean;
-  status: "stopped" | "connecting" | "live" | "error";
+  status: "stopped" | "connecting" | "live" | "unavailable" | "error";
   previewUrl: string | null;
   error: string | null;
   updatedAt: number;
 };
+export type NativePortForwardingPreference = "automatic" | "included" | "excluded";
 export type NativePortForwardEvent =
   | { type: "profile"; profile: NativePortForwardProfile }
   | { type: "removed"; id: string };
@@ -47,13 +52,21 @@ export type NativeTerminalOutput = { data: string; nextOffset: number; hasMore: 
 export type NativeDiscoveredPort = {
   port: number;
   name: string;
+  group: string;
+  details: string;
   process: string | null;
   pid: number | null;
   cwd: string | null;
-  kind: "web" | "node" | "python" | "container" | "service";
+  kind: "docker" | "hermes" | "kubernetes" | "minikube" | "vite" | "node" | "python" | "zrok" | "process" | "system";
+  forwardingKey: string;
+  defaultForwardingEnabled: boolean;
 };
 export async function listNativeConnectionConfigs(): Promise<NativeConnectionConfig[]> { return []; }
 export async function purgeLegacyDerivedStorage(): Promise<number> { return 0; }
+export async function startNativeBrowserDevToolsBridge(): Promise<NativeBrowserDevToolsBridge> { throw new Error("Chromium DevTools are available on Android only"); }
+export function stopNativeBrowserDevToolsBridge(): void {}
+export async function startNativeBrowserTracing(): Promise<void> { throw new Error("Browser tracing is available on Android only"); }
+export async function stopNativeBrowserTracing(): Promise<NativeBrowserTrace> { throw new Error("Browser tracing is available on Android only"); }
 export async function deleteNativeConnection(): Promise<void> { throw new Error("Android only"); }
 
 export async function setNativeConnectionEnabled(): Promise<void> {
@@ -75,6 +88,11 @@ export async function resizeNativeTerminal(): Promise<void> { throw new Error("T
 export async function readNativeTerminalOutput(): Promise<NativeTerminalOutput> { throw new Error("Terminal is available on Android only"); }
 export function closeNativeTerminal(): void {}
 export function subscribeNativeTerminal(): () => void { return () => {}; }
+export type NativeCommandMethod =
+  | "turn/start" | "turn/steer" | "thread/name/set" | "thread/archive" | "thread/unarchive" | "thread/delete"
+  | "thread/settings/update" | "turn/interrupt" | "serverRequest/respond"
+  | "companion/queue/put" | "companion/queue/edit" | "companion/queue/cancel"
+  | "companion/queue/move" | "companion/queue/retry" | "companion/queue/steer";
 export async function enqueueNativeCommand(): Promise<void> { throw new Error("Android only"); }
 export type NativeCommandDelivery = {
   connectionId: string;
@@ -84,6 +102,7 @@ export type NativeCommandDelivery = {
   targetCommandId: string | null;
   text: string;
   attachments: import("@codewide/sync-client").RemoteFileAttachment[];
+  workspaceRequestId?: string | null;
   state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
   attempts: number;
   lastError: string | null;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { colors, spacing } from "../theme";
@@ -26,7 +26,6 @@ type CodeReviewHostMessage = WithoutBridgeEnvelope<CodeReviewHostCommand>;
 
 export function CodeReviewEditor({
   document,
-  loading,
   loadError,
   files,
   workspaceRevision,
@@ -160,7 +159,6 @@ export function CodeReviewEditor({
   const currentRevision = document?.revision ?? null;
   const currentError = error?.revision === currentRevision ? error.message : null;
   const visibleError = currentError ?? loadError;
-  const showInitialLoading = document === null && loading && visibleError === null;
   return (
     <View style={styles.root}>
       <WebView
@@ -186,7 +184,6 @@ export function CodeReviewEditor({
         }}
         onShouldStartLoadWithRequest={({ url }) => url.startsWith("file:///android_asset/")}
       />
-      {showInitialLoading && <View pointerEvents="none" style={styles.loading}><ActivityIndicator color={colors.accent} /></View>}
       {visibleError !== null && (
         <View style={styles.error}>
           <Text selectable style={styles.errorTitle}>Code preview failed</Text>
@@ -214,7 +211,6 @@ function parseClientEvent(value: string): CodeReviewClientEvent | null {
 const styles = StyleSheet.create({
   root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
   webView: { flex: 1, backgroundColor: colors.background },
-  loading: { position: "absolute", inset: 0, alignItems: "center", justifyContent: "center" },
   error: { position: "absolute", inset: spacing.md, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg, borderRadius: 18, backgroundColor: colors.surfaceContainer },
   errorTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
   errorMessage: { maxWidth: 520, color: colors.textMuted, textAlign: "center" },

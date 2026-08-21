@@ -25,7 +25,7 @@
       * { box-sizing: border-box; }
       button, textarea, input { font: inherit; }
       #workspace { width: 100%; height: 100%; display: flex; gap: 0; padding: 10px; overflow: hidden; background: var(--review-canvas); }
-      .review-panel { min-height: 0; overflow: hidden; border: 1px solid var(--review-border-strong); background: var(--review-panel); box-shadow: var(--review-shadow); }
+      .review-panel { position: relative; min-height: 0; overflow: hidden; border: 1px solid var(--review-border-strong); background: var(--review-panel); box-shadow: var(--review-shadow); }
       #tree-panel { width: 37%; min-width: 300px; max-width: 460px; display: flex; flex-direction: column; border-right: 0; border-radius: 16px 0 0 16px; }
       #tree {
         flex: 1;
@@ -38,6 +38,11 @@
       #preview-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 0 16px 16px 0; }
       #preview { flex: 1; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; background: #0e0f11; scrollbar-color: rgba(255,255,255,.17) transparent; }
       .pierre-preview-host { min-width: 100%; min-height: 100%; }
+      .review-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 28px; text-align: center; pointer-events: none; }
+      .review-empty[hidden] { display: none; }
+      .review-empty-mark { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 3px; border: 1px solid var(--review-border-strong); border-radius: 14px; background: var(--review-panel-raised); color: var(--review-dim); font: 600 18px/1 system-ui, sans-serif; }
+      .review-empty-title { color: var(--review-text); font: 650 15px/20px system-ui, sans-serif; }
+      .review-empty-message { max-width: 340px; color: var(--review-muted); font: 13px/19px system-ui, sans-serif; }
       #preview::-webkit-scrollbar { width: 8px; height: 8px; }
       #preview::-webkit-scrollbar-track { background: transparent; }
       #preview::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: rgba(255,255,255,.18); background-clip: content-box; }
@@ -69,11 +74,21 @@
     <div id="workspace" data-sidebar-open="false" data-compact="false">
       <section id="tree-panel" class="review-panel">
         <div id="tree"></div>
+        <div id="tree-empty" class="review-empty" hidden>
+          <div class="review-empty-mark">—</div>
+          <div class="review-empty-title" data-empty-title></div>
+          <div class="review-empty-message" data-empty-message></div>
+        </div>
       </section>
       <section id="preview-panel" class="review-panel">
         <div id="preview"></div>
+        <div id="preview-empty" class="review-empty" hidden>
+          <div class="review-empty-mark">—</div>
+          <div class="review-empty-title" data-empty-title></div>
+          <div class="review-empty-message" data-empty-message></div>
+        </div>
       </section>
     </div>
-    <script src="code-review-editor.js?v=44c165a44852d650"></script>
+    <script src="code-review-editor.js?v=06aa11d3e8a174c3"></script>
   </body>
 </html>

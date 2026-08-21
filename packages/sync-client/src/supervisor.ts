@@ -1,10 +1,10 @@
 import { SyncSession, type SyncSessionOptions } from "./session";
-import type { RemoteConnection, SocketFactory, SyncCache, SyncEvent } from "./types";
+import type { RemoteConnection, SocketFactory, SyncCache, SyncEvent, SyncEventIngress } from "./types";
 
 export class MultiConnectionSupervisor {
   readonly #cache: SyncCache;
   readonly #socketFactory: SocketFactory;
-  readonly #onEvents: ((connectionId: string, events: SyncEvent[]) => void) | undefined;
+  readonly #onEvents: ((connectionId: string, events: SyncEvent[], ingress: SyncEventIngress) => void) | undefined;
   readonly #eventPersistenceIntervalMs: number | undefined;
   readonly #sessions = new Map<string, SyncSession>();
   readonly #connectionFingerprints = new Map<string, string>();
@@ -12,7 +12,7 @@ export class MultiConnectionSupervisor {
   constructor(options: {
     cache: SyncCache;
     socketFactory: SocketFactory;
-    onEvents?(connectionId: string, events: SyncEvent[]): void;
+    onEvents?(connectionId: string, events: SyncEvent[], ingress: SyncEventIngress): void;
     eventPersistenceIntervalMs?: number;
   }) {
     this.#cache = options.cache;

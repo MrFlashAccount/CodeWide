@@ -9,7 +9,11 @@ internal enum class NativeCommandReconciliation {
 /** Contract for commands that are safe to persist past an interrupted socket. */
 internal object NativeCommandPolicy {
   private val policies = mapOf(
-    "turn/start" to NativeCommandReconciliation.TURN_BY_CLIENT_MESSAGE,
+    // turn/start is transported as an idempotent companion/queue/put with the
+    // native command id as its durable deduplication key. If the socket drops
+    // before the acknowledgement arrives, replay that same admission request;
+    // the companion, not thread history, owns delivery reconciliation.
+    "turn/start" to NativeCommandReconciliation.IDEMPOTENT_RETRY,
     "turn/steer" to NativeCommandReconciliation.TURN_BY_CLIENT_MESSAGE,
     "serverRequest/respond" to NativeCommandReconciliation.SERVER_REQUEST_BY_PENDING_SET,
     "thread/name/set" to NativeCommandReconciliation.IDEMPOTENT_RETRY,
@@ -34,10 +38,11 @@ internal object NativeCommandPolicy {
   /**
    * Commands are FIFO inside a lane, not across the whole connection.
    *
-   * An uncertain turn/start remains at the head of the thread lane until it is
-   * reconciled by clientMessageId. A stop must therefore use a separate control
-   * lane or it can never reach the host while the turn it should interrupt is
-   * active. A successful RPC response is delivered and never occupies a lane.
+   * An uncertain turn/start is retried as the same idempotent companion queue
+   * admission. Direct turn/steer still reconciles by clientMessageId. A stop
+   * must therefore use a separate control lane or it can never reach the host
+   * while the turn it should interrupt is active. A successful RPC response is
+   * delivered and never occupies a lane.
    */
   fun deliveryLane(method: String, threadId: String?): String = when {
     method == "turn/interrupt" && threadId != null -> "thread:$threadId:control"

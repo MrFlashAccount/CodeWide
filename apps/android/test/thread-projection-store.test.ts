@@ -5,10 +5,14 @@ import { createThreadProjectionStore } from "../src/data/thread-projection-store
 describe("thread projection store", () => {
   it("durably applies detail before publishing the summary lifecycle", async () => {
     const order: string[] = [];
+    const threads = new Map();
     const store = createThreadProjectionStore({
       details: {
         async applySnapshot() { order.push("detail-snapshot"); },
-        async applyEvents() { order.push("detail-events"); },
+        async applyEvents() {
+          order.push("detail-events");
+          return { checkpoint: Promise.resolve(), threads };
+        },
       },
       summaries: {
         async applySnapshot() { order.push("summary-snapshot"); },
@@ -16,10 +20,11 @@ describe("thread projection store", () => {
       },
     });
 
-    await store.applyEvents("server", []);
+    const projected = await store.applyEvents("server", []);
     await store.applySnapshot("server", [], 0);
 
     expect(order).toEqual(["detail-events", "summary-events", "detail-snapshot", "summary-snapshot"]);
+    expect(projected.threads).toBe(threads);
   });
 
   it("does not publish summary state or acknowledge success after detail persistence fails", async () => {

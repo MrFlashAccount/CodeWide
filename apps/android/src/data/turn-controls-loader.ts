@@ -1,4 +1,4 @@
-import type { TurnControlsValue } from "./turn-controls-types";
+import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
 
 export type TurnControlsSection = keyof TurnControlsValue;
 export type TurnControlsLoaders = {
@@ -10,6 +10,19 @@ export type TurnControlsLoadResult = {
   errors: Error[];
   loadedSections: number;
 };
+
+export function isTurnControlsCacheFresh(
+  cached: Pick<TurnControlsRow, "status" | "value" | "error" | "updatedAt"> | undefined,
+  now: number,
+  maxAgeMs: number,
+): boolean {
+  return cached?.status === "ready"
+    && cached.error === null
+    && cached.value !== null
+    && cached.value.defaults !== undefined
+    && cached.value.models.every((model) => typeof model.isDefault === "boolean")
+    && now - cached.updatedAt < maxAgeMs;
+}
 
 /**
  * Fetches independent catalogs concurrently and publishes every successful
@@ -36,16 +49,20 @@ export async function loadTurnControlsIncrementally(
     loadSection("models"),
     loadSection("skills"),
     loadSection("permissions"),
+    loadSection("defaults"),
   ]);
   const errors = results.filter((error): error is Error => error !== null);
-  return { value: current, errors, loadedSections: 3 - errors.length };
+  return { value: current, errors, loadedSections: 4 - errors.length };
 }
 
 export function cloneTurnControls(value: TurnControlsValue): TurnControlsValue {
   return {
-    models: value.models.map((model) => ({ ...model, efforts: [...model.efforts] })),
+    models: value.models.map((model) => ({ ...model, isDefault: model.isDefault === true, efforts: [...model.efforts] })),
     skills: value.skills.map((skill) => ({ ...skill })),
     permissions: value.permissions.map((permission) => ({ ...permission })),
+    defaults: value.defaults === undefined
+      ? { model: null, effort: null, permissions: null }
+      : { ...value.defaults },
   };
 }
 

@@ -110,17 +110,17 @@ fn terminal_projection(method: &str, params: &serde_json::Map<String, Value>) ->
                 .filter_map(Value::as_object)
                 .find(|item| item.get("type").and_then(Value::as_str) == Some("agentMessage"))
         });
-    let agent_message = message.and_then(|item| {
-        let text = item.get("text")?.as_str()?;
-        Some(json!({
-            "utf8Bytes": text.len(),
-            "sha256": format!("{:x}", Sha256::digest(text.as_bytes())),
-        }))
-    });
+    // A turn/completed notification is allowed to carry a sparse item list.
+    // Its absence cannot prove that the authoritative turn has no agent
+    // response, so emit only a positive content witness.
+    let text = message?.get("text")?.as_str()?;
     Some(json!({
         "version": 1,
         "turnId": turn_id,
-        "agentMessage": agent_message,
+        "agentMessage": {
+            "utf8Bytes": text.len(),
+            "sha256": format!("{:x}", Sha256::digest(text.as_bytes())),
+        },
     }))
 }
 
@@ -353,6 +353,28 @@ mod tests {
                     "sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
                 }
             })
+        );
+    }
+
+    #[test]
+    fn sparse_completion_does_not_claim_that_the_authoritative_turn_has_no_agent_message() {
+        let projected = attach_thread_patch(json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread",
+                "turn": {
+                    "id": "interrupted-turn",
+                    "status": "interrupted",
+                    "items": []
+                }
+            }
+        }));
+
+        assert!(
+            projected[THREAD_PATCH_FIELD]["operation"]
+                .get("terminalProjection")
+                .is_none(),
+            "a sparse notification is not evidence that the authoritative turn has no response"
         );
     }
 

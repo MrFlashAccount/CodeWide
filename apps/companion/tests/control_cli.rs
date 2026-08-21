@@ -5,11 +5,64 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use axum::{Json, Router, http::HeaderMap, routing::post};
+use axum::{
+    Json, Router,
+    http::{HeaderMap, Uri},
+    routing::{get, post},
+};
 use serde_json::{Value, json};
 use tokio::{net::UnixListener, process::Command};
 
 const ADMIN_TOKEN: &str = "administrator-token-long-enough-for-cli-test";
+
+#[tokio::test]
+async fn native_cli_queries_structured_telemetry_filters() -> Result<(), Box<dyn std::error::Error>>
+{
+    let directory = tempfile::tempdir()?;
+    let endpoint = directory.path().join("control.sock");
+    let token_file = directory.path().join("host.token");
+    std::fs::write(&token_file, format!("{ADMIN_TOKEN}\n"))?;
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
+    let listener = UnixListener::bind(&endpoint)?;
+    let router = Router::new().route("/v1/telemetry/events", get(telemetry_query_echo));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_codewide-companion"))
+        .arg("telemetry")
+        .arg("query")
+        .arg("--request-id")
+        .arg("request/1")
+        .arg("--session-id")
+        .arg("session 1")
+        .arg("--tag-name")
+        .arg("renderer")
+        .arg("--tag-value")
+        .arg("react-native")
+        .arg("--descending")
+        .arg("--control-endpoint")
+        .arg(&endpoint)
+        .arg("--token-file")
+        .arg(&token_file)
+        .output()
+        .await?;
+    server.abort();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    let query = response["query"].as_str().ok_or("query missing")?;
+    assert!(query.contains("requestId=request%2F1"));
+    assert!(query.contains("sessionId=session+1"));
+    assert!(query.contains("tagName=renderer"));
+    assert!(query.contains("tagValue=react-native"));
+    assert!(query.contains("descending=true"));
+    Ok(())
+}
 
 #[tokio::test]
 async fn native_cli_creates_a_pairing_through_local_control_only()
@@ -190,4 +243,14 @@ async fn pairing_start(headers: HeaderMap) -> Json<Value> {
         "pairingToken": "pairing-token-long-enough-for-cli-test",
         "expiresAt": now + 300_000,
     }))
+}
+
+async fn telemetry_query_echo(headers: HeaderMap, uri: Uri) -> Json<Value> {
+    assert_eq!(
+        headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer administrator-token-long-enough-for-cli-test")
+    );
+    Json(json!({ "query": uri.query().unwrap_or_default() }))
 }

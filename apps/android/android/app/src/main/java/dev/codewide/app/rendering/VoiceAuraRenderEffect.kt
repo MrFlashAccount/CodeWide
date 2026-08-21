@@ -7,6 +7,7 @@ import android.view.Choreographer
 import android.view.View
 import android.view.animation.PathInterpolator
 import com.facebook.react.bridge.ReactApplicationContext
+import java.lang.ref.WeakReference
 import kotlin.math.exp
 import kotlin.math.log10
 
@@ -23,6 +24,7 @@ class VoiceAuraRenderEffect(
 ) : Choreographer.FrameCallback {
   private var shader: RuntimeShader? = null
   private var rootView: View? = null
+  private var requestedRootView: WeakReference<View>? = null
   private var effectApplied = false
   private var framePosted = false
   private var requestedActive = false
@@ -36,6 +38,20 @@ class VoiceAuraRenderEffect(
   private var transitionDurationNanos = 0L
   private var lastFrameNanos = 0L
   private var elapsedSeconds = 0f
+
+  fun setTarget(view: View?) {
+    check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+      "Voice aura target must be updated on the UI thread"
+    }
+    val currentTarget = requestedRootView?.get()
+    if (currentTarget === view) return
+    requestedRootView = view?.let(::WeakReference)
+    if (rootView !== null && rootView !== view) detach()
+    if (requestedActive || intensity > 0f) {
+      ensureRootView()
+      postFrame()
+    }
+  }
 
   fun update(active: Boolean, rawLevel: Double, reduceMotion: Boolean) {
     check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
@@ -168,7 +184,8 @@ class VoiceAuraRenderEffect(
 
   private fun ensureRootView(): View? {
     val activity = context.currentActivity ?: return rootView
-    val nextRoot = activity.findViewById<View>(R.id.content) ?: activity.window.decorView
+    val requestedRoot = requestedRootView?.get()?.takeIf(View::isAttachedToWindow)
+    val nextRoot = requestedRoot ?: activity.findViewById<View>(R.id.content) ?: activity.window.decorView
     if (rootView === nextRoot) return nextRoot
     detach()
     rootView = nextRoot

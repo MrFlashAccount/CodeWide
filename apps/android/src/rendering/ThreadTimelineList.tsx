@@ -85,7 +85,7 @@ function ThreadTimelineListInner<ItemT>(
       maintainScrollAtEndThreshold={0.02}
       maintainVisibleContentPosition={maintainVisibleContentPositionEnabled ? { data: true, size: true } : false}
       itemsAreEqual={itemsAreEqual ?? referenceEqual}
-      recycleItems
+      recycleItems={false}
       drawDistance={500}
     />
   );
@@ -97,9 +97,9 @@ function referenceEqual<ItemT>(previous: ItemT, next: ItemT): boolean {
 
 const ForwardedThreadTimelineList = forwardRef(ThreadTimelineListInner);
 
-// LegendList owns the only virtualization and recycling implementation in the
-// app. Keeping the wrapper thin prevents prop translation and fallback-engine
-// branches from drifting away from the behavior tested on Android.
+// LegendList owns timeline virtualization, but rows are deliberately not
+// recycled. Stateful markdown and activity trees must unmount instead of being
+// rebound to another turn after a long scroll.
 export const ThreadTimelineList = ForwardedThreadTimelineList as <ItemT>(
   props: ThreadTimelineListProps<ItemT> & RefAttributes<ThreadTimelineListRef>,
 ) => ReactElement;

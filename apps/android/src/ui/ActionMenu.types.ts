@@ -10,6 +10,7 @@ type ActionMenuTriggerElement = ReactElement<{
 
 export type ActionMenuItem = {
   id: string;
+  section?: string;
   label: string;
   description?: string;
   icon?: ComponentProps<typeof Ionicons>["name"];

@@ -151,7 +151,7 @@ describe("thread event projection", () => {
     expect(value.turns[0]?.items.some((item) => item.type === "commandExecution")).toBe(true);
   });
 
-  it("replaces a rollout summary placeholder when the live agent item completes", () => {
+  it("replaces a rollout summary placeholder as soon as the live agent text catches up", () => {
     const value = thread();
     value.turns[0]!.items = [
       value.turns[0]!.items[0]!,
@@ -161,7 +161,14 @@ describe("thread event projection", () => {
     applyThreadEvent(value, event("item/started", {
       item: { type: "agentMessage", id: "live-agent", text: "", phase: null, memoryCitation: null },
     }));
-    applyThreadEvent(value, event("item/agentMessage/delta", { itemId: "live-agent", delta: "Fresh progress" }));
+    applyThreadEvent(value, event("item/agentMessage/delta", { itemId: "live-agent", delta: "Fresh " }));
+    expect(value.turns[0]!.items.filter((item) => item.type === "agentMessage")).toHaveLength(2);
+    applyThreadEvent(value, event("item/agentMessage/delta", { itemId: "live-agent", delta: "progress" }));
+
+    expect(value.turns[0]!.items.filter((item) => item.type === "agentMessage")).toEqual([
+      expect.objectContaining({ id: "live-agent", text: "Fresh progress" }),
+    ]);
+
     applyThreadEvent(value, event("item/completed", {
       item: { type: "agentMessage", id: "live-agent", text: "Fresh progress", phase: null, memoryCitation: null },
     }));

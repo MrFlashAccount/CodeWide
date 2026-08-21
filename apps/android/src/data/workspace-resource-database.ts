@@ -93,9 +93,14 @@ export type ThreadChangeResource = {
   availability: "available" | "deleted" | "unavailable" | "unknown";
   additions: number;
   deletions: number;
+  binary?: boolean;
   turnId: string;
   itemId: string;
 };
+
+export type ThreadChangeScope = "session" | "lastTurn" | "staged" | "unstaged" | "branch";
+
+export type ThreadResourceKind = "changes" | "attachments";
 
 export type ThreadAttachmentResource = {
   key: string;
@@ -111,6 +116,8 @@ export type ThreadAttachmentResource = {
 export type ThreadResourcesValue = {
   threadId: string;
   revision: string;
+  changeScope: ThreadChangeScope;
+  changeScopes: ThreadChangeScope[];
   changes: ThreadChangeResource[];
   attachments: ThreadAttachmentResource[];
 };
@@ -122,6 +129,10 @@ export type ThreadResourcesRow = {
   status: "loading" | "ready" | "error";
   value: ThreadResourcesValue | null;
   error: string | null;
+  /** Resource-specific refresh state. Older persisted rows fall back to `status`. */
+  pendingKinds?: readonly ThreadResourceKind[];
+  readyKinds?: readonly ThreadResourceKind[];
+  resourceErrors?: Partial<Record<ThreadResourceKind, string>>;
   updatedAt: number;
 };
 

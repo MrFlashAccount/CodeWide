@@ -3,6 +3,7 @@ import type { SyncEvent, SyncSnapshotThread } from "@codewide/sync-client";
 import type { NativeCommandDelivery } from "../native/native-transport";
 import type { HostQueuedPrompt } from "./queue-event";
 import type { PendingTimelineEntry, PendingTimelineMutation, ThreadDetailRow } from "./thread-detail-projection";
+import type { ThreadEventProjection } from "./thread-projection-store";
 
 export { materializePendingTimeline, materializeThreadDetails, materializeThreadTurns } from "./thread-detail-projection";
 export type { PendingTimelineEntry, ThreadDetailRow, ThreadDetailSnapshot } from "./thread-detail-projection";
@@ -11,7 +12,7 @@ export type ThreadDetailDatabase = {
   collection: never;
   prepare(): Promise<void>;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
-  applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;
+  applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
   captureRefreshCursor(connectionId: string, threadId: string): number | null;
   replaceThread(connectionId: string, thread: Thread, cleanThroughCursor?: number | null): Promise<void>;
   prependTurns(connectionId: string, threadId: string, turns: Turn[]): Promise<void>;

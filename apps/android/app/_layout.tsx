@@ -9,6 +9,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { startOtaPrefetchRuntime } from "../src/data/use-ota-prefetch";
+import { PerformanceExperimentProvider } from "../src/data/performance-experiments";
 import {
   AppErrorBoundary,
   GlobalErrorBoundaryHost,
@@ -71,8 +72,10 @@ function RootApplication() {
       <KeyboardProvider>
         <SafeAreaProvider>
           <HeroUIRoot>
-            <StatusBar style="light" />
-            <Stack screenOptions={{ headerShown: false }} />
+            <PerformanceExperimentProvider>
+              <StatusBar style="light" />
+              <Stack screenOptions={{ headerShown: false }} />
+            </PerformanceExperimentProvider>
           </HeroUIRoot>
         </SafeAreaProvider>
       </KeyboardProvider>

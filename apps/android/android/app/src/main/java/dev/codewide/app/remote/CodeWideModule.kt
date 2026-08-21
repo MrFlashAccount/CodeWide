@@ -1,6 +1,8 @@
 package dev.codewide.app.remote
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioFormat
@@ -10,11 +12,14 @@ import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Bundle
+import android.net.Uri
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.text.format.DateFormat
 import android.util.Base64
 import android.util.Log
+import android.view.View
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -22,6 +27,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.facebook.react.uimanager.UIManagerHelper
 import dev.codewide.app.rendering.VoiceAuraRenderEffect
 import java.io.IOException
 import java.net.URI
@@ -63,12 +69,45 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   private var audioNoiseSuppressor: NoiseSuppressor? = null
   private var audioAutomaticGainControl: AutomaticGainControl? = null
   private val voiceAura = VoiceAuraRenderEffect(context)
+  private val browserDevTools = BrowserDevToolsBridge(context)
 
   init {
     contexts += context
   }
 
   override fun getName(): String = "CodeWideNative"
+
+  override fun getConstants(): MutableMap<String, Any> = mutableMapOf(
+    "localeTag" to (context.resources.configuration.locales[0] ?: Locale.getDefault()).toLanguageTag(),
+    "uses24HourClock" to DateFormat.is24HourFormat(context),
+  )
+
+  @ReactMethod
+  fun openDocument(uriValue: String, mimeType: String?, promise: Promise) {
+    try {
+      val uri = Uri.parse(uriValue)
+      require(uri.scheme == "content") { "Only saved content URIs can be opened" }
+      val resolvedMimeType = mimeType?.takeIf { it.isNotBlank() }
+        ?: context.contentResolver.getType(uri)
+        ?: "*/*"
+      val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, resolvedMimeType)
+        clipData = ClipData.newRawUri("CodeWide download", uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      try {
+        // Do not preflight this with PackageManager.resolveActivity(). Android
+        // package-visibility filtering can hide a valid document viewer from
+        // queries even though startActivity() is allowed to launch it.
+        context.startActivity(intent)
+      } catch (error: ActivityNotFoundException) {
+        throw IllegalStateException("No installed app can open this file", error)
+      }
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("OPEN_DOCUMENT_FAILED", error.message, error)
+    }
+  }
 
   @ReactMethod
   fun claimPairing(
@@ -182,6 +221,30 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     } catch (error: Throwable) {
       promise.reject("DERIVED_STORAGE_CLEANUP_FAILED", "Could not remove obsolete local cache databases", error)
     }
+  }
+
+  @ReactMethod
+  fun startBrowserDevToolsBridge(promise: Promise) {
+    try {
+      promise.resolve(Arguments.makeNativeMap(browserDevTools.start()))
+    } catch (error: Throwable) {
+      promise.reject("BROWSER_DEVTOOLS_START_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun stopBrowserDevToolsBridge() {
+    browserDevTools.stop()
+  }
+
+  @ReactMethod
+  fun startBrowserTracing(promise: Promise) {
+    browserDevTools.startTracing(promise)
+  }
+
+  @ReactMethod
+  fun stopBrowserTracing(promise: Promise) {
+    browserDevTools.stopTracing(promise)
   }
 
   @ReactMethod
@@ -466,6 +529,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     label: String,
     remotePort: Double,
     preferredLocalPort: Double?,
+    serviceKey: String?,
+    preference: String,
     promise: Promise,
   ) {
     try {
@@ -473,15 +538,27 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       val preferred = preferredLocalPort?.toInt()
       require(remotePort == remote.toDouble()) { "Remote port is invalid" }
       require(preferredLocalPort == null || preferredLocalPort == preferred?.toDouble()) { "Local port is invalid" }
+      require(serviceKey == null || serviceKey.matches(Regex("^[a-f0-9]{64}$"))) { "Service key is invalid" }
+      require(preference in setOf("automatic", "included", "excluded")) { "Forwarding preference is invalid" }
       val service = CodexConnectionService.instance
       val result = if (service != null) {
-        service.upsertPortForward(connectionId, profileId, label, remote, preferred)
+        service.upsertPortForward(connectionId, profileId, label, remote, preferred, serviceKey, preference)
       } else {
         val store = NativePortForwardStore(context)
         val previous = store.get(profileId)
         require(previous == null || previous.connectionId == connectionId) { "Port forward belongs to another server" }
         val profile = store.upsert(
-          StoredPortForward(profileId, connectionId, label.trim(), remote, preferred, previous?.enabled ?: false, System.currentTimeMillis()),
+          StoredPortForward(
+            profileId,
+            connectionId,
+            label.trim(),
+            remote,
+            preferred,
+            serviceKey,
+            preference,
+            preference != "excluded" && (previous?.enabled ?: false),
+            System.currentTimeMillis(),
+          ),
         )
         PortForwardProjection(profile, null, "stopped", null)
       }
@@ -600,6 +677,35 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     CodexConnectionService.instance?.acknowledgeThrough(connectionId, projectionCursor.toLong())
   }
 
+  @ReactMethod
+  fun readCommittedFrames(connectionId: String, afterCursor: Double?, promise: Promise) {
+    try {
+      val cursor = afterCursor?.toLong()
+      require(afterCursor == null || afterCursor == cursor?.toDouble()) { "Projection cursor is invalid" }
+      val service = CodexConnectionService.instance ?: error("Server connection is not ready")
+      service.readCommittedFrames(connectionId, cursor, MAX_COMMITTED_FRAME_PAGE, MAX_COMMITTED_FRAME_BYTES) { result ->
+        result.fold(onSuccess = { page ->
+          val frames = Arguments.createArray()
+          page.frames.forEach { frame ->
+            frames.pushMap(Arguments.createMap().apply {
+              putDouble("cursor", frame.cursor.toDouble())
+              putString("payload", frame.payload)
+            })
+          }
+          promise.resolve(Arguments.createMap().apply {
+            page.baseCursor?.let { putDouble("baseCursor", it.toDouble()) }
+            page.headCursor?.let { putDouble("headCursor", it.toDouble()) }
+            putArray("frames", frames)
+          })
+        }, onFailure = { error ->
+          promise.reject("JOURNAL_READ_FAILED", error.message ?: "Could not read committed frames", error)
+        })
+      }
+    } catch (error: Throwable) {
+      promise.reject("JOURNAL_READ_FAILED", error.message ?: "Could not read committed frames", error)
+    }
+  }
+
   @Deprecated("Use acknowledgeProjection; frame ids are transport-internal")
   @ReactMethod
   fun acknowledgeFrames(connectionId: String, frameId: Double) {
@@ -671,6 +777,23 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
+  /** Moves the live shader into the separate Android window owned by a React Native Modal. */
+  @ReactMethod
+  fun setVoiceAuraTarget(reactTag: Double?) {
+    context.runOnUiQueueThread {
+      try {
+        val tag = reactTag?.toInt()?.takeIf { it > 0 }
+        val view = tag?.let {
+          UIManagerHelper.getUIManagerForReactTag(context, it)?.resolveView(it) as? View
+        }
+        voiceAura.setTarget(view)
+      } catch (error: Throwable) {
+        voiceAura.setTarget(null)
+        Log.e(VOICE_AURA_LOG_TAG, "Could not update live voice aura target", error)
+      }
+    }
+  }
+
   /** Records mono PCM16 frames. Transcription stays on the paired Codex host. */
   @ReactMethod
   fun startPcmCapture(promise: Promise) {
@@ -724,6 +847,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   override fun invalidate() {
     contexts -= context
+    browserDevTools.close()
     stopPcmCaptureInternal()
     context.runOnUiQueueThread {
       voiceAura.clear()
@@ -977,7 +1101,9 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       CaptureSource(MediaRecorder.AudioSource.MIC, "mic"),
     )
     private const val MAX_ENGINE_ARGUMENT_BYTES = 64 * 1024 * 1024
-    private const val NATIVE_BRIDGE_CONTRACT_VERSION = 1
+    private const val NATIVE_BRIDGE_CONTRACT_VERSION = 2
+    private const val MAX_COMMITTED_FRAME_PAGE = 128
+    private const val MAX_COMMITTED_FRAME_BYTES = 512 * 1024
     private val contexts = CopyOnWriteArraySet<ReactApplicationContext>()
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val pairingHttpClient = OkHttpClient.Builder()

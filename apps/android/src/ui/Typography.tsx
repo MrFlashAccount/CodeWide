@@ -13,15 +13,10 @@ import {
 } from "react-native";
 
 import { colors } from "../theme";
+import { productFonts } from "./product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "./typography-policy";
 import { useAppVoiceInputRuntime, useVoiceInputResource } from "./VoiceInputRuntime";
 import { shouldEnableVoiceInput } from "./voice-input-policy";
-
-export const productFonts = {
-  regular: "RobotoFlex-Regular",
-  medium: "RobotoFlex-Medium",
-  semibold: "RobotoFlex-SemiBold",
-} as const;
 
 export function productFontStyle(style: StyleProp<TextStyle>): TextStyle | null {
   const flattened = StyleSheet.flatten(style);

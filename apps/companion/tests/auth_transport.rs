@@ -11,6 +11,7 @@ use codewide_companion::{
     server,
     store::IndexStore,
     sync::SyncHub,
+    telemetry::TelemetryStore,
     upstream::{ConnectionStatus, UpstreamHandle},
 };
 use futures_util::{SinkExt, StreamExt};
@@ -50,6 +51,9 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
         )
         .await?,
     );
+    let telemetry = Arc::new(TelemetryStore::open(
+        directory.path().join("telemetry.redb"),
+    )?);
     let public_listener = TcpListener::bind("127.0.0.1:0").await?;
     let public_address = public_listener.local_addr()?;
     let control_path = directory.path().join("companion-control.sock");
@@ -58,7 +62,10 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
         store,
         registry,
         sync,
-        server::CompanionServices::default(),
+        server::CompanionServices {
+            telemetry: Some(telemetry),
+            ..server::CompanionServices::default()
+        },
     );
     let public_task = tokio::spawn(async move {
         let _ = axum::serve(public_listener, routers.public).await;
@@ -125,6 +132,48 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
         public_address,
     )
     .await?;
+    assert_eq!(
+        public_client
+            .post(format!("{public_base}/v1/telemetry/events"))
+            .json(&telemetry_batch())
+            .send()
+            .await?
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let accepted: Value = public_client
+        .post(format!("{public_base}/v1/telemetry/events"))
+        .bearer_auth(&session_token)
+        .json(&telemetry_batch())
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(accepted, json!({"accepted": 1, "duplicates": 0}));
+    assert_eq!(
+        public_client
+            .get(format!(
+                "{public_base}/v1/telemetry/events?requestId=request-1"
+            ))
+            .bearer_auth(&session_token)
+            .send()
+            .await?
+            .status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    let page: Value = control_client
+        .get(format!(
+            "{control_base}/v1/telemetry/events?requestId=request-1"
+        ))
+        .bearer_auth(ADMIN_TOKEN)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    assert_eq!(page["events"][0]["deviceId"], device_id);
+    assert_eq!(page["events"][0]["requestId"], "request-1");
     assert!(matches!(
         connect_async(terminal_request(public_address, &session_token)?).await,
         Err(tokio_tungstenite::tungstenite::Error::Http(response))
@@ -184,6 +233,26 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
     control_task.abort();
     fake.abort();
     Ok(())
+}
+
+fn telemetry_batch() -> Value {
+    json!({
+        "version": 1,
+        "batchId": "batch-1",
+        "sentAtUnixMs": 10,
+        "clientSessionId": "client-1",
+        "events": [{
+            "eventId": "event-1",
+            "occurredAtUnixMs": 9,
+            "name": "stream.react_commit",
+            "sessionId": "thread-1",
+            "requestId": "request-1",
+            "connectionId": "connection-1",
+            "threadId": "thread-1",
+            "values": {"latencyMs": 12},
+            "tags": {"renderer": "react-native"}
+        }]
+    })
 }
 
 async fn pair_and_authorize(

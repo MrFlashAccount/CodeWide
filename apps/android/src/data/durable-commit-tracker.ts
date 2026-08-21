@@ -2,7 +2,10 @@ type CommitWaiter = {
   resolve(): void;
   reject(cause: unknown): void;
   timeout: ReturnType<typeof setTimeout>;
+  forceFlush: boolean;
 };
+
+export type ClaimedCommit = Pick<CommitWaiter, "forceFlush" | "resolve" | "reject">;
 
 /**
  * Bridges TanStack's synchronous external-sync commit Interface to the actual
@@ -17,7 +20,7 @@ export class DurableCommitTracker {
     this.#timeoutMs = timeoutMs;
   }
 
-  track(collectionId: string, commit: () => void): Promise<void> {
+  track(collectionId: string, commit: () => void, options: { forceFlush?: boolean } = {}): Promise<void> {
     let resolvePersisted!: () => void;
     let rejectPersisted!: (cause: unknown) => void;
     const persisted = new Promise<void>((resolve, reject) => {
@@ -27,6 +30,7 @@ export class DurableCommitTracker {
     const waiter: CommitWaiter = {
       resolve: resolvePersisted,
       reject: rejectPersisted,
+      forceFlush: options.forceFlush ?? true,
       timeout: setTimeout(() => {
         if (!this.#remove(collectionId, waiter)) return;
         rejectPersisted(new Error(`SQLite persistence did not commit ${collectionId} within ${this.#timeoutMs} ms`));
@@ -48,8 +52,7 @@ export class DurableCommitTracker {
   }
 
   async observe(collectionId: string, persist: () => Promise<void>): Promise<void> {
-    const waiter = this.#shift(collectionId);
-    if (waiter !== null) clearTimeout(waiter.timeout);
+    const waiter = this.claim(collectionId);
     try {
       await persist();
       if (waiter !== null) {
@@ -61,6 +64,13 @@ export class DurableCommitTracker {
       }
       throw cause;
     }
+  }
+
+  claim(collectionId: string): ClaimedCommit | null {
+    const waiter = this.#shift(collectionId);
+    if (waiter === null) return null;
+    clearTimeout(waiter.timeout);
+    return waiter;
   }
 
   #shift(collectionId: string): CommitWaiter | null {

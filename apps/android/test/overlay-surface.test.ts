@@ -34,9 +34,8 @@ describe("overlay surface ownership", () => {
     expect(fullscreenModal).toContain('import { PortalHost } from "heroui-native/portal"');
     expect(fullscreenModal).toContain("const portalHostName = `fullscreen-modal-${useId()}`");
     expect(fullscreenModal).toContain('<OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>');
-    expect(fullscreenModal.indexOf('<OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>')).toBeLessThan(
-      fullscreenModal.indexOf("{children}"),
-    );
+    const providerIndex = fullscreenModal.indexOf('<OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>');
+    expect(providerIndex).toBeLessThan(fullscreenModal.indexOf("{children}", providerIndex));
     expect(fullscreenModal).toContain("<PortalHost name={portalHostName} />");
   });
 

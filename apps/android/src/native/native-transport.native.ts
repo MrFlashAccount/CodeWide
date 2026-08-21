@@ -24,6 +24,10 @@ type NativeBridge = {
   saveConnectionCredentials(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean): Promise<void>;
   listConnectionConfigs(): Promise<NativeConnectionConfig[]>;
   purgeLegacyDerivedStorage?(): Promise<number>;
+  startBrowserDevToolsBridge?(): Promise<NativeBrowserDevToolsBridge>;
+  stopBrowserDevToolsBridge?(): void;
+  startBrowserTracing?(): Promise<void>;
+  stopBrowserTracing?(): Promise<NativeBrowserTrace>;
   deleteConnectionCredentials(connectionId: string): Promise<void>;
   setConnectionEnabled(connectionId: string, enabled: boolean): Promise<void>;
   mintStoredSession(connectionId: string): Promise<{ sessionToken: string; expiresAt: number }>;
@@ -37,6 +41,8 @@ type NativeBridge = {
     label: string,
     remotePort: number,
     preferredLocalPort: number | null,
+    serviceKey: string | null,
+    preference: NativePortForwardingPreference,
   ): Promise<string>;
   startPortForward(profileId: string): Promise<string>;
   stopPortForward(profileId: string): Promise<string>;
@@ -53,6 +59,7 @@ type NativeBridge = {
   startVoiceInput(localeTag: string | null): Promise<void>;
   stopVoiceInput(): void;
   setVoiceAuraState?(active: boolean, level: number, reducedMotion: boolean): void;
+  setVoiceAuraTarget?(reactTag: number | null): void;
   // Native-22 and older resolve void/null. Native-23 adds capture diagnostics;
   // audio chunks themselves remain the source of truth for the PCM format.
   startPcmCapture(): Promise<PcmCaptureInfo | null>;
@@ -75,6 +82,18 @@ export type NativeConnectionConfig = {
   enabled: boolean;
 };
 
+export type NativeBrowserDevToolsBridge = {
+  host: "127.0.0.1";
+  port: number;
+  token: string;
+  tracingSupported: boolean;
+};
+
+export type NativeBrowserTrace = {
+  path: string;
+  size: number;
+};
+
 export type NativePortForwardProfile = {
   id: string;
   connectionId: string;
@@ -82,13 +101,17 @@ export type NativePortForwardProfile = {
   remoteHost: "127.0.0.1";
   remotePort: number;
   preferredLocalPort: number | null;
+  serviceKey: string | null;
+  preference: NativePortForwardingPreference;
   localPort: number | null;
   enabled: boolean;
-  status: "stopped" | "connecting" | "live" | "error";
+  status: "stopped" | "connecting" | "live" | "unavailable" | "error";
   previewUrl: string | null;
   error: string | null;
   updatedAt: number;
 };
+
+export type NativePortForwardingPreference = "automatic" | "included" | "excluded";
 
 export type NativePortForwardEvent =
   | { type: "profile"; profile: NativePortForwardProfile }
@@ -115,10 +138,14 @@ export type NativeTerminalOutput = {
 export type NativeDiscoveredPort = {
   port: number;
   name: string;
+  group: string;
+  details: string;
   process: string | null;
   pid: number | null;
   cwd: string | null;
-  kind: "web" | "node" | "python" | "container" | "service";
+  kind: "docker" | "hermes" | "kubernetes" | "minikube" | "vite" | "node" | "python" | "zrok" | "process" | "system";
+  forwardingKey: string;
+  defaultForwardingEnabled: boolean;
 };
 
 export type NativeCommandDelivery = {
@@ -129,6 +156,7 @@ export type NativeCommandDelivery = {
   targetCommandId: string | null;
   text: string;
   attachments: RemoteFileAttachment[];
+  workspaceRequestId?: string | null;
   state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
   attempts: number;
   lastError: string | null;
@@ -184,6 +212,44 @@ export async function purgeLegacyDerivedStorage(): Promise<number> {
   return Number.isFinite(reclaimedBytes) && reclaimedBytes >= 0 ? reclaimedBytes : 0;
 }
 
+export async function startNativeBrowserDevToolsBridge(): Promise<NativeBrowserDevToolsBridge> {
+  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.startBrowserDevToolsBridge !== "function") {
+    throw new Error("This app build does not include Chromium DevTools");
+  }
+  const result = await bridge.startBrowserDevToolsBridge();
+  if (
+    result === null || typeof result !== "object"
+    || result.host !== "127.0.0.1"
+    || !Number.isInteger(result.port) || result.port < 1 || result.port > 65_535
+    || typeof result.token !== "string" || !/^[a-f0-9]{64}$/u.test(result.token)
+    || typeof result.tracingSupported !== "boolean"
+  ) throw new Error("Native Chromium DevTools bridge returned an invalid endpoint");
+  return result;
+}
+
+export function stopNativeBrowserDevToolsBridge(): void {
+  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.stopBrowserDevToolsBridge !== "function") return;
+  bridge.stopBrowserDevToolsBridge();
+}
+
+export async function startNativeBrowserTracing(): Promise<void> {
+  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.startBrowserTracing !== "function") {
+    throw new Error("Native WebView performance tracing is unavailable in this build");
+  }
+  await bridge.startBrowserTracing();
+}
+
+export async function stopNativeBrowserTracing(): Promise<NativeBrowserTrace> {
+  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.stopBrowserTracing !== "function") {
+    throw new Error("Native WebView performance tracing is unavailable in this build");
+  }
+  const result = await bridge.stopBrowserTracing();
+  if (result === null || typeof result !== "object" || typeof result.path !== "string" || result.path === "" || !Number.isFinite(result.size) || result.size < 0) {
+    throw new Error("Native WebView performance trace result is invalid");
+  }
+  return result;
+}
+
 export async function deleteNativeConnection(connectionId: string): Promise<void> {
   if (bridge === undefined || Platform.OS !== "android") throw new Error("Native connection storage is unavailable");
   await bridge.deleteConnectionCredentials(connectionId);
@@ -237,6 +303,8 @@ export async function upsertNativePortForward(input: {
   label: string;
   remotePort: number;
   preferredLocalPort: number | null;
+  serviceKey?: string | null;
+  preference?: NativePortForwardingPreference;
 }): Promise<NativePortForwardProfile> {
   if (bridge === undefined || Platform.OS !== "android") throw new Error("Native port forwarding is available on Android only");
   return parseNativePortForwardProfile(JSON.parse(await bridge.upsertPortForward(
@@ -245,6 +313,8 @@ export async function upsertNativePortForward(input: {
     input.label,
     input.remotePort,
     input.preferredLocalPort,
+    input.serviceKey ?? null,
+    input.preference ?? "included",
   )));
 }
 
@@ -365,9 +435,11 @@ export function parseNativePortForwardProfile(value: unknown): NativePortForward
     || row.remoteHost !== "127.0.0.1"
     || !isPort(row.remotePort)
     || !(row.preferredLocalPort === null || isPort(row.preferredLocalPort))
+    || !(row.serviceKey === null || (typeof row.serviceKey === "string" && /^[a-f0-9]{64}$/u.test(row.serviceKey)))
+    || !["automatic", "included", "excluded"].includes(row.preference ?? "")
     || !(row.localPort === null || isPort(row.localPort))
     || typeof row.enabled !== "boolean"
-    || !["stopped", "connecting", "live", "error"].includes(row.status ?? "")
+    || !["stopped", "connecting", "live", "unavailable", "error"].includes(row.status ?? "")
     || !(row.previewUrl === null || typeof row.previewUrl === "string")
     || !(row.error === null || typeof row.error === "string")
     || typeof row.updatedAt !== "number"
@@ -391,10 +463,14 @@ function parseNativeDiscoveredPort(value: unknown): NativeDiscoveredPort {
   if (
     !isPort(row.port)
     || typeof row.name !== "string" || row.name.length === 0
+    || typeof row.group !== "string" || row.group.length === 0
+    || typeof row.details !== "string"
     || !(row.process === null || typeof row.process === "string")
     || !(row.pid === null || (typeof row.pid === "number" && Number.isSafeInteger(row.pid) && row.pid > 0))
     || !(row.cwd === null || typeof row.cwd === "string")
-    || !["web", "node", "python", "container", "service"].includes(row.kind ?? "")
+    || !["docker", "hermes", "kubernetes", "minikube", "vite", "node", "python", "zrok", "process", "system"].includes(row.kind ?? "")
+    || typeof row.forwardingKey !== "string" || !/^[a-f0-9]{64}$/u.test(row.forwardingKey)
+    || typeof row.defaultForwardingEnabled !== "boolean"
   ) throw new Error("Native discovered port is invalid");
   return row as NativeDiscoveredPort;
 }
@@ -403,13 +479,16 @@ function isPort(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 65_535;
 }
 
+export type NativeCommandMethod =
+  | "turn/start" | "turn/steer" | "thread/name/set" | "thread/archive" | "thread/unarchive" | "thread/delete"
+  | "thread/settings/update" | "turn/interrupt" | "serverRequest/respond"
+  | "companion/queue/put" | "companion/queue/edit" | "companion/queue/cancel"
+  | "companion/queue/move" | "companion/queue/retry" | "companion/queue/steer";
+
 export async function enqueueNativeCommand(
   connectionId: string,
   commandId: string,
-    method: "turn/start" | "turn/steer" | "thread/name/set" | "thread/archive" | "thread/unarchive" | "thread/delete"
-      | "thread/settings/update" | "turn/interrupt" | "serverRequest/respond"
-      | "companion/queue/put" | "companion/queue/edit" | "companion/queue/cancel"
-      | "companion/queue/move" | "companion/queue/retry" | "companion/queue/steer",
+  method: NativeCommandMethod,
   params: Record<string, unknown>,
 ): Promise<void> {
   if (bridge === undefined || Platform.OS !== "android") throw new Error("Native durable command queue is unavailable");
@@ -521,6 +600,11 @@ export function cancelVoiceRecognition(): void {
 export function setNativeVoiceAuraState(active: boolean, level: number, reducedMotion: boolean): void {
   if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraState === undefined) return;
   bridge.setVoiceAuraState(active, Math.max(0, Math.min(1, level)), reducedMotion);
+}
+
+export function setNativeVoiceAuraTarget(reactTag: number | null): void {
+  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraTarget === undefined) return;
+  bridge.setVoiceAuraTarget(reactTag);
 }
 
 export async function startPcmCapture(

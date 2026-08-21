@@ -1,0 +1,3 @@
+# Generated, lockfile-pinned Eruda bundle. The matched token is minified code,
+# and sync-browser-devtools-asset.mjs replaces this file from the dependency.
+apps/android/android/app/src/main/assets/browser-devtools.js:generic-api-key:2

@@ -1,16 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import type { ThreadChangeDiffValue, VoiceTranscriptionEvent, VoiceTranscriptionOptions, VoiceTranscriptionSession } from "../data/use-remote-workspace";
-import type { VoiceInputRow, ThreadChangeResource } from "../data/workspace-resource-database";
-import type { VoiceInputController } from "../data/voice-input-controller";
+import type { ThreadChangeResource, ThreadChangeScope, ThreadResourcesValue } from "../data/workspace-resource-database";
 import type { GetTransferAccess } from "../data/private-transfer";
 import { colors, radii, spacing } from "../theme";
 import { AppText as Text } from "../ui/Typography";
 import { useAppDialog } from "../ui/AppDialog";
+import { ActionMenu } from "../ui/ActionMenu";
+import { reviewVoiceInputScope, useVoiceInputResource, type AppVoiceInputRuntime } from "../ui/VoiceInputRuntime";
 import { changedFileDisplayPath } from "./changed-file-path";
+import { changeScopeTitle, codeReviewMenuActions } from "./change-menu";
 import { CodeReviewEditor } from "./CodeReviewEditor";
 import { useAsyncResource } from "./async-resource-store";
 import {
@@ -27,53 +29,69 @@ import { loadDocumentPreview } from "./DocumentPreviewHost";
 type VoiceStarter = (listener: (event: VoiceTranscriptionEvent) => void, options?: VoiceTranscriptionOptions) => Promise<VoiceTranscriptionSession>;
 
 export function CodeReviewWorkspace({
-  changes,
+  changes: initialChanges,
+  changeScope: initialChangeScope = "session",
+  changeScopes: initialChangeScopes = ["session", "lastTurn"],
+  initialMode = "unified",
+  initialWrapLines = false,
   initialPath,
   initialLine,
   initialColumn,
   cwd,
   thread,
-  voiceScope,
-  voiceResource,
-  voiceController,
-  onStartVoiceTranscription,
+  voiceRuntime,
   getTransferAccess,
   sourceOverrides,
   onLoadDiff,
+  onInitialLoad,
+  onLoadScope,
+  onPreferencesChange,
   onDownload,
   onAttach,
   onClose,
 }: {
   changes: readonly CodeReviewFileResource[];
+  changeScope?: ThreadChangeScope;
+  changeScopes?: readonly ThreadChangeScope[];
+  initialMode?: CodeReviewViewMode;
+  initialWrapLines?: boolean;
   initialPath?: string;
   initialLine?: number;
   initialColumn?: number;
   cwd: string;
   thread: Thread | null;
-  voiceScope: string;
-  voiceResource: VoiceInputRow | null;
-  voiceController: VoiceInputController | null;
-  onStartVoiceTranscription?: VoiceStarter;
+  voiceRuntime: AppVoiceInputRuntime | null;
   getTransferAccess: GetTransferAccess;
   sourceOverrides?: Readonly<Record<string, string>>;
-  onLoadDiff?(path: string): Promise<ThreadChangeDiffValue>;
+  onLoadDiff?(path: string, scope?: ThreadChangeScope): Promise<ThreadChangeDiffValue>;
+  onInitialLoad?(): Promise<ThreadResourcesValue>;
+  onLoadScope?(scope: ThreadChangeScope): Promise<ThreadResourcesValue>;
+  onPreferencesChange?(preferences: { scope: ThreadChangeScope; mode: CodeReviewViewMode; wrapLines: boolean }): void;
   onDownload?(): void;
   onAttach(comments: readonly CodeReviewComment[]): Promise<boolean>;
   onClose(): void;
 }) {
   const dialog = useAppDialog();
   const window = useWindowDimensions();
+  const voiceScope = voiceRuntime === null ? null : reviewVoiceInputScope(voiceRuntime);
+  const voiceResource = useVoiceInputResource(voiceRuntime, voiceScope);
+  const voiceController = voiceRuntime?.controller ?? null;
+  const onStartVoiceTranscription: VoiceStarter | undefined = voiceRuntime?.startRemote;
   const selectionRef = useRef({ start: 0, end: 0 });
   const commentDraftRef = useRef("");
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
+  const [changes, setChanges] = useState<readonly CodeReviewFileResource[]>(initialChanges);
+  const [changeScope, setChangeScope] = useState(initialChangeScope);
+  const [changeScopes, setChangeScopes] = useState<readonly ThreadChangeScope[]>(initialChangeScopes);
+  const [scopeLoading, setScopeLoading] = useState(onInitialLoad !== undefined);
   const [sidebarPreference, setSidebarPreference] = useState<boolean | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(
     initialPath !== undefined && changes.some((change) => change.path === initialPath)
       ? initialPath
       : changes[0]?.path ?? null,
   );
-  const [mode, setMode] = useState<CodeReviewViewMode>(initialLine === undefined ? "unified" : "source");
-  const [wrapLines, setWrapLines] = useState(false);
+  const [mode, setMode] = useState<CodeReviewViewMode>(initialLine === undefined ? initialMode : "source");
+  const [wrapLines, setWrapLines] = useState(initialWrapLines);
   const [selectedReference, setSelectedReference] = useState<CodeReviewLineReference | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [comments, setComments] = useState<CodeReviewComment[]>([]);
@@ -93,13 +111,13 @@ export function CodeReviewWorkspace({
   const effectiveSelectedPath = selectedChange?.path ?? null;
   const documentRevision = selectedChange === null
     ? "none"
-    : `${selectedChange.turnId}:${selectedChange.itemId}:${selectedChange.additions}:${selectedChange.deletions}:${selectedChange.availability}:${selectedChange.sourceOnly === true ? "source" : "diff"}:${sourceOverrides?.[selectedChange.path] ?? "remote"}`;
+    : `${changeScope}:${selectedChange.turnId}:${selectedChange.itemId}:${selectedChange.additions}:${selectedChange.deletions}:${selectedChange.availability}:${selectedChange.sourceOnly === true ? "source" : "diff"}:${sourceOverrides?.[selectedChange.path] ?? "remote"}`;
   const documentResource = useAsyncResource<CodeReviewResourceValue>(
     selectedChange === null ? null : `code-review:${thread?.id ?? "none"}:${selectedChange.path}`,
     documentRevision,
     async (publish, signal) => {
       if (selectedChange === null) throw new Error("No changed file selected");
-      return await loadCodeReviewResource(selectedChange, getTransferAccess, onLoadDiff, signal, sourceOverrides, publish);
+      return await loadCodeReviewResource(selectedChange, changeScope, getTransferAccess, onLoadDiff, signal, sourceOverrides, publish);
     },
     estimateCodeReviewResourceWeight,
   );
@@ -132,6 +150,30 @@ export function CodeReviewWorkspace({
   }));
   const workspaceRevision = codeReviewWorkspaceRevision(reviewFiles);
 
+  const applyResource = (resource: ThreadResourcesValue) => {
+    setChanges(resource.changes);
+    setChangeScope(resource.changeScope);
+    setChangeScopes(resource.changeScopes);
+    setSelectedPath((current) => resource.changes.some((change) => change.path === current) ? current : resource.changes[0]?.path ?? null);
+    setSelectedReference(null);
+  };
+
+  useEffect(() => {
+    if (onInitialLoad === undefined) return;
+    let mounted = true;
+    void onInitialLoad().then(
+      (resource) => {
+        if (mounted) applyResource(resource);
+      },
+      (cause: unknown) => {
+        if (mounted) dialog.alert("Changes unavailable", cause instanceof Error ? cause.message : "Could not load changes");
+      },
+    ).finally(() => {
+      if (mounted) setScopeLoading(false);
+    });
+    return () => { mounted = false; };
+  }, [dialog, onInitialLoad]);
+
   const selectFile = (change: ThreadChangeResource) => {
     setSelectedPath(change.path);
     setSelectedReference(null);
@@ -161,7 +203,8 @@ export function CodeReviewWorkspace({
     selectionRef.current = { start: 0, end: 0 };
   };
   const bindVoice = () => {
-    voiceController?.bind({
+    if (voiceController === null || voiceScope === null) return;
+    voiceController.bind({
       scope: voiceScope,
       source: () => commentDraftRef.current,
       selection: () => selectionRef.current,
@@ -171,22 +214,26 @@ export function CodeReviewWorkspace({
       ...(onStartVoiceTranscription === undefined ? {} : { startRemote: onStartVoiceTranscription }),
     });
   };
-  const toggleVoice = (draft: string, selection: { start: number; end: number }) => {
+  const pressVoice = async (draft: string, selection: { start: number; end: number }) => {
+    if (voiceController === null || voiceScope === null) return;
     updateCommentDraft(draft);
     selectionRef.current = selection;
     bindVoice();
-    void voiceController?.toggle();
-  };
-  const retryVoice = (draft: string, selection: { start: number; end: number }) => {
-    updateCommentDraft(draft);
-    selectionRef.current = selection;
-    bindVoice();
-    void voiceController?.retry();
+    if (voiceResource?.retryAvailable === true) await voiceController.retry();
+    else if (voiceResource?.phase === undefined || voiceResource.phase === "idle") await voiceController.toggle();
+    else if (voiceResource.phase !== "finishing") await voiceController.finish(false);
   };
   const close = () => {
     if (voiceResource?.phase !== "idle") void voiceController?.finish(false);
+    if (voiceScope !== null) voiceController?.unbind(voiceScope);
     onClose();
   };
+  useEffect(() => () => {
+    if (voiceScope === null) return;
+    const current = voiceRuntime?.resources?.voiceInputs.get(voiceScope) ?? null;
+    if (current?.phase !== undefined && current.phase !== "idle") void voiceController?.finish(false);
+    voiceController?.unbind(voiceScope);
+  }, [voiceController, voiceRuntime?.resources, voiceScope]);
   const attach = async () => {
     if (comments.length === 0 || attaching) return;
     setAttaching(true);
@@ -199,6 +246,41 @@ export function CodeReviewWorkspace({
     setAttaching(false);
     if (attached) close();
   };
+  const notifyPreferences = (nextScope: ThreadChangeScope, nextMode: CodeReviewViewMode, nextWrapLines: boolean) => {
+    onPreferencesChange?.({ scope: nextScope, mode: nextMode, wrapLines: nextWrapLines });
+  };
+  const selectMenuAction = (id: string) => {
+    if (id.startsWith("scope:")) {
+      const scope = id.slice("scope:".length) as ThreadChangeScope;
+      if (!changeScopes.includes(scope) || scope === changeScope || onLoadScope === undefined || scopeLoading) return;
+      setScopeLoading(true);
+      void onLoadScope(scope).then(
+        (resource) => {
+          applyResource(resource);
+          notifyPreferences(resource.changeScope, mode, wrapLines);
+        },
+        (cause: unknown) => dialog.alert("Changes unavailable", cause instanceof Error ? cause.message : "Could not load changes"),
+      ).finally(() => setScopeLoading(false));
+      return;
+    }
+    if (id.startsWith("view:")) {
+      const nextMode = id.slice("view:".length) as CodeReviewViewMode;
+      setMode(nextMode);
+      notifyPreferences(changeScope, nextMode, wrapLines);
+      return;
+    }
+    if (id === "wrap") {
+      const nextWrapLines = !wrapLines;
+      setWrapLines(nextWrapLines);
+      notifyPreferences(changeScope, mode, nextWrapLines);
+      return;
+    }
+    if (id === "download") onDownload?.();
+  };
+  const menuActions = [
+    ...codeReviewMenuActions(changeScopes, changeScope, mode, wrapLines),
+    ...(onDownload === undefined ? [] : [{ id: "download", section: "File", label: "Download", icon: "download-outline" as const }]),
+  ];
   return (
     <View
       testID="code-review-workspace"
@@ -211,26 +293,18 @@ export function CodeReviewWorkspace({
         <View style={styles.headerTitle}>
           <Text numberOfLines={1} ellipsizeMode="middle" style={styles.title}>{effectiveSelectedPath === null ? "Code review" : changedFileDisplayPath(effectiveSelectedPath, cwd, 72)}</Text>
           <View style={styles.subtitleRow}>
-            <Text numberOfLines={1} style={styles.subtitle}>{changes.length} files · {comments.length} comments</Text>
+            <Text numberOfLines={1} style={styles.subtitle}>{changeScopeTitle(changeScope)} · {changes.length} files · {comments.length} comments</Text>
             {documentStatus !== null && <Text accessibilityLabel={`File status: ${documentStatus}`} numberOfLines={1} style={styles.documentStatus}>· {documentStatus}</Text>}
           </View>
         </View>
-        {onDownload !== undefined && <Pressable accessibilityLabel="Download file" onPress={onDownload} style={styles.iconButton}><Ionicons name="download-outline" size={21} color={colors.text} /></Pressable>}
+        <ActionMenu accessibilityLabel="Changes options" actions={menuActions} placement="bottom" align="end" onSelect={selectMenuAction}>
+          <Pressable accessibilityLabel="Changes options" disabled={scopeLoading} style={styles.iconButton}>
+            {scopeLoading ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name="ellipsis-vertical" size={21} color={colors.text} />}
+          </Pressable>
+        </ActionMenu>
         <Pressable accessibilityLabel="Attach review" disabled={attachDisabled} onPress={() => void attach()} style={[styles.attachButton, !attachDisabled && styles.attachButtonReady, compact && styles.attachButtonCompact, attachDisabled && styles.disabled]}>
           {attaching ? <ActivityIndicator size="small" color={colors.text} /> : <Ionicons name="attach" size={18} color={attachDisabled ? colors.textDim : colors.text} />}
           {!compact && <Text style={styles.attachButtonText}>Attach {comments.length || ""}</Text>}
-        </Pressable>
-      </View>
-
-      <View style={styles.reviewToolbar}>
-        <View style={styles.modeSwitch}>
-          <ModeButton title="Unified" selected={effectiveMode === "unified"} disabled={!hasDiff} onPress={() => setMode("unified")} />
-          <ModeButton title="Split" selected={effectiveMode === "split"} disabled={!hasDiff} onPress={() => setMode("split")} />
-          <ModeButton title="File" selected={effectiveMode === "source"} disabled={document === null} onPress={() => setMode("source")} />
-        </View>
-        <Pressable accessibilityRole="switch" accessibilityState={{ checked: wrapLines }} accessibilityLabel="Wrap long lines" onPress={() => setWrapLines((current) => !current)} style={[styles.wrapButton, wrapLines && styles.wrapButtonSelected]}>
-          <Ionicons name="return-down-forward-outline" size={17} color={wrapLines ? colors.text : colors.textMuted} />
-          {!compact && <Text style={[styles.wrapButtonText, wrapLines && styles.wrapButtonTextSelected]}>Wrap</Text>}
         </Pressable>
       </View>
 
@@ -258,7 +332,7 @@ export function CodeReviewWorkspace({
             onCommentDraftChange={updateCommentDraft}
             onCommentSelectionChange={(selection) => { selectionRef.current = selection; }}
             onCommentSubmit={addComment}
-            onVoicePress={(draft, selection) => voiceResource?.retryAvailable ? retryVoice(draft, selection) : toggleVoice(draft, selection)}
+            onVoicePress={(draft, selection) => void pressVoice(draft, selection)}
             onFileSelect={(path) => {
               const change = changes.find((candidate) => candidate.path === path);
               if (change !== undefined) selectFile(change);
@@ -291,8 +365,9 @@ type CodeReviewResourceValue = {
 
 async function loadCodeReviewResource(
   change: CodeReviewFileResource,
+  changeScope: ThreadChangeScope,
   getTransferAccess: GetTransferAccess,
-  onLoadDiff: ((path: string) => Promise<ThreadChangeDiffValue>) | undefined,
+  onLoadDiff: ((path: string, scope?: ThreadChangeScope) => Promise<ThreadChangeDiffValue>) | undefined,
   signal: AbortSignal,
   sourceOverrides: Readonly<Record<string, string>> | undefined,
   publish: (value: CodeReviewResourceValue) => void,
@@ -312,17 +387,22 @@ async function loadCodeReviewResource(
   let diffFailed = false;
   const diffPromise = onLoadDiff === undefined || change.sourceOnly === true
     ? Promise.resolve<ThreadChangeDiffValue | null>(null)
-    : onLoadDiff(change.path).catch(() => {
+    : onLoadDiff(change.path, changeScope).catch(() => {
         diffFailed = true;
         return null;
       });
-  const source = await sourcePromise;
+  const fallbackSource = await sourcePromise;
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  const deleted = change.kind === "delete" || change.availability === "deleted";
+  const sourceDisplayState: CodeReviewDocument["displayState"] = deleted
+    ? "deleted"
+    : fallbackSource === "" ? "empty" : undefined;
   const sourceDocument: CodeReviewDocument = {
     path: change.path,
-    source,
+    source: fallbackSource,
     patches: [],
-    revision: codeReviewDocumentRevision(change.path, source, []),
+    ...(sourceDisplayState === undefined ? {} : { displayState: sourceDisplayState }),
+    revision: codeReviewDocumentRevision(change.path, fallbackSource, [], sourceDisplayState),
   };
   publish({
     document: sourceDocument,
@@ -331,14 +411,19 @@ async function loadCodeReviewResource(
   });
   const diff = await diffPromise;
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  const source = diff?.source ?? fallbackSource;
   const patches = diff?.patches
     .map((patch) => ({ kind: patch.kind, diff: patch.diff.trimEnd() }))
     .filter((patch) => patch.diff !== "") ?? [];
+  const displayState: CodeReviewDocument["displayState"] = deleted
+    ? "deleted"
+    : source === "" && patches.length === 0 ? "empty" : undefined;
   const materializedDocument: CodeReviewDocument = {
     path: change.path,
     source,
     patches,
-    revision: codeReviewDocumentRevision(change.path, source, patches),
+    ...(displayState === undefined ? {} : { displayState }),
+    revision: codeReviewDocumentRevision(change.path, source, patches, displayState),
   };
   return {
     document: materializedDocument,
@@ -351,10 +436,6 @@ async function loadCodeReviewResource(
 
 function estimateCodeReviewResourceWeight(value: CodeReviewResourceValue): number {
   return (value.document.source.length + value.document.patches.reduce((sum, patch) => sum + patch.diff.length, 0)) * 2;
-}
-
-function ModeButton({ title, selected, disabled, onPress }: { title: string; selected: boolean; disabled: boolean; onPress(): void }) {
-  return <Pressable disabled={disabled} onPress={onPress} style={[styles.modeButton, selected && styles.modeButtonSelected, disabled && styles.disabled]}><Text style={[styles.modeButtonText, selected && styles.modeButtonTextSelected]}>{title}</Text></Pressable>;
 }
 
 function shortPath(path: string): string {

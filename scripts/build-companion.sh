@@ -13,4 +13,4 @@ fi
 export CARGO_ENCODED_RUSTFLAGS
 
 cd "$repo_root"
-exec cargo build --release -p codewide-companion "$@"
+exec cargo build --release -p codewide-companion --bins "$@"

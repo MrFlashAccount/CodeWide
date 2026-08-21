@@ -52,7 +52,7 @@ describe("fullscreen workspace presentation", () => {
     expect(fullscreenOverlay).toContain("const active = entries.at(-1) ?? null;");
     expect(fullscreenOverlay).toContain("if (active === null) return null;");
     expect(nativeFullscreenModal).toContain("if (!isOpen) return null;");
-    expect(fullscreenOverlay).toContain("useLayoutEffect(() => () => host.dismissScope(scope), [host, scope])");
+    expect(fullscreenOverlay).toContain("useLayoutEffect(() => () => host.dismissUnmountedScope(scope), [host, scope])");
   });
 
   it("keeps parent fullscreen workspaces mounted when a child is presented", () => {
@@ -113,8 +113,9 @@ describe("fullscreen workspace presentation", () => {
     const end = screen.indexOf("</ScrollView>", start);
     const strip = screen.slice(start, end);
     expect(strip).toContain('testID="composer-ports-label"');
+    expect(strip).toContain("portForwardCount > 0");
     expect(strip).toContain('onPress={() => openControls("ports")}');
-    expect(strip).toContain('livePortForwardCount > 0 ? colors.green : colors.textMuted');
+    expect(strip).toContain('hasLivePortForward ? colors.green : colors.textMuted');
     expect(screen).toContain('page === "ports" ? (');
     expect(screen).toContain('<PortForwardingManager {...portForwarding} />');
     expect(screen).toContain('if (page === "ports") return "Ports";');
@@ -144,6 +145,14 @@ describe("fullscreen workspace presentation", () => {
     expect(subagentSheet).not.toContain("onLoadResources");
     expect(subagentSheet).toContain("initialThreadId");
     expect(subagentSheet).toContain("onOpenSubagent: openById");
+  });
+
+  it("keeps cached subagent text visible after refresh failures and updates recycled selection", () => {
+    expect(subagentSheet).toContain("loadError?.threadId === selectedId && conversation === null");
+    expect(subagentSheet).toContain("setLoadError({");
+    expect(subagentSheet).toContain("threadId,");
+    expect(subagentSheet).toContain("error={selectedError}");
+    expect(subagentWorkspace).toContain("extraData={selected?.remoteThreadId ?? null}");
   });
 
   it("opens a concrete subagent from agent activity instead of expanding an empty card", () => {
