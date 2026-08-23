@@ -167,7 +167,7 @@ describe("fullscreen workspace presentation", () => {
     expect(screen.match(/label="Chat list"/gu)).toHaveLength(2);
     expect(screen.split("fallback={<ThreadListSuspenseFallback />}")).toHaveLength(3);
     expect(screen.match(/label="Conversation"/gu)).toHaveLength(2);
-    expect(screen.split("fallback={<ConversationNavigationLoader")).toHaveLength(3);
+    expect(screen.split("fallback={<ConversationNavigationFallback")).toHaveLength(3);
     expect(screen).toContain('scope="bubble" label="Conversation item"');
     expect(subagentSheet).toContain('label="Subagent conversation"');
     expect(subagentSheet).toContain("<SubagentConversationDetail");

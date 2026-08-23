@@ -9,6 +9,7 @@ import {
   measureThreadNavigationWork,
   recordThreadNavigationMeasure,
   recordThreadNavigationRowCommit,
+  recordThreadNavigationVisualEvent,
   resetThreadNavigationMetricsForTests,
 } from "../src/data/thread-navigation-metrics";
 import {
@@ -155,5 +156,46 @@ describe("thread navigation metrics", () => {
       expect.objectContaining({ requestId: navigationId, tags: expect.objectContaining({ measure: "assemble_timeline" }) }),
     ]));
     expect(JSON.stringify(summary)).not.toMatch(/content|message|payload|prompt|response|text/u);
+  });
+
+  it("keeps visible UI events that happen after the first navigation frame", async () => {
+    const batches: TelemetryBatch[] = [];
+    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    setTelemetryEnabled(true);
+
+    const navigationId = beginThreadNavigation("server-1", "thread-4");
+    const completed = markThreadNavigationStage("server-1", "thread-4", "next_frame");
+    expect(completed).not.toBeNull();
+    expect(recordThreadNavigationVisualEvent("server-1", "thread-4", "suspense_fallback_visible", {
+      tags: { status: "loading-history" },
+    }, navigationId)).toBe(navigationId);
+    finalizeThreadNavigationProfile(completed!, null);
+    await flushTelemetry();
+
+    expect(getThreadNavigationProfileSnapshot().last?.visualEvents).toEqual([
+      expect.objectContaining({ name: "suspense_fallback_visible", tags: { status: "loading-history" } }),
+    ]);
+    expect(batches.flatMap((batch) => batch.events)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "navigation.thread_visual_event",
+        requestId: navigationId,
+        tags: expect.objectContaining({ event: "suspense_fallback_visible" }),
+      }),
+    ]));
+  });
+
+  it("does not attach a stale visual cleanup to a newer navigation of the same thread", () => {
+    const firstId = beginThreadNavigation("server-1", "thread-5");
+    markThreadNavigationStage("server-1", "thread-5", "next_frame", {}, firstId);
+    const secondId = beginThreadNavigation("server-1", "thread-5");
+
+    expect(recordThreadNavigationVisualEvent(
+      "server-1",
+      "thread-5",
+      "conversation_destination_hidden_or_unmounted",
+      {},
+      firstId,
+    )).toBeNull();
+    expect(getThreadNavigationProfileSnapshot().active).toMatchObject({ id: secondId, visualEvents: [] });
   });
 });

@@ -56,13 +56,18 @@ describe("application text input contract", () => {
     expect(screen).not.toContain("beginLargePasteCapture");
   });
 
-  it("installs the native paste receiver after Fabric mounts and accepts keyboard clipboard content", () => {
+  it("installs native receivers for both Android content events and chunked keyboard paste", () => {
     expect(largePasteModule).toContain("UIManagerListener");
     expect(largePasteModule).toContain("override fun didMountItems(uiManager: UIManager)");
     expect(largePasteModule).toContain("installRequestedViews(uiManager)");
+    expect(largePasteModule).toContain("ClipboardChunkInputFilter");
+    expect(largePasteModule).toContain("view.filters = arrayOf(inputFilter, *view.filters)");
+    expect(largePasteModule).toContain("clipboard.primaryClip");
+    expect(largePasteModule).toContain("emitLargePaste(registration, clipboardText");
     expect(largePasteModule).not.toContain("MAX_RESOLVE_ATTEMPTS");
     expect(largePastePolicy).toContain("ContentInfoCompat.SOURCE_CLIPBOARD");
     expect(largePastePolicy).toContain("ContentInfoCompat.SOURCE_INPUT_METHOD");
+    expect(largePastePolicy).toContain("shouldInterceptClipboardChunk");
   });
 
   it("keeps the conversation composer attached to every IME session", () => {

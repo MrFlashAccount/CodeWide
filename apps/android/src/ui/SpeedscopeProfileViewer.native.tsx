@@ -23,13 +23,72 @@ export function SpeedscopeProfileViewer({ title, fileName, content, onClose }: {
     setStatus("loading");
     webView.current?.injectJavaScript(`
       (() => {
+        const post = (type, message) => window.ReactNativeWebView.postMessage(JSON.stringify({type, message}));
+        const describe = (value) => {
+          if (value instanceof Error) return value.stack || value.message;
+          if (typeof value === "string") return value;
+          try { return JSON.stringify(value); } catch { return String(value); }
+        };
+        let parserError = null;
+        const originalLog = console.log.bind(console);
+        const originalError = console.error.bind(console);
+        console.log = (...args) => {
+          originalLog(...args);
+          if (args[0] === "Failed to load format") {
+            parserError = args.slice(1).map(describe).join(" ") || "Speedscope rejected the profile";
+            post("speedscope-error", parserError);
+          }
+        };
+        console.error = (...args) => {
+          originalError(...args);
+          const message = args.map(describe).join(" ");
+          if (message.includes("Failed to create WebGL context")) {
+            parserError = message;
+            post("speedscope-error", message);
+          }
+        };
+        window.addEventListener("error", (event) => {
+          parserError = describe(event.error || event.message);
+          post("speedscope-error", parserError);
+        }, {once: true});
+        window.addEventListener("unhandledrejection", (event) => {
+          parserError = describe(event.reason);
+          post("speedscope-error", parserError);
+        }, {once: true});
         const loader = window.speedscope && window.speedscope.loadFileFromBase64;
         if (typeof loader !== "function") {
-          window.ReactNativeWebView.postMessage(JSON.stringify({type:"speedscope-error",message:"Speedscope loader is unavailable"}));
+          post("speedscope-error", "Speedscope loader is unavailable");
           return;
         }
-        loader(${JSON.stringify(fileName)}, ${JSON.stringify(base64Profile)});
-        window.ReactNativeWebView.postMessage(JSON.stringify({type:"speedscope-profile-loaded"}));
+        const initialTitle = document.title;
+        try {
+          loader(${JSON.stringify(fileName)}, ${JSON.stringify(base64Profile)});
+        } catch (cause) {
+          parserError = describe(cause);
+          post("speedscope-error", parserError);
+          return;
+        }
+        const startedAt = Date.now();
+        const check = window.setInterval(() => {
+          if (parserError !== null) {
+            window.clearInterval(check);
+            return;
+          }
+          if (document.title !== initialTitle && document.title.endsWith(" - speedscope")) {
+            window.clearInterval(check);
+            post("speedscope-profile-loaded");
+            return;
+          }
+          if (document.body?.innerText.includes("Something went wrong")) {
+            window.clearInterval(check);
+            post("speedscope-error", "Speedscope rejected the profile without exposing a parser error");
+            return;
+          }
+          if (Date.now() - startedAt > 10000) {
+            window.clearInterval(check);
+            post("speedscope-error", "Speedscope did not finish loading the profile within 10 seconds");
+          }
+        }, 50);
       })();
       true;
     `);

@@ -44,6 +44,7 @@ export type ThreadNavigationProfile = {
   rowCommits: number;
   uniqueRowsCommitted: number;
   measures: readonly ThreadNavigationMeasure[];
+  visualEvents: readonly ThreadNavigationVisualEvent[];
   stages: readonly {
     stage: ThreadNavigationStage;
     elapsedMs: number;
@@ -52,6 +53,13 @@ export type ThreadNavigationProfile = {
     tags: Readonly<Record<string, string>>;
   }[];
   frames: ThreadNavigationFrameProfile | null;
+};
+
+export type ThreadNavigationVisualEvent = {
+  name: string;
+  elapsedMs: number;
+  values: Readonly<Record<string, number>>;
+  tags: Readonly<Record<string, string>>;
 };
 
 export type ThreadNavigationMeasure = {
@@ -79,6 +87,7 @@ type ThreadNavigation = {
   rowCommits: number;
   committedRowKeys: Set<string>;
   measures: ThreadNavigationMeasure[];
+  visualEvents: ThreadNavigationVisualEvent[];
 };
 
 type StageDetails = {
@@ -98,8 +107,11 @@ const STAGE_TIMINGS: Partial<Record<ThreadNavigationStage, TimingMetric>> = {
 };
 
 let activeNavigation: ThreadNavigation | null = null;
+let recentNavigation: { navigation: ThreadNavigation; expiresAtMs: number } | null = null;
 let profileSnapshot: ThreadNavigationProfileSnapshot = { active: null, last: null };
 const profileListeners = new Set<() => void>();
+const POST_NAVIGATION_OBSERVATION_MS = 5_000;
+const MAX_VISUAL_EVENTS = 256;
 
 export function beginThreadNavigation(connectionId: string, threadId: string, trigger = "thread_list"): string {
   if (activeNavigation !== null) emitStage(activeNavigation, "superseded", {}, true);
@@ -116,6 +128,7 @@ export function beginThreadNavigation(connectionId: string, threadId: string, tr
     rowCommits: 0,
     committedRowKeys: new Set(),
     measures: [],
+    visualEvents: [],
   };
   emitStage(activeNavigation, "selection_requested");
   return activeNavigation.id;
@@ -189,6 +202,60 @@ export function recordThreadNavigationMeasure(
   });
 }
 
+/**
+ * Records committed presentation state, including changes that happen shortly
+ * after the first visible frame. Those late events are the important evidence
+ * for navigation flicker: the normal latency profile has already completed by
+ * then, but the user can still see a fallback, remount, or window replacement.
+ */
+export function recordThreadNavigationVisualEvent(
+  connectionId: string,
+  threadId: string,
+  name: string,
+  details: StageDetails = {},
+  expectedNavigationId?: string,
+): string | null {
+  const now = performance.now();
+  const navigation = activeNavigation?.connectionId === connectionId && activeNavigation.threadId === threadId
+    ? activeNavigation
+    : recentNavigation !== null
+      && recentNavigation.expiresAtMs >= now
+      && recentNavigation.navigation.connectionId === connectionId
+      && recentNavigation.navigation.threadId === threadId
+        ? recentNavigation.navigation
+        : null;
+  if (navigation === null) return null;
+  if (expectedNavigationId !== undefined && navigation.id !== expectedNavigationId) return null;
+  const event: ThreadNavigationVisualEvent = {
+    name,
+    elapsedMs: Math.max(0, now - navigation.startedAtMs),
+    values: { ...details.values },
+    tags: { ...details.tags },
+  };
+  navigation.visualEvents.push(event);
+  if (navigation.visualEvents.length > MAX_VISUAL_EVENTS) navigation.visualEvents.shift();
+  recordTelemetryEvent(navigation.connectionId, {
+    name: "navigation.thread_visual_event",
+    sessionId: navigation.threadId,
+    requestId: navigation.id,
+    threadId: navigation.threadId,
+    values: { elapsedMs: event.elapsedMs, ...event.values },
+    tags: { event: name, trigger: navigation.trigger, ...event.tags },
+  });
+  const status: ThreadNavigationProfile["status"] = activeNavigation?.id === navigation.id
+    ? "active"
+    : profileSnapshot.last?.id === navigation.id
+      ? profileSnapshot.last.status
+      : "completed";
+  const projected = projectProfile(navigation, status);
+  if (status === "active") {
+    publishProfiles({ ...profileSnapshot, active: projected });
+  } else if (profileSnapshot.last?.id === navigation.id) {
+    publishProfiles({ ...profileSnapshot, last: { ...projected, frames: profileSnapshot.last.frames } });
+  }
+  return navigation.id;
+}
+
 export function recordActiveThreadNavigationMeasure(
   name: string,
   durationMs: number,
@@ -228,8 +295,12 @@ export function finalizeThreadNavigationProfile(
   profile: ThreadNavigationProfile,
   frames: ThreadNavigationFrameProfile | null,
 ): ThreadNavigationProfile {
-  const completed = { ...profile, frames };
-  const slowestMeasure = profile.measures.reduce<ThreadNavigationMeasure | null>((slowest, measure) => (
+  // Frame capture completes asynchronously. Preserve any visual events that
+  // arrived after the navigation's first visible frame instead of replacing
+  // them with the older terminal profile snapshot.
+  const latest = profileSnapshot.last?.id === profile.id ? profileSnapshot.last : profile;
+  const completed = { ...latest, frames };
+  const slowestMeasure = completed.measures.reduce<ThreadNavigationMeasure | null>((slowest, measure) => (
     slowest === null || measure.durationMs > slowest.durationMs ? measure : slowest
   ), null);
   if (profileSnapshot.last?.id === profile.id) publishProfiles({ ...profileSnapshot, last: completed });
@@ -239,18 +310,19 @@ export function finalizeThreadNavigationProfile(
     requestId: profile.id,
     threadId: profile.threadId,
     values: {
-      totalMs: profile.totalMs,
-      bottleneckMs: profile.bottleneckMs,
-      rowCommits: profile.rowCommits,
-      uniqueRowsCommitted: profile.uniqueRowsCommitted,
+      totalMs: completed.totalMs,
+      bottleneckMs: completed.bottleneckMs,
+      rowCommits: completed.rowCommits,
+      uniqueRowsCommitted: completed.uniqueRowsCommitted,
       renderedFrames: frames?.renderedFrames ?? 0,
       averageFrameMs: frames?.averageFrameMs ?? 0,
       p95FrameMs: frames?.p95FrameMs ?? 0,
       maxFrameMs: frames?.maxFrameMs ?? 0,
       jankFrames: frames?.jankFrames ?? 0,
       droppedFrameEstimate: frames?.droppedFrameEstimate ?? 0,
-      measureCount: profile.measures.length,
-      measureDurationSumMs: profile.measures.reduce((total, measure) => total + measure.durationMs, 0),
+      measureCount: completed.measures.length,
+      measureDurationSumMs: completed.measures.reduce((total, measure) => total + measure.durationMs, 0),
+      visualEventCount: completed.visualEvents.length,
       maxMeasureMs: slowestMeasure?.durationMs ?? 0,
     },
     tags: {
@@ -307,6 +379,10 @@ function emitStage(
   const profile = projectProfile(navigation, terminal ? stage === "superseded" ? "superseded" : "completed" : "active");
   if (terminal && activeNavigation?.id === navigation.id) {
     activeNavigation = null;
+    recentNavigation = {
+      navigation,
+      expiresAtMs: performance.now() + POST_NAVIGATION_OBSERVATION_MS,
+    };
     publishProfiles({ active: null, last: profile });
     return profile;
   }
@@ -335,6 +411,7 @@ function projectProfile(navigation: ThreadNavigation, status: ThreadNavigationPr
     rowCommits: navigation.rowCommits,
     uniqueRowsCommitted: navigation.committedRowKeys.size,
     measures: navigation.measures,
+    visualEvents: navigation.visualEvents,
     stages: navigation.stageRecords,
     frames: null,
   };
@@ -352,5 +429,6 @@ function createId(): string {
 
 export function resetThreadNavigationMetricsForTests(): void {
   activeNavigation = null;
+  recentNavigation = null;
   profileSnapshot = { active: null, last: null };
 }

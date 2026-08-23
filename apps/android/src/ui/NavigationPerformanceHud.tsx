@@ -99,7 +99,7 @@ export function NavigationPerformanceHud() {
               <MenuAction
                 icon="git-compare-outline"
                 title="Navigation timeline"
-                subtitle={`${profile.stages.length} stages · ${profile.measures.length} measures`}
+                subtitle={`${profile.stages.length} stages · ${profile.measures.length} measures · ${profile.visualEvents.length} UI events`}
                 onPress={() => openViewer(
                   "Navigation timeline",
                   `${profile.id}.speedscope.json`,

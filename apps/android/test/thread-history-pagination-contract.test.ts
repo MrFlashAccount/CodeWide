@@ -198,12 +198,18 @@ describe("thread history pagination contract", () => {
 
   it("keeps a mounted timeline visible while a pagination subset reloads", () => {
     expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
-    expect(screen).toContain("<Suspense fallback={<ConversationNavigationLoader");
+    expect(screen).toContain("<Suspense fallback={<ConversationNavigationFallback");
     expect(screen).toContain("<ConversationDestination");
     expect(screen).not.toContain("pendingConversationRequest");
     expect(screen).not.toContain("advanceConversationPresentation(");
     expect(screen).not.toContain("navigationReady");
     expect(screen).not.toContain("timelineHeaderContent");
+  });
+
+  it("keeps diagnostic navigation capture out of the product tree shape", () => {
+    expect(screen).not.toContain("ActiveNavigationReactProfiler");
+    expect(screen).not.toContain("NavigationReactProfiler");
+    expect(screen).not.toContain("<Profiler");
   });
 
   it("restores a semantic anchor declaratively without measuring the whole chat", () => {

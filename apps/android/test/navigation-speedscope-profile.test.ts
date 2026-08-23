@@ -12,12 +12,12 @@ describe("navigation Speedscope projection", () => {
     };
 
     expect(result.$schema).toBe("https://www.speedscope.app/file-format-schema.json");
-    expect(result.profiles).toHaveLength(2);
+    expect(result.profiles).toHaveLength(3);
     expect(result.profiles[0]).toMatchObject({
       type: "evented",
       name: "Navigation stages",
       startValue: 0,
-      endValue: 900,
+      endValue: 950.01,
       events: [
         { type: "O", at: 0, frame: 0 },
         { type: "C", at: 100, frame: 0 },
@@ -36,6 +36,38 @@ describe("navigation Speedscope projection", () => {
       name: "db_materialize_sealed_turns",
       file: "durationMs=16.5 · completedAtMs=210 · rowCount=258 · cache=miss",
     });
+    expect(result.profiles[2]).toMatchObject({
+      type: "evented",
+      name: "Visible UI states",
+      startValue: 0,
+      endValue: 950.01,
+      events: [
+        { type: "O", at: 950, frame: 3 },
+        { type: "C", at: 950.01, frame: 3 },
+      ],
+    });
+    expect(result.shared.frames[3]).toEqual({
+      name: "suspense_fallback_visible",
+      file: "status=loading-history",
+    });
+  });
+
+  it("serializes same-commit UI markers as an ordered non-overlapping event stack", () => {
+    const input: ThreadNavigationProfile = {
+      ...profile(),
+      visualEvents: [
+        { name: "first", elapsedMs: 10, values: {}, tags: {} },
+        { name: "second", elapsedMs: 10.001, values: {}, tags: {} },
+        { name: "third", elapsedMs: 9.999, values: {}, tags: {} },
+      ],
+    };
+    const result = JSON.parse(serializeNavigationSpeedscopeProfile(input)) as {
+      profiles: Array<{ name: string; events?: Array<{ type: "O" | "C"; at: number }> }>;
+    };
+    const events = result.profiles.find(({ name }) => name === "Visible UI states")?.events ?? [];
+    expect(events).toHaveLength(6);
+    expect(events.every((event, index) => index === 0 || event.at >= events[index - 1]!.at)).toBe(true);
+    expect(events.map(({ type }) => type)).toEqual(["O", "C", "O", "C", "O", "C"]);
   });
 });
 
@@ -63,6 +95,12 @@ function profile(): ThreadNavigationProfile {
       elapsedMs: 210,
       values: { rowCount: 258 },
       tags: { cache: "miss" },
+    }],
+    visualEvents: [{
+      name: "suspense_fallback_visible",
+      elapsedMs: 950,
+      values: {},
+      tags: { status: "loading-history" },
     }],
     frames: null,
   };

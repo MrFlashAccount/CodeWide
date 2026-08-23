@@ -28,7 +28,7 @@ import Reanimated, {
 import * as Clipboard from "expo-clipboard";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import Constants from "expo-constants";
-import { createContext, memo, Profiler, Suspense, type ProfilerOnRenderCallback, type ReactNode, useContext, useDeferredValue, useId, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { createContext, memo, Suspense, type ReactNode, useContext, useDeferredValue, useId, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -85,7 +85,7 @@ import { AUTO_ATTACH_PASTE_MIN_CHARS, captureClipboardLargePaste, type Clipboard
 import type { LargePasteEvent } from "./native/large-paste";
 import { useEvent } from "./react/useEvent";
 import { incrementDiagnosticMetric, liveStreamMetricKey, operationalDiagnosticsEnabled, recordLiveRenderCommit, recordTiming } from "./data/operational-metrics";
-import { activeThreadNavigationIdFor, beginThreadNavigation, finalizeThreadNavigationProfile, hasActiveThreadNavigation, isThreadNavigationActiveFor, markThreadNavigationStage, measureThreadNavigationWork, recordActiveThreadNavigationMeasure, recordThreadNavigationMeasure, recordThreadNavigationRowCommit } from "./data/thread-navigation-metrics";
+import { activeThreadNavigationIdFor, beginThreadNavigation, finalizeThreadNavigationProfile, isThreadNavigationActiveFor, markThreadNavigationStage, measureThreadNavigationWork, recordThreadNavigationRowCommit, recordThreadNavigationVisualEvent } from "./data/thread-navigation-metrics";
 import { usePerformanceExperiment, usePerformanceExperiments } from "./data/performance-experiments";
 import { beginNavigationFrameTrace, endNavigationFrameTrace } from "./native/performance-metrics";
 import { humanPairingError } from "./data/pairing-error";
@@ -539,46 +539,6 @@ type TimelineItem =
   | { kind: "optimistic"; scope: string; id: string; text: string; attachments: ComposerAttachment[]; status: "sending" | "uncertain" | "failed" | "delivered"; workspaceRequestId?: string | null; lastError: string | null; createdAt: number }
   | { kind: "meta"; key: string; status: "completed" | "interrupted" | "failed" | "inProgress"; durationMs: number | null; completedAt: number | null };
 
-function ActiveNavigationReactProfiler({ name, children }: { name: string; children: ReactNode }) {
-  if (!hasActiveThreadNavigation()) return <>{children}</>;
-  const onRender: ProfilerOnRenderCallback = (_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
-    recordActiveThreadNavigationMeasure(name, actualDuration, {
-      values: {
-        baseDurationMs: baseDuration,
-        renderToCommitMs: Math.max(0, commitTime - startTime),
-        schedulerWaitMs: Math.max(0, commitTime - startTime - actualDuration),
-      },
-      tags: { phase },
-    });
-  };
-  return <Profiler id={name} onRender={onRender}>{children}</Profiler>;
-}
-
-function NavigationReactProfiler({
-  connectionId,
-  threadId,
-  name,
-  children,
-}: {
-  connectionId: string;
-  threadId: string | null;
-  name: string;
-  children: ReactNode;
-}) {
-  if (threadId === null || !isThreadNavigationActiveFor(connectionId, threadId)) return <>{children}</>;
-  const onRender: ProfilerOnRenderCallback = (_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
-    recordThreadNavigationMeasure(connectionId, threadId, name, actualDuration, {
-      values: {
-        baseDurationMs: baseDuration,
-        renderToCommitMs: Math.max(0, commitTime - startTime),
-        schedulerWaitMs: Math.max(0, commitTime - startTime - actualDuration),
-      },
-      tags: { phase },
-    });
-  };
-  return <Profiler id={name} onRender={onRender}>{children}</Profiler>;
-}
-
 function ThreadTimelineNavigationCommit({
   connectionId,
   threadId,
@@ -677,8 +637,6 @@ type ConversationDestinationBaseProps = Omit<ConversationPaneProps,
   | "onLoadTurnItems"
 > & {
   navigationKey: string;
-  navigationConnectionId: string;
-  navigationThreadId: string | null;
 };
 
 type MainConversationDetailProps = ConversationDestinationBaseProps & {
@@ -703,8 +661,6 @@ function MainConversationDetail({
   connectionAvailable,
   threadLifecycleActive,
   navigationKey,
-  navigationConnectionId,
-  navigationThreadId,
   ...conversation
 }: MainConversationDetailProps) {
   const uiStateDatabase = remote.threadUiStateDatabase;
@@ -814,9 +770,17 @@ function MainConversationDetail({
       residentMaxOrdinal: historyResource?.residentMaxOrdinal ?? persistedResidentMaxOrdinal,
       error: null,
     };
+    const navigationId = activeThreadNavigationIdFor(connectionId, threadId);
+    recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
+      values: {
+        historyEpoch,
+        residentMaxOrdinal: loadingState.residentMaxOrdinal ?? -1,
+        residentTurnLimit: loadingState.residentTurnLimit,
+      },
+      tags: { status: loadingState.status, phase: "start" },
+    }, navigationId ?? undefined);
     putHistoryState(loadingState);
     const openedAt = monotonicNowMs();
-    const navigationId = activeThreadNavigationIdFor(connectionId, threadId);
     if (navigationId !== null) markThreadNavigationStage(connectionId, threadId, "hydration_start", {}, navigationId);
     const result = await remote.readThread(connectionId, threadId, null).then(
       (window) => ({ window, cause: null }),
@@ -838,6 +802,14 @@ function MainConversationDetail({
             status: cachedSnapshotAvailable ? "background-retrying" : "initial-error",
             error: result.cause instanceof Error ? result.cause.message : "Could not load messages",
           };
+      recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
+        values: {
+          historyEpoch,
+          residentMaxOrdinal: state.residentMaxOrdinal ?? -1,
+          residentTurnLimit: state.residentTurnLimit,
+        },
+        tags: { status: state.status, phase: "error" },
+      }, navigationId ?? undefined);
       putHistoryState(state);
       return state;
     }
@@ -849,6 +821,14 @@ function MainConversationDetail({
       nextCursor: result.window?.nextCursor ?? current?.nextCursor ?? null,
       error: result.window === null ? "Could not load messages" : null,
     };
+    recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
+      values: {
+        historyEpoch,
+        residentMaxOrdinal: state.residentMaxOrdinal ?? -1,
+        residentTurnLimit: state.residentTurnLimit,
+      },
+      tags: { status: state.status, phase: "result" },
+    }, navigationId ?? undefined);
     putHistoryState(state);
     return state;
   });
@@ -885,7 +865,44 @@ function MainConversationDetail({
   });
 
   return (
-    <NavigationReactProfiler connectionId={navigationConnectionId} threadId={navigationThreadId} name="react_conversation_commit">
+    <>
+      <CommitOnChangeProbe
+        scope={`main-conversation:${navigationKey}`}
+        revision={navigationKey}
+        onCommit={() => {
+          const navigationId = recordThreadNavigationVisualEvent(connectionId, threadId, "conversation_destination_visible");
+          return navigationId === null
+            ? undefined
+            : () => recordThreadNavigationVisualEvent(connectionId, threadId, "conversation_destination_hidden_or_unmounted", {}, navigationId);
+        }}
+      />
+      <CommitOnChangeProbe
+        scope={`main-window:${navigationKey}`}
+        revision={`${chatSnapshot.requestKey ?? "none"}:${chatSnapshot.status}:${chatSnapshot.layoutRevision}:${chatSnapshot.revision}:${chatWindow.turnRows.length}:${chatWindow.detailRows.length}:${chatWindow.liveRows.length}:${historyResourceRaw === null ? "history-missing" : `history-${historyResourceRaw.generation}`}`}
+        onCommit={() => {
+          recordThreadNavigationVisualEvent(connectionId, threadId, "chat_window_committed", {
+            values: {
+              historyEpoch: chatSnapshot.historyEpoch,
+              requestedMaxOrdinal: chatSnapshot.requestedMaxOrdinal ?? -1,
+              residentTurnLimit: chatSnapshot.residentTurnLimit,
+              layoutRevision: chatSnapshot.layoutRevision,
+              contentRevision: chatSnapshot.revision,
+              turnRows: chatWindow.turnRows.length,
+              detailRows: chatWindow.detailRows.length,
+              liveRows: chatWindow.liveRows.length,
+            },
+            tags: {
+              status: chatSnapshot.status,
+              request: chatWindowRequest.residentMaxOrdinal === undefined
+                ? "restore"
+                : chatWindowRequest.residentMaxOrdinal === null
+                  ? "tail"
+                  : "ordinal",
+              history: historyResourceRaw === null ? "missing" : "resident",
+            },
+          });
+        }}
+      />
       <ConversationPane
         key={navigationKey}
         {...conversation}
@@ -900,7 +917,7 @@ function MainConversationDetail({
         onLoadTurnItems={async (turnId) => { await remote.loadTurnItems(connectionId, threadId, turnId); }}
         subagentSummaryDatabase={remote.threadSummaryDatabase}
       />
-    </NavigationReactProfiler>
+    </>
   );
 }
 
@@ -915,15 +932,13 @@ function NewConversationDetail({
   connectionId,
   draftId,
   navigationKey,
-  navigationConnectionId,
-  navigationThreadId,
   ...conversation
 }: NewConversationDetailProps) {
   const uiStateDatabase = remote.threadUiStateDatabase;
   if (uiStateDatabase === null) throw new Error("Native composer database is unavailable");
   const composerState = useThreadUiState(uiStateDatabase, connectionId, draftId);
   return (
-    <NavigationReactProfiler connectionId={navigationConnectionId} threadId={navigationThreadId} name="react_conversation_commit">
+    <>
       <ConversationPane
         key={navigationKey}
         {...conversation}
@@ -937,7 +952,7 @@ function NewConversationDetail({
         historyViewport={COMPLETE_STATIC_THREAD_HISTORY}
         subagentSummaryDatabase={remote.threadSummaryDatabase}
       />
-    </NavigationReactProfiler>
+    </>
   );
 }
 
@@ -1003,6 +1018,35 @@ function ConversationNavigationLoader({
         </View>
       </View>
     </View>
+  );
+}
+
+function ConversationNavigationFallback({
+  connectionId,
+  threadId,
+  navigationKey,
+  ...loader
+}: Parameters<typeof ConversationNavigationLoader>[0] & {
+  connectionId: string;
+  threadId: string | null;
+  navigationKey: string;
+}) {
+  return (
+    <>
+      {threadId !== null && (
+        <CommitOnChangeProbe
+          scope={`conversation-fallback:${navigationKey}`}
+          revision="visible"
+          onCommit={() => {
+            const navigationId = recordThreadNavigationVisualEvent(connectionId, threadId, "suspense_fallback_visible");
+            return navigationId === null
+              ? undefined
+              : () => recordThreadNavigationVisualEvent(connectionId, threadId, "suspense_fallback_hidden", {}, navigationId);
+          }}
+        />
+      )}
+      <ConversationNavigationLoader {...loader} />
+    </>
   );
 }
 
@@ -1177,11 +1221,7 @@ export function CodeWideScreen() {
   const windowLayout = useWindowLayout();
   const insets = useSafeAreaInsets();
   const remote = useRemoteWorkspace();
-  return (
-    <ActiveNavigationReactProfiler name="react_workspace_commit">
-      <CodeWideWorkspaceScreen desktop={windowLayout.desktop} viewportWidth={windowLayout.width} insets={insets} remote={remote} />
-    </ActiveNavigationReactProfiler>
-  );
+  return <CodeWideWorkspaceScreen desktop={windowLayout.desktop} viewportWidth={windowLayout.width} insets={insets} remote={remote} />;
 }
 
 function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { desktop: boolean; viewportWidth: number; insets: ReturnType<typeof useSafeAreaInsets>; remote: RemoteWorkspace }) {
@@ -1807,12 +1847,10 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             resetKey={`${activeConnectionId}:${composerThreadId ?? "none"}`}
             onDismiss={closeActiveConversation}
           >
-          <Suspense fallback={<ConversationNavigationLoader thread={visibleConversationThread} server={servers.find((server) => server.id === activeConnectionId)} cwd={activeCwd} compact onBack={closeActiveConversation} />}>
+          <Suspense fallback={<ConversationNavigationFallback connectionId={activeConnectionId} threadId={activeRemoteThreadId} navigationKey={activeConversationNavigationKey} thread={visibleConversationThread} server={servers.find((server) => server.id === activeConnectionId)} cwd={activeCwd} compact onBack={closeActiveConversation} />}>
           {activeConversationRoute === null ? null : <ConversationDestination
             route={activeConversationRoute}
             navigationKey={activeConversationNavigationKey}
-            navigationConnectionId={activeConnectionId}
-            navigationThreadId={activeRemoteThreadId}
             thread={visibleConversationThread}
             newChat={newChatDraft !== null}
             server={servers.find((server) => server.id === activeConnectionId)}
@@ -1988,12 +2026,10 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           resetKey={`${activeConnectionId}:${composerThreadId ?? "none"}`}
           onDismiss={closeActiveConversation}
         >
-        <Suspense fallback={<ConversationNavigationLoader thread={visibleConversationThread} server={servers.find((server) => server.id === activeConnectionId)} cwd={activeCwd} compact={false} onBack={undefined} />}>
+        <Suspense fallback={<ConversationNavigationFallback connectionId={activeConnectionId} threadId={activeRemoteThreadId} navigationKey={activeConversationNavigationKey} thread={visibleConversationThread} server={servers.find((server) => server.id === activeConnectionId)} cwd={activeCwd} compact={false} onBack={undefined} />}>
         {activeConversationRoute === null ? null : <ConversationDestination
           route={activeConversationRoute}
           navigationKey={activeConversationNavigationKey}
-          navigationConnectionId={activeConnectionId}
-          navigationThreadId={activeRemoteThreadId}
           thread={visibleConversationThread}
           newChat={newChatDraft !== null}
           server={servers.find((server) => server.id === activeConnectionId)}
@@ -4036,6 +4072,15 @@ function ConversationPane({
             },
             tags: { restore: "semantic_anchor" },
           });
+          recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_position_applied", {
+            values: {
+              itemCount: timeline.length,
+              restoredOffsetPx: anchorOffset,
+              contentHeightPx: resolvedHeight,
+              viewportHeightPx: timelineViewportHeightRef.current,
+            },
+            tags: { restore: "semantic_anchor" },
+          });
         }
         setTimelineDidPosition(true);
         return;
@@ -4052,6 +4097,15 @@ function ConversationPane({
       scrollRestoredRef.current = true;
       if (draftConnectionId !== null && draftThreadId !== null) {
         markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
+          values: {
+            itemCount: timeline.length,
+            restoredOffsetPx: 0,
+            contentHeightPx: resolvedHeight,
+            viewportHeightPx: timelineViewportHeightRef.current,
+          },
+          tags: { restore: "missing_anchor_fallback" },
+        });
+        recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_position_applied", {
           values: {
             itemCount: timeline.length,
             restoredOffsetPx: 0,
@@ -4077,6 +4131,15 @@ function ConversationPane({
     scrollRestoredRef.current = true;
     if (draftConnectionId !== null && draftThreadId !== null) {
       markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
+        values: {
+          itemCount: timeline.length,
+          restoredOffsetPx: 0,
+          contentHeightPx: resolvedHeight,
+          viewportHeightPx: timelineViewportHeightRef.current,
+        },
+        tags: { restore: pendingOffset <= 1 ? "latest" : "legacy_offset_fallback" },
+      });
+      recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_position_applied", {
         values: {
           itemCount: timeline.length,
           restoredOffsetPx: 0,
@@ -4920,6 +4983,21 @@ function ConversationPane({
       <ThreadCwdContext.Provider value={cwd}>
       <ThreadCodeDocumentContext.Provider value={openCodeDocument}>
       <View ref={timelineViewportRef} style={styles.timelineShell}>
+      {draftConnectionId !== null && draftThreadId !== null && (
+        <CommitOnChangeProbe
+          scope={`timeline-surface:${composerScope}`}
+          revision={composerScope}
+          onCommit={() => {
+            const navigationId = recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_surface_visible", {
+              values: { itemCount: timeline.length },
+              tags: { readOnly: readOnly ? "true" : "false", status: historyViewport.status },
+            });
+            return navigationId === null
+              ? undefined
+              : () => recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_surface_hidden_or_unmounted", {}, navigationId);
+          }}
+        />
+      )}
       <CommitOnChangeProbe
         scope={composerScope}
         revision={latestUnreadReceiptKey}
@@ -4936,7 +5014,6 @@ function ConversationPane({
         restoreOffset={initialRestoreOffset}
         restoreAnchorTurnId={initialRestoreAnchorTurnId}
       >
-      <NavigationReactProfiler connectionId={draftConnectionId ?? ""} threadId={draftThreadId} name="react_timeline_list_commit">
       <ThreadTimelineList
         ref={timelineRef}
         freeze={timelineOverlayFreeze}
@@ -4960,6 +5037,12 @@ function ConversationPane({
         scrollEventThrottle={16}
         onLoad={({ elapsedTimeInMs }) => {
           recordTiming("timeline_first_draw_ms", elapsedTimeInMs);
+          if (draftConnectionId !== null && draftThreadId !== null) {
+            recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_first_draw", {
+              values: { nativeListDrawMs: elapsedTimeInMs, itemCount: displayedTimeline.length },
+              tags: { status: historyViewport.status },
+            });
+          }
           historyViewport.prefetch();
           if (draftConnectionId !== null && draftThreadId !== null) {
             markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_first_draw", {
@@ -5035,6 +5118,19 @@ function ConversationPane({
         }}
         onContentSizeChange={(_width, height) => {
           timelineContentHeightRef.current = height;
+          if (draftConnectionId !== null && draftThreadId !== null) {
+            recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_content_size_changed", {
+              values: {
+                heightPx: height,
+                viewportHeightPx: timelineViewportHeightRef.current,
+                itemCount: displayedTimeline.length,
+              },
+              tags: {
+                positioned: timelinePositioned ? "true" : "false",
+                status: historyViewport.status,
+              },
+            });
+          }
           historyViewport.prefetch();
           scheduleUnreadAgentVisibilityCheck();
           if (timelineOverlay.isActive()) {
@@ -5120,7 +5216,6 @@ function ConversationPane({
         }
         renderItem={renderTimelineItem}
       />
-      </NavigationReactProfiler>
       </ThreadTimelineNavigationCommit>
       {historyViewport.status === "loading-history" && timeline.length > 0 && (
         <View pointerEvents="none" testID="history-loading-indicator" style={styles.historyLoadingIndicator}>
