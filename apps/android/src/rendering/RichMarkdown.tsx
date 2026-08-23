@@ -18,7 +18,7 @@ import { markdownTableLayout } from "./markdown-table-layout";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
 import { NativeCodeBlock } from "./NativeCodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
-import { useContentReview } from "./ContentReviewHost";
+import { useContentReview, useContentReviewHighlights } from "./ContentReviewHost";
 import type { ContentReviewTarget } from "./content-review";
 import { ReviewableText } from "./ReviewableText";
 import { looksLikeAsciiDiagram } from "./ascii-diagram";
@@ -57,6 +57,8 @@ function Text({
   const scale = useContext(RichMarkdownTextScaleContext);
   const review = useContext(RichMarkdownReviewContext);
   const beginReview = useContentReview();
+  const blockPath = review === null || reviewBlockPath === undefined ? null : `${review.pathPrefix}/${reviewBlockPath}`;
+  const reviewHighlights = useContentReviewHighlights(review?.target.id ?? "", blockPath ?? "", reviewOffset);
   const flattened = StyleSheet.flatten(style);
   const fontSize = typeof flattened?.fontSize === "number" ? flattened.fontSize * scale : undefined;
   const lineHeight = typeof flattened?.lineHeight === "number" ? flattened.lineHeight * scale : undefined;
@@ -69,11 +71,12 @@ function Text({
       <ReviewableText
         {...props}
         style={resolvedStyle}
+        reviewHighlights={reviewHighlights}
         onReviewSelection={(selection) => {
           void beginReview({
             kind: "text",
             target: review.target,
-            blockPath: `${review.pathPrefix}/${reviewBlockPath}`,
+            blockPath: blockPath as string,
             quote: selection.text,
             start: reviewOffset + selection.start,
             end: reviewOffset + selection.end,
@@ -514,9 +517,9 @@ function fallbackText(node: Nodes): string {
 }
 
 const styles = StyleSheet.create({
-  document: { minWidth: 0, maxWidth: "100%", gap: 5 },
+  document: { minWidth: 0, gap: 5 },
   wideBlock: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" },
-  paragraph: { minWidth: 0, maxWidth: "100%", color: colors.text, fontSize: 13, lineHeight: 18 },
+  paragraph: { minWidth: 0, color: colors.text, fontSize: 13, lineHeight: 18 },
   heading: { color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "700", marginTop: 3 },
   headingOne: { fontSize: 17, lineHeight: 22 },
   headingTwo: { fontSize: 16, lineHeight: 21 },
@@ -533,11 +536,11 @@ const styles = StyleSheet.create({
   alertHeader: { flexDirection: "row", alignItems: "center", gap: 5 },
   alertTitle: { fontSize: 12, lineHeight: 16, fontWeight: "700" },
   alertBody: { minWidth: 0, gap: 4 },
-  list: { width: "100%", minWidth: 0, gap: 3 },
-  listRow: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6 },
+  list: { minWidth: 0, alignSelf: "flex-start", gap: 3 },
+  listRow: { minWidth: 0, alignSelf: "flex-start", flexDirection: "row", alignItems: "flex-start", gap: 6 },
   listMarker: { color: colors.textMuted, width: 19, textAlign: "right", fontSize: 13, lineHeight: 18 },
   taskMarker: { width: 19, minHeight: 18, alignItems: "flex-end", justifyContent: "flex-start", paddingTop: 1 },
-  listBody: { minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: 0, gap: 2 },
+  listBody: { minWidth: 0, flexShrink: 1, gap: 2 },
   footnote: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 5 },
   footnoteMarker: { color: colors.accent, fontSize: 10, lineHeight: 15 },
   footnoteBody: { minWidth: 0, flex: 1, gap: 3 },

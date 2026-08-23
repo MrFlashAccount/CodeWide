@@ -15,6 +15,15 @@ import {
 
 type Listener = () => void;
 
+const EMPTY_PORT_FORWARDING_SNAPSHOT: NativePortForwardingSnapshot = Object.freeze({
+  profiles: Object.freeze([]),
+  discoveredPorts: Object.freeze([]),
+  discoveryStatus: "idle",
+  discoveryError: null,
+});
+const subscribeToNothing = (_listener: Listener): (() => void) => () => undefined;
+const readEmptyPortForwardingSnapshot = (): NativePortForwardingSnapshot => EMPTY_PORT_FORWARDING_SNAPSHOT;
+
 class PortForwardScope {
   readonly connectionId: string;
   #listeners = new Set<Listener>();
@@ -337,9 +346,13 @@ export function useNativePortForwards(connectionId: string): readonly NativePort
   return useSyncExternalStore(scope.subscribe, scope.getSnapshot, scope.getSnapshot).profiles;
 }
 
-export function useNativePortForwarding(connectionId: string): NativePortForwardingSnapshot {
-  const scope = nativePortForwardingStore.scope(connectionId);
-  return useSyncExternalStore(scope.subscribe, scope.getSnapshot, scope.getSnapshot);
+export function useNativePortForwarding(connectionId: string | null): NativePortForwardingSnapshot {
+  const scope = connectionId === null ? null : nativePortForwardingStore.scope(connectionId);
+  return useSyncExternalStore(
+    scope?.subscribe ?? subscribeToNothing,
+    scope?.getSnapshot ?? readEmptyPortForwardingSnapshot,
+    scope?.getSnapshot ?? readEmptyPortForwardingSnapshot,
+  );
 }
 
 export function createNativePortForwardId(): string {

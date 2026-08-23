@@ -28,7 +28,7 @@ import { createTextOutboxCommand, MAX_TURN_TEXT_CHARS, RpcResponseError, seedThr
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
-import { createOptimisticAction, useLiveQuery } from "@tanstack/react-db";
+import { useLiveQuery } from "@tanstack/react-db";
 import { useSyncExternalStore } from "react";
 import { AppState, PermissionsAndroid, Platform } from "react-native";
 
@@ -61,13 +61,15 @@ import { streamRepairThreadIds, terminalProjectionMatches, terminalProjectionPro
 import { materializeLegacyThreadWindow, materializeResumedThread, type CompanionThreadResumeResponse } from "./thread-read-model";
 import { shouldRefreshInvalidatedThread } from "./thread-detail-invalidation";
 import { projectThreadResourcePatch } from "./thread-resource-projection";
-import { SubagentListProjection } from "./subagent-projection";
 import { loadSubagentDescendants, subagentActivityRootThreadId } from "./subagent-loader";
-import { ThreadListProjection } from "./thread-list-projection";
 import type { StoredThreadSummary } from "./thread-summary-types";
 import type { StoredComposerPreferences } from "./thread-ui-state-types";
 import { buildThreadForkParams, type ThreadForkOptions } from "./thread-fork";
-import { THREAD_HISTORY_PAGE_SIZE, THREAD_TURN_PAGE_SIZE } from "./thread-pagination";
+import {
+  THREAD_HISTORY_PAGE_SIZE,
+  THREAD_RESIDENT_TURN_LIMIT,
+  threadResumePageLimit,
+} from "./thread-pagination";
 import { cloneTurnControls, isTurnControlsCacheFresh, loadTurnControlsIncrementally } from "./turn-controls-loader";
 import { createWorkspaceResourceDatabase, threadResourceKey, tunnelResourceKey, turnControlsResourceKey, type BackgroundTerminalValue, type ThreadChangeScope, type ThreadResourceKind, type ThreadResourcesValue, type TunnelValue, type TurnControlsValue, type WorkspaceResourceDatabase } from "./workspace-resource-database";
 import { RetryableVoiceTranscriptionError, UnretryableVoiceTranscriptionError, VoiceInputController, type VoiceTranscriptionEvent, type VoiceTranscriptionOptions, type VoiceTranscriptionSession } from "./voice-input-controller";
@@ -82,8 +84,6 @@ export type RemoteWorkspace = {
   ready: boolean;
   error: string | null;
   connections: StoredConnection[];
-  threads: StoredThreadSummary[];
-  subagents: StoredThreadSummary[];
   threadSummaryDatabase: ThreadSummaryDatabase | null;
   threadUiStateDatabase: ThreadUiStateDatabase | null;
   resourceDatabase: WorkspaceResourceDatabase | null;
@@ -119,7 +119,7 @@ export type RemoteWorkspace = {
   loadDraftAttachments(connectionId: string, threadId: string): Promise<RemoteFileAttachment[]>;
   saveDraftAttachments(connectionId: string, threadId: string, attachments: RemoteFileAttachment[]): Promise<void>;
   loadScrollOffset(connectionId: string, threadId: string): Promise<number | null>;
-  saveScrollOffset(connectionId: string, threadId: string, offset: number): Promise<void>;
+  saveScrollOffset(connectionId: string, threadId: string, offset: number, historyAnchorTurnId: string | null, historyAnchorOffsetPx: number | null): Promise<void>;
   loadComposerPreferences(connectionId: string, threadId: string): Promise<StoredComposerPreferences | null>;
   saveComposerPreferences(connectionId: string, threadId: string, preferences: StoredComposerPreferences): Promise<void>;
   listQueuedPrompts(connectionId: string, threadId: string): Promise<QueuedPrompt[]>;
@@ -135,7 +135,7 @@ export type RemoteWorkspace = {
   loadThreadResources(connectionId: string, threadId: string, scope?: ThreadChangeScope, kind?: ThreadResourceLoadKind): Promise<ThreadResourcesValue>;
   loadThreadChangeDiff(connectionId: string, threadId: string, path: string, scope?: ThreadChangeScope): Promise<ThreadChangeDiffValue>;
   reconcileThreadLifecycle(connectionId: string, threadId: string, turnId: string, cachedThread: Thread): Promise<void>;
-  loadOlderTurns(connectionId: string, threadId: string, cursor: string): Promise<ThreadTurnPage>;
+  loadOlderTurns(connectionId: string, threadId: string, cursor: string, expectedHistoryEpoch: number): Promise<ThreadTurnPage>;
   loadTurnItems(connectionId: string, threadId: string, turnId: string): Promise<Turn["items"]>;
   startVoiceTranscription(connectionId: string, threadId: string, listener: VoiceTranscriptionListener, options?: VoiceTranscriptionOptions): Promise<VoiceTranscriptionSession>;
   sendText(connectionId: string, threadId: string, text: string, mode?: SendMode, options?: TurnSendOptions): Promise<string>;
@@ -175,7 +175,7 @@ export type TurnControls = TurnControlsValue;
 export type TunnelPreview = TunnelValue;
 export type { TransferAccess } from "./private-transfer";
 export type ThreadWindow = { thread: Thread; nextCursor: string | null };
-export type ThreadTurnPage = { turns: Turn[]; nextCursor: string | null };
+export type ThreadTurnPage = { turns: Turn[]; nextCursor: string | null; acceptedHistory: boolean; extendedHistory: boolean };
 export type ThreadChangeDiffValue = {
   threadId: string;
   path: string;
@@ -243,9 +243,6 @@ type WorkspaceRuntimeSnapshot = {
   accountRateLimits: AccountRateLimitsDatabase | null;
 };
 
-const EMPTY_THREAD_SUMMARIES: readonly StoredThreadSummary[] = [];
-const EMPTY_PENDING_REQUESTS: readonly PendingServerRequest[] = [];
-
 class WorkspaceRuntime {
   readonly native = Platform.OS === "android";
   snapshot: WorkspaceRuntimeSnapshot = {
@@ -261,7 +258,7 @@ class WorkspaceRuntime {
     accountRateLimits: null,
   };
   readonly listeners = new Set<() => void>();
-  readonly threadUiStateSeedInFlight = new Map<string, ReturnType<typeof seedThreadUiState>>();
+  readonly threadUiStateSeedInFlight = new Map<string, ReturnType<ThreadUiStateDatabase["getOrCreate"]>>();
   readonly httpSessions = new Map<string, { credentialKey: string; sessionToken: string; expiresAt: number }>();
   readonly httpSessionMintInFlight = new Map<string, { credentialKey: string; promise: Promise<{ sessionToken: string; expiresAt: number }> }>();
   readonly threadReadInFlight = new Map<string, Promise<ThreadWindow | null>>();
@@ -273,8 +270,6 @@ class WorkspaceRuntime {
   readonly subagentRefreshInFlight = new Map<string, Promise<void>>();
   readonly turnItemsInFlight = new Map<string, Promise<Turn["items"]>>();
   readonly lifecycleRepairAttempt = new Map<string, number>();
-  readonly threadListProjection = new ThreadListProjection();
-  readonly subagentListProjection = new SubagentListProjection();
   readonly turnControlsInFlight = new Map<string, Promise<TurnControls>>();
   readonly accountRateLimitsInFlight = new Map<string, Promise<GetAccountRateLimitsResponse>>();
   readonly connectionAttemptStartedAt = new Map<string, number>();
@@ -594,7 +589,7 @@ function createWorkspaceActions(): WorkspaceActions {
   
     const searchThreads = async (query: string, connectionId: string | null = null) => {
       return projectThreadHotStates(
-        workspaceRuntime.snapshot.threadSummaries?.search(query, connectionId) ?? [],
+        await workspaceRuntime.snapshot.threadSummaries?.search(query, connectionId) ?? [],
         workspaceRuntime.snapshot.pendingRequests?.collection.toArray ?? [],
       );
     };
@@ -718,8 +713,8 @@ function createWorkspaceActions(): WorkspaceActions {
       return (await getOrCreateThreadUiState(connectionId, threadId, workspaceRuntime.snapshot.threadUiState, workspaceRuntime.threadUiStateSeedInFlight)).scrollOffset;
     };
   
-    const saveScrollOffset = async (connectionId: string, threadId: string, offset: number): Promise<void> => {
-      await requireThreadUiStateDatabase(workspaceRuntime.snapshot.threadUiState).saveScrollOffset(connectionId, threadId, offset);
+    const saveScrollOffset = async (connectionId: string, threadId: string, offset: number, historyAnchorTurnId: string | null, historyAnchorOffsetPx: number | null): Promise<void> => {
+      await requireThreadUiStateDatabase(workspaceRuntime.snapshot.threadUiState).saveScrollOffset(connectionId, threadId, offset, historyAnchorTurnId, historyAnchorOffsetPx);
     };
   
     const loadComposerPreferences = async (connectionId: string, threadId: string) => {
@@ -751,7 +746,7 @@ function createWorkspaceActions(): WorkspaceActions {
             .flatMap((delivery) => delivery.targetCommandId === null ? [] : [delivery.targetCommandId]));
           await details.replaceQueued(connectionId, threadId, commands, pending);
         } catch {
-          // Persisted TanStack projection remains available offline.
+          // The persisted Legend chat projection remains available offline.
         }
       }
       return details.listQueued(connectionId, threadId)
@@ -889,6 +884,7 @@ function createWorkspaceActions(): WorkspaceActions {
     ): Promise<ThreadResourcesValue> => {
       const key = threadResourceKey(connectionId, threadId);
       const inFlightKey = `${key}\u0000${kind}\u0000${scope ?? "initial"}`;
+      const requestedKinds = threadResourceKinds(kind);
       const pending = workspaceRuntime.threadResourcesInFlight.get(inFlightKey);
       if (pending !== undefined) return await pending;
       const conflict = [...workspaceRuntime.threadResourcesInFlight.entries()].find(([candidate]) => {
@@ -903,12 +899,19 @@ function createWorkspaceActions(): WorkspaceActions {
           // The requested resource still deserves its own retry after a
           // conflicting refresh failed.
         }
+        const settled = workspaceRuntime.resourceDatabase.threadResources.get(key);
+        const settledReadyKinds = initializedThreadResourceKinds(settled);
+        if (
+          settled?.value !== null
+          && settled?.value !== undefined
+          && requestedKinds.every((requestedKind) => settledReadyKinds.includes(requestedKind))
+          && (kind !== "changes" || scope === undefined || settled.value.changeScope === scope)
+        ) return settled.value;
         return await loadThreadResources(connectionId, threadId, scope, kind);
       }
       const operation = (async () => {
         const previousRow = workspaceRuntime.resourceDatabase.threadResources.get(key);
         const previous = previousRow?.value ?? null;
-        const requestedKinds = threadResourceKinds(kind);
         workspaceRuntime.resourceDatabase.putThreadResources({
           id: key,
           connectionId,
@@ -923,9 +926,7 @@ function createWorkspaceActions(): WorkspaceActions {
         try {
           const session = workspaceRuntime.supervisor?.session(connectionId);
           if (session === undefined) throw new Error("Connection is not enabled");
-          const expectedRecencyAt = workspaceRuntime.snapshot.threadSummaries?.collection.toArray.find((summary) => (
-            summary.connectionId === connectionId && summary.remoteThreadId === threadId
-          ))?.recencyAt ?? null;
+          const expectedRecencyAt = (await workspaceRuntime.snapshot.threadSummaries?.get(connectionId, threadId))?.recencyAt ?? null;
           const method = kind === "changes"
             ? "companion/threadChanges/read"
             : kind === "attachments"
@@ -951,7 +952,7 @@ function createWorkspaceActions(): WorkspaceActions {
             readyKinds: mergeThreadResourceKinds(initializedThreadResourceKinds(current), requestedKinds),
             resourceErrors: clearThreadResourceErrors(current?.resourceErrors, requestedKinds),
           });
-          return value;
+          return workspaceRuntime.resourceDatabase.threadResources.get(key)?.value ?? value;
         } catch (cause) {
           const current = workspaceRuntime.resourceDatabase.threadResources.get(key);
           const pendingKinds = subtractThreadResourceKinds(current?.pendingKinds ?? requestedKinds, requestedKinds);
@@ -1036,6 +1037,7 @@ function createWorkspaceActions(): WorkspaceActions {
         const details = workspaceRuntime.snapshot.threadDetails;
         const summaries = workspaceRuntime.snapshot.threadSummaries;
         const cached = cachedThread ?? details?.getThread(connectionId, threadId) ?? null;
+        const initialTurnsLimit = threadResumePageLimit(cached?.turns.length ?? 0);
         // Capture before sending the authoritative request. Only invalidations at
         // or below this cursor can be cleared by its response; newer events stay
         // dirty and force another refresh instead of being lost in a race.
@@ -1044,7 +1046,7 @@ function createWorkspaceActions(): WorkspaceActions {
         if (session === undefined) {
           await reconcileActiveThreadCommands(details, connectionId, threadId);
           if (requireAuthoritative) throw new Error("Authoritative thread repair requires an active connection");
-          return cached === null ? null : { thread: recentThreadWindow(cached), nextCursor: null };
+          return cached === null ? null : { thread: residentThreadWindow(cached), nextCursor: null };
         }
         // The global state-DB snapshot may omit older spawned descendants.
         // Refresh them independently so opening the chat is never blocked by
@@ -1055,9 +1057,7 @@ function createWorkspaceActions(): WorkspaceActions {
         const persistHydratedThread = async (hydrated: Thread): Promise<void> => {
           await details?.replaceThread(connectionId, hydrated, refreshCursor);
           await reconcileActiveThreadCommands(details, connectionId, threadId);
-          const previous = summaries?.collection.toArray.find((candidate) => (
-            candidate.connectionId === connectionId && candidate.remoteThreadId === threadId
-          ));
+          const previous = await summaries?.get(connectionId, threadId);
           await summaries?.mergeSnapshots(connectionId, [{
             thread: hydrated,
             archived: previous?.archived ?? workspaceRuntime.threadInvalidationArchived.get(regularRequestKey) ?? false,
@@ -1069,7 +1069,7 @@ function createWorkspaceActions(): WorkspaceActions {
             threadId,
             excludeTurns: true,
             initialTurnsPage: {
-              limit: THREAD_TURN_PAGE_SIZE,
+              limit: initialTurnsLimit,
               sortDirection: "desc",
               itemsView: "summary",
             },
@@ -1080,7 +1080,7 @@ function createWorkspaceActions(): WorkspaceActions {
             page = await rpcAfterAttach<ThreadTurnsListResponse>(session, "thread/turns/list", {
               threadId,
               cursor: response.turnsBackwardsCursor,
-              limit: THREAD_TURN_PAGE_SIZE,
+              limit: initialTurnsLimit,
               sortDirection: "desc",
               itemsView: "summary",
             });
@@ -1105,7 +1105,7 @@ function createWorkspaceActions(): WorkspaceActions {
             const page = await rpcAfterAttach<ThreadTurnsListResponse>(session, "thread/turns/list", {
               threadId,
               cursor: null,
-              limit: THREAD_TURN_PAGE_SIZE,
+              limit: initialTurnsLimit,
               sortDirection: "desc",
               itemsView: "summary",
             });
@@ -1116,7 +1116,7 @@ function createWorkspaceActions(): WorkspaceActions {
           } catch (fallbackCause) {
             console.warn("CodeWide read-only thread fallback failed:", fallbackCause instanceof Error ? fallbackCause.message : "unknown error");
             if (!requireAuthoritative && cached !== null && cached.turns.length > 0) {
-              return { thread: recentThreadWindow(cached), nextCursor: null };
+              return { thread: residentThreadWindow(cached), nextCursor: null };
             }
             throw fallbackCause;
           }
@@ -1135,7 +1135,7 @@ function createWorkspaceActions(): WorkspaceActions {
       threadId: string,
     ): Promise<ThreadWindow | null> => await readThread(connectionId, threadId, undefined, true);
   
-    const loadOlderTurns = async (connectionId: string, threadId: string, cursor: string): Promise<ThreadTurnPage> => {
+    const loadOlderTurns = async (connectionId: string, threadId: string, cursor: string, expectedHistoryEpoch: number): Promise<ThreadTurnPage> => {
       const session = workspaceRuntime.supervisor?.session(connectionId);
       if (session === undefined) throw new Error("Connection is not enabled");
       const startedAt = performance.now();
@@ -1150,8 +1150,13 @@ function createWorkspaceActions(): WorkspaceActions {
       });
       recordTiming("history_page_rpc_ms", performance.now() - startedAt);
       const turns = [...page.data].reverse();
-      await workspaceRuntime.snapshot.threadDetails?.prependTurns(connectionId, threadId, turns);
-      return { turns, nextCursor: page.nextCursor };
+      const persisted = await workspaceRuntime.snapshot.threadDetails?.prependTurns(connectionId, threadId, expectedHistoryEpoch, turns);
+      return {
+        turns,
+        nextCursor: page.nextCursor,
+        acceptedHistory: persisted?.accepted ?? false,
+        extendedHistory: persisted?.extendedMinimum ?? false,
+      };
     };
 
     const readSubagentThread = async (connectionId: string, threadId: string): Promise<ThreadWindow | null> => {
@@ -1256,37 +1261,37 @@ function createWorkspaceActions(): WorkspaceActions {
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
       });
-      const submit = createOptimisticAction<{ row: typeof pending }>({
-        onMutate: ({ row }) => { details.collection.insert(row); },
-        mutationFn: async ({ row }) => {
-          await commitNativeThenProject(
-            async () => {
-              if (presentation === "queue" || options.workspaceRequestId !== undefined) {
-                await enqueueNativeCommand(connectionId, `queue-put-${randomUUID()}`, "companion/queue/put", {
-                  command: {
-                    ...command,
-                    presentation,
-                    ...(options.workspaceRequestId === undefined ? {} : { workspaceRequestId: options.workspaceRequestId }),
-                  },
-                });
-              } else {
-                await enqueueNativeCommand(connectionId, command.commandId, command.method, command.params);
-              }
-            },
-            async () => {
-              const projected = await details.commitPending({
-                ...row,
-                pending: row.pending === null || row.pending === undefined
-                  ? null
-                  : { ...row.pending, state: presentation === "queue" ? "queued" : "accepted", updatedAt: Date.now() },
+      const optimistic = details.stagePendingMutation({ upserts: [pending], deletes: [] });
+      try {
+        await commitNativeThenProject(
+          async () => {
+            if (presentation === "queue" || options.workspaceRequestId !== undefined) {
+              await enqueueNativeCommand(connectionId, `queue-put-${randomUUID()}`, "companion/queue/put", {
+                command: {
+                  ...command,
+                  presentation,
+                  ...(options.workspaceRequestId === undefined ? {} : { workspaceRequestId: options.workspaceRequestId }),
+                },
               });
-              if (!projected) console.warn("Accepted command will be reconciled from the native outbox when the thread becomes active");
-            },
-          );
-        },
-      });
-      const transaction = submit({ row: pending });
-      await transaction.isPersisted.promise;
+            } else {
+              await enqueueNativeCommand(connectionId, command.commandId, command.method, command.params);
+            }
+          },
+          async () => {
+            const projected = await details.commitPending({
+              ...pending,
+              pending: pending.pending === null || pending.pending === undefined
+                ? null
+                : { ...pending.pending, state: presentation === "queue" ? "queued" : "accepted", updatedAt: Date.now() },
+            });
+            if (!projected) console.warn("Accepted command will be reconciled from the native outbox when the thread becomes active");
+          },
+        );
+        optimistic.complete();
+      } catch (cause) {
+        optimistic.rollback();
+        throw cause;
+      }
       return command.commandId;
     };
 
@@ -1746,9 +1751,7 @@ function refreshInvalidatedThread(connectionId: string, threadId: string, archiv
   const operation = (async (): Promise<void> => {
     while (true) {
       const generation = workspaceRuntime.threadInvalidationGeneration.get(key) ?? 0;
-      const known = workspaceRuntime.snapshot.threadSummaries?.collection.toArray.some((candidate) => (
-        candidate.connectionId === connectionId && candidate.remoteThreadId === threadId
-      )) ?? false;
+      const known = (await workspaceRuntime.snapshot.threadSummaries?.get(connectionId, threadId) ?? null) !== null;
       const cached = workspaceRuntime.snapshot.threadDetails?.getThread(connectionId, threadId) ?? null;
       // Existing cold rows already receive the bounded semantic preview patch.
       // Never overwrite a known live chain with the lossy active rollout
@@ -1818,26 +1821,11 @@ export function useRemoteWorkspace(): RemoteWorkspace {
     [pendingRequestDatabase],
   );
   const pendingRequests = [...(pendingRequestQuery.data ?? [])].sort((left, right) => left.createdAt - right.createdAt);
-  const threadQuery = useLiveQuery(
-    () => threadDatabase?.collection,
-    [threadDatabase],
-  );
-  const threadSummaries = threadQuery.data ?? EMPTY_THREAD_SUMMARIES;
-  const threads = workspaceRuntime.threadListProjection.project(
-    threadSummaries,
-    pendingRequestQuery.data ?? EMPTY_PENDING_REQUESTS,
-  );
-  const subagents = workspaceRuntime.subagentListProjection.project(threadSummaries);
-
-  
-
   return {
     native,
     ready,
     error,
     connections,
-    threads,
-    subagents,
     threadSummaryDatabase: threadDatabase,
     threadUiStateDatabase: runtime.threadUiState,
     resourceDatabase: runtime.resources,
@@ -1863,6 +1851,7 @@ function ensureWorkspaceRuntimeStarted(): Promise<void> {
 
 async function startWorkspaceRuntime(): Promise<void> {
   let startupStage = "secure runtime";
+  let createdThreadDetails: ThreadDetailDatabase | null = null;
   try {
     assertSecureCryptoRuntime();
     startupStage = "local database";
@@ -1870,6 +1859,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     const connectionStates = createConnectionStateDatabase();
     const summaries = createThreadSummaryDatabase();
     const details = createThreadDetailDatabase();
+    createdThreadDetails = details;
     const pendingRequests = createPendingRequestDatabase();
     const threadUiState = createThreadUiStateDatabase();
     const resources = createWorkspaceResourceDatabase();
@@ -1878,7 +1868,7 @@ async function startWorkspaceRuntime(): Promise<void> {
     workspaceRuntime.fileTransferController = new FileTransferController(resources);
     // Publish the local-first stores before hydration, migrations and the
     // connection engine finish. The workspace can paint immediately while
-    // TanStack collections fill from disk in the background.
+    // its reactive stores fill from disk in the background.
     workspaceRuntime.update({
       ready: false,
       error: null,
@@ -1895,7 +1885,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       await enqueueNativeCommand(connectionId, `thread-name-${randomUUID()}`, "thread/name/set", { threadId, name });
     });
     await Promise.all([
-      summaries.collection.preload(),
+      summaries.prepare(),
       details.prepare(),
       profiles.collection.preload(),
       connectionStates.collection.preload(),
@@ -1904,7 +1894,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       resources.turnControls.preload(),
       accountRateLimits.collection.preload(),
     ]);
-    // Kotlin owns the only durable command ledger. TanStack is a reconstructable
+    // Kotlin owns the only durable command ledger. The UI cache is a reconstructable
     // read model, so startup reads the native snapshot only for state that is
     // already active (thread deletion) and never persists a second outbox copy.
     try {
@@ -2167,6 +2157,16 @@ async function startWorkspaceRuntime(): Promise<void> {
       if (state === "active") activateConnections();
     });
   } catch (cause) {
+    if (createdThreadDetails !== null) {
+      if (workspaceRuntime.snapshot.threadDetails === createdThreadDetails) {
+        workspaceRuntime.update({ threadDetails: null });
+      }
+      try {
+        await createdThreadDetails.close();
+      } catch (closeCause) {
+        console.warn("Could not close failed thread detail startup", closeCause);
+      }
+    }
     const message = cause instanceof Error ? cause.message : "unknown startup error";
     throw new Error(`Local runtime startup failed (${startupStage}): ${message}`, { cause });
   }
@@ -2217,7 +2217,7 @@ async function getOrCreateThreadUiState(
   connectionId: string,
   threadId: string,
   database: ThreadUiStateDatabase | null,
-  inFlight: Map<string, ReturnType<typeof seedThreadUiState>>,
+  inFlight: Map<string, ReturnType<ThreadUiStateDatabase["getOrCreate"]>>,
 ) {
   const uiState = requireThreadUiStateDatabase(database);
   const cached = uiState.get(connectionId, threadId);
@@ -2225,28 +2225,13 @@ async function getOrCreateThreadUiState(
   const key = `${connectionId}\u0000${threadId}`;
   const pending = inFlight.get(key);
   if (pending !== undefined) return await pending;
-  const operation = seedThreadUiState(connectionId, threadId, uiState);
+  const operation = uiState.getOrCreate(connectionId, threadId);
   inFlight.set(key, operation);
   try {
     return await operation;
   } finally {
     if (inFlight.get(key) === operation) inFlight.delete(key);
   }
-}
-
-async function seedThreadUiState(
-  connectionId: string,
-  threadId: string,
-  uiState: ThreadUiStateDatabase,
-) {
-  // UI state is cache by design. Do not reopen the old app-data database on
-  // thread access: doing so retained gigabytes that the server can rebuild.
-  return await uiState.seedLegacy(connectionId, threadId, {
-    draftText: "",
-    attachments: [],
-    scrollOffset: null,
-    preferences: null,
-  });
 }
 
 async function rpcAfterAttach<T>(session: RpcClient, method: string, params: unknown): Promise<T> {
@@ -2399,7 +2384,7 @@ function rpcResponseErrorCode(cause: unknown): number | null {
   return typeof code === "number" ? code : null;
 }
 
-function recentThreadWindow(thread: Thread, limit = THREAD_TURN_PAGE_SIZE): Thread {
+function residentThreadWindow(thread: Thread, limit = THREAD_RESIDENT_TURN_LIMIT): Thread {
   if (thread.turns.length <= limit) return thread;
   return { ...thread, turns: thread.turns.slice(-limit) };
 }
@@ -2494,29 +2479,19 @@ async function runOptimisticPendingMutation(
   mutation: PendingTimelineMutation,
   persistNative: () => Promise<void>,
 ): Promise<void> {
-  const submit = createOptimisticAction<{ mutation: PendingTimelineMutation }>({
-    onMutate: ({ mutation: next }) => {
-      for (const key of next.deletes) {
-        if (details.collection.has(key)) details.collection.delete(key);
-      }
-      for (const row of next.upserts) {
-        if (details.collection.has(row.id)) {
-          details.collection.update(row.id, (draft) => { Object.assign(draft, row); });
-        } else {
-          details.collection.insert(row);
-        }
-      }
-    },
-    mutationFn: async ({ mutation: next }) => {
-      // The optimistic layer may roll back only before Kotlin has durably
-      // accepted the command. After that point the native outbox owns recovery.
-      await commitNativeThenProject(persistNative, async () => {
-        const projected = await details.commitPendingMutation(next);
-        if (!projected) console.warn("Accepted queue mutation will be reconciled from the native outbox");
-      });
-    },
-  });
-  await submit({ mutation }).isPersisted.promise;
+  const optimistic = details.stagePendingMutation(mutation);
+  try {
+    // The optimistic layer may roll back only before Kotlin has durably
+    // accepted the command. After that point the native outbox owns recovery.
+    await commitNativeThenProject(persistNative, async () => {
+      const projected = await details.commitPendingMutation(mutation);
+      if (!projected) console.warn("Accepted queue mutation will be reconciled from the native outbox");
+    });
+    optimistic.complete();
+  } catch (cause) {
+    optimistic.rollback();
+    throw cause;
+  }
 }
 
 type ThreadResourceLoadKind = "all" | "changes" | "attachments";

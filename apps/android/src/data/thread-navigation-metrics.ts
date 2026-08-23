@@ -3,7 +3,7 @@ import { recordTelemetryEvent } from "./telemetry";
 
 export type ThreadNavigationStage =
   | "selection_requested"
-  | "selection_commit"
+  | "selection_next_frame"
   | "hydration_start"
   | "hydration_result"
   | "scope_commit"
@@ -22,6 +22,12 @@ export type ThreadNavigationFrameProfile = {
   maxFrameMs: number;
   jankFrames: number;
   droppedFrameEstimate: number;
+  hermesProfile: {
+    format: "hermes-sampling-profile";
+    sizeBytes: number;
+    content: string | null;
+    error: string | null;
+  } | null;
 };
 
 export type ThreadNavigationProfile = {
@@ -37,6 +43,7 @@ export type ThreadNavigationProfile = {
   bottleneckMs: number;
   rowCommits: number;
   uniqueRowsCommitted: number;
+  measures: readonly ThreadNavigationMeasure[];
   stages: readonly {
     stage: ThreadNavigationStage;
     elapsedMs: number;
@@ -45,6 +52,14 @@ export type ThreadNavigationProfile = {
     tags: Readonly<Record<string, string>>;
   }[];
   frames: ThreadNavigationFrameProfile | null;
+};
+
+export type ThreadNavigationMeasure = {
+  name: string;
+  durationMs: number;
+  elapsedMs: number;
+  values: Readonly<Record<string, number>>;
+  tags: Readonly<Record<string, string>>;
 };
 
 export type ThreadNavigationProfileSnapshot = {
@@ -63,6 +78,7 @@ type ThreadNavigation = {
   stageRecords: ThreadNavigationProfile["stages"];
   rowCommits: number;
   committedRowKeys: Set<string>;
+  measures: ThreadNavigationMeasure[];
 };
 
 type StageDetails = {
@@ -71,7 +87,7 @@ type StageDetails = {
 };
 
 const STAGE_TIMINGS: Partial<Record<ThreadNavigationStage, TimingMetric>> = {
-  selection_commit: "thread_navigation_selection_ms",
+  selection_next_frame: "thread_navigation_selection_ms",
   hydration_result: "thread_navigation_hydration_result_ms",
   scope_commit: "thread_navigation_scope_commit_ms",
   timeline_model_ready: "thread_navigation_timeline_model_ms",
@@ -99,6 +115,7 @@ export function beginThreadNavigation(connectionId: string, threadId: string, tr
     stageRecords: [],
     rowCommits: 0,
     committedRowKeys: new Set(),
+    measures: [],
   };
   emitStage(activeNavigation, "selection_requested");
   return activeNavigation.id;
@@ -109,9 +126,11 @@ export function markThreadNavigationStage(
   threadId: string,
   stage: ThreadNavigationStage,
   details: StageDetails = {},
+  expectedNavigationId?: string,
 ): ThreadNavigationProfile | null {
   const navigation = activeNavigation;
   if (navigation === null || navigation.connectionId !== connectionId || navigation.threadId !== threadId) return null;
+  if (expectedNavigationId !== undefined && navigation.id !== expectedNavigationId) return null;
   return emitStage(navigation, stage, details, stage === "next_frame" || stage === "superseded");
 }
 
@@ -120,6 +139,80 @@ export function recordThreadNavigationRowCommit(connectionId: string, threadId: 
   if (navigation === null || navigation.connectionId !== connectionId || navigation.threadId !== threadId) return;
   navigation.rowCommits += 1;
   navigation.committedRowKeys.add(rowKey);
+}
+
+export function isThreadNavigationActiveFor(connectionId: string, threadId: string): boolean {
+  return activeNavigation?.connectionId === connectionId && activeNavigation.threadId === threadId;
+}
+
+export function activeThreadNavigationIdFor(connectionId: string, threadId: string): string | null {
+  return isThreadNavigationActiveFor(connectionId, threadId) ? activeNavigation?.id ?? null : null;
+}
+
+export function hasActiveThreadNavigation(): boolean {
+  return activeNavigation !== null;
+}
+
+export function recordThreadNavigationMeasure(
+  connectionId: string,
+  threadId: string,
+  name: string,
+  durationMs: number,
+  details: StageDetails = {},
+): void {
+  const navigation = activeNavigation;
+  if (navigation === null || navigation.connectionId !== connectionId || navigation.threadId !== threadId) return;
+  const elapsedMs = Math.max(0, performance.now() - navigation.startedAtMs);
+  const measure = {
+    name,
+    durationMs: Math.max(0, durationMs),
+    elapsedMs,
+    values: { ...details.values },
+    tags: { ...details.tags },
+  };
+  navigation.measures.push(measure);
+  recordTelemetryEvent(navigation.connectionId, {
+    name: "navigation.thread_measure",
+    sessionId: navigation.threadId,
+    requestId: navigation.id,
+    threadId: navigation.threadId,
+    values: {
+      durationMs: measure.durationMs,
+      elapsedMs,
+      ...details.values,
+    },
+    tags: {
+      measure: name,
+      trigger: navigation.trigger,
+      ...details.tags,
+    },
+  });
+}
+
+export function recordActiveThreadNavigationMeasure(
+  name: string,
+  durationMs: number,
+  details: StageDetails = {},
+): void {
+  const navigation = activeNavigation;
+  if (navigation === null) return;
+  recordThreadNavigationMeasure(navigation.connectionId, navigation.threadId, name, durationMs, details);
+}
+
+export function measureThreadNavigationWork<T>(
+  connectionId: string,
+  threadId: string | null,
+  name: string,
+  work: () => T,
+  details: StageDetails = {},
+): T {
+  if (threadId === null) return work();
+  const startedAtMs = performance.now();
+  try {
+    return work();
+  } finally {
+    recordThreadNavigationMeasure(connectionId, threadId, name, performance.now() - startedAtMs, details);
+  }
 }
 
 export function subscribeThreadNavigationProfiles(listener: () => void): () => void {
@@ -136,6 +229,9 @@ export function finalizeThreadNavigationProfile(
   frames: ThreadNavigationFrameProfile | null,
 ): ThreadNavigationProfile {
   const completed = { ...profile, frames };
+  const slowestMeasure = profile.measures.reduce<ThreadNavigationMeasure | null>((slowest, measure) => (
+    slowest === null || measure.durationMs > slowest.durationMs ? measure : slowest
+  ), null);
   if (profileSnapshot.last?.id === profile.id) publishProfiles({ ...profileSnapshot, last: completed });
   recordTelemetryEvent(profile.connectionId, {
     name: "navigation.thread_profile",
@@ -153,12 +249,17 @@ export function finalizeThreadNavigationProfile(
       maxFrameMs: frames?.maxFrameMs ?? 0,
       jankFrames: frames?.jankFrames ?? 0,
       droppedFrameEstimate: frames?.droppedFrameEstimate ?? 0,
+      measureCount: profile.measures.length,
+      measureDurationSumMs: profile.measures.reduce((total, measure) => total + measure.durationMs, 0),
+      maxMeasureMs: slowestMeasure?.durationMs ?? 0,
     },
     tags: {
       status: profile.status,
       bottleneckStage: profile.bottleneckStage ?? "none",
       frameTrace: frames === null ? "unavailable" : "available",
       trigger: profile.trigger,
+      slowestMeasure: slowestMeasure?.name ?? "none",
+      measures: "overlapping",
     },
   });
   return completed;
@@ -233,6 +334,7 @@ function projectProfile(navigation: ThreadNavigation, status: ThreadNavigationPr
     bottleneckMs: bottleneck?.sincePreviousMs ?? 0,
     rowCommits: navigation.rowCommits,
     uniqueRowsCommitted: navigation.committedRowKeys.size,
+    measures: navigation.measures,
     stages: navigation.stageRecords,
     frames: null,
   };

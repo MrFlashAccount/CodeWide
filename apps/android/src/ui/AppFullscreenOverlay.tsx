@@ -1,14 +1,18 @@
 import {
   createContext,
+  Suspense,
   type ReactNode,
   useContext,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { StyleSheet, View } from "react-native";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
 
+import { useEvent } from "../react/useEvent";
+import { colors } from "../theme";
 import { AppFullscreenModal } from "./AppFullscreenModal";
+import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
 export type AppFullscreenOverlayLifecycle = {
   willOpen?(id: string): void;
@@ -94,14 +98,17 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
     entry.lifecycle?.didOpen?.(entry.id);
   };
 
-  const close = (id: string) => {
+  const close = useEvent((id: string) => {
     const current = entriesRef.current;
     const index = current.findIndex((entry) => entry.id === id);
     if (index < 0) return;
     const removed = current.slice(index);
     publish(current.slice(0, index));
     for (const entry of removed.reverse()) entry.lifecycle?.didClose?.(entry.id);
-  };
+  });
+  const markAllShown = useEvent(() => {
+    for (const entry of entriesRef.current) markShown(entry.id);
+  });
 
   const [controller] = useState<OverlayHostController>(() => ({
     present(binding, render, options) {
@@ -143,9 +150,7 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
       <AppFullscreenOverlayPresentationContext.Provider value={{
         entries,
         close,
-        markAllShown: () => {
-          for (const entry of entriesRef.current) markShown(entry.id);
-        },
+        markAllShown,
       }}>
         {children}
       </AppFullscreenOverlayPresentationContext.Provider>
@@ -181,12 +186,29 @@ export function AppFullscreenOverlayHost() {
               pointerEvents={isActive ? "auto" : "none"}
               style={[styles.layer, !isActive && styles.hiddenLayer]}
             >
-              {entry.content}
+              <RecoverableRenderBoundary
+                scope="dialog"
+                label="Fullscreen overlay content"
+                resetKey={entry.id}
+                onDismiss={() => close(entry.id)}
+              >
+                <Suspense fallback={<FullscreenOverlaySuspenseFallback />}>
+                  {entry.content}
+                </Suspense>
+              </RecoverableRenderBoundary>
             </View>
           );
         })}
       </View>
     </AppFullscreenModal>
+  );
+}
+
+function FullscreenOverlaySuspenseFallback() {
+  return (
+    <View accessibilityLabel="Loading view" style={styles.suspenseFallback} testID="fullscreen-overlay-suspense-fallback">
+      <ActivityIndicator color={colors.accent} />
+    </View>
   );
 }
 
@@ -215,15 +237,27 @@ export function useAppFullscreenOverlay(
 ): AppFullscreenOverlayController {
   const host = useContext(AppFullscreenOverlayHostContext);
   const inherited = useContext(AppFullscreenOverlayBindingContext);
-  if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
   const binding: OverlayBinding = {
     scope: override?.scope ?? inherited.scope,
     lifecycle: override?.lifecycle === undefined ? inherited.lifecycle : override.lifecycle,
   };
+  const present = useEvent((render: AppFullscreenOverlayRender, options?: AppFullscreenOverlayOptions) => {
+    if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
+    return host.present(binding, render, options);
+  });
+  const dismissAll = useEvent(() => {
+    if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
+    host.dismissScope(binding.scope);
+  });
+  const dismissScope = useEvent((scope: string) => {
+    if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
+    host.dismissScope(scope);
+  });
+  if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
   return {
-    present: (render, options) => host.present(binding, render, options),
-    dismissAll: () => host.dismissScope(binding.scope),
-    dismissScope: (scope) => host.dismissScope(scope),
+    present,
+    dismissAll,
+    dismissScope,
   };
 }
 
@@ -234,4 +268,5 @@ const styles = StyleSheet.create({
   // `display: none` preserves React and native view state (including ScrollView
   // offset) without painting an inactive WebView behind the active layer.
   hiddenLayer: { display: "none" },
+  suspenseFallback: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
 });

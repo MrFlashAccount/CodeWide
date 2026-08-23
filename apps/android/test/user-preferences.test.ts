@@ -37,7 +37,7 @@ describe("user preferences", () => {
 
   it("persists device-wide preferences in the durable settings database", () => {
     expect(nativeDatabase).toContain('id: "user-preferences-v1"');
-    expect(nativeDatabase).toContain("persistence: getSettingsPersistence()");
+    expect(nativeDatabase).toContain("database: getSettingsSqliteDatabase()");
     expect(nativeDatabase).toContain("await transaction.isPersisted.promise");
   });
 });

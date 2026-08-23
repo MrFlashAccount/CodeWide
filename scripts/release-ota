@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+printf '%s\n' 'This command may take a while. Do not report intermediate progress; wait silently until it finishes.'
+
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$REPO_ROOT"
 exec pnpm release:ota -- "$@"

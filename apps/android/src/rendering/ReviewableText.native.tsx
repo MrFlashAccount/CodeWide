@@ -1,5 +1,4 @@
 import {
-  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
@@ -13,9 +12,11 @@ import {
   Text as NativeText,
 } from "react-native";
 
+import { useEvent } from "../react/useEvent";
 import { productFontStyle } from "../ui/Typography";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../ui/typography-policy";
 import { contentReviewNativeModule } from "./content-review-native-module";
+import type { ContentReviewHighlight } from "./ContentReviewHost";
 
 export type ReviewSelection = {
   text: string;
@@ -48,14 +49,20 @@ export function ReviewableText({
   allowFontScaling = true,
   maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
   onReviewSelection,
+  reviewHighlights = [],
   ...props
 }: ComponentProps<typeof NativeText> & {
   onReviewSelection(selection: ReviewSelection): void;
+  reviewHighlights?: readonly ContentReviewHighlight[];
 }) {
   const textRef = useRef<ComponentRef<typeof NativeText> | null>(null);
   const generatedId = useId();
   const token = `review-text-${generatedId}`;
-  const handleReviewSelection = useEffectEvent(onReviewSelection);
+  const handleReviewSelection = useEvent(onReviewSelection);
+  const highlightKey = reviewHighlights.map(({ start, end }) => `${start}:${end}`).join(",");
+  const applyReviewHighlights = useEvent((nativeModule: ReturnType<typeof contentReviewNativeModule>, reactTag: number) => {
+    nativeModule?.setHighlights?.(reactTag, token, reviewHighlights);
+  });
 
   useLayoutEffect(() => {
     const nativeModule = contentReviewNativeModule(NativeModules.CodeWideContentReview);
@@ -73,7 +80,15 @@ export function ReviewableText({
         nativeSubscription = null;
       }
     };
-  }, [token]);
+  }, [handleReviewSelection, token]);
+
+  useLayoutEffect(() => {
+    const nativeModule = contentReviewNativeModule(NativeModules.CodeWideContentReview);
+    if (nativeModule?.setHighlights === undefined) return;
+    const reactTag = findNodeHandle(textRef.current);
+    if (reactTag === null) return;
+    applyReviewHighlights(nativeModule, reactTag);
+  }, [applyReviewHighlights, highlightKey, token]);
 
   return (
     <NativeText

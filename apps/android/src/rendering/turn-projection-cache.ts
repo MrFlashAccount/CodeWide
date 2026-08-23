@@ -1,10 +1,9 @@
 import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 
 /**
- * Keeps the expensive render-window scan stable while an append-only turn is
- * streaming. A completed turn can later receive its authoritative final text
- * without changing item count or identity, so the tail agent boundary must be
- * part of the cache key as well.
+ * Keeps the component-local render-window scan stable while an append-only
+ * turn is streaming. The cache itself lives in the mounted turn component,
+ * so this revision does not retain an inactive conversation.
  */
 export function turnProjectionTopologyRevision(turn: Pick<Turn, "items" | "status">): string {
   const tail = turn.items.at(-1);

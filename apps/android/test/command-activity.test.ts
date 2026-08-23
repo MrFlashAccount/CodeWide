@@ -30,6 +30,8 @@ describe("command activity presentation", () => {
     expect(commandBlock).toContain('codeVariant="terminal"');
     expect(commandBlock).toContain("<LargeContentControls block={block}");
     expect(commandBlock).toContain("headerMeta={<OutputFootprintMetric");
+    expect(commandBlock).toContain("initiallyExpanded={false}");
+    expect(commandBlock).not.toContain("initiallyExpanded={running}");
   });
 
   it("keeps activity tokens and cost on one text baseline", () => {

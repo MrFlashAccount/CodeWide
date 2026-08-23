@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, BackHandler, PanResponder, Platform, Pressable, StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react-native-webview";
 
@@ -10,6 +10,7 @@ import {
   stopNativeBrowserTracing,
   type NativeBrowserDevToolsBridge,
 } from "../native/native-transport";
+import { useEvent } from "../react/useEvent";
 import { colors, spacing, touchTarget, typeScale } from "../theme";
 import {
   createDevToolsFailure,
@@ -85,11 +86,11 @@ export function InternalBrowser({
     };
   }, []);
 
-  const reportError = useCallback((cause: unknown, fallback: string) => {
+  const reportError = useEvent((cause: unknown, fallback: string) => {
     onError?.(cause instanceof Error ? cause.message : fallback);
-  }, [onError]);
+  });
 
-  const captureDevToolsFailure = useCallback((kind: DevToolsFailureKind, message: string, detail?: string) => {
+  const captureDevToolsFailure = useEvent((kind: DevToolsFailureKind, message: string, detail?: string) => {
     const failure = createDevToolsFailure(kind, message, {
       context: [
         `Target: ${browserLocation(navigation.url)}`,
@@ -100,9 +101,9 @@ export function InternalBrowser({
     console.error("Chromium DevTools failure", failure);
     setDevToolsFailure(failure);
     return failure;
-  }, [devToolsUrl, navigation.url, setDevToolsFailure]);
+  });
 
-  const openDevTools = useCallback(async () => {
+  const openDevTools = useEvent(async () => {
     setDevToolsLoading(true);
     setDevToolsDocumentLoading(true);
     setDevToolsFailure(null);
@@ -111,8 +112,8 @@ export function InternalBrowser({
       const endpoint = await startNativeBrowserDevToolsBridge();
       bridgeStarted.current = true;
       const marker = markInspectablePage(webView.current);
-      const target: DevToolsTarget = await delay(75)
-        .then(() => findInspectablePage(endpoint, navigation.url, marker.id))
+      marker.apply();
+      const target: DevToolsTarget = await findInspectablePage(endpoint, navigation.url, marker)
         .finally(marker.restore);
       if (mounted.current) {
         setBridge(endpoint);
@@ -135,9 +136,9 @@ export function InternalBrowser({
       }
     }
     if (mounted.current) setDevToolsLoading(false);
-  }, [captureDevToolsFailure, navigation.url, reportError]);
+  });
 
-  const closeDevTools = useCallback(() => {
+  const closeDevTools = useEvent(() => {
     if (traceRunning) {
       void stopNativeBrowserTracing().catch(() => undefined);
       setTraceRunning(false);
@@ -152,7 +153,7 @@ export function InternalBrowser({
     setDevToolsFailure(null);
     setDevToolsDockSide("bottom");
     setTraceStatus(null);
-  }, [setBridge, setDevToolsDockSide, setDevToolsDocumentLoading, setDevToolsFailure, setDevToolsUrl, setTraceRunning, setTraceStatus, traceRunning]);
+  });
 
   useEffect(() => {
     if (Platform.OS !== "android" || header === undefined) return;
@@ -165,7 +166,7 @@ export function InternalBrowser({
     return () => subscription.remove();
   }, [closeDevTools, devToolsUrl, header, navigation.canGoBack]);
 
-  const handleDevToolsMessage = useCallback((event: WebViewMessageEvent) => {
+  const handleDevToolsMessage = useEvent((event: WebViewMessageEvent) => {
     const message = parseDevToolsMessage(event.nativeEvent.data);
     if (message === null) return;
     if (message.source === "codewide-devtools-dock") {
@@ -190,15 +191,15 @@ export function InternalBrowser({
     const description = message.message ?? "Chromium DevTools did not render";
     captureDevToolsFailure("health", description);
     onError?.(`Chromium DevTools: ${description}`);
-  }, [captureDevToolsFailure, onError, setDevToolsDockSide, setDevToolsDocumentLoading, setDevToolsFailure]);
+  });
 
-  const retryDevTools = useCallback(() => {
+  const retryDevTools = useEvent(() => {
     setDevToolsFailure(null);
     setDevToolsDocumentLoading(true);
     setDevToolsRevision((revision) => revision + 1);
-  }, [setDevToolsDocumentLoading, setDevToolsFailure, setDevToolsRevision]);
+  });
 
-  const toggleTrace = useCallback(async () => {
+  const toggleTrace = useEvent(async () => {
     try {
       if (!traceRunning) {
         await startNativeBrowserTracing();
@@ -213,7 +214,7 @@ export function InternalBrowser({
       setTraceRunning(false);
       reportError(cause, "Could not capture WebView performance trace");
     }
-  }, [reportError, traceRunning]);
+  });
 
   const dividerPanResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -428,40 +429,51 @@ function BrowserButton({ label, icon, disabled = false, onPress }: {
 async function findInspectablePage(
   endpoint: NativeBrowserDevToolsBridge,
   pageUrl: string,
-  marker: string,
+  marker: InspectablePageMarker,
 ): Promise<DevToolsTarget> {
   let lastError: unknown = null;
-  let fallback: DevToolsTarget | null = null;
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
+      marker.apply();
+      await delay(50);
       const response = await fetch(`http://${endpoint.host}:${endpoint.port}/json/list?codewide_token=${endpoint.token}`);
       if (!response.ok) throw new Error(`DevTools discovery returned HTTP ${response.status}`);
       const payload: unknown = await response.json();
       if (!Array.isArray(payload)) throw new Error("DevTools discovery returned an invalid target list");
       const targets = payload.filter(isDevToolsTarget).filter((target) => target.type === "page" && !isBundledDevToolsUrl(target.url));
-      const markedTarget = targets.find((candidate) => candidate.title === marker);
-      if (markedTarget !== undefined) return markedTarget;
-      fallback = selectVisibleTarget(targets.filter((candidate) => samePageUrl(candidate.url, pageUrl))) ?? fallback;
-      lastError = new Error(`No inspectable WebView target matches ${browserLocation(pageUrl)}`);
+      const urlMatches = targets.filter((candidate) => samePageUrl(candidate.url, pageUrl));
+      const otherTargets = targets.filter((candidate) => !urlMatches.includes(candidate));
+      for (const candidates of [urlMatches, otherTargets]) {
+        const probes = await Promise.all(candidates.map(async (candidate) => ({
+          candidate,
+          matched: await targetContainsMarker(endpoint, candidate, marker.id),
+        })));
+        const exact = probes.find((probe) => probe.matched);
+        if (exact !== undefined) return exact.candidate;
+      }
+      lastError = new Error(`No CDP target owns the browser WebView at ${browserLocation(pageUrl)} (${targets.length} targets probed)`);
     } catch (cause) {
       lastError = cause;
     }
     await delay(100);
   }
-  if (fallback !== null) return fallback;
   throw lastError instanceof Error ? lastError : new Error("No inspectable WebView target is available");
 }
 
 function chromiumDevToolsUrl(endpoint: NativeBrowserDevToolsBridge, target: DevToolsTarget): string {
+  const websocket = proxiedWebSocketUrl(endpoint, target).replace(/^ws:\/\//u, "");
+  const query = new URLSearchParams({ ws: websocket, can_dock: "true" });
+  return `http://${endpoint.host}:${endpoint.port}/browser-devtools/${endpoint.token}/front_end/inspector.html?${query.toString()}`;
+}
+
+function proxiedWebSocketUrl(endpoint: NativeBrowserDevToolsBridge, target: DevToolsTarget): string {
   const discoveredSocket = new URL(target.webSocketDebuggerUrl);
   if (discoveredSocket.protocol !== "ws:" && discoveredSocket.protocol !== "wss:") {
     throw new Error("DevTools target returned an invalid WebSocket URL");
   }
   const path = `${discoveredSocket.pathname}${discoveredSocket.search}`;
   const separator = discoveredSocket.search.length > 0 ? "&" : "?";
-  const websocket = `${endpoint.host}:${endpoint.port}${path}${separator}codewide_token=${encodeURIComponent(endpoint.token)}`;
-  const query = new URLSearchParams({ ws: websocket, can_dock: "true" });
-  return `http://${endpoint.host}:${endpoint.port}/browser-devtools/${endpoint.token}/front_end/inspector.html?${query.toString()}`;
+  return `ws://${endpoint.host}:${endpoint.port}${path}${separator}codewide_token=${encodeURIComponent(endpoint.token)}`;
 }
 
 function isDevToolsTarget(value: unknown): value is DevToolsTarget {
@@ -475,60 +487,75 @@ function isDevToolsTarget(value: unknown): value is DevToolsTarget {
       || typeof (value as Partial<DevToolsTarget>).description === "string");
 }
 
-function selectVisibleTarget(targets: DevToolsTarget[]): DevToolsTarget | null {
-  return [...targets].sort((left, right) => targetVisibilityScore(right) - targetVisibilityScore(left))[0] ?? null;
-}
-
-function targetVisibilityScore(target: DevToolsTarget): number {
-  if (target.description === undefined) return 0;
-  try {
-    const description: unknown = JSON.parse(target.description);
-    if (description === null || typeof description !== "object") return 0;
-    const state = description as { attached?: unknown; visible?: unknown; empty?: unknown; width?: unknown; height?: unknown };
-    const width = typeof state.width === "number" ? state.width : 0;
-    const height = typeof state.height === "number" ? state.height : 0;
-    return (state.attached === true ? 1_000_000_000 : 0)
-      + (state.visible === true ? 100_000_000 : 0)
-      + (state.empty === false ? 10_000_000 : 0)
-      + Math.max(0, width * height);
-  } catch {
-    return 0;
-  }
-}
-
-function markInspectablePage(target: WebView | null): { id: string; restore(): void } {
-  const id = `__codewide_devtools_target_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-  if (target === null) return { id, restore() {} };
-  target.injectJavaScript(`
-    (() => {
-      const marker = ${JSON.stringify(id)};
-      const previous = window.__codewideDevToolsTargetMarker;
-      if (previous && typeof previous.restore === "function") previous.restore();
-      const previousTitle = document.title;
-      const apply = () => { if (document.title !== marker) document.title = marker; };
-      const observer = new MutationObserver(apply);
-      observer.observe(document.head || document.documentElement, { childList: true, subtree: true, characterData: true });
-      apply();
-      window.__codewideDevToolsTargetMarker = {
-        marker,
-        restore: () => {
-          observer.disconnect();
-          if (document.title === marker) document.title = previousTitle;
-          delete window.__codewideDevToolsTargetMarker;
-        },
+function targetContainsMarker(
+  endpoint: NativeBrowserDevToolsBridge,
+  target: DevToolsTarget,
+  marker: string,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let socket: WebSocket | null = null;
+    const finish = (matched: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (socket !== null && socket.readyState < WebSocket.CLOSING) socket.close(1000, "probe complete");
+      resolve(matched);
+    };
+    const timeout = setTimeout(() => finish(false), 750);
+    try {
+      socket = new WebSocket(proxiedWebSocketUrl(endpoint, target));
+      socket.onopen = () => {
+        socket?.send(JSON.stringify({
+          id: 1,
+          method: "Runtime.evaluate",
+          params: {
+            expression: "globalThis.__codewideDevToolsTargetMarker || null",
+            returnByValue: true,
+          },
+        }));
       };
-    })();
-    true;
-  `);
+      socket.onmessage = (event) => {
+        try {
+          const response: unknown = JSON.parse(String(event.data));
+          const id = (response as { id?: unknown }).id;
+          const value = (response as { result?: { result?: { value?: unknown } } }).result?.result?.value;
+          if (id === 1) finish(value === marker);
+        } catch {
+          finish(false);
+        }
+      };
+      socket.onerror = () => finish(false);
+      socket.onclose = () => finish(false);
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+type InspectablePageMarker = { id: string; apply(): void; restore(): void };
+
+function markInspectablePage(target: WebView | null): InspectablePageMarker {
+  const id = `__codewide_devtools_target_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  if (target === null) return { id, apply() {}, restore() {} };
   return {
     id,
+    apply() {
+      try {
+        target.injectJavaScript(`
+          globalThis.__codewideDevToolsTargetMarker = ${JSON.stringify(id)};
+          true;
+        `);
+      } catch {
+        // Discovery retries before reporting that no exact target was found.
+      }
+    },
     restore() {
       try {
         target.injectJavaScript(`
-          (() => {
-            const probe = window.__codewideDevToolsTargetMarker;
-            if (probe && probe.marker === ${JSON.stringify(id)} && typeof probe.restore === "function") probe.restore();
-          })();
+          if (globalThis.__codewideDevToolsTargetMarker === ${JSON.stringify(id)}) {
+            delete globalThis.__codewideDevToolsTargetMarker;
+          }
           true;
         `);
       } catch {
@@ -601,12 +628,24 @@ const DEVTOOLS_BOOTSTRAP = `
     } catch (_) {}
 
     let lastDockSide = "";
+    let collapsedInternalPaneForSide = "";
+    const collapseDuplicateInspectedPage = (side) => {
+      if (collapsedInternalPaneForSide === side) return;
+      try {
+        const advancedApp = window.Emulation?.AdvancedApp?.instance?.();
+        const split = advancedApp?.rootSplitWidget;
+        if (typeof split?.hideMain !== "function") return;
+        split.hideMain();
+        collapsedInternalPaneForSide = side;
+      } catch (_) {}
+    };
     const reportDockSide = () => {
       let side = "bottom";
       try {
         const stored = JSON.parse(window.localStorage.getItem("currentDockState") || '"bottom"');
         if (["bottom", "left", "right", "undocked"].includes(stored)) side = stored;
       } catch (_) {}
+      collapseDuplicateInspectedPage(side);
       if (side !== lastDockSide) {
         lastDockSide = side;
         post({ source: "codewide-devtools-dock", side });

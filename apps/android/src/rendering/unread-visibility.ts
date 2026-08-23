@@ -22,3 +22,14 @@ export function shouldMarkAgentResponseRead(
 ): boolean {
   return visibleRatioWithinViewport(itemY, itemHeight, viewportY, viewportHeight) >= threshold;
 }
+
+/** Atomically decides whether one async visibility path owns the receipt. */
+export function claimUnreadReceipt(
+  currentReceiptKey: string | null,
+  acknowledgedReceiptKey: string | null,
+  requestedReceiptKey: string,
+): string | null {
+  if (currentReceiptKey !== requestedReceiptKey) return null;
+  if (acknowledgedReceiptKey === requestedReceiptKey) return null;
+  return requestedReceiptKey;
+}

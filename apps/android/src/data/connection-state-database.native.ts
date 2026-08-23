@@ -1,8 +1,8 @@
 import type { RemoteConnectionState } from "@codewide/sync-client";
-import { createCollection, type Collection } from "@tanstack/react-db";
-import { persistedCollectionOptions } from "@tanstack/react-native-db-sqlite-persistence";
+import type { Collection } from "@tanstack/react-db";
 
-import { getUiCachePersistence } from "./ui-cache-persistence.native";
+import { createPersistentCollectionModel } from "./persistent-collection.native";
+import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 
 export type ConnectionStateRow = {
   id: string;
@@ -20,83 +20,58 @@ export type ConnectionStateDatabase = {
   close(): void;
 };
 
-type SyncControls = {
-  begin(options?: { immediate?: boolean }): void;
-  write(change:
-    | { type: "insert" | "update"; value: ConnectionStateRow }
-    | { type: "delete"; key: string }
-  ): void;
-  commit(): void;
-};
-
 export function createConnectionStateDatabase(): ConnectionStateDatabase {
-  let controls: SyncControls | null = null;
   let source = new Map<string, ConnectionStateRow>();
-  let bootstrapped = false;
   let disposed = false;
-  const collection = createCollection(
-    persistedCollectionOptions<ConnectionStateRow, string>({
-      id: "connection-states-v1",
-      schemaVersion: 1,
-      getKey: (row) => row.id,
-      persistence: getUiCachePersistence(),
-      sync: {
-        sync: ({ begin, write, commit, markReady }) => {
-          controls = { begin, write, commit };
-          markReady();
-          return { cleanup: () => { controls = null; } };
-        },
-      },
-    }),
-  );
-
-  const bootstrap = (): void => {
-    if (bootstrapped) return;
-    source = new Map(collection.toArray.map((row) => [row.id, row]));
-    bootstrapped = true;
-  };
+  const model = createPersistentCollectionModel<ConnectionStateRow, string>({
+    id: "connection-states-v1",
+    tableName: "codewide_connection_states",
+    schemaVersion: 1,
+    database: getUiCacheSqliteDatabase(),
+    getKey: (row) => row.id,
+    columns: [{ property: "connectionId", column: "connection_id", type: "TEXT" }],
+    legacyCollectionId: "connection-states-v1",
+    onResidentRows: (rows) => { source = new Map(rows.map((row) => [row.id, row])); },
+  });
+  const { collection, storage } = model;
 
   const publish = (row: ConnectionStateRow): void => {
-    if (disposed || controls === null) return;
-    bootstrap();
+    if (disposed) return;
     const previous = source.get(row.id);
     if (previous !== undefined && sameState(previous, row)) return;
     source.set(row.id, row);
-    controls.begin({ immediate: true });
-    controls.write({ type: previous === undefined ? "insert" : "update", value: row });
-    controls.commit();
+    storage.begin();
+    storage.write({ type: previous === undefined ? "insert" : "update", value: row });
+    void storage.commit().catch((cause: unknown) => console.warn("Could not persist connection state", cause));
   };
 
   const remove = (connectionId: string): void => {
-    if (disposed || controls === null) return;
-    bootstrap();
+    if (disposed) return;
     if (!source.delete(connectionId)) return;
-    controls.begin({ immediate: true });
-    controls.write({ type: "delete", key: connectionId });
-    controls.commit();
+    storage.begin();
+    storage.write({ type: "delete", key: connectionId });
+    void storage.commit().catch((cause: unknown) => console.warn("Could not delete connection state", cause));
   };
 
   return {
     collection,
     reconcileProfiles(profiles) {
-      if (disposed || controls === null) return;
-      bootstrap();
+      if (disposed) return;
       const profileIds = new Set(profiles.map((profile) => profile.connectionId));
-      controls.begin({ immediate: true });
+      storage.begin();
       for (const [id] of source) {
         if (profileIds.has(id)) continue;
         source.delete(id);
-        controls.write({ type: "delete", key: id });
+        storage.write({ type: "delete", key: id });
       }
       for (const profile of profiles) {
         if (source.has(profile.connectionId)) continue;
         source.set(profile.connectionId, profile);
-        controls.write({ type: "insert", value: profile });
+        storage.write({ type: "insert", value: profile });
       }
-      controls.commit();
+      void storage.commit().catch((cause: unknown) => console.warn("Could not reconcile connection states", cause));
     },
     setState(connectionId, state, diagnostic) {
-      bootstrap();
       const current = source.get(connectionId) ?? {
         id: connectionId,
         connectionId,
@@ -115,7 +90,7 @@ export function createConnectionStateDatabase(): ConnectionStateDatabase {
     remove,
     close() {
       disposed = true;
-      collection.cleanup();
+      model.close();
     },
   };
 }

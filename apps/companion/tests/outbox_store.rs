@@ -77,6 +77,70 @@ fn durable_delivery_is_not_presented_as_an_explicit_user_queue()
 }
 
 #[test]
+fn delivered_receipts_are_bounded_without_pruning_active_or_failed_commands()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let store = IndexStore::open(directory.path().join("state.redb"))?;
+    for (command_id, state) in [
+        ("active", OutboxState::Queued),
+        ("failed", OutboxState::Failed),
+    ] {
+        store.outbox_put_turn_start(
+            command_id,
+            "thread-1",
+            json!({
+                "threadId": "thread-1",
+                "clientUserMessageId": command_id,
+                "input": [{"type": "text", "text": command_id}]
+            }),
+            Some(1),
+        )?;
+        if state == OutboxState::Failed {
+            store.outbox_set_state(command_id, state, Some("retry me"))?;
+        }
+    }
+    for index in 0..140 {
+        let command_id = format!("delivered-{index:03}");
+        store.outbox_put_turn_start(
+            &command_id,
+            "thread-2",
+            json!({
+                "threadId": "thread-2",
+                "clientUserMessageId": command_id,
+                "input": [{"type": "text", "text": command_id}]
+            }),
+            Some(index),
+        )?;
+        store.outbox_set_state(&command_id, OutboxState::Delivered, None)?;
+    }
+
+    assert_eq!(store.outbox_prune_delivered_receipts()?, 1);
+    let commands = store.outbox_list(None)?;
+    assert_eq!(commands.len(), 130);
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.command_id == "active")
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.command_id == "failed")
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| command.command_id == "delivered-000")
+    );
+    assert!(
+        commands
+            .iter()
+            .any(|command| command.command_id == "delivered-139")
+    );
+    Ok(())
+}
+
+#[test]
 fn workspace_gate_is_durable_and_part_of_command_identity() -> Result<(), Box<dyn std::error::Error>>
 {
     let directory = tempfile::tempdir()?;

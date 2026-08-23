@@ -4,7 +4,6 @@ import {
   type ReactNode,
   useContext,
   useEffect,
-  useEffectEvent,
   useRef,
   useState,
 } from "react";
@@ -18,6 +17,8 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
+
+import { useEvent } from "../react/useEvent";
 import Animated, {
   Easing,
   runOnJS,
@@ -159,8 +160,8 @@ function ImagePreviewSession({
     if (resource?.phase !== undefined && resource.phase !== "idle") void voiceRuntime?.controller?.finish(false);
     voiceRuntime?.controller?.unbind(voiceScope);
   };
-  const stopVoiceOnUnmount = useEffectEvent(stopVoice);
-  useEffect(() => () => stopVoiceOnUnmount(), []);
+  const stopVoiceOnUnmount = useEvent(stopVoice);
+  useEffect(() => () => stopVoiceOnUnmount(), [stopVoiceOnUnmount]);
   const close = () => {
     stopVoice();
     onClose();
@@ -212,7 +213,9 @@ export function ImagePreviewGroup({ id, children }: { id: string; children: Reac
 export function useImagePreview(): (request: ImagePreviewRequest, fullscreenOverride?: AppFullscreenOverlayController) => void {
   const controller = useContext(ImagePreviewContext);
   const fullscreen = useAppFullscreenOverlay();
-  return (request, fullscreenOverride) => controller.open(request, fullscreenOverride ?? fullscreen);
+  return useEvent((request: ImagePreviewRequest, fullscreenOverride?: AppFullscreenOverlayController) => {
+    controller.open(request, fullscreenOverride ?? fullscreen);
+  });
 }
 
 export function useImagePreviewGroup(): string | null {
@@ -222,23 +225,23 @@ export function useImagePreviewGroup(): string | null {
 export function useImagePreviewAnnotationHandler(handler: (text: string) => Promise<boolean>): void {
   const { registerAnnotationHandler } = useContext(ImagePreviewContext);
   const voiceRuntime = useAppVoiceInputRuntime();
-  const handleAnnotation = useEffectEvent(handler);
+  const handleAnnotation = useEvent(handler);
   useEffect(
     () => registerAnnotationHandler((text) => handleAnnotation(text), voiceRuntime),
-    [registerAnnotationHandler, voiceRuntime],
+    [handleAnnotation, registerAnnotationHandler, voiceRuntime],
   );
 }
 
 export function useRegisterImagePreviewItem(groupId: string | null, item: ImagePreviewItem): void {
   const { register } = useContext(ImagePreviewContext);
   const headersKey = JSON.stringify(item.source.headers ?? {});
-  const registerCurrentItem = useEffectEvent(() => {
+  const registerCurrentItem = useEvent(() => {
     if (groupId === null) return;
     return register(groupId, item);
   });
   useEffect(() => {
     return registerCurrentItem();
-  }, [groupId, headersKey, item.id, item.label, item.link, item.order, item.reference, item.source.uri, register]);
+  }, [groupId, headersKey, item.id, item.label, item.link, item.order, item.reference, item.source.uri, register, registerCurrentItem]);
 }
 
 function ImageViewer({

@@ -18,24 +18,26 @@ describe("document preview surfaces", () => {
   });
 
   it("keeps responsive sheet geometry on the native Expo UI sheet", () => {
-    const appSheet = readSource("../src/ui/AppSheet.tsx");
+    const appSheet = readSource("../src/ui/AppSheet.android.tsx");
 
-    expect(appSheet).toContain('from "@expo/ui/community/bottom-sheet"');
-    expect(appSheet).toContain("index={isOpen ? contentProps.index ?? 0 : -1}");
-    expect(appSheet).toContain("enablePanDownToClose={contentProps.enablePanDownToClose ?? true}");
-    expect(appSheet).toContain("backgroundStyle={styles.transparentBackground}");
-    expect(appSheet).toContain("<BottomSheetView");
-    expect(appSheet).toContain("<BottomSheetScrollView nestedScrollEnabled={nestedScrollEnabled}");
+    expect(appSheet).toContain('from "@expo/ui/jetpack-compose"');
+    expect(appSheet).toContain('<Host colorScheme="dark"');
+    expect(appSheet).toContain("containerColor={colors.surfaceContainerHigh}");
+    expect(appSheet).toContain("contentColor={colors.text}");
+    expect(appSheet).toContain("scrimColor={colors.scrim}");
+    expect(appSheet).toContain("<RNHostView matchContents={fitToContents}");
+    expect(appSheet).toContain("!fitToContents && styles.fixedHostContent");
+    expect(appSheet).toContain("fixedHostContent: { flexGrow: 1, height: 0 }");
+    expect(appSheet).toContain("<ScrollView nestedScrollEnabled={nestedScrollEnabled}");
     expect(appSheet).toContain("const SHEET_MAX_WIDTH = 580");
     expect(appSheet).toContain("const detached = contentProps.detached ?? true");
-    expect(appSheet).not.toContain("useWindowDimensions");
+    expect(appSheet).toContain("useWindowDimensions");
     expect(appSheet).toContain("maxWidth: SHEET_MAX_WIDTH");
     expect(appSheet).toContain("borderRadius: radii.composer");
     expect(appSheet).toContain("backgroundColor: colors.surfaceContainerHigh");
-    expect(appSheet).not.toContain("useRef");
-    expect(appSheet).not.toContain("useEffect");
-    expect(appSheet).not.toContain("useCallback");
-    expect(appSheet).toContain("onClose={() => onOpenChange(false)}");
+    expect(appSheet).toContain("sheetRef.current");
+    expect(appSheet).toContain("sheetRef.current?.hide()");
+    expect(appSheet).toContain("onOpenChange(false)");
     expect(appSheet).toContain("<RecoverableRenderBoundary");
     expect(appSheet).toContain('label="Bottom sheet content"');
     expect(appSheet).toContain('resetKey={isOpen ? "open" : "closed"}');
@@ -60,7 +62,7 @@ describe("document preview surfaces", () => {
     expect(richMarkdown).toContain('Platform.OS === "android" ? GestureScrollView : ScrollView');
     expect(richMarkdown).toContain("<HorizontalScrollView");
     expect(documentPreview).toContain('if (surface === "fullscreen")');
-    expect(documentPreview).toContain("fullscreen.present(({ close }) => (");
+    expect(documentPreview).toContain("presentFullscreenDocument(fullscreen, request, downloadFile)");
     expect(documentPreview).toContain("<ScrollView");
     expect(documentPreview).toContain("paddingBottom: spacing.sm");
   });

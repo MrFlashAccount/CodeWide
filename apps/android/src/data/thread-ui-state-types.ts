@@ -19,12 +19,10 @@ export type ThreadUiStateRow = {
   draftText: string;
   attachments: StoredDraftAttachment[];
   scrollOffset: number | null;
+  /** Stable viewport cursor. Absent on pre-anchor cache rows. */
+  historyAnchorTurnId?: string | null;
+  /** Anchor row top relative to the viewport top in pixels. */
+  historyAnchorOffsetPx?: number | null;
   preferences: StoredComposerPreferences | null;
-  migratedFromLegacy: boolean;
   updatedAt: number;
 };
-
-export type LegacyThreadUiState = Pick<
-  ThreadUiStateRow,
-  "draftText" | "attachments" | "scrollOffset" | "preferences"
->;

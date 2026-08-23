@@ -3,9 +3,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { Toast, useToast } from "heroui-native/toast";
 import {
   createContext,
+  createElement,
   type ReactNode,
   useContext,
-  useEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -13,9 +14,10 @@ import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, View } f
 import { WebView } from "react-native-webview";
 
 import { colors, spacing } from "../theme";
-import { readPrivateAssetText, type GetTransferAccess, type PrivateAssetSource } from "../data/private-transfer";
+import { privateAssetCacheKey, readPrivateAssetText, type GetTransferAccess, type PrivateAssetSource } from "../data/private-transfer";
 import { documentReadingWidth, type DocumentLayoutMode } from "../data/user-preferences";
 import { openDownloadedFile, pickDownloadDirectory, startDownload, startPreviewDownload, type RunningTransfer, type SelectedDirectory } from "../native/file-transfer";
+import { useEvent } from "../react/useEvent";
 import { useAppFullscreenOverlay, type AppFullscreenOverlayController } from "../ui/AppFullscreenOverlay";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { AppSheet, AppSheetScrollView } from "../ui/AppSheet";
@@ -34,7 +36,9 @@ import { useImagePreview } from "./ImagePreviewHost";
 import { materializePrivateAsset } from "./private-asset";
 import { RichMarkdown, RichMarkdownTextScaleProvider } from "./RichMarkdown";
 import type { ContentReviewTarget } from "./content-review";
+import { ContentReviewComposer } from "./ContentReviewHost";
 import { RichContentWidthProvider } from "./RichContentLayout";
+import { useEphemeralAsyncResource } from "./async-resource-store";
 import { useDocumentViewerPreferences } from "./use-document-viewer-preferences";
 
 export type DocumentPreviewRequest = {
@@ -73,6 +77,62 @@ type DocumentPreviewController = {
 
 const DocumentPreviewContext = createContext<DocumentPreviewController | null>(null);
 
+async function runDocumentDownload(
+  request: DocumentPreviewRequest,
+  onComplete: (request: DocumentPreviewRequest, completed: CompletedTransfer) => void,
+  onFailure: (message: string, retry: () => void) => void,
+): Promise<void> {
+  try {
+    const directory = await pickDownloadDirectory();
+    const transfer = startDocumentDownload(request, directory);
+    const completed = await transfer.promise;
+    onComplete(request, completed);
+  } catch (cause) {
+    if (isPickerCancellation(cause)) return;
+    onFailure(
+      cause instanceof Error ? cause.message : "Could not download file",
+      () => void runDocumentDownload(request, onComplete, onFailure),
+    );
+  }
+}
+
+function loadImagePreviewWithRetry(
+  request: DocumentPreviewRequest,
+  isCurrent: () => boolean,
+  onReady: (uri: string) => void,
+  onFailure: (message: string, retry: () => void) => void,
+): void {
+  if (!isCurrent()) return;
+  void materializePrivateAsset(
+    request.source ?? { kind: "path", path: request.path },
+    request.getTransferAccess,
+  ).then(
+    (uri) => {
+      if (isCurrent()) onReady(uri);
+    },
+    (cause: unknown) => {
+      if (!isCurrent()) return;
+      onFailure(
+        cause instanceof Error ? cause.message : "Image preview failed",
+        () => loadImagePreviewWithRetry(request, isCurrent, onReady, onFailure),
+      );
+    },
+  );
+}
+
+function presentFullscreenDocument(
+  fullscreen: AppFullscreenOverlayController,
+  request: DocumentPreviewRequest,
+  downloadFile: (request: DocumentPreviewRequest) => Promise<void>,
+): void {
+  fullscreen.present(({ close }) => createElement(FullscreenDocumentPreview, {
+    request,
+    onClose: close,
+    onDownload: () => void downloadFile(request),
+    onOpen: (nested) => presentFullscreenDocument(fullscreen, nested, downloadFile),
+  }));
+}
+
 /** Owns document preview above the virtualized timeline. Private files are
  * fetched with scoped auth into app-private storage; neither their URL nor
  * auth token is handed to a system browser. */
@@ -80,11 +140,34 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
   const dialog = useAppDialog();
   const { toast } = useToast();
   const openImagePreview = useImagePreview();
+  const resourceOwnerId = useId();
   const [preview, setPreview] = useState<PreviewState | null>(null);
-  const [result, setResult] = useState<DocumentPreviewResult>({ phase: "loading" });
   const previewLoadRef = useRef<AbortController | null>(null);
-  const fullscreenRef = useRef<AppFullscreenOverlayController | null>(null);
   const revisionRef = useRef(0);
+  const previewSurface = preview === null ? null : documentPreviewSurface(preview.kind);
+  const previewSource = preview?.source ?? (preview === null ? null : { kind: "path" as const, path: preview.path });
+  const previewResource = useEphemeralAsyncResource<Extract<DocumentPreviewResult, { phase: "ready" }>>(
+    preview === null || previewSurface !== "sheet" || previewSource === null
+      ? null
+      : `document-sheet:${resourceOwnerId}:${privateAssetCacheKey(previewSource)}`,
+    preview === null ? "none" : `${preview.kind}:${preview.revision}`,
+    async (_publish, signal) => {
+      if (preview === null) throw new Error("Document preview is closed");
+      const loaded = await loadDocumentPreview(preview, signal);
+      return {
+        phase: "ready",
+        source: loaded.source,
+        segments: preview.kind === "markdown" ? projectCompleteMarkdown(loaded.source) : [],
+        truncated: loaded.truncated,
+      };
+    },
+    (value) => value.source.length * 2,
+  );
+  const result: DocumentPreviewResult = previewResource.status === "ready" && previewResource.value !== null
+    ? previewResource.value
+    : previewResource.status === "error"
+      ? { phase: "error", message: previewResource.error ?? "Document preview failed" }
+      : { phase: "loading" };
   const showDownloadComplete = (request: DocumentPreviewRequest, completed: CompletedTransfer) => {
     const toastId = "document-download-complete";
     const common = {
@@ -127,70 +210,49 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
       ),
     });
   };
-  const downloadFile = async (request: DocumentPreviewRequest): Promise<void> => {
-    try {
-      const directory = await pickDownloadDirectory();
-      const transfer = startDocumentDownload(request, directory);
-      const completed = await transfer.promise;
-      showDownloadComplete(request, completed);
-    } catch (cause) {
-      if (isPickerCancellation(cause)) return;
+  const downloadFile = useEvent((request: DocumentPreviewRequest): Promise<void> => runDocumentDownload(
+    request,
+    showDownloadComplete,
+    (message, retryDownload) => {
       dialog.alert(
         "Download failed",
-        cause instanceof Error ? cause.message : "Could not download file",
+        message,
         [
           { text: "Cancel", style: "cancel" },
-          { text: "Retry", onPress: () => void downloadFile(request) },
+          { text: "Retry", onPress: retryDownload },
         ],
       );
-    }
-  };
-  const beginPreviewLoad = (request: DocumentPreviewRequest, revision: number, fullscreen: AppFullscreenOverlayController) => {
+    },
+  ));
+  const beginImagePreviewLoad = (
+    request: DocumentPreviewRequest,
+    revision: number,
+    fullscreen: AppFullscreenOverlayController,
+  ) => {
     previewLoadRef.current?.abort();
     previewLoadRef.current = null;
-    if (request.kind === "download") return;
     const controller = new AbortController();
     previewLoadRef.current = controller;
     const isCurrent = () => !controller.signal.aborted && revisionRef.current === revision;
-    if (request.kind === "image") {
-      void (async () => {
-        if (!isCurrent()) return;
-        const uri = await materializePrivateAsset(request.source ?? { kind: "path", path: request.path }, request.getTransferAccess);
-        if (!isCurrent()) return;
-        openImagePreview({
+    loadImagePreviewWithRetry(
+      request,
+      isCurrent,
+      (uri) => openImagePreview({
           id: `remote-file:${request.path}`,
           label: request.name,
           source: { uri },
           reference: request.path,
           download: () => downloadFile(request),
-        }, fullscreen);
-      })().catch((cause: unknown) => {
-        if (!isCurrent()) return;
-        const message = cause instanceof Error ? cause.message : "Image preview failed";
+        }, fullscreen),
+      (message, retryImagePreview) => {
         dialog.alert("Image preview failed", message, [
           { text: "Cancel", style: "cancel" },
-          { text: "Retry", onPress: () => open(request, fullscreen) },
+          { text: "Retry", onPress: retryImagePreview },
         ]);
-      });
-      return;
-    }
-    void loadDocumentPreview(request, controller.signal).then(
-      (loaded) => {
-        if (!isCurrent()) return;
-        setResult({
-          phase: "ready",
-          source: loaded.source,
-          segments: request.kind === "markdown" ? projectCompleteMarkdown(loaded.source) : [],
-          truncated: loaded.truncated,
-        });
-      },
-      (cause) => {
-        if (isCurrent()) setResult({ phase: "error", message: cause instanceof Error ? cause.message : "Document preview failed" });
       },
     );
   };
-  const open = (request: DocumentPreviewRequest, fullscreen: AppFullscreenOverlayController) => {
-    fullscreenRef.current = fullscreen;
+  const open = useEvent((request: DocumentPreviewRequest, fullscreen: AppFullscreenOverlayController) => {
     revisionRef.current += 1;
     const revision = revisionRef.current;
     const surface = documentPreviewSurface(request.kind);
@@ -199,24 +261,15 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
       return;
     }
     if (surface === "image-viewer") {
-      beginPreviewLoad(request, revision, fullscreen);
+      beginImagePreviewLoad(request, revision, fullscreen);
       return;
     }
     if (surface === "fullscreen") {
-      fullscreen.present(({ close }) => (
-        <FullscreenDocumentPreview
-          request={request}
-          onClose={close}
-          onDownload={() => void downloadFile(request)}
-          onOpen={(nested) => open(nested, fullscreen)}
-        />
-      ));
+      presentFullscreenDocument(fullscreen, request, downloadFile);
       return;
     }
-    setResult({ phase: "loading" });
     setPreview({ ...request, revision });
-    beginPreviewLoad(request, revision, fullscreen);
-  };
+  });
   const close = () => {
     revisionRef.current += 1;
     previewLoadRef.current?.abort();
@@ -224,12 +277,10 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
     setPreview(null);
   };
   const retry = () => {
-    if (preview === null || fullscreenRef.current === null) return;
+    if (preview === null) return;
     revisionRef.current += 1;
     const revision = revisionRef.current;
-    setResult({ phase: "loading" });
     setPreview({ ...preview, revision });
-    beginPreviewLoad(preview, revision, fullscreenRef.current);
   };
   const previewBody = result.phase === "loading" ? (
     <View style={styles.center}>
@@ -245,7 +296,6 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
       </Pressable>
     </View>
   ) : null;
-  const previewSurface = preview === null ? null : documentPreviewSurface(preview.kind);
   return (
     <DocumentPreviewContext.Provider value={{ open, download: downloadFile }}>
       {children}
@@ -293,8 +343,8 @@ function FullscreenDocumentPreview({
   onDownload(): void;
   onOpen(request: DocumentPreviewRequest): void;
 }) {
+  const resourceOwnerId = useId();
   const [revision, setRevision] = useState(0);
-  const [result, setResult] = useState<DocumentPreviewResult>({ phase: "loading" });
   const [documentViewportWidth, setDocumentViewportWidth] = useState(0);
   const {
     preferences: { textScale, layoutMode },
@@ -304,25 +354,26 @@ function FullscreenDocumentPreview({
   } = useDocumentViewerPreferences();
   const markdownScrollRef = useRef<ScrollView | null>(null);
   const scrolledMarkdownRevisionRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void loadDocumentPreview(request, controller.signal).then(
-      (loaded) => {
-        if (controller.signal.aborted) return;
-        setResult({
-          phase: "ready",
-          source: loaded.source,
-          segments: request.kind === "markdown" ? projectCompleteMarkdown(loaded.source) : [],
-          truncated: loaded.truncated,
-        });
-      },
-      (cause: unknown) => {
-        if (!controller.signal.aborted) setResult({ phase: "error", message: cause instanceof Error ? cause.message : "Document preview failed" });
-      },
-    );
-    return () => controller.abort();
-  }, [request, revision]);
+  const source = request.source ?? { kind: "path" as const, path: request.path };
+  const previewResource = useEphemeralAsyncResource<Extract<DocumentPreviewResult, { phase: "ready" }>>(
+    `fullscreen-document:${resourceOwnerId}:${privateAssetCacheKey(source)}`,
+    `${request.kind}:${revision}`,
+    async (_publish, signal) => {
+      const loaded = await loadDocumentPreview(request, signal);
+      return {
+        phase: "ready",
+        source: loaded.source,
+        segments: request.kind === "markdown" ? projectCompleteMarkdown(loaded.source) : [],
+        truncated: loaded.truncated,
+      };
+    },
+    (value) => value.source.length * 2,
+  );
+  const result: DocumentPreviewResult = previewResource.status === "ready" && previewResource.value !== null
+    ? previewResource.value
+    : previewResource.status === "error"
+      ? { phase: "error", message: previewResource.error ?? "Document preview failed" }
+      : { phase: "loading" };
 
   const markdownTarget = request.kind === "markdown" && result.phase === "ready"
     ? markdownLineTarget(result.source, result.segments, request.line)
@@ -368,7 +419,6 @@ function FullscreenDocumentPreview({
         <View style={styles.center}>
           <Text selectable style={styles.error}>{result.message}</Text>
           <Pressable accessibilityRole="button" onPress={() => {
-            setResult({ phase: "loading" });
             setRevision((current) => current + 1);
           }} style={styles.retryButton}>
             <Ionicons name="refresh" size={18} color={colors.onPrimary} />
@@ -434,6 +484,7 @@ function FullscreenDocumentPreview({
           </View>
         </ScrollView>
       )}
+      {markdownReviewTarget !== undefined && <ContentReviewComposer targetId={markdownReviewTarget.id} />}
     </View>
   );
 }
@@ -601,8 +652,12 @@ function DocumentTextScaleControl({
 export function useDocumentPreview(): (request: DocumentPreviewRequest) => void {
   const controller = useContext(DocumentPreviewContext);
   const fullscreen = useAppFullscreenOverlay();
+  const open = useEvent((request: DocumentPreviewRequest) => {
+    if (controller === null) throw new Error("useDocumentPreview must be used inside DocumentPreviewHost");
+    controller.open(request, fullscreen);
+  });
   if (controller === null) throw new Error("useDocumentPreview must be used inside DocumentPreviewHost");
-  return (request) => controller.open(request, fullscreen);
+  return open;
 }
 
 export function useDocumentDownload(): (request: DocumentPreviewRequest) => Promise<void> {

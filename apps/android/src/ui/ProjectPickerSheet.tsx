@@ -4,11 +4,12 @@ import { Accordion } from "heroui-native/accordion";
 import { Button } from "heroui-native/button";
 import { ListGroup } from "heroui-native/list-group";
 import { SearchField } from "heroui-native/search-field";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, View } from "react-native";
 
 import type { RemoteDirectoryEntry, RemoteProject } from "../data/remote-projects";
 import { joinDirectoryPath, normalizeDirectoryPath, parentDirectoryPath, partitionDiscoveredProjects, pathCrumbs, projectIncludesDirectory } from "../data/remote-projects";
+import { useEvent } from "../react/useEvent";
 import { colors, radii, spacing, typeScale } from "../theme";
 import { AppSheet, AppSheetScrollView } from "./AppSheet";
 import { AppText as Text } from "./Typography";
@@ -52,7 +53,37 @@ export function ProjectPickerSheet({
   const wasVisible = useRef(false);
   const requestGeneration = useRef(0);
   const directoryCache = useRef(new Map<string, RemoteDirectoryEntry[]>());
-  const readDirectory = useEffectEvent(async (path: string) => await onReadDirectory?.(path) ?? []);
+  const readDirectory = useEvent(async (path: string) => await onReadDirectory?.(path) ?? []);
+  const loadDirectory = useEvent((path: string) => {
+    if (onReadDirectory === undefined) return;
+    const generation = ++requestGeneration.current;
+    const cached = directoryCache.current.get(path);
+    if (cached !== undefined) {
+      setDirectoryEntries(cached);
+      setDirectoryLoading(false);
+      setDirectoryError(null);
+      return;
+    }
+    setDirectoryEntries([]);
+    setDirectoryLoading(true);
+    setDirectoryError(null);
+    void readDirectory(path).then(
+      (entries) => {
+        if (generation !== requestGeneration.current) return;
+        const directories = entries
+          .filter((entry) => entry.isDirectory)
+          .sort((left, right) => left.fileName.localeCompare(right.fileName, undefined, { numeric: true, sensitivity: "base" }));
+        directoryCache.current.set(path, directories);
+        setDirectoryEntries(directories);
+        setDirectoryLoading(false);
+      },
+      (cause: unknown) => {
+        if (generation !== requestGeneration.current) return;
+        setDirectoryLoading(false);
+        setDirectoryError(cause instanceof Error ? cause.message : "Could not open directory");
+      },
+    );
+  });
 
   useEffect(() => {
     if (visible && !wasVisible.current) {
@@ -64,39 +95,9 @@ export function ProjectPickerSheet({
       setPinningPath(null);
       setProjectActionError(null);
     }
+    if (!visible) requestGeneration.current += 1;
     wasVisible.current = visible;
   }, [cwd, discoveredProjects, projects, visible]);
-
-  useEffect(() => {
-    if (!visible || mode !== "directory" || onReadDirectory === undefined) return;
-    const generation = ++requestGeneration.current;
-    const cached = directoryCache.current.get(directoryPath);
-    if (cached !== undefined) {
-      setDirectoryEntries(cached);
-      setDirectoryLoading(false);
-      setDirectoryError(null);
-      return;
-    }
-    setDirectoryEntries([]);
-    setDirectoryLoading(true);
-    setDirectoryError(null);
-    void readDirectory(directoryPath).then(
-      (entries) => {
-        if (generation !== requestGeneration.current) return;
-        const directories = entries
-          .filter((entry) => entry.isDirectory)
-          .sort((left, right) => left.fileName.localeCompare(right.fileName, undefined, { numeric: true, sensitivity: "base" }));
-        directoryCache.current.set(directoryPath, directories);
-        setDirectoryEntries(directories);
-        setDirectoryLoading(false);
-      },
-      (cause: unknown) => {
-        if (generation !== requestGeneration.current) return;
-        setDirectoryLoading(false);
-        setDirectoryError(cause instanceof Error ? cause.message : "Could not open directory");
-      },
-    );
-  }, [directoryPath, mode, onReadDirectory, visible]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const { recent: recentProjects, other: otherProjects } = useMemo(
@@ -106,7 +107,7 @@ export function ProjectPickerSheet({
   const unpinnedProjects = [...recentProjects, ...otherProjects];
   const searchProjects = normalizedQuery === ""
     ? []
-    : [...projects, ...unpinnedProjects].filter((project) => `${project.name}\n${project.path}\n${project.aliases?.join("\n") ?? ""}`.toLocaleLowerCase().includes(normalizedQuery));
+    : [...projects, ...unpinnedProjects].filter((project) => `${project.name}\n${project.path}`.toLocaleLowerCase().includes(normalizedQuery));
   const visibleDirectories = normalizedQuery === ""
     ? directoryEntries
     : directoryEntries.filter((entry) => entry.fileName.toLocaleLowerCase().includes(normalizedQuery));
@@ -116,12 +117,14 @@ export function ProjectPickerSheet({
     if (directoryLoading) return;
     setQuery("");
     setDirectoryPath(path);
+    loadDirectory(path);
   };
   const openDirectoryPicker = () => {
     if (onReadDirectory === undefined || onAddProject === undefined) return;
     setQuery("");
     setDirectoryError(null);
     setMode("directory");
+    loadDirectory(directoryPath);
   };
   const addCurrentDirectory = async () => {
     if (onAddProject === undefined || adding || busy || directoryLoading) return;

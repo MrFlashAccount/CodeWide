@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   joinDirectoryPath,
   parentDirectoryPath,
+  parseRemoteProjects,
   partitionDiscoveredProjects,
   pathCrumbs,
   projectIncludesDirectory,
@@ -15,14 +16,25 @@ function project(path: string, lastUsedAt: number): RemoteProject {
     name: path.split("/").at(-1) || path,
     addedAt: lastUsedAt,
     lastUsedAt,
+    pinned: true,
   };
 }
 
 describe("remote projects", () => {
+  it("accepts companion-owned pinned and discovered projects", () => {
+    expect(parseRemoteProjects({ data: [
+      { path: "/work/pinned", name: "pinned", addedAt: 1, lastUsedAt: 2, pinned: true },
+      { path: "/work/recent", name: "recent", addedAt: 3, lastUsedAt: 4, pinned: false },
+    ] })).toEqual([
+      { ...project("/work/pinned", 2), addedAt: 1 },
+      { ...project("/work/recent", 4), addedAt: 3, pinned: false },
+    ]);
+  });
+
   it("keeps pinned projects separate and deduplicates discovered paths", () => {
     const pinned = [project("/work/codewide-wt", 10)];
     const discovered = [
-      { ...project("/work/codewide", 9), aliases: ["/work/codewide", "/work/codewide-wt/"] },
+      project("/work/codewide-wt/", 9),
       project("/work/recent", 8),
       project("/work/recent", 7),
       project("/work/other", 6),

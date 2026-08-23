@@ -13,9 +13,10 @@ export type TimingMetric =
   | "native_journal_commit_ms"
   | "projection_apply_ms"
   | "sqlite_checkpoint_ms"
+  | "sqlite_subset_load_ms"
   | "connection_to_usable_ms"
   | "history_page_rpc_ms"
-  | "thread_selection_commit_ms"
+  | "thread_selection_next_frame_ms"
   | "thread_navigation_selection_ms"
   | "thread_navigation_hydration_result_ms"
   | "thread_navigation_scope_commit_ms"
@@ -58,6 +59,8 @@ export type CounterMetric =
   | "native_journal_commits"
   | "native_journal_committed_events"
   | "sqlite_checkpoints"
+  | "sqlite_subset_loads"
+  | "sqlite_subset_rows_loaded"
   | "sqlite_transactions_coalesced"
   | "stream_repair_mismatches"
   | "stream_repairs"
@@ -78,6 +81,9 @@ export type OperationalMetricsSnapshot = {
     livePendingStreams: number;
     livePendingChars: number;
     liveOldestPendingMs: number;
+    sqliteSubsetLastRows: number;
+    sqliteSubsetMaxRows: number;
+    threadDetailResidentRows: number;
   };
 };
 
@@ -88,6 +94,9 @@ const counters = new Map<CounterMetric, number>();
 const MAX_PENDING_LIVE_STREAMS = 256;
 const pendingLiveCommits = new Map<string, { firstAtMs: number; chars: number; projectionBatches: number }>();
 let diagnosticsEnabled = false;
+let sqliteSubsetLastRows = 0;
+let sqliteSubsetMaxRows = 0;
+let threadDetailResidentRows = 0;
 
 export function recordTiming(name: TimingMetric, valueMs: number): void {
   if (!Number.isFinite(valueMs) || valueMs < 0) return;
@@ -104,6 +113,20 @@ export function recordTiming(name: TimingMetric, valueMs: number): void {
 export function incrementMetric(name: CounterMetric, amount = 1): void {
   if (!Number.isSafeInteger(amount) || amount < 1) return;
   counters.set(name, Math.min(Number.MAX_SAFE_INTEGER, (counters.get(name) ?? 0) + amount));
+}
+
+export function recordSqliteSubsetLoad(rowCount: number, durationMs: number): void {
+  if (!Number.isSafeInteger(rowCount) || rowCount < 0) return;
+  recordTiming("sqlite_subset_load_ms", durationMs);
+  incrementMetric("sqlite_subset_loads");
+  if (rowCount > 0) incrementMetric("sqlite_subset_rows_loaded", rowCount);
+  sqliteSubsetLastRows = rowCount;
+  sqliteSubsetMaxRows = Math.max(sqliteSubsetMaxRows, rowCount);
+}
+
+export function setThreadDetailResidentRows(rowCount: number): void {
+  if (!Number.isSafeInteger(rowCount) || rowCount < 0) return;
+  threadDetailResidentRows = rowCount;
 }
 
 /** Hot-path diagnostics are inert unless Data for geeks is explicitly enabled. */
@@ -209,6 +232,9 @@ export function operationalMetricsSnapshot(): OperationalMetricsSnapshot {
       livePendingStreams: pendingLiveCommits.size,
       livePendingChars,
       liveOldestPendingMs: rounded(liveOldestPendingMs),
+      sqliteSubsetLastRows,
+      sqliteSubsetMaxRows,
+      threadDetailResidentRows,
     },
   };
 }
@@ -218,6 +244,9 @@ export function resetOperationalMetrics(): void {
   timingTotals.clear();
   counters.clear();
   pendingLiveCommits.clear();
+  sqliteSubsetLastRows = 0;
+  sqliteSubsetMaxRows = 0;
+  threadDetailResidentRows = 0;
 }
 
 export function resetOperationalMetricsForTests(): void {

@@ -6,6 +6,14 @@ import { describe, expect, it } from "vitest";
 
 const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const largePasteModule = readFileSync(
+  new URL("../android/app/src/main/java/dev/codewide/app/remote/LargePasteModule.kt", import.meta.url),
+  "utf8",
+);
+const largePastePolicy = readFileSync(
+  new URL("../android/app/src/main/java/dev/codewide/app/remote/LargePastePolicy.kt", import.meta.url),
+  "utf8",
+);
 const codeReviewEditor = readFileSync(new URL("../src/rendering/CodeReviewEditor.web.tsx", import.meta.url), "utf8");
 const heroBottomSheetPrimitive = readFileSync(
   new URL("../node_modules/heroui-native/src/primitives/bottom-sheet/bottom-sheet.tsx", import.meta.url),
@@ -35,6 +43,26 @@ describe("application text input contract", () => {
   it("keeps fields with specialized voice controls opted out", () => {
     expect(screen).toMatch(/<TextInput\s+voiceInput=\{false\}\s+accessibilityLabel="Message Codex"/u);
     expect(codeReviewEditor).toMatch(/<TextInput\s+voiceInput=\{false\}\s+autoFocus/u);
+  });
+
+  it("lets the composer inspect a complete paste before applying the message limit", () => {
+    const composerStart = screen.indexOf('accessibilityLabel="Message Codex"');
+    const composerEnd = screen.indexOf("/>", composerStart);
+    expect(composerStart).toBeGreaterThan(-1);
+    expect(screen.slice(composerStart, composerEnd)).not.toContain("maxLength=");
+    expect(screen.slice(composerStart, composerEnd)).toContain("largePasteThreshold: AUTO_ATTACH_PASTE_MIN_CHARS");
+    expect(screen.slice(composerStart, composerEnd)).toContain("onLargePaste: handleComposerLargePaste");
+    expect(screen).not.toContain("LARGE_PASTE_SETTLE_MS");
+    expect(screen).not.toContain("beginLargePasteCapture");
+  });
+
+  it("installs the native paste receiver after Fabric mounts and accepts keyboard clipboard content", () => {
+    expect(largePasteModule).toContain("UIManagerListener");
+    expect(largePasteModule).toContain("override fun didMountItems(uiManager: UIManager)");
+    expect(largePasteModule).toContain("installRequestedViews(uiManager)");
+    expect(largePasteModule).not.toContain("MAX_RESOLVE_ATTEMPTS");
+    expect(largePastePolicy).toContain("ContentInfoCompat.SOURCE_CLIPBOARD");
+    expect(largePastePolicy).toContain("ContentInfoCompat.SOURCE_INPUT_METHOD");
   });
 
   it("keeps the conversation composer attached to every IME session", () => {

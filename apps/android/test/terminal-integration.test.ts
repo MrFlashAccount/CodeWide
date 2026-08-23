@@ -22,7 +22,7 @@ describe("native terminal integration", () => {
     expect(screen).toContain("<TerminalWorkspace connectionId={draftConnectionId} threadId={draftThreadId}");
     expect(screen).toContain("{ dismissOnScopeUnmount: false }");
     expect(screen).toContain('ComposerContextCount label="Terminals"');
-    expect(screen).toContain("interactiveTerminals.tabs.length");
+    expect(screen).toContain("workspace.tabs.length");
   });
 
   it("keeps the live terminal renderer mounted across responsive layout changes", () => {

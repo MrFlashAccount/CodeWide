@@ -4,7 +4,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
+use redb::{
+    Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, Table, TableDefinition,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -19,9 +21,10 @@ const THREAD_USAGE: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_
 const SCHEMA_VERSION: u32 = 4;
 const FILE_STATE_VERSION: u8 = 1;
 const FILE_STATE_BYTES: usize = 65;
-const MAX_OUTBOX_COMMANDS: u64 = 1_000;
+const MAX_OUTBOX_COMMANDS: usize = 1_000;
 const MAX_OUTBOX_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_OUTBOX_BYTES: usize = 48 * 1024 * 1024;
+const MAX_RETAINED_DELIVERED_COMMANDS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -175,6 +178,8 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error("corrupt companion index: {0}")]
     CorruptedIndex(String),
+    #[error("outbox capacity exceeded by active or failed commands")]
+    OutboxCapacityExceeded,
 }
 
 pub struct IndexStore {
@@ -626,19 +631,10 @@ impl IndexStore {
                 }
                 return Ok(existing);
             }
-            let mut total_bytes = params_bytes;
-            let mut max_order = 0_u64;
-            for entry in table.iter()? {
-                let (_key, value) = entry?;
-                let existing: OutboxCommand = serde_json::from_slice(value.value())?;
-                total_bytes =
-                    total_bytes.saturating_add(serde_json::to_vec(&existing.params)?.len());
-                max_order = max_order.max(existing.order);
-            }
-            if table.len()? >= MAX_OUTBOX_COMMANDS || total_bytes > MAX_OUTBOX_BYTES {
-                return Err(StoreError::CorruptedIndex(
-                    "outbox capacity exceeded".into(),
-                ));
+            let (_, command_count, total_bytes, max_order) =
+                prune_delivered_outbox_receipts(&mut table, 1, params_bytes)?;
+            if command_count > MAX_OUTBOX_COMMANDS || total_bytes > MAX_OUTBOX_BYTES {
+                return Err(StoreError::OutboxCapacityExceeded);
             }
             let now = unix_time_ms();
             let command = OutboxCommand {
@@ -662,6 +658,22 @@ impl IndexStore {
         };
         write.commit()?;
         Ok(command)
+    }
+
+    /// Removes old delivered receipts while preserving queued, uncertain, and
+    /// failed commands. Returns the number of reclaimed rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the outbox cannot be read or updated.
+    pub fn outbox_prune_delivered_receipts(&self) -> Result<usize, StoreError> {
+        let write = self.database.begin_write()?;
+        let removed = {
+            let mut table = write.open_table(OUTBOX)?;
+            prune_delivered_outbox_receipts(&mut table, 0, 0)?.0
+        };
+        write.commit()?;
+        Ok(removed)
     }
 
     /// Lists durable outbox commands in dispatch order.
@@ -1066,6 +1078,53 @@ fn validate_outbox_id(value: &str, label: &str) -> Result<(), StoreError> {
         return Err(StoreError::CorruptedIndex(format!("invalid {label}")));
     }
     Ok(())
+}
+
+fn prune_delivered_outbox_receipts(
+    table: &mut Table<'_, &str, &[u8]>,
+    incoming_commands: usize,
+    incoming_bytes: usize,
+) -> Result<(usize, usize, usize, u64), StoreError> {
+    let mut total_bytes = incoming_bytes;
+    let mut max_order = 0_u64;
+    let mut command_count = incoming_commands;
+    let mut delivered = Vec::new();
+    for entry in table.iter()? {
+        let (key, value) = entry?;
+        let command: OutboxCommand = serde_json::from_slice(value.value())?;
+        let command_bytes = serde_json::to_vec(&command.params)?.len();
+        total_bytes = total_bytes.saturating_add(command_bytes);
+        command_count = command_count.saturating_add(1);
+        max_order = max_order.max(command.order);
+        if command.state == OutboxState::Delivered {
+            delivered.push((
+                key.value().to_owned(),
+                command.updated_at,
+                command.order,
+                command_bytes,
+            ));
+        }
+    }
+    // Delivered rows are short-lived receipts for reconnecting clients, not
+    // permanent queue history. Keep a bounded recent window and reclaim older
+    // receipts before they can starve active commands.
+    delivered.sort_by_key(|(_, updated_at, order, _)| (*updated_at, *order));
+    let mut delivered_count = delivered.len();
+    let mut removed = 0_usize;
+    for (command_id, _, _, command_bytes) in delivered {
+        if delivered_count <= MAX_RETAINED_DELIVERED_COMMANDS
+            && command_count <= MAX_OUTBOX_COMMANDS
+            && total_bytes <= MAX_OUTBOX_BYTES
+        {
+            break;
+        }
+        table.remove(command_id.as_str())?;
+        delivered_count -= 1;
+        command_count -= 1;
+        total_bytes = total_bytes.saturating_sub(command_bytes);
+        removed += 1;
+    }
+    Ok((removed, command_count, total_bytes, max_order))
 }
 
 fn ensure_outbox_editable(command: &OutboxCommand) -> Result<(), StoreError> {

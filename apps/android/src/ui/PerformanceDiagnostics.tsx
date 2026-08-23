@@ -109,7 +109,6 @@ export function PerformanceDiagnostics() {
       setError(cause instanceof Error ? cause.message : "Could not copy diagnostics");
     }
   };
-
   return (
     <View style={styles.section}>
       <View style={styles.toggleRow}>
@@ -254,6 +253,7 @@ const STAGE_METRICS: ReadonlyArray<{ id: TimingMetric; label: string }> = [
   { id: "live_delta_to_commit_ms", label: "Projection → React commit" },
   { id: "thread_detail_projection_ms", label: "Detail projection" },
   { id: "thread_summary_projection_ms", label: "Summary projection" },
+  { id: "sqlite_subset_load_ms", label: "SQLite subset load" },
   { id: "sqlite_checkpoint_ms", label: "SQLite checkpoint" },
   { id: "markdown_parse_ms", label: "Markdown parse" },
 ];
@@ -310,6 +310,8 @@ function OperationalMetrics({ metrics }: { metrics: OperationalMetricsSnapshot }
         <Text style={styles.counterText}>event bytes {bytes(metrics.counters.native_event_bytes ?? 0)}</Text>
         <Text style={styles.counterText}>MD chars {integer(metrics.counters.markdown_parse_chars ?? 0)}</Text>
         <Text style={styles.counterText}>row commits {integer(metrics.counters.thread_row_commits ?? 0)}</Text>
+        <Text style={styles.counterText}>SQLite subset rows {integer(metrics.gauges.sqliteSubsetLastRows)} last / {integer(metrics.gauges.sqliteSubsetMaxRows)} max / {integer(metrics.counters.sqlite_subset_rows_loaded ?? 0)} total</Text>
+        <Text style={styles.counterText}>thread detail resident rows {integer(metrics.gauges.threadDetailResidentRows)}</Text>
       </View>
     </View>
   );

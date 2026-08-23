@@ -28,8 +28,8 @@ describe("Android cache storage boundary", () => {
 
   it("keeps server identity and the unfinished outbox durable", () => {
     expect(settings).toContain('name: "codex-remote-settings.db", location: "settings"');
-    expect(profiles).toContain("getSettingsPersistence()");
-    expect(profiles).not.toContain("getUiCachePersistence()");
+    expect(profiles).toContain("getSettingsSqliteDatabase()");
+    expect(profiles).not.toContain("getUiCacheSqliteDatabase()");
     expect(commandStore).toContain('context.getDatabasePath("codex-remote-native-commands.db")');
   });
 

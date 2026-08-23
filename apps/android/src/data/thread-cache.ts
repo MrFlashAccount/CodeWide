@@ -1,9 +1,8 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 
-import { THREAD_TURN_PAGE_SIZE } from "./thread-pagination";
 import { normalizeUserMessage } from "../rendering/user-message-normalizer";
 
-export const MAX_CACHED_THREAD_TURNS = THREAD_TURN_PAGE_SIZE;
+export const MAX_CACHED_THREAD_TURNS = 6;
 // This payload is parsed on the React Native JS thread when a conversation is
 // opened. Multi-megabyte rows make a tap look frozen on real Android devices.
 // Keep the recent window small enough for an interactive cold-cache read.

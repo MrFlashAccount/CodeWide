@@ -31,6 +31,20 @@ export type ContentReviewComment = {
   createdAt: number;
 };
 
+export function contentReviewTextHighlights(
+  anchors: readonly ContentReviewAnchor[],
+  targetId: string,
+  blockPath: string,
+  offset = 0,
+): Array<{ start: number; end: number }> {
+  return anchors.flatMap((anchor) => {
+    if (anchor.kind !== "text" || anchor.target.id !== targetId || anchor.blockPath !== blockPath) return [];
+    const start = Math.max(0, anchor.start - offset);
+    const end = Math.max(0, anchor.end - offset);
+    return end > start ? [{ start, end }] : [];
+  });
+}
+
 export function normalizedReviewPoint(value: number): number {
   return Math.max(0, Math.min(1, value));
 }

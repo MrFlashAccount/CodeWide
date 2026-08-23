@@ -1,17 +1,18 @@
-import { createCollection, type Collection } from "@tanstack/react-db";
-import { persistedCollectionOptions } from "@tanstack/react-native-db-sqlite-persistence";
+import type { Collection } from "@tanstack/react-db";
 
-import { getUiCachePersistence } from "./ui-cache-persistence.native";
+import { createPersistentCollectionModel } from "./persistent-collection.native";
+import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import type { TurnControlsRow } from "./turn-controls-types";
 
 /** Durable stale-while-revalidate source for model, skill and permission catalogs. */
 export function createTurnControlsCollection(): Collection<TurnControlsRow, string> {
-  return createCollection(
-    persistedCollectionOptions<TurnControlsRow, string>({
-      id: "workspace-turn-controls-v2",
-      schemaVersion: 2,
-      getKey: (row) => row.id,
-      persistence: getUiCachePersistence(),
-    }),
-  );
+  return createPersistentCollectionModel<TurnControlsRow, string>({
+    id: "workspace-turn-controls-v2",
+    tableName: "codewide_turn_controls",
+    schemaVersion: 2,
+    database: getUiCacheSqliteDatabase(),
+    getKey: (row) => row.id,
+    columns: [{ property: "updatedAt", column: "updated_at", type: "REAL" }],
+    legacyCollectionId: "workspace-turn-controls-v2",
+  }).collection;
 }

@@ -4,18 +4,12 @@ import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import { createTurnControlsCollection } from "./turn-controls-collection";
 import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
+import type { ThreadHistoryState } from "./thread-pagination";
+import { createThreadResourcesModel, type ThreadResourcesModel } from "./thread-resources-model";
 
 export type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
 
-export type ThreadLoadState = {
-  phase: "loading" | "refreshing" | "ready" | "error";
-  nextCursor: string | null;
-  loadingOlder: boolean;
-  residentOffset: number;
-  error: string | null;
-};
-
-export type ThreadLoadRow = ThreadLoadState & {
+export type ThreadHistoryRow = ThreadHistoryState & {
   id: string;
   connectionId: string;
   threadId: string;
@@ -137,15 +131,15 @@ export type ThreadResourcesRow = {
 };
 
 export type WorkspaceResourceDatabase = {
-  threadLoads: LocalCollection<ThreadLoadRow>;
+  threadHistories: LocalCollection<ThreadHistoryRow>;
   turnControls: LocalCollection<TurnControlsRow>;
   backgroundTerminals: LocalCollection<BackgroundTerminalsRow>;
   threadGoals: LocalCollection<ThreadGoalRow>;
   tunnels: LocalCollection<TunnelRow>;
   voiceInputs: LocalCollection<VoiceInputRow>;
   fileTransfers: LocalCollection<FileTransferRow>;
-  threadResources: LocalCollection<ThreadResourcesRow>;
-  putThreadLoad(row: Omit<ThreadLoadRow, "updatedAt">): void;
+  threadResources: ThreadResourcesModel;
+  putThreadHistory(row: Omit<ThreadHistoryRow, "updatedAt">): void;
   putTurnControls(row: Omit<TurnControlsRow, "updatedAt">): void;
   putBackgroundTerminals(row: Omit<BackgroundTerminalsRow, "updatedAt">): void;
   putThreadGoal(row: Omit<ThreadGoalRow, "updatedAt">): void;
@@ -156,8 +150,8 @@ export type WorkspaceResourceDatabase = {
 };
 
 export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
-  const threadLoads = createCollection(localOnlyCollectionOptions<ThreadLoadRow, string>({
-    id: "workspace-thread-loads-v1",
+  const threadHistories = createCollection(localOnlyCollectionOptions<ThreadHistoryRow, string>({
+    id: "workspace-thread-histories-v1",
     getKey: (row) => row.id,
   }));
   const turnControls = createTurnControlsCollection();
@@ -181,12 +175,9 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
     id: "workspace-file-transfers-v1",
     getKey: (row) => row.id,
   }));
-  const threadResources = createCollection(localOnlyCollectionOptions<ThreadResourcesRow, string>({
-    id: "workspace-thread-resources-v1",
-    getKey: (row) => row.id,
-  }));
+  const threadResources = createThreadResourcesModel();
   return {
-    threadLoads,
+    threadHistories,
     turnControls,
     backgroundTerminals,
     threadGoals,
@@ -194,9 +185,9 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
     voiceInputs,
     fileTransfers,
     threadResources,
-    putThreadLoad(row) {
-      put(threadLoads, { ...row, updatedAt: Date.now() });
-      trimOldest(threadLoads, 72);
+    putThreadHistory(row) {
+      put(threadHistories, { ...row, updatedAt: Date.now() });
+      trimOldest(threadHistories, 72);
     },
     putTurnControls(row) {
       put(turnControls, { ...row, updatedAt: Date.now() });
@@ -223,14 +214,13 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
       trimOldest(fileTransfers, 16);
     },
     putThreadResources(row) {
-      put(threadResources, { ...row, updatedAt: Date.now() });
-      trimOldest(threadResources, 48);
+      threadResources.put({ ...row, updatedAt: Date.now() });
     },
   };
 }
 
-export function threadLoadResourceKey(connectionId: string, threadId: string, generation: number): string {
-  return `${connectionId}\u0000${threadId}\u0000${generation}`;
+export function threadHistoryResourceKey(connectionId: string, threadId: string): string {
+  return `${connectionId}\u0000${threadId}`;
 }
 
 export function turnControlsResourceKey(connectionId: string, cwd: string): string {

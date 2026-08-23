@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { forwardRef, useId, useRef, type ComponentProps, type ForwardedRef } from "react";
+import { forwardRef, useEffectEvent, useId, useLayoutEffect, useRef, type ComponentProps, type ForwardedRef } from "react";
 import {
   ActivityIndicator,
+  findNodeHandle,
   Pressable,
   StyleSheet,
   Text as NativeText,
@@ -12,6 +13,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
+import { installLargePasteInterceptor, type LargePasteEvent } from "../native/large-paste";
 import { colors } from "../theme";
 import { productFonts } from "./product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "./typography-policy";
@@ -49,12 +51,17 @@ export type AppTextInputProps = ComponentProps<typeof NativeTextInput> & {
   voiceInput?: boolean;
   /** Stable semantic scope for composite inputs that render voice state elsewhere. */
   voiceScope?: string;
+  /** Consume clipboard text above this limit before Android chunks the paste. */
+  largePasteThreshold?: number;
+  onLargePaste?(event: LargePasteEvent): void;
 };
 
 export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(function AppTextInput({
   style,
   voiceInput,
   voiceScope,
+  largePasteThreshold,
+  onLargePaste,
   value,
   defaultValue,
   editable,
@@ -118,6 +125,15 @@ export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(funct
     inputRef.current = node;
     assignForwardedRef(forwardedRef, node);
   };
+  const handleLargePaste = useEffectEvent((event: LargePasteEvent) => onLargePaste?.(event));
+  const largePasteToken = `large-paste-${generatedId}`;
+  const largePasteEnabled = onLargePaste !== undefined && largePasteThreshold !== undefined;
+  useLayoutEffect(() => {
+    if (!largePasteEnabled || largePasteThreshold === undefined) return;
+    const reactTag = findNodeHandle(inputRef.current);
+    if (reactTag === null) return;
+    return installLargePasteInterceptor(reactTag, largePasteToken, largePasteThreshold, handleLargePaste) ?? undefined;
+  }, [largePasteEnabled, largePasteThreshold, largePasteToken]);
   const handleChangeText = (next: string) => {
     uncontrolledValueRef.current = next;
     onChangeText?.(next);

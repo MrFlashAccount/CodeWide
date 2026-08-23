@@ -1,22 +1,23 @@
-import type { SyncEvent, SyncSnapshotThread } from "@codewide/sync-client";
-import { createCollection, type Collection } from "@tanstack/react-db";
-import { persistedCollectionOptions } from "@tanstack/react-native-db-sqlite-persistence";
+import { threadIdFromEvent, type SyncEvent, type SyncSnapshotThread } from "@codewide/sync-client";
 
 import type { NativeCommandDelivery } from "../native/native-transport";
-import type { StoredThreadSummary } from "./thread-summary-types";
+import { normalizeStoredThreadSummary, type StoredThreadSummary } from "./thread-summary-types";
 import {
   projectThreadSummaryEvent,
   projectThreadSummarySnapshot,
   retainThreadSummaryMissingFromSnapshot,
   threadSummaryKey,
 } from "./thread-summary-projection";
-import { commitUiCacheSyncDurably, getUiCachePersistence } from "./ui-cache-persistence.native";
 import { SerialTaskQueue } from "./serial-task-queue";
-
-const THREAD_SUMMARY_COLLECTION_ID = "thread-summaries-v2";
+import { createThreadSummaryModel, type ThreadSummaryModel, type ThreadSummaryViewRequest, type ThreadSummaryViewResource } from "./thread-summary-model";
+import { createThreadSummarySqlite } from "./thread-summary-sqlite.native";
 
 export type ThreadSummaryDatabase = {
-  collection: Collection<StoredThreadSummary, string>;
+  readonly model: ThreadSummaryModel;
+  prepare(): Promise<void>;
+  viewResource(request: ThreadSummaryViewRequest): ThreadSummaryViewResource;
+  loadView(request: ThreadSummaryViewRequest): Promise<void>;
+  get(connectionId: string, threadId: string): Promise<StoredThreadSummary | null>;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   mergeSnapshots(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;
@@ -26,7 +27,7 @@ export type ThreadSummaryDatabase = {
   applyCommandDelivery(delivery: NativeCommandDelivery): Promise<void>;
   reconcileDeleteCommands(deliveries: readonly NativeCommandDelivery[]): Promise<void>;
   setRenameHandler(handler: ThreadRenameHandler): void;
-  search(query: string, connectionId?: string | null): StoredThreadSummary[];
+  search(query: string, connectionId?: string | null): Promise<StoredThreadSummary[]>;
   updatePinned(connectionId: string, threadId: string, pinned: boolean): Promise<void>;
   updateArchived(connectionId: string, threadId: string, archived: boolean): Promise<void>;
   updateName(connectionId: string, threadId: string, name: string): Promise<void>;
@@ -36,88 +37,78 @@ export type ThreadSummaryDatabase = {
 
 type ThreadRenameHandler = (connectionId: string, threadId: string, name: string) => Promise<void>;
 
-type SyncControls = {
-  begin(options?: { immediate?: boolean }): void;
-  write(change:
-    | { type: "insert" | "update"; value: StoredThreadSummary }
-    | { type: "delete"; key: string }
-  ): void;
-  commit(): void;
-};
-
 export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   let renameHandler: ThreadRenameHandler | null = null;
-  let controls: SyncControls | null = null;
-  let source = new Map<string, StoredThreadSummary>();
-  let bootstrapped = false;
   let disposed = false;
   const writes = new SerialTaskQueue();
+  const model = createThreadSummaryModel();
+  const storage = createThreadSummarySqlite();
+  let refreshScheduled = false;
 
-  const collection = createCollection(
-    persistedCollectionOptions<StoredThreadSummary, string>({
-      id: THREAD_SUMMARY_COLLECTION_ID,
-      // The new lifecycle fields are optional and backward compatible. Keep
-      // the schema version so an app update does not discard the offline index.
-      schemaVersion: 4,
-      getKey: (row) => threadSummaryKey(row.connectionId, row.remoteThreadId),
-      persistence: getUiCachePersistence(),
-      sync: {
-        sync: ({ begin, write, commit, markReady }) => {
-          controls = { begin, write, commit };
-          // Persistence is the warm-start source. Native snapshot/deltas replace
-          // or update it later through the same ordered Interface.
-          markReady();
-          return { cleanup: () => { controls = null; } };
-        },
-      },
-      onUpdate: async ({ transaction }) => {
-        for (const mutation of transaction.mutations) {
-          const before = mutation.original;
-          const after = mutation.modified;
-          if (before.name !== after.name) {
-            if (renameHandler === null || after.name === null) throw new Error("Thread rename transport is not ready");
-            await renameHandler(after.connectionId, after.remoteThreadId, after.name);
-          }
-          await publish(after);
-        }
-      },
-    }),
+  const loadConnectionRows = storage.loadConnectionRows;
+  const loadRows = storage.loadRows;
+  const loadRow = async (connectionId: string, threadId: string): Promise<StoredThreadSummary | undefined> => (
+    await storage.loadRow(connectionId, threadId) ?? undefined
   );
 
-  const bootstrap = (): void => {
-    if (bootstrapped) return;
-    source = new Map(collection.toArray.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]));
-    bootstrapped = true;
+  const loadView = async (request: ThreadSummaryViewRequest): Promise<void> => {
+    const generation = model.startView(request);
+    try {
+      model.commitView(request, generation, await storage.loadView(request));
+    } catch (cause) {
+      model.failView(request, generation, cause);
+      throw cause;
+    }
+  };
+
+  const scheduleActiveViewRefresh = (): void => {
+    if (refreshScheduled || disposed) return;
+    refreshScheduled = true;
+    queueMicrotask(() => {
+      refreshScheduled = false;
+      for (const request of model.activeRequests()) void loadView(request).catch(() => undefined);
+    });
+  };
+
+  const publishModelChanges = (
+    changes: readonly ({ type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string })[],
+    refillBoundedViews = false,
+  ): void => {
+    model.publish(changes);
+    if (refillBoundedViews) scheduleActiveViewRefresh();
   };
 
   const publish = async (row: StoredThreadSummary): Promise<void> => {
     await writes.run(async () => {
-      if (disposed || controls === null) return;
-      bootstrap();
-      const key = threadSummaryKey(row.connectionId, row.remoteThreadId);
-      const previous = source.get(key);
-      source.set(key, row);
-      controls.begin({ immediate: true });
-      controls.write({ type: previous === undefined ? "insert" : "update", value: row });
-      await commitUiCacheSyncDurably(THREAD_SUMMARY_COLLECTION_ID, controls.commit);
+      if (disposed) return;
+      const normalized = normalizeStoredThreadSummary(row);
+      const previous = await loadRow(normalized.connectionId, normalized.remoteThreadId);
+      storage.begin();
+      storage.write({ type: previous === undefined ? "insert" : "update", value: normalized });
+      const checkpoint = storage.commit({ durable: true });
+      publishModelChanges(
+        [{ type: previous === undefined ? "insert" : "update", value: normalized }],
+        previous !== undefined && summaryViewMembershipChanged(previous, normalized),
+      );
+      await checkpoint;
     });
   };
 
   const remove = async (key: string): Promise<void> => {
     await writes.run(async () => {
-      if (disposed || controls === null) return;
-      source.delete(key);
-      controls.begin({ immediate: true });
-      controls.write({ type: "delete", key });
-      await commitUiCacheSyncDurably(THREAD_SUMMARY_COLLECTION_ID, controls.commit);
+      if (disposed) return;
+      storage.begin();
+      storage.write({ type: "delete", key });
+      const checkpoint = storage.commit({ durable: true });
+      publishModelChanges([{ type: "delete", key }], true);
+      await checkpoint;
     });
   };
 
   const applyDeleteDelivery = async (delivery: NativeCommandDelivery): Promise<void> => {
     if (delivery.method !== "thread/delete" || delivery.threadId === null) return;
     const key = threadSummaryKey(delivery.connectionId, delivery.threadId);
-    bootstrap();
-    const row = source.get(key);
+    const row = await loadRow(delivery.connectionId, delivery.threadId);
     if (row === undefined || row.deleteCommandId !== delivery.commandId) return;
     if (delivery.state === "failed") {
       await publish({ ...row, deleteCommandId: null });
@@ -127,115 +118,148 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   };
 
   return {
-    collection,
+    model,
+    prepare: storage.prepare,
+    viewResource(request) {
+      return model.resource(request, async () => await storage.loadView(request));
+    },
+    loadView,
+    async get(connectionId, threadId) {
+      return await loadRow(connectionId, threadId) ?? null;
+    },
     async insertStartedThread(connectionId, thread) {
+      const previous = await loadRow(connectionId, thread.id);
       const mutation = projectThreadSummaryEvent(connectionId, {
         method: "thread/started",
         params: { thread },
-      }, (threadId) => {
-        bootstrap();
-        return source.get(threadSummaryKey(connectionId, threadId));
-      });
+      }, () => previous);
       if (mutation?.value !== null && mutation?.value !== undefined) await publish(mutation.value);
     },
     async applySnapshot(connectionId, snapshots) {
       await writes.run(async () => {
-        if (disposed || controls === null) return;
-        bootstrap();
+        if (disposed) return;
+        const current = new Map((await loadConnectionRows(connectionId)).map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]));
         const next = new Map<string, StoredThreadSummary>();
         for (const snapshot of snapshots) {
           if (snapshot.thread.ephemeral) continue;
           const key = threadSummaryKey(connectionId, snapshot.thread.id);
-          const previous = source.get(key);
+          const previous = current.get(key);
           next.set(key, projectThreadSummarySnapshot(connectionId, snapshot.thread, snapshot.archived, previous));
         }
-        controls.begin({ immediate: true });
+        storage.begin();
         let mutationCount = 0;
-        for (const [key, previous] of source) {
-          if (previous.connectionId !== connectionId) continue;
+        for (const [key, previous] of current) {
           if (!next.has(key)) {
             // thread/start may return an empty shell before there is a rollout
             // for thread/list to enumerate. Keep that shell until the first
             // activity event makes the server snapshot authoritative.
             if (retainThreadSummaryMissingFromSnapshot(previous)) continue;
-            source.delete(key);
-            controls.write({ type: "delete", key });
+            storage.write({ type: "delete", key });
             mutationCount += 1;
           }
         }
         for (const [key, row] of next) {
-          const previous = source.get(key);
-          source.set(key, row);
+          const previous = current.get(key);
           if (previous === undefined) {
-            controls.write({ type: "insert", value: row });
+            storage.write({ type: "insert", value: row });
             mutationCount += 1;
           } else if (!sameThreadSummary(previous, row)) {
-            controls.write({ type: "update", value: row });
+            storage.write({ type: "update", value: row });
             mutationCount += 1;
           }
         }
-        if (mutationCount === 0) controls.commit();
-        else await commitUiCacheSyncDurably(THREAD_SUMMARY_COLLECTION_ID, controls.commit);
+        const checkpoint = storage.commit({ durable: mutationCount > 0 });
+        if (mutationCount > 0) publishModelChanges([
+          ...[...current].filter(([key, previous]) => !next.has(key) && !retainThreadSummaryMissingFromSnapshot(previous)).map(([key]) => ({ type: "delete" as const, key })),
+          ...[...next].flatMap(([key, row]) => {
+            const previous = current.get(key);
+            return previous === undefined || !sameThreadSummary(previous, row)
+              ? [{ type: previous === undefined ? "insert" as const : "update" as const, value: row }]
+              : [];
+          }),
+        ], [...current].some(([key, previous]) => !next.has(key) && !retainThreadSummaryMissingFromSnapshot(previous))
+          || [...next].some(([key, row]) => {
+            const previous = current.get(key);
+            return previous !== undefined && summaryViewMembershipChanged(previous, row);
+          }));
+        await checkpoint;
       });
     },
     async mergeSnapshots(connectionId, snapshots) {
       await writes.run(async () => {
-        if (disposed || controls === null || snapshots.length === 0) return;
-        bootstrap();
+        if (disposed || snapshots.length === 0) return;
+        const existing = await loadRows(connectionId, snapshots.map(({ thread }) => thread.id));
+        const current = new Map(existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]));
         const changed = new Map<string, StoredThreadSummary>();
         for (const snapshot of snapshots) {
           if (snapshot.thread.ephemeral) continue;
           const key = threadSummaryKey(connectionId, snapshot.thread.id);
-          const previous = source.get(key);
+          const previous = current.get(key);
           const row = projectThreadSummarySnapshot(connectionId, snapshot.thread, snapshot.archived, previous);
           if (previous === undefined || !sameThreadSummary(previous, row)) changed.set(key, row);
         }
         if (changed.size === 0) return;
-        controls.begin({ immediate: true });
+        storage.begin();
         for (const [key, row] of changed) {
-          const previous = source.get(key);
-          source.set(key, row);
-          controls.write({ type: previous === undefined ? "insert" : "update", value: row });
+          const previous = current.get(key);
+          storage.write({ type: previous === undefined ? "insert" : "update", value: row });
         }
-        await commitUiCacheSyncDurably(THREAD_SUMMARY_COLLECTION_ID, controls.commit);
+        const checkpoint = storage.commit({ durable: true });
+        publishModelChanges([...changed].map(([key, row]) => ({
+          ...(current.has(key) ? { type: "update" as const } : { type: "insert" as const }),
+          value: row,
+        })), [...changed].some(([key, row]) => {
+          const previous = current.get(key);
+          return previous !== undefined && summaryViewMembershipChanged(previous, row);
+        }));
+        await checkpoint;
       });
     },
     async applyEvents(connectionId, events) {
       await writes.run(async () => {
-        if (disposed || controls === null || events.length === 0) return;
-        bootstrap();
+        if (disposed || events.length === 0) return;
+        const threadIds = [...new Set(events.flatMap((event) => {
+          const threadId = threadIdFromEvent(event.payload);
+          return threadId === null ? [] : [threadId];
+        }))];
+        const existing = await loadRows(connectionId, threadIds);
+        const current = new Map(existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]));
         const changed = new Map<string, StoredThreadSummary | null>();
         for (const event of events) {
           const mutation = projectThreadSummaryEvent(connectionId, event.payload, (threadId) => {
             const key = threadSummaryKey(connectionId, threadId);
-            return changed.get(key) ?? source.get(key) ?? undefined;
+            return changed.get(key) ?? current.get(key) ?? undefined;
           }, undefined, event.cursor);
           if (mutation !== null) changed.set(mutation.key, mutation.value);
         }
         if (changed.size === 0) return;
-        controls.begin({ immediate: true });
+        storage.begin();
         for (const [key, row] of changed) {
           if (row === null) {
-            source.delete(key);
-            controls.write({ type: "delete", key });
+            storage.write({ type: "delete", key });
           } else {
-            const previous = source.get(key);
-            source.set(key, row);
-            controls.write({ type: previous === undefined ? "insert" : "update", value: row });
+            const previous = current.get(key);
+            storage.write({ type: previous === undefined ? "insert" : "update", value: row });
           }
         }
-        await commitUiCacheSyncDurably(THREAD_SUMMARY_COLLECTION_ID, controls.commit);
+        const checkpoint = storage.commit({ durable: true });
+        publishModelChanges([...changed].map(([key, row]) => row === null
+          ? { type: "delete" as const, key }
+          : { type: current.has(key) ? "update" as const : "insert" as const, value: row }), [...changed].some(([key, row]) => {
+            if (row === null) return true;
+            const previous = current.get(key);
+            return previous !== undefined && summaryViewMembershipChanged(previous, row);
+          }));
+        await checkpoint;
       });
     },
     async beginDelete(connectionId, threadId, commandId) {
-      bootstrap();
-      const row = source.get(threadSummaryKey(connectionId, threadId));
+      const row = await loadRow(connectionId, threadId);
       if (row === undefined) return;
       await publish({ ...row, deleteCommandId: commandId });
     },
     async rollbackDelete(connectionId, threadId, commandId) {
-      bootstrap();
-      const row = source.get(threadSummaryKey(connectionId, threadId));
+      const row = await loadRow(connectionId, threadId);
       if (row === undefined || row.deleteCommandId !== commandId) return;
       await publish({ ...row, deleteCommandId: null });
     },
@@ -243,9 +267,8 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       await applyDeleteDelivery(delivery);
     },
     async reconcileDeleteCommands(deliveries) {
-      bootstrap();
       const byId = new Map(deliveries.map((delivery) => [`${delivery.connectionId}\u0000${delivery.commandId}`, delivery]));
-      for (const row of [...source.values()]) {
+      for (const row of await storage.loadAll()) {
         if (row.deleteCommandId === null || row.deleteCommandId === undefined) continue;
         const delivery = byId.get(`${row.connectionId}\u0000${row.deleteCommandId}`);
         if (delivery === undefined || delivery.state === "failed") {
@@ -258,11 +281,11 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     setRenameHandler(handler) {
       renameHandler = handler;
     },
-    search(query, connectionId = null) {
-      bootstrap();
+    async search(query, connectionId = null) {
       const needle = query.trim().toLocaleLowerCase();
       if (needle === "") return [];
-      return [...source.values()]
+      const rows = connectionId === null ? await storage.loadAll() : await loadConnectionRows(connectionId);
+      return rows
         .filter((row) => row.deleteCommandId == null
           && row.parentThreadId == null
           && (connectionId === null || row.connectionId === connectionId)
@@ -271,39 +294,27 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
         .slice(0, 200);
     },
     async updatePinned(connectionId, threadId, pinned) {
-      const key = threadSummaryKey(connectionId, threadId);
-      if (!collection.has(key)) return;
-      const transaction = collection.update(key, (draft) => { draft.pinned = pinned; });
-      await transaction.isPersisted.promise;
+      const row = await loadRow(connectionId, threadId);
+      if (row !== undefined) await publish({ ...row, pinned });
     },
     async updateArchived(connectionId, threadId, archived) {
-      const key = threadSummaryKey(connectionId, threadId);
-      if (!collection.has(key)) return;
-      const transaction = collection.update(key, (draft) => { draft.archived = archived; });
-      await transaction.isPersisted.promise;
+      const row = await loadRow(connectionId, threadId);
+      if (row !== undefined) await publish({ ...row, archived });
     },
     async updateName(connectionId, threadId, name) {
-      const key = threadSummaryKey(connectionId, threadId);
-      if (!collection.has(key)) {
-        if (renameHandler === null) throw new Error("Thread rename transport is not ready");
-        await renameHandler(connectionId, threadId, name);
-        return;
-      }
-      const transaction = collection.update(key, (draft) => { draft.name = name; });
-      await transaction.isPersisted.promise;
+      if (renameHandler === null) throw new Error("Thread rename transport is not ready");
+      await renameHandler(connectionId, threadId, name);
+      const row = await loadRow(connectionId, threadId);
+      if (row !== undefined) await publish({ ...row, name });
     },
     async markRead(connectionId, threadId) {
-      const key = threadSummaryKey(connectionId, threadId);
-      if (!collection.has(key)) return;
-      const transaction = collection.update(key, (draft) => {
-        draft.lastSeenCursor = draft.latestActivityCursor;
-        draft.unread = 0;
-      });
-      await transaction.isPersisted.promise;
+      const row = await loadRow(connectionId, threadId);
+      if (row !== undefined) await publish({ ...row, lastSeenCursor: row.latestActivityCursor, unread: 0 });
     },
     close() {
       disposed = true;
-      collection.cleanup();
+      model.close();
+      void storage.close().catch((cause: unknown) => console.warn("Could not close thread summary model", cause));
     },
   };
 
@@ -335,4 +346,12 @@ function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary
 function compareThreadSummaryRecency(left: StoredThreadSummary, right: StoredThreadSummary): number {
   if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
   return (right.recencyAt ?? right.updatedAt) - (left.recencyAt ?? left.updatedAt);
+}
+
+function summaryViewMembershipChanged(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
+  return left.connectionId !== right.connectionId
+    || left.parentThreadId !== right.parentThreadId
+    || left.pinned !== right.pinned
+    || left.archived !== right.archived
+    || left.deleteCommandId !== right.deleteCommandId;
 }

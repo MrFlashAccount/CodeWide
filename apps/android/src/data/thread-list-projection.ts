@@ -1,4 +1,5 @@
 import type { PendingServerRequest } from "./pending-request-types";
+import { replaceEqualDeep } from "./replace-equal-deep";
 import { projectThreadHotStates } from "./thread-hot-state";
 import type { StoredThreadSummary } from "./thread-summary-types";
 
@@ -18,12 +19,12 @@ export class ThreadListProjection {
     pendingRequests: readonly PendingServerRequest[],
   ): StoredThreadSummary[] {
     if (summaries === this.summaries && pendingRequests === this.pendingRequests) return this.value;
-    this.summaries = summaries;
+    this.summaries = replaceEqualDeep(this.summaries, summaries);
     this.pendingRequests = pendingRequests;
-    this.value = projectThreadHotStates(
-      summaries.filter((thread) => thread.deleteCommandId == null && thread.parentThreadId == null),
+    this.value = replaceEqualDeep(this.value, projectThreadHotStates(
+      this.summaries.filter((thread) => thread.deleteCommandId == null && thread.parentThreadId == null),
       pendingRequests,
-    ).sort(compareThreadSummaryRecency);
+    ).sort(compareThreadSummaryRecency));
     return this.value;
   }
 }

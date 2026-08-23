@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { colors, radii } from "../theme";
+import { RecoverableRenderBoundary } from "../ui/RecoverableRenderBoundary";
 
 export type BubbleVariant = "agent" | "user";
 
@@ -11,20 +12,39 @@ export type BubbleVariant = "agent" | "user";
  */
 export function Bubble({
   variant,
+  fill = false,
   testID,
+  errorLabel,
+  errorContext,
+  errorResetKey,
   children,
 }: {
   variant: BubbleVariant;
+  fill?: boolean;
   testID?: string;
+  errorLabel?: string;
+  errorContext?: string;
+  errorResetKey?: string;
   children: ReactNode;
 }) {
   return (
+    <RecoverableRenderBoundary
+      scope="bubble"
+      label={errorLabel ?? (variant === "agent" ? "Agent message" : "User message")}
+      {...(errorContext === undefined ? {} : { context: errorContext })}
+      resetKey={errorResetKey ?? `${variant}:${testID ?? "bubble"}`}
+    >
     <View
       testID={testID}
-      style={[styles.surface, variant === "agent" ? styles.agentSurface : styles.userSurface]}
+      style={[
+        styles.surface,
+        variant === "agent" ? styles.agentSurface : styles.userSurface,
+        variant === "agent" && fill ? styles.agentSurfaceFill : null,
+      ]}
     >
       {children}
     </View>
+    </RecoverableRenderBoundary>
   );
 }
 
@@ -35,7 +55,6 @@ export function BubbleContent({ children }: { children: ReactNode }) {
 const styles = StyleSheet.create({
   surface: {
     minWidth: 0,
-    maxWidth: "100%",
     borderRadius: radii.selected,
   },
   agentSurface: {
@@ -46,6 +65,10 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     backgroundColor: colors.surface,
   },
+  agentSurfaceFill: {
+    width: "88%",
+    flexShrink: 0,
+  },
   userSurface: {
     maxWidth: "82%",
     alignSelf: "flex-end",
@@ -54,5 +77,5 @@ const styles = StyleSheet.create({
     paddingBottom: 9,
     backgroundColor: colors.surfaceRaised,
   },
-  content: { minWidth: 0, maxWidth: "100%" },
+  content: { minWidth: 0 },
 });

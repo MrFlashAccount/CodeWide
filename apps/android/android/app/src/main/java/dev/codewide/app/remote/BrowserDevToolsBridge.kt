@@ -423,8 +423,10 @@ internal object BrowserDevToolsRequestAuth {
     if (parts.size != 3) return null
     val sanitizedTarget = authenticatedTarget(parts[1], token) ?: return null
     val remainingHeaders = header.substring(lineEnd + 2)
+    // Chromium rejects CDP WebSocket upgrades that contain any Origin header.
+    // Its own Android DevTools client deliberately omits Origin as well.
     val sanitizedHeaders = ORIGIN_HEADER.replace(remainingHeaders) { match ->
-      "${match.groupValues[1]}Origin: devtools://devtools"
+      match.groupValues[1]
     }
     return buildString(header.length) {
       append(parts[0])
@@ -453,7 +455,7 @@ internal object BrowserDevToolsRequestAuth {
     return if (retained.isEmpty()) path else "$path?${retained.joinToString("&")}"
   }
 
-  private val ORIGIN_HEADER = Regex("(?i)(^|\\r\\n)Origin:[^\\r\\n]*")
+  private val ORIGIN_HEADER = Regex("(?i)(^|\\r\\n)Origin:[^\\r\\n]*(?:\\r\\n|$)")
 }
 
 private fun Closeable.closeQuietly() {

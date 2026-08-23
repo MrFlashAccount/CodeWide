@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import type { ThreadChangeDiffValue, VoiceTranscriptionEvent, VoiceTranscriptionOptions, VoiceTranscriptionSession } from "../data/use-remote-workspace";
@@ -14,7 +14,7 @@ import { reviewVoiceInputScope, useVoiceInputResource, type AppVoiceInputRuntime
 import { changedFileDisplayPath } from "./changed-file-path";
 import { changeScopeTitle, codeReviewMenuActions } from "./change-menu";
 import { CodeReviewEditor } from "./CodeReviewEditor";
-import { useAsyncResource } from "./async-resource-store";
+import { useAsyncResource, useEphemeralAsyncResource } from "./async-resource-store";
 import {
   codeReviewDocumentRevision,
   codeReviewWorkspaceRevision,
@@ -79,16 +79,15 @@ export function CodeReviewWorkspace({
   const onStartVoiceTranscription: VoiceStarter | undefined = voiceRuntime?.startRemote;
   const selectionRef = useRef({ start: 0, end: 0 });
   const commentDraftRef = useRef("");
+  const resourceOwnerId = useId();
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
-  const [changes, setChanges] = useState<readonly CodeReviewFileResource[]>(initialChanges);
-  const [changeScope, setChangeScope] = useState(initialChangeScope);
-  const [changeScopes, setChangeScopes] = useState<readonly ThreadChangeScope[]>(initialChangeScopes);
-  const [scopeLoading, setScopeLoading] = useState(onInitialLoad !== undefined);
+  const [requestedScope, setRequestedScope] = useState(initialChangeScope);
+  const [scopeRevision, setScopeRevision] = useState(0);
   const [sidebarPreference, setSidebarPreference] = useState<boolean | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(
-    initialPath !== undefined && changes.some((change) => change.path === initialPath)
+    initialPath !== undefined && initialChanges.some((change) => change.path === initialPath)
       ? initialPath
-      : changes[0]?.path ?? null,
+      : initialChanges[0]?.path ?? null,
   );
   const [mode, setMode] = useState<CodeReviewViewMode>(initialLine === undefined ? initialMode : "source");
   const [wrapLines, setWrapLines] = useState(initialWrapLines);
@@ -96,6 +95,26 @@ export function CodeReviewWorkspace({
   const [commentDraft, setCommentDraft] = useState("");
   const [comments, setComments] = useState<CodeReviewComment[]>([]);
   const [attaching, setAttaching] = useState(false);
+  const shouldLoadInitialScope = requestedScope === initialChangeScope && onInitialLoad !== undefined;
+  const shouldLoadAlternateScope = requestedScope !== initialChangeScope && onLoadScope !== undefined;
+  const scopeResource = useAsyncResource<ThreadResourcesValue>(
+    shouldLoadInitialScope || shouldLoadAlternateScope
+      ? `code-review-scope:${resourceOwnerId}:${thread?.id ?? "none"}`
+      : null,
+    `${requestedScope}:${scopeRevision}`,
+    async () => shouldLoadInitialScope
+      ? await onInitialLoad!()
+      : await onLoadScope!(requestedScope),
+  );
+  const loadedScope = scopeResource.value;
+  const changes: readonly CodeReviewFileResource[] = loadedScope === null
+    ? initialChanges
+    : loadedScope.changes.map((change) => initialChanges.some((initial) => initial.path === change.path && initial.sourceOnly === true)
+      ? { ...change, sourceOnly: true }
+      : change);
+  const changeScope = loadedScope?.changeScope ?? initialChangeScope;
+  const changeScopes = loadedScope?.changeScopes ?? initialChangeScopes;
+  const scopeLoading = scopeResource.status === "loading";
   const revealReference: CodeReviewLineReference | null = initialPath !== undefined && initialLine !== undefined
     ? {
         path: initialPath,
@@ -112,8 +131,8 @@ export function CodeReviewWorkspace({
   const documentRevision = selectedChange === null
     ? "none"
     : `${changeScope}:${selectedChange.turnId}:${selectedChange.itemId}:${selectedChange.additions}:${selectedChange.deletions}:${selectedChange.availability}:${selectedChange.sourceOnly === true ? "source" : "diff"}:${sourceOverrides?.[selectedChange.path] ?? "remote"}`;
-  const documentResource = useAsyncResource<CodeReviewResourceValue>(
-    selectedChange === null ? null : `code-review:${thread?.id ?? "none"}:${selectedChange.path}`,
+  const documentResource = useEphemeralAsyncResource<CodeReviewResourceValue>(
+    selectedChange === null ? null : `code-review:${resourceOwnerId}:${thread?.id ?? "none"}:${selectedChange.path}`,
     documentRevision,
     async (publish, signal) => {
       if (selectedChange === null) throw new Error("No changed file selected");
@@ -123,7 +142,7 @@ export function CodeReviewWorkspace({
   );
   const document = documentResource.value?.document ?? null;
   const hasDiff = document !== null && document.patches.length > 0;
-  const loadError = documentResource.error;
+  const loadError = documentResource.error ?? scopeResource.error;
   const documentWarning = documentResource.value?.warning ?? null;
   const diffTruncated = documentResource.value?.diffTruncated ?? false;
   const loading = documentResource.status === "loading" || documentResource.status === "idle";
@@ -149,30 +168,6 @@ export function CodeReviewWorkspace({
     sourceOnly: change.sourceOnly === true,
   }));
   const workspaceRevision = codeReviewWorkspaceRevision(reviewFiles);
-
-  const applyResource = (resource: ThreadResourcesValue) => {
-    setChanges(resource.changes);
-    setChangeScope(resource.changeScope);
-    setChangeScopes(resource.changeScopes);
-    setSelectedPath((current) => resource.changes.some((change) => change.path === current) ? current : resource.changes[0]?.path ?? null);
-    setSelectedReference(null);
-  };
-
-  useEffect(() => {
-    if (onInitialLoad === undefined) return;
-    let mounted = true;
-    void onInitialLoad().then(
-      (resource) => {
-        if (mounted) applyResource(resource);
-      },
-      (cause: unknown) => {
-        if (mounted) dialog.alert("Changes unavailable", cause instanceof Error ? cause.message : "Could not load changes");
-      },
-    ).finally(() => {
-      if (mounted) setScopeLoading(false);
-    });
-    return () => { mounted = false; };
-  }, [dialog, onInitialLoad]);
 
   const selectFile = (change: ThreadChangeResource) => {
     setSelectedPath(change.path);
@@ -253,14 +248,10 @@ export function CodeReviewWorkspace({
     if (id.startsWith("scope:")) {
       const scope = id.slice("scope:".length) as ThreadChangeScope;
       if (!changeScopes.includes(scope) || scope === changeScope || onLoadScope === undefined || scopeLoading) return;
-      setScopeLoading(true);
-      void onLoadScope(scope).then(
-        (resource) => {
-          applyResource(resource);
-          notifyPreferences(resource.changeScope, mode, wrapLines);
-        },
-        (cause: unknown) => dialog.alert("Changes unavailable", cause instanceof Error ? cause.message : "Could not load changes"),
-      ).finally(() => setScopeLoading(false));
+      setRequestedScope(scope);
+      setScopeRevision((current) => current + 1);
+      setSelectedReference(null);
+      notifyPreferences(scope, mode, wrapLines);
       return;
     }
     if (id.startsWith("view:")) {

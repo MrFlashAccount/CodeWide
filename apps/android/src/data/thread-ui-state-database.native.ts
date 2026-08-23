@@ -1,10 +1,10 @@
 import { MAX_TURN_TEXT_CHARS } from "@codewide/sync-client";
-import { createCollection, type Collection } from "@tanstack/react-db";
-import { persistedCollectionOptions } from "@tanstack/react-native-db-sqlite-persistence";
+import type { Collection } from "@tanstack/react-db";
 
-import { getUiCachePersistence } from "./ui-cache-persistence.native";
+import { createPersistentCollectionModel } from "./persistent-collection.native";
+import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
+import { sanitizeHistoryAnchorOffset } from "./thread-history-anchor";
 import type {
-  LegacyThreadUiState,
   StoredComposerPreferences,
   StoredDraftAttachment,
   ThreadUiStateRow,
@@ -13,24 +13,34 @@ import type {
 export type ThreadUiStateDatabase = {
   collection: Collection<ThreadUiStateRow, string>;
   get(connectionId: string, threadId: string): ThreadUiStateRow | null;
-  seedLegacy(connectionId: string, threadId: string, state: LegacyThreadUiState): Promise<ThreadUiStateRow>;
+  /** Stable React resource for the persisted composer/anchor row. */
+  read(connectionId: string, threadId: string): Promise<ThreadUiStateRow>;
+  getOrCreate(connectionId: string, threadId: string): Promise<ThreadUiStateRow>;
   saveDraft(connectionId: string, threadId: string, text: string): Promise<void>;
   saveAttachments(connectionId: string, threadId: string, attachments: StoredDraftAttachment[]): Promise<void>;
-  saveScrollOffset(connectionId: string, threadId: string, offset: number): Promise<void>;
+  saveScrollOffset(connectionId: string, threadId: string, offset: number, historyAnchorTurnId: string | null, historyAnchorOffsetPx: number | null): Promise<void>;
   savePreferences(connectionId: string, threadId: string, preferences: StoredComposerPreferences): Promise<void>;
   deleteConnection(connectionId: string): Promise<void>;
   close(): void;
 };
 
 export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
-  const collection = createCollection(
-    persistedCollectionOptions<ThreadUiStateRow, string>({
-      id: "thread-ui-state-v1",
-      schemaVersion: 1,
-      getKey: (row) => row.id,
-      persistence: getUiCachePersistence(),
-    }),
-  );
+  const model = createPersistentCollectionModel<ThreadUiStateRow, string>({
+    id: "thread-ui-state-v1",
+    tableName: "codewide_thread_ui_state",
+    schemaVersion: 1,
+    database: getUiCacheSqliteDatabase(),
+    getKey: (row) => row.id,
+    columns: [
+      { property: "connectionId", column: "connection_id", type: "TEXT" },
+      { property: "threadId", column: "thread_id", type: "TEXT" },
+      { property: "updatedAt", column: "updated_at", type: "REAL" },
+    ],
+    indexes: [["connectionId", "threadId"]],
+    legacyCollectionId: "thread-ui-state-v1",
+  });
+  const { collection } = model;
+  const reads = new Map<string, Promise<ThreadUiStateRow>>();
 
   const get = (connectionId: string, threadId: string): ThreadUiStateRow | null => {
     return collection.get(threadUiStateKey(connectionId, threadId)) ?? null;
@@ -41,6 +51,7 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     threadId: string,
     apply: (draft: ThreadUiStateRow) => void,
   ): Promise<void> => {
+    await model.ready;
     const id = threadUiStateKey(connectionId, threadId);
     const current = collection.get(id);
     const transaction = current === undefined
@@ -52,10 +63,8 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     await transaction.isPersisted.promise;
   };
 
-  return {
-    collection,
-    get,
-    async seedLegacy(connectionId, threadId, state) {
+  const getOrCreate = async (connectionId: string, threadId: string): Promise<ThreadUiStateRow> => {
+      await model.ready;
       const existing = get(connectionId, threadId);
       if (existing !== null) return existing;
       const id = threadUiStateKey(connectionId, threadId);
@@ -63,17 +72,35 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
         id,
         connectionId,
         threadId,
-        draftText: boundedDraft(state.draftText),
-        attachments: sanitizeDraftAttachments(state.attachments),
-        scrollOffset: boundedScrollOffset(state.scrollOffset),
-        preferences: clonePreferences(state.preferences),
-        migratedFromLegacy: true,
+        draftText: "",
+        attachments: [],
+        scrollOffset: null,
+        historyAnchorTurnId: null,
+        historyAnchorOffsetPx: null,
+        preferences: null,
         updatedAt: Date.now(),
       };
       const transaction = collection.insert(row);
       await transaction.isPersisted.promise;
       return row;
+  };
+
+  return {
+    collection,
+    get,
+    read(connectionId, threadId) {
+      const id = threadUiStateKey(connectionId, threadId);
+      let resource = reads.get(id);
+      if (resource === undefined) {
+        resource = getOrCreate(connectionId, threadId).catch((cause: unknown) => {
+          if (reads.get(id) === resource) reads.delete(id);
+          throw cause;
+        });
+        reads.set(id, resource);
+      }
+      return resource;
     },
+    getOrCreate,
     async saveDraft(connectionId, threadId, text) {
       const value = boundedDraft(text);
       await patch(connectionId, threadId, (draft) => { draft.draftText = value; });
@@ -82,15 +109,23 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       const value = sanitizeDraftAttachments(attachments);
       await patch(connectionId, threadId, (draft) => { draft.attachments = value; });
     },
-    async saveScrollOffset(connectionId, threadId, offset) {
+    async saveScrollOffset(connectionId, threadId, offset, historyAnchorTurnId, historyAnchorOffsetPx) {
       const value = boundedScrollOffset(offset) ?? 0;
-      await patch(connectionId, threadId, (draft) => { draft.scrollOffset = value; });
+      await patch(connectionId, threadId, (draft) => {
+        draft.scrollOffset = value;
+        draft.historyAnchorTurnId = boundedHistoryAnchor(historyAnchorTurnId);
+        draft.historyAnchorOffsetPx = boundedHistoryAnchorOffset(historyAnchorOffsetPx);
+      });
     },
     async savePreferences(connectionId, threadId, preferences) {
       const value = clonePreferences(preferences);
       await patch(connectionId, threadId, (draft) => { draft.preferences = value; });
     },
     async deleteConnection(connectionId) {
+      await model.ready;
+      for (const key of reads.keys()) {
+        if (key.startsWith(`${connectionId}\u0000`)) reads.delete(key);
+      }
       const keys = collection.toArray
         .filter((row) => row.connectionId === connectionId)
         .map((row) => row.id);
@@ -99,7 +134,8 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       await transaction.isPersisted.promise;
     },
     close() {
-      collection.cleanup();
+      reads.clear();
+      model.close();
     },
   };
 }
@@ -117,8 +153,9 @@ function createDefaultRow(
     draftText: "",
     attachments: [],
     scrollOffset: null,
+    historyAnchorTurnId: null,
+    historyAnchorOffsetPx: null,
     preferences: null,
-    migratedFromLegacy: true,
     updatedAt: Date.now(),
   };
   apply(row);
@@ -133,6 +170,15 @@ function boundedDraft(text: string): string {
 function boundedScrollOffset(offset: number | null): number | null {
   if (offset === null) return null;
   return Number.isFinite(offset) ? Math.max(0, offset) : 0;
+}
+
+function boundedHistoryAnchor(turnId: string | null): string | null {
+  if (turnId === null) return null;
+  return turnId.length > 0 && turnId.length <= 512 && !/[\u0000-\u001f\u007f]/u.test(turnId) ? turnId : null;
+}
+
+function boundedHistoryAnchorOffset(offset: number | null): number | null {
+  return sanitizeHistoryAnchorOffset(offset);
 }
 
 function clonePreferences(preferences: StoredComposerPreferences | null): StoredComposerPreferences | null {

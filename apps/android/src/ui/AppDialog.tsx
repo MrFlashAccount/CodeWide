@@ -1,5 +1,6 @@
-import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, type ReactNode, useContext, useMemo, useState } from "react";
 
+import { useEvent } from "../react/useEvent";
 import { AppDialogSurface } from "./AppDialogSurface";
 import type { AppDialogAction, AppDialogRequest } from "./AppDialog.types";
 
@@ -11,7 +12,7 @@ const AppDialogContext = createContext<AppDialogController | null>(null);
 
 export function AppDialogProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<{ isOpen: boolean; request: AppDialogRequest | null }>({ isOpen: false, request: null });
-  const alert = useCallback((title: string, message?: string, actions?: readonly AppDialogAction[]) => {
+  const alert = useEvent((title: string, message?: string, actions?: readonly AppDialogAction[]) => {
     setState({
       isOpen: true,
       request: {
@@ -20,13 +21,13 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
         actions: actions === undefined || actions.length === 0 ? [{ text: "OK" }] : actions,
       },
     });
-  }, []);
+  });
   const controller = useMemo<AppDialogController>(() => ({ alert }), [alert]);
-  const dismiss = useCallback(() => setState((current) => ({ ...current, isOpen: false })), []);
-  const handleAction = useCallback((action: AppDialogAction) => {
+  const dismiss = useEvent(() => setState((current) => ({ ...current, isOpen: false })));
+  const handleAction = useEvent((action: AppDialogAction) => {
     setState((current) => ({ ...current, isOpen: false }));
     action.onPress?.();
-  }, []);
+  });
 
   return (
     <AppDialogContext.Provider value={controller}>

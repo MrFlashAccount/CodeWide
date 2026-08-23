@@ -57,7 +57,7 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
       {...(contentProps.enableOverDrag === undefined ? {} : { enableOverDrag: contentProps.enableOverDrag })}
       enablePanDownToClose={contentProps.enablePanDownToClose ?? true}
       handleComponent={null}
-      backgroundStyle={styles.transparentBackground}
+      backgroundStyle={styles.sheetBackground}
       onClose={() => onOpenChange(false)}
     >
       <BottomSheetView style={[styles.frame, expanded && styles.expandedFrame]}>
@@ -95,8 +95,8 @@ export function AppSheetScrollView({ nestedScrollEnabled = true, ...props }: Scr
 }
 
 const styles = StyleSheet.create({
-  transparentBackground: {
-    backgroundColor: "transparent",
+  sheetBackground: {
+    backgroundColor: colors.surfaceContainerHigh,
   },
   frame: {
     width: "100%",

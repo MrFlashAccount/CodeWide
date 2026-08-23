@@ -14,8 +14,8 @@ import type { Personality } from "@codewide/codex-protocol/v0.147.0";
 import { connectionId, normalizeThreadItem } from "@codewide/domain";
 import { projectCompleteMarkdown, projectMarkdownStream } from "@codewide/rendering-core";
 import { toRenderBlock, type RenderBlock, type RenderContentReference } from "@codewide/renderers";
-import { latestProjectedThreadExecutionSettings, MAX_TURN_TEXT_CHARS, projectedThreadExecutionSettings, projectedTurnMetadata, type OutputFootprintProjection, type TurnUsageProjection } from "@codewide/sync-client";
-import { and, eq, gte, lte, or, useLiveQuery } from "@tanstack/react-db";
+import { latestProjectedThreadExecutionSettings, MAX_TURN_ATTACHMENTS, MAX_TURN_TEXT_CHARS, projectedThreadExecutionSettings, projectedTurnMetadata, type OutputFootprintProjection, type TurnUsageProjection } from "@codewide/sync-client";
+import { eq, useLiveQuery } from "@tanstack/react-db";
 import { Gesture, GestureDetector, Pressable as GesturePressable } from "react-native-gesture-handler";
 import Swipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { KeyboardController, KeyboardGestureArea, KeyboardStickyView } from "react-native-keyboard-controller";
@@ -28,10 +28,9 @@ import Reanimated, {
 import * as Clipboard from "expo-clipboard";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import Constants from "expo-constants";
-import { createContext, type ReactNode, useCallback, useContext, useDeferredValue, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, memo, Profiler, Suspense, type ProfilerOnRenderCallback, type ReactNode, useContext, useDeferredValue, useId, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import {
   ActivityIndicator,
-  BackHandler,
   Image,
   KeyboardAvoidingView,
   Linking,
@@ -51,26 +50,42 @@ import { WebView } from "react-native-webview";
 import { colors, radii, spacing, touchTarget, typeScale } from "./theme";
 import { useRemoteWorkspace, type BackgroundTerminal, type ComposerAttachment, type QueuedPrompt, type RemoteWorkspace, type SendMode, type ThreadChangeDiffValue, type ThreadGoalInput, type ThreadSettings, type TunnelPreview, type TurnControls, type TurnSendOptions, type VoiceTranscriptionEvent, type VoiceTranscriptionOptions, type VoiceTranscriptionSession } from "./data/use-remote-workspace";
 import type { ThreadForkOptions } from "./data/thread-fork";
-import { advanceResidentOffset, retreatResidentOffset, shouldPrefetchOlderPage, THREAD_RESIDENT_TURN_LIMIT, THREAD_TURN_PAGE_SIZE } from "./data/thread-pagination";
-import { mergeProjectedThreadPartitions, mergeThreadPartitions } from "./data/thread-partitions";
+import { THREAD_RESIDENT_TURN_LIMIT, type ResidentRangeDirection, type ThreadHistoryState } from "./data/thread-pagination";
+import { COMPLETE_STATIC_THREAD_HISTORY, useThreadHistoryController, type ThreadHistoryViewport } from "./data/use-thread-history-controller";
+import { useThreadChatWindow } from "./data/use-thread-chat-window";
+import { useThreadUiState } from "./data/use-thread-ui-state";
+import { useThreadResources } from "./data/use-thread-resources";
+import type { ThreadResourcesModel } from "./data/thread-resources-model";
+import { useRemoteProjectCatalog } from "./data/use-remote-project-catalog";
+import { useDeepLinkListener } from "./data/use-deep-link-listener";
+import { useSecondClock } from "./data/second-clock";
+import type { ThreadChatWindowRequest } from "./data/thread-chat-model";
+import { projectThreadChatWindow } from "./data/thread-chat-projection";
+import { mergeThreadLoadStatuses, threadLoadBlocksPresentation } from "./data/thread-load-status";
+import { mergeProjectedThreadPartitions } from "./data/thread-partitions";
 import { plainThreadPreview } from "./data/thread-cache";
-import { materializePendingTimeline, materializeThreadDetails, materializeThreadTurns, type ThreadDetailDatabase } from "./data/thread-detail-database";
+import type { ThreadDetailDatabase } from "./data/thread-detail-database";
 import type { ThreadSummaryDatabase } from "./data/thread-summary-database";
+import { useThreadSummaryView } from "./data/use-thread-summary-view";
 import { subagentActivityTargetThreadId, subagentDisplayName, subagentsForThread } from "./data/subagent-projection";
-import { deriveThreadProjects, projectLabel, threadContextLabel } from "./data/thread-projects";
+import { projectLabel, threadContextLabel } from "./data/thread-projects";
 import type { RemoteDirectoryEntry, RemoteProject } from "./data/remote-projects";
 import type { DraftSelection } from "./data/voice-draft";
 import { isProfileOnlyConnectionUpdate, validateConnectionProfile, validateConnectionUpdateInput, type ConnectionInput, type ConnectionUpdateInput } from "./data/connection-validation";
 import { resolveComposerSendMode, type ComposerSendPreference } from "./data/composer-delivery-mode";
-import { reconcileComposerLatestValue } from "./data/composer-latest-value";
+import { useComposerLatestValues } from "./data/use-composer-latest-values";
+import { mergeFailedComposerAttachments, mergeFailedComposerText, rollbackOwnedModelSelection } from "./data/composer-mutation-recovery";
 import { validateGoalEditorDraft } from "./data/goal-editor";
 import { currentThreadContextUsage, selectWeeklyRateLimit, type AccountRateLimitsRow } from "./data/account-rate-limits";
 import { accountProfileLabel, type AccountPoolSnapshot } from "./data/account-pool";
 import { formatDeviceTime } from "./data/device-time";
 import { isSafeHttpUrl, mcpElicitationFields, parseElicitationValue } from "./data/elicitation-form";
 import { parseThreadDeepLink } from "./data/deep-link";
+import { AUTO_ATTACH_PASTE_MIN_CHARS, captureClipboardLargePaste, type ClipboardLargePasteCapture } from "./data/composer-paste-attachment";
+import type { LargePasteEvent } from "./native/large-paste";
+import { useEvent } from "./react/useEvent";
 import { incrementDiagnosticMetric, liveStreamMetricKey, operationalDiagnosticsEnabled, recordLiveRenderCommit, recordTiming } from "./data/operational-metrics";
-import { beginThreadNavigation, finalizeThreadNavigationProfile, markThreadNavigationStage, recordThreadNavigationRowCommit } from "./data/thread-navigation-metrics";
+import { activeThreadNavigationIdFor, beginThreadNavigation, finalizeThreadNavigationProfile, hasActiveThreadNavigation, isThreadNavigationActiveFor, markThreadNavigationStage, measureThreadNavigationWork, recordActiveThreadNavigationMeasure, recordThreadNavigationMeasure, recordThreadNavigationRowCommit } from "./data/thread-navigation-metrics";
 import { usePerformanceExperiment, usePerformanceExperiments } from "./data/performance-experiments";
 import { beginNavigationFrameTrace, endNavigationFrameTrace } from "./native/performance-metrics";
 import { humanPairingError } from "./data/pairing-error";
@@ -80,18 +95,23 @@ import {
   createNativePortForwardId,
   nativePortForwardingStore,
   useNativePortForwarding,
+  type NativePortForwardingSnapshot,
 } from "./data/native-port-forwarding-store";
 import {
   closeInteractiveTerminalWorkspace,
   createInteractiveTerminalTab,
+  readInteractiveTerminalWorkspace,
   useInteractiveTerminalWorkspace,
 } from "./data/interactive-terminal-store";
 import { effectiveTurnLifecycleStatus, isThreadLifecycleActive } from "./data/thread-lifecycle";
 import type { StoredConnection } from "./data/connection-profile-types";
 import type { PendingServerRequest } from "./data/pending-request-types";
 import type { StoredThreadSummary } from "./data/thread-summary-types";
+import { ThreadListProjection } from "./data/thread-list-projection";
+import { SubagentListProjection } from "./data/subagent-projection";
 import type { StoredComposerPreferences, ThreadUiStateRow } from "./data/thread-ui-state-types";
-import { threadLoadResourceKey, threadResourceKey, tunnelResourceKey, turnControlsResourceKey, type BackgroundTerminalsRow, type FileTransferRow, type ThreadAttachmentResource, type ThreadChangeResource, type ThreadChangeScope, type ThreadGoalRow, type ThreadLoadState, type ThreadResourcesRow, type ThreadResourcesValue, type TunnelRow, type TurnControlsRow, type VoiceInputRow } from "./data/workspace-resource-database";
+import { threadHistoryResourceKey, threadResourceKey, tunnelResourceKey, turnControlsResourceKey, type BackgroundTerminalsRow, type FileTransferRow, type ThreadAttachmentResource, type ThreadChangeResource, type ThreadChangeScope, type ThreadGoalRow, type ThreadResourcesRow, type ThreadResourcesValue, type TunnelRow, type TurnControlsRow, type VoiceInputRow, type WorkspaceResourceDatabase } from "./data/workspace-resource-database";
+import { useBackgroundTerminalsRow, useThreadGoalRow, useTunnelRow, useTurnControlsRow } from "./data/use-workspace-resource-row";
 import type { VoiceInputController } from "./data/voice-input-controller";
 import type { FileTransferController } from "./data/file-transfer-controller";
 import { ATTACHMENT_ROOT_ID, attachmentUploadPath } from "./data/attachment-upload";
@@ -110,27 +130,27 @@ import { CodeReviewWorkspace } from "./rendering/CodeReviewWorkspace";
 import { changeScopeMenuActions, changeScopeTitle } from "./rendering/change-menu";
 import { codeReviewFilesForDocument } from "./rendering/code-review-files";
 import { serializeCodeReviewAttachment, type CodeReviewComment } from "./rendering/code-review";
-import { useContentReviewRuntime } from "./rendering/ContentReviewHost";
+import { ContentReviewComposer, useContentReviewRuntime } from "./rendering/ContentReviewHost";
 import type { ContentReviewTarget } from "./rendering/content-review";
 import { collapsedCodePreview, nativeCodeLanguageForPath, stripTerminalControlSequences } from "./rendering/native-code-block";
 import { boundedJsonStringify } from "./rendering/bounded-json";
-import { useAsyncResource } from "./rendering/async-resource-store";
+import { useAsyncResource, useEphemeralAsyncResource } from "./rendering/async-resource-store";
 import { changedFileDisplayPath } from "./rendering/changed-file-path";
 import { projectFileChange } from "./rendering/file-change-rendering";
 import { privateImageAssetProjection, safeImageUri } from "./rendering/image-source";
-import { readPrivateAssetText, type GetTransferAccess, type PrivateAssetSource } from "./data/private-transfer";
+import { privateAssetCacheKey, readPrivateAssetText, type GetTransferAccess, type PrivateAssetSource, type PrivateAssetTextResult } from "./data/private-transfer";
 import { projectCachedLiveMarkdown, projectCachedLiveText, type LiveMarkdownProjection } from "./rendering/live-text-stream";
 import { mergeChronologicalTimeline, protocolTimestampMs } from "./rendering/optimistic-timeline";
 import { reasoningActivityTitle } from "./rendering/reasoning-title";
+import { richMarkdownLayout } from "./rendering/rich-markdown-layout";
 import { selectLiveTurnPlan } from "./rendering/live-turn-plan";
 import { isAgentMessageStillStreaming, selectTurnRenderWindow } from "./rendering/thread-render-window";
-import { turnProjectionTopologyRevision } from "./rendering/turn-projection-cache";
-import { ThreadTimelineList, type ThreadTimelineListRef } from "./rendering/ThreadTimelineList";
+import { ThreadTimelineList, type ThreadTimelineListRef, type TimelineInitialPosition } from "./rendering/ThreadTimelineList";
 import { useTimelineOverlayScrollGuard } from "./rendering/use-timeline-overlay-scroll-guard";
 import { optimisticTimelineKey, remoteTurnTimelineKey } from "./rendering/timeline-identity";
 import { activeTurnSequence, type TurnSequencePart } from "./rendering/turn-sequence";
 import { Bubble, BubbleContent } from "./rendering/Bubble";
-import { shouldMarkAgentResponseRead } from "./rendering/unread-visibility";
+import { claimUnreadReceipt, shouldMarkAgentResponseRead } from "./rendering/unread-visibility";
 import { normalizeUserMessage } from "./rendering/user-message-normalizer";
 import { projectUserMessageAttachments, type UserMessageAttachment } from "./rendering/user-message-attachments";
 import { composerAttachmentPreviewKind, composerAttachmentSource } from "./rendering/composer-attachment-preview";
@@ -161,12 +181,18 @@ import { PortForwardingManager, type PortForwardingManagerProps } from "./ui/Por
 import { ProjectPickerSheet } from "./ui/ProjectPickerSheet";
 import { TerminalWorkspace } from "./ui/TerminalWorkspace";
 import { InternalBrowser } from "./ui/InternalBrowser";
+import { useAndroidBackHandler } from "./ui/use-android-back-handler";
+import { useUnmount } from "./ui/use-unmount";
+import { CommitOnChangeProbe, EveryCommitProbe } from "./ui/CommitProbe";
+import { useConversationOwner } from "./ui/use-conversation-owner";
 
 const ALL_SERVERS_ID = "__all_servers__";
+const THREAD_LIST_PAGE_SIZE = 40;
+const SUBAGENT_LIST_LIMIT = 200;
 
 type ServerStatus = "live" | "syncing" | "offline" | "connecting" | "degraded" | "authRequired";
 
-type DemoServer = {
+type ThreadListServer = {
   id: string;
   name: string;
   emoji: string;
@@ -176,12 +202,13 @@ type DemoServer = {
   tlsPinSha256?: string;
 };
 
-type DemoThread = {
+type ThreadListItem = {
   id: string;
   serverId: string;
   title: string;
   preview: string;
-  time: string;
+  time?: string;
+  timestamp?: number;
   pinned: boolean;
   archived?: boolean;
   unread: number;
@@ -195,12 +222,6 @@ type NewChatDraft = {
   workspaceMode: NewChatWorkspaceMode;
 };
 
-type InjectedTestWorkspace = {
-  servers: DemoServer[];
-  threads: DemoThread[];
-  thread: Thread | null;
-  controls: TurnControls | null;
-};
 const COLLAPSED_BODY_CHARS = 360;
 const EXPANDED_BODY_CHARS = 96_000;
 const TOOL_RESULT_MAX_HEIGHT = 400;
@@ -228,6 +249,7 @@ const EMPTY_COMPOSER_PREFERENCES: StoredComposerPreferences = {
 const EMPTY_COMPOSER_ATTACHMENTS: ComposerAttachment[] = [];
 const LATEST_TIMELINE_THRESHOLD_PX = 2;
 const sessionConversationScrollOffsets = new Map<string, number>();
+const sessionConversationHistoryAnchors = new Map<string, { turnId: string; viewportOffsetPx: number | null }>();
 const ForceExpandCardsContext = createContext(false);
 const ActiveToolCallContext = createContext(false);
 const TurnActivityContentContext = createContext(false);
@@ -383,6 +405,108 @@ function ComposerContextCount({
   );
 }
 
+function ThreadResourceContextChips({
+  model,
+  resourceId,
+  revision,
+  load,
+  preferences,
+  onPreferencesChange,
+  onOpen,
+}: {
+  model: ThreadResourcesModel | null;
+  resourceId: string | null;
+  revision: string;
+  load(scope?: ThreadChangeScope, kind?: "all" | "changes" | "attachments"): Promise<ThreadResourcesValue>;
+  preferences: ChangesPreferences;
+  onPreferencesChange(preferences: ChangesPreferences): void;
+  onOpen(kind: "changes" | "attachments"): void;
+}) {
+  const dialog = useAppDialog();
+  const resource = useThreadResources(model, resourceId, () => load(), { revision });
+  const pending = (kind: "changes" | "attachments") => resource === null
+    || (resource.pendingKinds === undefined
+      ? resource.status === "loading"
+      : resource.pendingKinds.includes(kind));
+  const ready = (kind: "changes" | "attachments") => resource?.readyKinds === undefined
+    ? resource?.value != null
+    : resource.readyKinds.includes(kind);
+  const changesPending = pending("changes");
+  const attachmentsPending = pending("attachments");
+  const changesReady = ready("changes");
+  const attachmentsReady = ready("attachments");
+  const changesInitialLoading = changesPending && !changesReady;
+  const attachmentsInitialLoading = attachmentsPending && !attachmentsReady;
+  const changesError = resource?.resourceErrors?.changes
+    ?? (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
+  const attachmentsError = resource?.resourceErrors?.attachments
+    ?? (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
+  const changeCount = resource?.value?.changes.length ?? 0;
+  const attachmentCount = resource?.value?.attachments.length ?? 0;
+  const changeScopes = resource?.value?.changeScopes ?? ["session" as const, "lastTurn" as const];
+  const changeScope = preferences.scope !== null && changeScopes.includes(preferences.scope)
+    ? preferences.scope
+    : resource?.value?.changeScope ?? changeScopes[0] ?? "session";
+  const changesEmpty = changesReady && changeCount === 0;
+  const attachmentsEmpty = attachmentsReady && attachmentCount === 0;
+  const changesLabel = changesInitialLoading
+    ? "Loading changes…"
+    : changesError !== null && !changesReady
+      ? "Changes unavailable"
+      : changesEmpty ? "No changes" : `Changes · ${changeCount}`;
+  const attachmentsLabel = attachmentsInitialLoading
+    ? "Loading attachments…"
+    : attachmentsError !== null && !attachmentsReady
+      ? "Attachments unavailable"
+      : attachmentsEmpty ? "No attachments" : `Attachments · ${attachmentCount}`;
+  const selectScope = (id: string) => {
+    if (!id.startsWith("scope:")) return;
+    const scope = id.slice("scope:".length) as ThreadChangeScope;
+    if (!changeScopes.includes(scope)) return;
+    onPreferencesChange({ ...preferences, scope });
+    void load(scope, "changes").catch((cause) => {
+      dialog.alert("Changes unavailable", cause instanceof Error ? cause.message : "Could not load changes");
+    });
+  };
+  return (
+    <>
+      <ActionMenu
+        accessibilityLabel="Choose changes scope"
+        actions={changeScopeMenuActions(changeScopes, changeScope)}
+        trigger="long-press"
+        placement="top"
+        align="start"
+        onSelect={selectScope}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${changesLabel}, ${changeScopeTitle(changeScope)}. Long press to choose changes scope.`}
+          onPress={() => onOpen("changes")}
+          style={styles.composerContextChip}
+        >
+          <Ionicons name="git-compare-outline" size={15} color={changesEmpty ? colors.textDim : colors.textMuted} />
+          {changesInitialLoading || changesEmpty || changesError !== null && !changesReady
+            ? <ComposerContextLabel loading={changesInitialLoading} testID="composer-changes-label" text={changesLabel} />
+            : <ComposerContextCount label="Changes" value={changeCount} testID="composer-changes-label" />}
+        </Pressable>
+      </ActionMenu>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={attachmentsLabel}
+        accessibilityState={{ disabled: attachmentsEmpty }}
+        disabled={attachmentsEmpty}
+        onPress={() => onOpen("attachments")}
+        style={[styles.composerContextChip, attachmentsEmpty && styles.disabled]}
+      >
+        <Ionicons name="attach-outline" size={15} color={attachmentsEmpty ? colors.textDim : colors.textMuted} />
+        {attachmentsInitialLoading || attachmentsEmpty || attachmentsError !== null && !attachmentsReady
+          ? <ComposerContextLabel loading={attachmentsInitialLoading} testID="composer-attachments-label" text={attachmentsLabel} />
+          : <ComposerContextCount label="Attachments" value={attachmentCount} testID="composer-attachments-label" />}
+      </Pressable>
+    </>
+  );
+}
+
 function pairingParseResult(raw: string): { value: ReturnType<typeof parsePairingPayload>; error: null } | { value: null; error: string } {
   try {
     return { value: parsePairingPayload(raw), error: null };
@@ -415,16 +539,480 @@ type TimelineItem =
   | { kind: "optimistic"; scope: string; id: string; text: string; attachments: ComposerAttachment[]; status: "sending" | "uncertain" | "failed" | "delivered"; workspaceRequestId?: string | null; lastError: string | null; createdAt: number }
   | { kind: "meta"; key: string; status: "completed" | "interrupted" | "failed" | "inProgress"; durationMs: number | null; completedAt: number | null };
 
-const timelineRowCache = new WeakMap<Thread["turns"][number], Extract<TimelineItem, { kind: "turn" }>>();
-const liveBlockProjectionCache = new WeakMap<object, { revision: string; block: RenderBlock }>();
-const timelineViewabilityConfig = { itemVisiblePercentThreshold: 1 };
+function ActiveNavigationReactProfiler({ name, children }: { name: string; children: ReactNode }) {
+  if (!hasActiveThreadNavigation()) return <>{children}</>;
+  const onRender: ProfilerOnRenderCallback = (_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+    recordActiveThreadNavigationMeasure(name, actualDuration, {
+      values: {
+        baseDurationMs: baseDuration,
+        renderToCommitMs: Math.max(0, commitTime - startTime),
+        schedulerWaitMs: Math.max(0, commitTime - startTime - actualDuration),
+      },
+      tags: { phase },
+    });
+  };
+  return <Profiler id={name} onRender={onRender}>{children}</Profiler>;
+}
 
+function NavigationReactProfiler({
+  connectionId,
+  threadId,
+  name,
+  children,
+}: {
+  connectionId: string;
+  threadId: string | null;
+  name: string;
+  children: ReactNode;
+}) {
+  if (threadId === null || !isThreadNavigationActiveFor(connectionId, threadId)) return <>{children}</>;
+  const onRender: ProfilerOnRenderCallback = (_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+    recordThreadNavigationMeasure(connectionId, threadId, name, actualDuration, {
+      values: {
+        baseDurationMs: baseDuration,
+        renderToCommitMs: Math.max(0, commitTime - startTime),
+        schedulerWaitMs: Math.max(0, commitTime - startTime - actualDuration),
+      },
+      tags: { phase },
+    });
+  };
+  return <Profiler id={name} onRender={onRender}>{children}</Profiler>;
+}
+
+function ThreadTimelineNavigationCommit({
+  connectionId,
+  threadId,
+  modelReady,
+  visible,
+  itemCount,
+  turnCount,
+  loadStatus,
+  restoreOffset,
+  restoreAnchorTurnId,
+  children,
+}: {
+  connectionId: string | null;
+  threadId: string | null;
+  modelReady: boolean;
+  visible: boolean;
+  itemCount: number;
+  turnCount: number;
+  loadStatus: ThreadHistoryViewport["status"];
+  restoreOffset: number | null;
+  restoreAnchorTurnId: string | null;
+  children: ReactNode;
+}) {
+  const scopeReportedRef = useRef(false);
+  const modelReportedRef = useRef(false);
+  const visibleReportedRef = useRef(false);
+  const navigationIdRef = useRef<string | null>(null);
+  const nextFrameRef = useRef<number | null>(null);
+  const nextFrameReportedRef = useRef(false);
+  const onCommit = () => {
+    if (connectionId === null || threadId === null) return;
+    const activeNavigationId = activeThreadNavigationIdFor(connectionId, threadId);
+    if (activeNavigationId === null) return;
+    if (navigationIdRef.current !== activeNavigationId) {
+      if (nextFrameRef.current !== null) cancelAnimationFrame(nextFrameRef.current);
+      navigationIdRef.current = activeNavigationId;
+      scopeReportedRef.current = false;
+      modelReportedRef.current = false;
+      visibleReportedRef.current = false;
+      nextFrameReportedRef.current = false;
+      nextFrameRef.current = null;
+    }
+    const navigationId = activeNavigationId;
+    if (!scopeReportedRef.current) {
+      scopeReportedRef.current = true;
+      markThreadNavigationStage(connectionId, threadId, "scope_commit", {
+        values: { restoredOffsetPx: restoreOffset ?? 0 },
+        tags: { restore: restoreOffset === null ? "waiting_for_cursor" : restoreAnchorTurnId === null ? "latest" : "semantic_anchor" },
+      }, navigationId);
+    }
+    if (modelReady && !modelReportedRef.current) {
+      modelReportedRef.current = true;
+      markThreadNavigationStage(connectionId, threadId, "timeline_model_ready", {
+        values: { itemCount, turnCount },
+        tags: { loadStatus },
+      }, navigationId);
+    }
+    if (visible && !visibleReportedRef.current) {
+      visibleReportedRef.current = true;
+      markThreadNavigationStage(connectionId, threadId, "visible_commit", {
+        values: { itemCount },
+        tags: { timeline: itemCount === 0 ? "empty" : "populated" },
+      }, navigationId);
+    }
+    if (!visible || nextFrameReportedRef.current || nextFrameRef.current !== null) return;
+    nextFrameRef.current = requestAnimationFrame(() => {
+      nextFrameRef.current = null;
+      const completed = markThreadNavigationStage(connectionId, threadId, "next_frame", {
+        values: { itemCount },
+      }, navigationId);
+      if (completed !== null) {
+        nextFrameReportedRef.current = true;
+        void endNavigationFrameTrace(completed.id)
+          .then((frames) => finalizeThreadNavigationProfile(completed, frames));
+      }
+    });
+    return () => {
+      if (nextFrameRef.current !== null) cancelAnimationFrame(nextFrameRef.current);
+      nextFrameRef.current = null;
+    };
+  };
+  return <>{children}<EveryCommitProbe onCommit={onCommit} /></>;
+}
+
+type ConversationPaneProps = Parameters<typeof ConversationPane>[0];
+
+type ConversationDestinationBaseProps = Omit<ConversationPaneProps,
+  | "remoteThread"
+  | "remoteSealedTurns"
+  | "remoteLiveTurns"
+  | "pendingDeliveries"
+  | "queuedPrompts"
+  | "composerState"
+  | "historyRestoreReady"
+  | "historyViewport"
+  | "onLoadTurnItems"
+> & {
+  navigationKey: string;
+  navigationConnectionId: string;
+  navigationThreadId: string | null;
+};
+
+type MainConversationDetailProps = ConversationDestinationBaseProps & {
+  remote: RemoteWorkspace;
+  connectionId: string;
+  threadId: string;
+  threadOpenGeneration: number;
+  connectionAvailable: boolean;
+  threadLifecycleActive: boolean;
+};
+
+/**
+ * The main-chat destination owns the same single suspending window read as a
+ * subagent detail. Nothing selection-specific is read by the workspace above
+ * this component's Suspense boundary.
+ */
+function MainConversationDetail({
+  remote,
+  connectionId,
+  threadId,
+  threadOpenGeneration,
+  connectionAvailable,
+  threadLifecycleActive,
+  navigationKey,
+  navigationConnectionId,
+  navigationThreadId,
+  ...conversation
+}: MainConversationDetailProps) {
+  const uiStateDatabase = remote.threadUiStateDatabase;
+  const chatDatabase = remote.threadDetails;
+  if (uiStateDatabase === null || chatDatabase === null) {
+    throw new Error("Native conversation databases are unavailable");
+  }
+
+  const summaryView = useThreadSummaryView(remote.threadSummaryDatabase, {
+    // A transition keeps the previous conversation mounted while this
+    // destination suspends. Give every destination its own summary owner so
+    // the previous passive cleanup cannot evict or reconfigure the resource
+    // that just revealed the next conversation.
+    viewId: `conversation:${connectionId}:${threadId}`,
+    connectionId: null,
+    recentLimit: 0,
+    archivedLimit: 0,
+    selectedConnectionId: connectionId,
+    selectedThreadId: threadId,
+    subagentConnectionId: null,
+    subagentLimit: 0,
+  });
+  const storedThread = summaryView?.selected[0] ?? null;
+  const composerState = useThreadUiState(uiStateDatabase, connectionId, threadId);
+  const historyResourceId = threadHistoryResourceKey(connectionId, threadId);
+  const historyQuery = useLiveQuery(
+    (query) => remote.resourceDatabase === null
+      ? undefined
+      : query
+          .from({ load: remote.resourceDatabase.threadHistories })
+          .where(({ load }) => eq(load.id, historyResourceId)),
+    [historyResourceId, remote.resourceDatabase],
+  );
+  const historyResourceRaw = historyQuery.data?.[0] ?? null;
+  const chatWindowRequest: ThreadChatWindowRequest = {
+    connectionId,
+    threadId,
+    anchorTurnId: composerState.historyAnchorTurnId ?? null,
+    residentHistoryEpoch: historyResourceRaw?.historyEpoch ?? null,
+    residentMaxOrdinal: historyResourceRaw === null ? undefined : historyResourceRaw.residentMaxOrdinal,
+    residentTurnLimit: historyResourceRaw?.residentTurnLimit ?? THREAD_RESIDENT_TURN_LIMIT,
+  };
+  const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest);
+  if (chatWindow === null) throw new Error("Conversation window is unavailable");
+
+  const chatSnapshot = chatWindow.snapshot;
+  const historyEpoch = chatSnapshot.historyEpoch;
+  const historyResource = historyResourceRaw?.historyEpoch === historyEpoch ? historyResourceRaw : null;
+  const putHistoryState = (state: ThreadHistoryState): void => {
+    remote.resourceDatabase?.putThreadHistory({
+      id: historyResourceId,
+      connectionId,
+      threadId,
+      generation: threadOpenGeneration,
+      ...state,
+    });
+  };
+  const readHistoryState = (): ThreadHistoryState | null => {
+    const row = remote.resourceDatabase?.threadHistories.get(historyResourceId) ?? null;
+    return row?.historyEpoch === historyEpoch ? row : null;
+  };
+  const projection = projectThreadChatWindow(chatDatabase, chatWindow, connectionId, threadId, false);
+  const remoteThread = projection.remoteThread ?? storedThread?.provisionalThread ?? null;
+  const provisionalThread = storedThread?.provisionalThread ?? null;
+  const historyRestoreReady = !threadLoadBlocksPresentation(chatSnapshot.status);
+  const persistedResidentMaxOrdinal = chatSnapshot.requestedMaxOrdinal ?? null;
+  const activeResidentMaxOrdinal = historyResource?.residentMaxOrdinal ?? persistedResidentMaxOrdinal;
+  const residentTurnLimit = historyResource?.residentTurnLimit
+    ?? chatSnapshot.residentTurnLimit
+    ?? THREAD_RESIDENT_TURN_LIMIT;
+  const residentOrdinalBounds = (() => {
+    if (chatWindow.turnRows.length === 0) return null;
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const row of chatWindow.turnRows) {
+      min = Math.min(min, row.ordinal);
+      max = Math.max(max, row.ordinal);
+    }
+    return { min, max };
+  })();
+  const windowReady = chatSnapshot.status === "ready"
+    || chatSnapshot.status === "background-updating"
+    || chatSnapshot.status === "background-retrying";
+  const historyState: ThreadHistoryState = historyResource ?? {
+    historyEpoch,
+    status: provisionalThread !== null ? "ready" : remoteThread === null ? "initial-loading" : "background-updating",
+    nextCursor: null,
+    residentTurnLimit,
+    residentMaxOrdinal: persistedResidentMaxOrdinal,
+    error: null,
+  };
+  const presentationState: ThreadHistoryState = {
+    ...historyState,
+    status: mergeThreadLoadStatuses(chatSnapshot.status, historyState.status),
+  };
+  const hydrationTaskKey = !connectionAvailable || !historyRestoreReady
+    ? null
+    : `thread-hydration:${historyResourceId}:${threadOpenGeneration}:${historyEpoch}:${provisionalThread === null ? "materialized" : "provisional"}`;
+  useAsyncResource<ThreadHistoryState>("active-thread-hydration", hydrationTaskKey ?? "inactive", async (_publish, signal) => {
+    if (hydrationTaskKey === null) return historyState;
+    const cachedSnapshotAvailable = remoteThread !== null;
+    const loadingState: ThreadHistoryState = {
+      historyEpoch,
+      status: cachedSnapshotAvailable ? "background-updating" : "initial-loading",
+      nextCursor: historyResource?.nextCursor ?? null,
+      residentTurnLimit,
+      residentMaxOrdinal: historyResource?.residentMaxOrdinal ?? persistedResidentMaxOrdinal,
+      error: null,
+    };
+    putHistoryState(loadingState);
+    const openedAt = monotonicNowMs();
+    const navigationId = activeThreadNavigationIdFor(connectionId, threadId);
+    if (navigationId !== null) markThreadNavigationStage(connectionId, threadId, "hydration_start", {}, navigationId);
+    const result = await remote.readThread(connectionId, threadId, null).then(
+      (window) => ({ window, cause: null }),
+      (cause: unknown) => ({ window: null, cause }),
+    );
+    if (navigationId !== null) {
+      markThreadNavigationStage(connectionId, threadId, "hydration_result", {
+        values: { rpcMs: monotonicNowMs() - openedAt },
+        tags: { outcome: signal.aborted ? "aborted" : result.cause === null ? "success" : provisionalThread === null ? "error" : "provisional" },
+      }, navigationId);
+    }
+    if (signal.aborted) return loadingState;
+    if (result.cause !== null) {
+      const current = readHistoryState();
+      const state: ThreadHistoryState = provisionalThread !== null
+        ? { ...(current ?? loadingState), status: "ready", error: null }
+        : {
+            ...(current ?? loadingState),
+            status: cachedSnapshotAvailable ? "background-retrying" : "initial-error",
+            error: result.cause instanceof Error ? result.cause.message : "Could not load messages",
+          };
+      putHistoryState(state);
+      return state;
+    }
+    if (result.window !== null) recordTiming("thread_fresh_visible_ms", monotonicNowMs() - openedAt);
+    const current = readHistoryState();
+    const state: ThreadHistoryState = {
+      ...(current ?? loadingState),
+      status: result.window === null ? cachedSnapshotAvailable ? "background-retrying" : "initial-error" : "ready",
+      nextCursor: result.window?.nextCursor ?? current?.nextCursor ?? null,
+      error: result.window === null ? "Could not load messages" : null,
+    };
+    putHistoryState(state);
+    return state;
+  });
+
+  const staleLifecycleTurnId = !connectionAvailable || threadLifecycleActive || remoteThread === null
+    ? null
+    : activeTurnId(remoteThread);
+  const lifecycleRepairTaskKey = staleLifecycleTurnId === null
+    ? null
+    : `thread-lifecycle-repair:${connectionId}:${threadId}:${staleLifecycleTurnId}`;
+  useAsyncResource<boolean>("active-thread-lifecycle-repair", lifecycleRepairTaskKey ?? "inactive", async () => {
+    if (staleLifecycleTurnId === null) return false;
+    await remote.reconcileThreadLifecycle(connectionId, threadId, staleLifecycleTurnId, remoteThread as Thread);
+    return true;
+  });
+
+  const historyViewport = useThreadHistoryController({
+    enabled: true,
+    resourceId: historyResourceId,
+    connectionId,
+    threadId,
+    historyEpoch,
+    state: historyResource,
+    presentationState,
+    residentTurnRows: chatWindow.turnRows,
+    liveRows: chatWindow.liveRows,
+    residentOrdinalBounds,
+    presentedResidentMaxOrdinal: chatSnapshot.requestedMaxOrdinal ?? activeResidentMaxOrdinal,
+    persistedMinimumOrdinal: chatSnapshot.earliestSealedOrdinal,
+    latestSealedOrdinal: chatSnapshot.latestSealedOrdinal,
+    residentQueryReady: windowReady,
+    putState: putHistoryState,
+    loadOlderTurns: remote.loadOlderTurns,
+  });
+
+  return (
+    <NavigationReactProfiler connectionId={navigationConnectionId} threadId={navigationThreadId} name="react_conversation_commit">
+      <ConversationPane
+        key={navigationKey}
+        {...conversation}
+        remoteThread={remoteThread}
+        remoteSealedTurns={projection.remoteSealedTurns}
+        remoteLiveTurns={projection.remoteLiveTurns}
+        pendingDeliveries={projection.pendingDeliveries}
+        queuedPrompts={projection.queuedPrompts}
+        composerState={composerState}
+        historyRestoreReady={historyRestoreReady}
+        historyViewport={historyViewport}
+        onLoadTurnItems={async (turnId) => { await remote.loadTurnItems(connectionId, threadId, turnId); }}
+        subagentSummaryDatabase={remote.threadSummaryDatabase}
+      />
+    </NavigationReactProfiler>
+  );
+}
+
+type NewConversationDetailProps = ConversationDestinationBaseProps & {
+  remote: RemoteWorkspace;
+  connectionId: string;
+  draftId: string;
+};
+
+function NewConversationDetail({
+  remote,
+  connectionId,
+  draftId,
+  navigationKey,
+  navigationConnectionId,
+  navigationThreadId,
+  ...conversation
+}: NewConversationDetailProps) {
+  const uiStateDatabase = remote.threadUiStateDatabase;
+  if (uiStateDatabase === null) throw new Error("Native composer database is unavailable");
+  const composerState = useThreadUiState(uiStateDatabase, connectionId, draftId);
+  return (
+    <NavigationReactProfiler connectionId={navigationConnectionId} threadId={navigationThreadId} name="react_conversation_commit">
+      <ConversationPane
+        key={navigationKey}
+        {...conversation}
+        remoteThread={null}
+        remoteSealedTurns={[]}
+        remoteLiveTurns={[]}
+        pendingDeliveries={[]}
+        queuedPrompts={[]}
+        composerState={composerState}
+        historyRestoreReady
+        historyViewport={COMPLETE_STATIC_THREAD_HISTORY}
+        subagentSummaryDatabase={remote.threadSummaryDatabase}
+      />
+    </NavigationReactProfiler>
+  );
+}
+
+type ConversationDestinationProps = ConversationDestinationBaseProps & {
+  route:
+    | {
+        kind: "thread";
+        remote: RemoteWorkspace;
+        connectionId: string;
+        threadId: string;
+        threadOpenGeneration: number;
+        connectionAvailable: boolean;
+        threadLifecycleActive: boolean;
+      }
+    | {
+        kind: "new";
+        remote: RemoteWorkspace;
+        connectionId: string;
+        draftId: string;
+      };
+};
+
+/** Chooses one destination. Each destination owns its only suspending read below the local boundary. */
+function ConversationDestination({ route, ...conversation }: ConversationDestinationProps) {
+  return route.kind === "thread"
+    ? <MainConversationDetail {...conversation} {...route} />
+    : <NewConversationDetail {...conversation} {...route} />;
+}
+
+function ConversationNavigationLoader({
+  thread,
+  server,
+  cwd = "/workspace",
+  compact = false,
+  onBack,
+}: {
+  thread: ThreadListItem | null;
+  server: ThreadListServer | undefined;
+  cwd: string | undefined;
+  compact: boolean | undefined;
+  onBack: (() => void) | undefined;
+}) {
+  return (
+    <View style={styles.conversation} testID="conversation-navigation-loader">
+      <View style={styles.conversationKeyboard}>
+        <View style={styles.conversationHeader}>
+          {compact && onBack !== undefined ? (
+            <Pressable onPress={onBack} style={styles.headerIcon} accessibilityLabel="Back to threads">
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
+            </Pressable>
+          ) : null}
+          <View style={styles.conversationIdentity}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={styles.conversationTitle}>
+              {thread === null ? "Loading thread…" : emojiSafeTitle(thread.title)}
+            </Text>
+            <Text numberOfLines={1} ellipsizeMode="middle" style={styles.conversationSubtitle}>
+              {threadContextLabel(server?.name ?? "", cwd)}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.emptyConversation}>
+          <ActivityIndicator size="small" color={colors.accent} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const timelineRowCache = new WeakMap<Thread["turns"][number], Extract<TimelineItem, { kind: "turn" }>>();
 function projectTimelineTurns(
   turns: readonly Thread["turns"][number][],
   composerScope: string,
   connectionId: string,
   threadId: string,
-  threadState?: DemoThread["state"],
+  threadState?: ThreadListItem["state"],
 ): Extract<TimelineItem, { kind: "turn" }>[] {
   return turns.map((rawTurn) => {
     const effectiveStatus = threadState === undefined
@@ -464,22 +1052,124 @@ class ScrollOffsetMemory {
   write(value: number): void { this.#value = value; }
 }
 
-class DemoComposerMemory {
-  readonly #drafts = new Map<string, string>();
-  readonly #attachments = new Map<string, ComposerAttachment[]>();
-  readonly #preferences = new Map<string, StoredComposerPreferences>();
-
-  read(scope: string): { draft: string; attachments: ComposerAttachment[]; preferences: StoredComposerPreferences } {
-    return {
-      draft: this.#drafts.get(scope) ?? "",
-      attachments: structuredClone(this.#attachments.get(scope) ?? []),
-      preferences: this.#preferences.get(scope) ?? EMPTY_COMPOSER_PREFERENCES,
-    };
-  }
-
-  writeDraft(scope: string, text: string): void { this.#drafts.set(scope, text); }
-  writeAttachments(scope: string, attachments: ComposerAttachment[]): void { this.#attachments.set(scope, structuredClone(attachments)); }
-  writePreferences(scope: string, preferences: StoredComposerPreferences): void { this.#preferences.set(scope, preferences); }
+function nativePortForwardingManagerProps(
+  connectionId: string,
+  serverName: string,
+  snapshot: NativePortForwardingSnapshot,
+  onOpen: (title: string, url: string) => void,
+): PortForwardingManagerProps {
+  const profiles = snapshot.profiles;
+  return {
+    serverName,
+    profiles,
+    discoveredPorts: snapshot.discoveredPorts,
+    discoveryStatus: snapshot.discoveryStatus,
+    discoveryError: snapshot.discoveryError,
+    onOpen: (profile) => {
+      if (profile.status === "live" && profile.previewUrl !== null) onOpen(profile.label, profile.previewUrl);
+    },
+    onRefresh: async () => await nativePortForwardingStore.refreshDiscovery(connectionId),
+    onSelectPort: async (candidate) => {
+      await nativePortForwardingStore.upsert({
+        connectionId,
+        profileId: createNativePortForwardId(),
+        label: candidate.name,
+        remotePort: candidate.port,
+        preferredLocalPort: null,
+        startImmediately: true,
+        serviceKey: candidate.forwardingKey,
+        preference: "included",
+      });
+    },
+    onExcludePort: async (candidate) => {
+      await nativePortForwardingStore.upsert({
+        connectionId,
+        profileId: `excluded-${candidate.forwardingKey.slice(0, 40)}`,
+        label: candidate.name,
+        remotePort: candidate.port,
+        preferredLocalPort: null,
+        startImmediately: false,
+        serviceKey: candidate.forwardingKey,
+        preference: "excluded",
+      });
+    },
+    onAdd: async (input) => {
+      await nativePortForwardingStore.upsert({
+        connectionId,
+        profileId: createNativePortForwardId(),
+        label: input.label,
+        remotePort: input.remotePort,
+        preferredLocalPort: input.preferredLocalPort,
+        startImmediately: input.startImmediately,
+        serviceKey: null,
+        preference: "included",
+      });
+    },
+    onEdit: async (profileId, input) => {
+      const existing = profiles.find((profile) => profile.id === profileId);
+      await nativePortForwardingStore.upsert({
+        connectionId,
+        profileId,
+        label: input.label,
+        remotePort: input.remotePort,
+        preferredLocalPort: input.preferredLocalPort,
+        startImmediately: input.startImmediately,
+        serviceKey: existing?.serviceKey ?? null,
+        preference: existing?.preference === "excluded" ? "included" : existing?.preference ?? "included",
+      });
+    },
+    onStart: async (profileId) => {
+      const profile = profiles.find((candidate) => candidate.id === profileId);
+      if (profile?.preference !== "excluded") {
+        await nativePortForwardingStore.start(connectionId, profileId);
+        return;
+      }
+      await nativePortForwardingStore.setPreference({
+        connectionId,
+        profileId,
+        label: profile.label,
+        remotePort: profile.remotePort,
+        preferredLocalPort: profile.preferredLocalPort,
+        serviceKey: profile.serviceKey,
+        preference: "included",
+        startImmediately: true,
+      });
+    },
+    onStop: async (profileId) => {
+      const profile = profiles.find((candidate) => candidate.id === profileId);
+      if (profile === undefined || profile.serviceKey === null) {
+        await nativePortForwardingStore.stop(connectionId, profileId);
+        return;
+      }
+      await nativePortForwardingStore.setPreference({
+        connectionId,
+        profileId,
+        label: profile.label,
+        remotePort: profile.remotePort,
+        preferredLocalPort: profile.preferredLocalPort,
+        serviceKey: profile.serviceKey,
+        preference: "excluded",
+        startImmediately: false,
+      });
+    },
+    onReconnect: async (profileId) => await nativePortForwardingStore.reconnect(connectionId, profileId),
+    onRemove: async (profileId) => await nativePortForwardingStore.remove(connectionId, profileId),
+    onSetPreference: async (profileId, preference) => {
+      const profile = profiles.find((candidate) => candidate.id === profileId);
+      if (profile === undefined) throw new Error("Port forward not found");
+      const candidate = snapshot.discoveredPorts.find((value) => value.forwardingKey === profile.serviceKey);
+      await nativePortForwardingStore.setPreference({
+        connectionId,
+        profileId,
+        label: profile.label,
+        remotePort: candidate?.port ?? profile.remotePort,
+        preferredLocalPort: profile.preferredLocalPort,
+        serviceKey: profile.serviceKey,
+        preference,
+        startImmediately: preference === "included" || (preference === "automatic" && candidate?.defaultForwardingEnabled === true),
+      });
+    },
+  };
 }
 
 export function CodeWideScreen() {
@@ -487,10 +1177,15 @@ export function CodeWideScreen() {
   const windowLayout = useWindowLayout();
   const insets = useSafeAreaInsets();
   const remote = useRemoteWorkspace();
-  return <CodeWideWorkspaceScreen desktop={windowLayout.desktop} viewportWidth={windowLayout.width} insets={insets} remote={remote} />;
+  return (
+    <ActiveNavigationReactProfiler name="react_workspace_commit">
+      <CodeWideWorkspaceScreen desktop={windowLayout.desktop} viewportWidth={windowLayout.width} insets={insets} remote={remote} />
+    </ActiveNavigationReactProfiler>
+  );
 }
 
 function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { desktop: boolean; viewportWidth: number; insets: ReturnType<typeof useSafeAreaInsets>; remote: RemoteWorkspace }) {
+  const [, startThreadTransition] = useTransition();
   const accountRateLimitsQuery = useLiveQuery(
     () => remote.accountRateLimitsDatabase?.collection,
     [remote.accountRateLimitsDatabase],
@@ -498,11 +1193,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const accountRateLimits = accountRateLimitsQuery.data ?? [];
   const dialog = useAppDialog();
   const reduceVoiceMotion = useReducedMotionPreference();
-  const [testWorkspace] = useState(injectedTestWorkspace);
-  const [injectedRemoteThread] = useState(() => injectedTestThread() ?? testWorkspace?.thread ?? null);
-  const [demoServerState, setDemoServerState] = useState<DemoServer[]>(() => testWorkspace?.servers ?? []);
-  const [demoThreadState, setDemoThreadState] = useState<DemoThread[]>(() => testWorkspace?.threads ?? []);
   const [connectionSheetVisible, setConnectionSheetVisible] = useState(false);
+  const [connectionSheetOpenedAt, setConnectionSheetOpenedAt] = useState(Date.now);
   const [pendingPairingCode, setPendingPairingCode] = useState<string | null>(null);
   const [newThreadVisible, setNewThreadVisible] = useState(false);
   const [newChatDraft, setNewChatDraft] = useState<NewChatDraft | null>(null);
@@ -512,81 +1204,17 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const [mobileThreadQuery, setMobileThreadQuery] = useState("");
   const [mobileThreadOffset] = useState(() => new ScrollOffsetMemory());
   const [threadListMode, setThreadListMode] = useState<ThreadListMode>("active");
-  const demoForkCounterRef = useRef(0);
-  const demoDeliveryCounterRef = useRef(0);
-  const [demoComposerMemory] = useState(() => new DemoComposerMemory());
-  const [demoPendingDeliveries, setDemoPendingDeliveries] = useState<Array<NativeCommandDelivery & { attachments: ComposerAttachment[] }>>([]);
-  const [projectsByConnection, setProjectsByConnection] = useState<Record<string, RemoteProject[]>>({});
-  const [projectErrorsByConnection, setProjectErrorsByConnection] = useState<Record<string, string | null>>({});
-  const demoScrollOffsetsRef = useRef(new Map<string, number>());
-  const saveDemoDraft = async (serverId: string, threadId: string, text: string) => {
-    demoComposerMemory.writeDraft(`${serverId}\u0000${threadId}`, text);
-  };
-  const saveDemoDraftAttachments = async (serverId: string, threadId: string, attachments: ComposerAttachment[]) => {
-    demoComposerMemory.writeAttachments(`${serverId}\u0000${threadId}`, attachments);
-  };
-  const loadDemoScrollOffset = async (serverId: string, threadId: string) => demoScrollOffsetsRef.current.get(`${serverId}\u0000${threadId}`) ?? null;
-  const saveDemoScrollOffset = async (serverId: string, threadId: string, offset: number) => {
-    demoScrollOffsetsRef.current.set(`${serverId}\u0000${threadId}`, offset);
-  };
-  const saveDemoPreferences = async (serverId: string, threadId: string, preferences: StoredComposerPreferences) => {
-    demoComposerMemory.writePreferences(`${serverId}\u0000${threadId}`, preferences);
-  };
-  const servers: DemoServer[] = remote.native
-    ? [...remote.connections.map((server) => ({
+  const servers: ThreadListServer[] = [...remote.connections.map((server) => ({
         id: server.id,
         name: server.displayName,
         emoji: server.emoji,
         status: server.enabled ? server.state : "offline",
-      }))]
-    : demoServerState;
-  const settingsConnections: StoredConnection[] = remote.native
-    ? remote.connections
-    : demoServerState.map((server, index) => ({
-        id: server.id,
-        displayName: server.name,
-        emoji: server.emoji,
-        endpoint: server.endpoint ?? `wss://${server.id}.example.test/v1/sync`,
-        token: server.token ?? "d".repeat(43),
-        ...(server.tlsPinSha256 === undefined ? {} : { tlsPinSha256: server.tlsPinSha256 }),
-        enabled: server.status !== "offline",
-        sortOrder: index,
-        state: server.status,
-        lastError: null,
-        lastErrorAt: null,
-      }));
-  const projectConnectionKey = remote.connections
-    .filter((connection) => connection.enabled && (connection.state === "live" || connection.state === "syncing"))
-    .map((connection) => `${connection.id}:${connection.state}`)
-    .sort()
-    .join("|");
-  const loadProjects = useEffectEvent(async (connectionId: string) => await remote.listProjects(connectionId));
-  useEffect(() => {
-    if (!remote.native || projectConnectionKey === "") return;
-    let cancelled = false;
-    const connectionIds = projectConnectionKey.split("|").map((entry) => entry.slice(0, entry.lastIndexOf(":")));
-    for (const connectionId of connectionIds) {
-      void loadProjects(connectionId).then(
-        (projects) => {
-          if (cancelled) return;
-          setProjectsByConnection((current) => ({ ...current, [connectionId]: projects }));
-          setProjectErrorsByConnection((current) => ({ ...current, [connectionId]: null }));
-        },
-        (cause: unknown) => {
-          if (cancelled) return;
-          setProjectErrorsByConnection((current) => ({
-            ...current,
-            [connectionId]: cause instanceof Error ? cause.message : "Could not load projects",
-          }));
-        },
-      );
-    }
-    return () => { cancelled = true; };
-  }, [projectConnectionKey, remote.native]);
-  const threads: DemoThread[] = remote.native
-    ? remote.threads.map(storedThreadToDemo)
-    : demoThreadState;
-  const [requestedServerId, setActiveServerId] = useState(remote.native ? (desktop ? "" : ALL_SERVERS_ID) : (desktop ? (testWorkspace?.servers[0]?.id ?? "") : ALL_SERVERS_ID));
+      }))];
+  const settingsConnections: StoredConnection[] = remote.connections;
+  const projectCatalog = useRemoteProjectCatalog(remote.native, remote.connections, remote.listProjects);
+  const projectsByConnection = projectCatalog.projectsByConnection;
+  const projectErrorsByConnection = projectCatalog.errorsByConnection;
+  const [requestedServerId, setActiveServerId] = useState(desktop ? "" : ALL_SERVERS_ID);
   const activeServerId = servers.length === 0
     ? desktop ? "" : ALL_SERVERS_ID
     : !desktop && requestedServerId === ALL_SERVERS_ID
@@ -594,48 +1222,103 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
       : servers.some((server) => server.id === requestedServerId)
         ? requestedServerId
         : servers[0]?.id ?? "";
-  const [threadSelection, setThreadSelection] = useState(() => ({
-    id: desktop && !remote.native && testWorkspace?.threads[0] !== undefined ? threadSelectionKey(testWorkspace.threads[0]) : null as string | null,
-    generation: 0,
-  }));
+  const [threadSelection, setThreadSelection] = useState(() => ({ id: null as string | null, generation: 0 }));
   const requestedThreadId = threadSelection.id;
+  const requestedThreadTarget = parseThreadSelectionKey(requestedThreadId);
   const threadOpenGeneration = threadSelection.generation;
-  const setActiveThreadId = (value: string | null, refreshIfSelected = false) => {
+  const [threadListLimit, setThreadListLimit] = useState(THREAD_LIST_PAGE_SIZE);
+  const [threadListProjection] = useState(() => new ThreadListProjection());
+  const threadConnectionId = activeServerId === ALL_SERVERS_ID || activeServerId === ""
+    ? null
+    : activeServerId;
+  const threadSummaryView = useThreadSummaryView(remote.threadSummaryDatabase, {
+    connectionId: threadConnectionId,
+    recentLimit: threadListLimit,
+    archivedLimit: threadListLimit,
+    selectedConnectionId: null,
+    selectedThreadId: null,
+    subagentConnectionId: null,
+    subagentLimit: 0,
+  });
+  const pinnedThreadSummaryRows = threadSummaryView?.pinned ?? [];
+  const recentThreadSummaryRows = threadSummaryView?.recent ?? [];
+  const archivedThreadSummaryRows = threadSummaryView?.archived ?? [];
+  const loadedThreadSummaries = deduplicateThreadSummaries([
+    ...pinnedThreadSummaryRows,
+    ...recentThreadSummaryRows,
+    ...archivedThreadSummaryRows,
+  ]);
+  const projectedThreadSummaries = threadListProjection.project(loadedThreadSummaries, remote.pendingRequests);
+  const threads: ThreadListItem[] = projectedThreadSummaries.map(storedThreadToListItem);
+  const loadMoreThreads = () => {
+    const loadedCount = threadListMode === "archived"
+      ? archivedThreadSummaryRows.length
+      : recentThreadSummaryRows.length;
+    if (loadedCount < threadListLimit) return;
+    setThreadListLimit((current) => current + THREAD_LIST_PAGE_SIZE);
+  };
+  const setActiveThreadId = (
+    value: string | null,
+    navigationId?: string,
+    closeDraft = false,
+    nextServerId?: string,
+    reloadSelected = false,
+  ) => {
     if (value !== requestedThreadId) {
       // A focused search field or composer keeps the Android IME session alive
       // when the visible surface is replaced. End that session at the navigation
       // boundary so the newly selected conversation never inherits keyboard focus.
       KeyboardController.dismiss({ animated: false, keepFocus: false });
     }
-    // Selection is immediate. A bounded atomic snapshot can render while the
-    // authoritative server refresh runs; individual historical events are
-    // never replayed into the visible conversation one by one.
+    // The selected resource is React-owned navigation state. A missing local
+    // Legend resource suspends this transition, keeping the previous chat
+    // visible until the destination SQLite window is atomically ready.
     const startedAt = performance.now();
-    setThreadSelection((current) => current.id === value
-      ? refreshIfSelected
-        ? { id: value, generation: current.generation + 1 }
-        : current
-      : { id: value, generation: current.generation + 1 });
+    startThreadTransition(() => {
+      if (nextServerId !== undefined) setActiveServerId(nextServerId);
+      if (closeDraft) setNewChatDraft(null);
+      setThreadSelection((current) => current.id === value
+        ? reloadSelected
+          ? { ...current, generation: current.generation + 1 }
+          : current
+        : { id: value, generation: current.generation + 1 });
+    });
     requestAnimationFrame(() => {
       const elapsed = performance.now() - startedAt;
-      recordTiming("thread_selection_commit_ms", elapsed);
+      recordTiming("thread_selection_next_frame_ms", elapsed);
       const target = parseThreadSelectionKey(value);
-      if (target !== null) {
-        markThreadNavigationStage(target.connectionId, target.threadId, "selection_commit", {
-          values: { reactCommitMs: elapsed },
-        });
+      if (target !== null && navigationId !== undefined) {
+        markThreadNavigationStage(target.connectionId, target.threadId, "selection_next_frame", {
+          values: { animationFrameDelayMs: elapsed },
+        }, navigationId);
       }
-      if (__DEV__) console.log(`[CodeWide perf] thread_selection_commit_ms=${Math.round(elapsed)}`);
+      if (__DEV__) console.log(`[CodeWide perf] thread_selection_next_frame_ms=${Math.round(elapsed)}`);
     });
   };
   const selectThread = (value: string) => {
-    setNewChatDraft(null);
     const target = parseThreadSelectionKey(value);
+    let navigationId: string | undefined;
     if (target !== null) {
-      const navigationId = beginThreadNavigation(target.connectionId, target.threadId);
+      navigationId = beginThreadNavigation(target.connectionId, target.threadId);
       void beginNavigationFrameTrace(navigationId);
     }
-    setActiveThreadId(value, true);
+    // Keep repeated selection as an explicit diagnostic reload path: it runs
+    // through the same navigation, hydration, and profiling stages.
+    setActiveThreadId(value, navigationId, true, undefined, true);
+  };
+  const preloadThread = (value: string): (() => void) | undefined => {
+    if (!remote.native || remote.threadDetails === null || remote.threadUiStateDatabase === null || value === requestedThreadId) return;
+    const target = parseThreadSelectionKey(value);
+    if (target === null) return;
+    const uiState = remote.threadUiStateDatabase.get(target.connectionId, target.threadId);
+    return remote.threadDetails.preloadWindow({
+      connectionId: target.connectionId,
+      threadId: target.threadId,
+      anchorTurnId: uiState?.historyAnchorTurnId ?? null,
+      residentHistoryEpoch: null,
+      residentMaxOrdinal: undefined,
+      residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+    });
   };
 
   const scopedThreads = activeServerId === ALL_SERVERS_ID ? threads : threads.filter((thread) => thread.serverId === activeServerId);
@@ -643,7 +1326,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const archivedThreads = scopedThreads.filter((thread) => thread.archived);
   const normalizedMobileThreadQuery = mobileThreadQuery.trim().toLocaleLowerCase();
   const mobileSearchKey = `${activeServerId}\u0000${normalizedMobileThreadQuery}`;
-  const mobileRemoteSearchResource = useAsyncResource<DemoThread[]>(
+  const mobileRemoteSearchResource = useAsyncResource<ThreadListItem[]>(
     remote.native ? "mobile-thread-search" : null,
     mobileSearchKey,
     async (_publish, signal) => {
@@ -653,18 +1336,12 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
         mobileThreadQuery,
         activeServerId === ALL_SERVERS_ID ? null : activeServerId,
       );
-      return results.map(storedThreadToDemo);
+      return results.map(storedThreadToListItem);
     },
-  );
-  const localMobileSearchMatches = normalizedMobileThreadQuery === "" ? [] : demoThreadState.filter((thread) =>
-    (activeServerId === ALL_SERVERS_ID || activeServerId === thread.serverId)
-      && `${thread.title}\n${thread.preview}`.toLocaleLowerCase().includes(normalizedMobileThreadQuery),
   );
   const mobileNativeSearch = normalizedMobileThreadQuery === ""
     ? null
-    : remote.native
-      ? mobileRemoteSearchResource.value ?? []
-      : localMobileSearchMatches;
+    : mobileRemoteSearchResource.value ?? [];
   const mobileVisibleThreads = mobileNativeSearch === null ? serverThreads : mobileNativeSearch.filter((thread) => !thread.archived);
   const mobileVisibleArchivedThreads = mobileNativeSearch === null ? archivedThreads : mobileNativeSearch.filter((thread) => thread.archived);
   const selectedThread = requestedThreadId === null
@@ -678,19 +1355,26 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const activeThreadId = activeThread === null
     ? pendingThreadSelection ? requestedThreadId : null
     : threadSelectionKey(activeThread);
-  const activeThreadKey = activeThread === null ? null : threadSelectionKey(activeThread);
-  const activeThreadHydrationScope = activeThreadKey === null ? null : `${activeThreadKey}\u0001${threadOpenGeneration}`;
+  const activeThreadKey = activeThread === null ? requestedThreadId : threadSelectionKey(activeThread);
   const activeConnectionId = newChatDraft?.serverId
     ?? activeThread?.serverId
+    ?? requestedThreadTarget?.connectionId
     ?? (activeServerId === ALL_SERVERS_ID ? "" : activeServerId);
   const activeAccountRateLimits = accountRateLimits.find((row) => row.connectionId === activeConnectionId) ?? null;
   const selectedServerAccountRateLimits = accountRateLimits.find((row) => row.connectionId === activeServerId) ?? null;
   const activeConnectionState = remote.connections.find((connection) => connection.id === activeConnectionId)?.state ?? "offline";
   const activeConnectionAvailable = activeConnectionState === "live" || activeConnectionState === "syncing";
-  const activeRemoteThreadId = activeThread?.id ?? null;
+  const activeRemoteThreadId = activeThread?.id ?? requestedThreadTarget?.threadId ?? null;
   const composerThreadId = newChatDraft?.id ?? activeRemoteThreadId;
-  const visibleConversationThread: DemoThread | null = newChatDraft === null
-    ? activeThread
+  const visibleConversationThread: ThreadListItem | null = newChatDraft === null
+    ? activeThread ?? (requestedThreadTarget === null ? null : {
+        id: requestedThreadTarget.threadId,
+        serverId: requestedThreadTarget.connectionId,
+        title: "Loading thread…",
+        preview: "",
+        pinned: false,
+        unread: 0,
+      })
     : {
         id: newChatDraft.id,
         serverId: newChatDraft.serverId,
@@ -700,11 +1384,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
         pinned: false,
         unread: 0,
       };
-  const nativePortForwardingSnapshot = useNativePortForwarding(
-    remote.native ? activeConnectionId : "",
-  );
-  const nativePortForwardProfiles = nativePortForwardingSnapshot.profiles;
-  const activeStoredThread = remote.threads.find((candidate) =>
+  const activeStoredThread = loadedThreadSummaries.find((candidate) =>
     candidate.connectionId === activeConnectionId && candidate.remoteThreadId === activeRemoteThreadId,
   ) ?? null;
   const activeCwd = newChatDraft?.cwd ?? activeStoredThread?.cwd ?? "/workspace";
@@ -722,91 +1402,14 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
     : null;
   const activeProjects: RemoteProject[] = activeConnectionId === "" || !remote.native
     ? []
-    : projectsByConnection[activeConnectionId] ?? [];
-  const activeDiscoveredProjects: RemoteProject[] = activeConnectionId === ""
+    : (projectsByConnection[activeConnectionId] ?? []).filter(({ pinned }) => pinned);
+  const activeDiscoveredProjects: RemoteProject[] = activeConnectionId === "" || !remote.native
     ? []
-    : deriveThreadProjects(remote.threads, activeConnectionId).map((project) => ({
-        path: project.cwd,
-        name: project.label,
-        addedAt: project.lastUsedAt,
-        lastUsedAt: project.lastUsedAt,
-        aliases: project.cwds,
-      }));
+    : (projectsByConnection[activeConnectionId] ?? []).filter(({ pinned }) => !pinned);
   const activeProjectError = activeConnectionId === "" ? null : projectErrorsByConnection[activeConnectionId] ?? null;
-  const activeEmptyProvisionalThread = activeStoredThread?.provisionalThread?.turns.length === 0;
-  const activeThreadLoadResourceId = activeRemoteThreadId === null || activeConnectionId === ""
-    ? null
-    : threadLoadResourceKey(activeConnectionId, activeRemoteThreadId, threadOpenGeneration);
-  const activeThreadLoadQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null || activeThreadLoadResourceId === null
-      ? undefined
-      : query
-          .from({ load: remote.resourceDatabase.threadLoads })
-          .where(({ load }) => eq(load.id, activeThreadLoadResourceId)),
-    [activeThreadLoadResourceId, remote.resourceDatabase],
-  );
-  const activeThreadLoadResource = activeThreadLoadQuery.data?.[0] ?? null;
-  const putActiveThreadLoadState = (state: ThreadLoadState) => {
-    if (remote.resourceDatabase === null || activeThreadLoadResourceId === null || activeRemoteThreadId === null || activeConnectionId === "") return;
-    remote.resourceDatabase.putThreadLoad({
-      id: activeThreadLoadResourceId,
-      connectionId: activeConnectionId,
-      threadId: activeRemoteThreadId,
-      generation: threadOpenGeneration,
-      ...state,
-    });
-  };
   const activeControlsResourceId = activeConnectionId === "" ? null : turnControlsResourceKey(activeConnectionId, activeCwd);
-  const activeControlsQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null || activeControlsResourceId === null
-      ? undefined
-      : query
-          .from({ controls: remote.resourceDatabase.turnControls })
-          .where(({ controls }) => eq(controls.id, activeControlsResourceId)),
-    [activeControlsResourceId, remote.resourceDatabase],
-  );
-  const activeControlsResource = activeControlsQuery.data?.[0] ?? null;
   const activeThreadResourceId = activeConnectionId === "" || activeRemoteThreadId === null ? null : threadResourceKey(activeConnectionId, activeRemoteThreadId);
-  const activeTerminalsQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null || activeThreadResourceId === null
-      ? undefined
-      : query.from({ resource: remote.resourceDatabase.backgroundTerminals }).where(({ resource }) => eq(resource.id, activeThreadResourceId)),
-    [activeThreadResourceId, remote.resourceDatabase],
-  );
-  const activeGoalQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null || activeThreadResourceId === null
-      ? undefined
-      : query.from({ resource: remote.resourceDatabase.threadGoals }).where(({ resource }) => eq(resource.id, activeThreadResourceId)),
-    [activeThreadResourceId, remote.resourceDatabase],
-  );
-  const activeThreadResourcesQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null || activeThreadResourceId === null
-      ? undefined
-      : query.from({ resource: remote.resourceDatabase.threadResources }).where(({ resource }) => eq(resource.id, activeThreadResourceId)),
-    [activeThreadResourceId, remote.resourceDatabase],
-  );
   const activeTunnelResourceId = activeConnectionId === "" ? null : tunnelResourceKey(activeConnectionId);
-  const activeTunnelQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null || activeTunnelResourceId === null
-      ? undefined
-      : query.from({ resource: remote.resourceDatabase.tunnels }).where(({ resource }) => eq(resource.id, activeTunnelResourceId)),
-    [activeTunnelResourceId, remote.resourceDatabase],
-  );
-  const activeTerminalsResource = activeTerminalsQuery.data?.[0] ?? null;
-  const activeGoalResource = activeGoalQuery.data?.[0] ?? null;
-  const activeThreadResources = activeThreadResourcesQuery.data?.[0] ?? null;
-  const visibleThreadResources: ThreadResourcesRow | null = activeEmptyProvisionalThread && activeRemoteThreadId !== null
-      ? {
-          id: threadResourceKey(activeConnectionId, activeRemoteThreadId),
-          connectionId: activeConnectionId,
-          threadId: activeRemoteThreadId,
-          status: "ready",
-          value: { threadId: activeRemoteThreadId, revision: "empty", changeScope: "session", changeScopes: ["session", "lastTurn"], changes: [], attachments: [] },
-          error: null,
-          updatedAt: 0,
-        }
-      : activeThreadResources;
-  const activeTunnelResource = activeTunnelQuery.data?.[0] ?? null;
   const activeVoiceScope = activeConnectionId === "" || composerThreadId === null ? null : `${activeConnectionId}\u0000${composerThreadId}`;
   const activeVoiceQuery = useLiveQuery(
     (query) => remote.resourceDatabase === null || activeVoiceScope === null
@@ -824,9 +1427,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   );
   const activeReviewVoiceResource = activeReviewVoiceQuery.data?.[0] ?? null;
   const voiceInputsQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null
-      ? undefined
-      : query.from({ resource: remote.resourceDatabase.voiceInputs }),
+    (query) => remote.resourceDatabase === null ? undefined : query.from({ resource: remote.resourceDatabase.voiceInputs }),
     [remote.resourceDatabase],
   );
   const activeFileTransferQuery = useLiveQuery(
@@ -836,354 +1437,34 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
     [activeVoiceScope, remote.resourceDatabase],
   );
   const activeFileTransferResource = activeFileTransferQuery.data?.[0] ?? null;
-  const activeResidentOffset = activeThreadLoadResource?.residentOffset ?? 0;
-  const activeSealedTurnQuery = useLiveQuery(
-    (query) => remote.threadDetails === null || activeRemoteThreadId === null || activeConnectionId === ""
-      ? undefined
-      : query
-          .from({ row: remote.threadDetails.collection })
-          .where(({ row }) => and(
-            eq(row.connectionId, activeConnectionId),
-            eq(row.remoteThreadId, activeRemoteThreadId),
-            eq(row.sealed, true),
-            eq(row.kind, "turn"),
-          ))
-          .orderBy(({ row }) => row.ordinal, "desc")
-          .limit(THREAD_RESIDENT_TURN_LIMIT)
-          .offset(activeResidentOffset),
-    [activeConnectionId, activeRemoteThreadId, activeResidentOffset, remote.threadDetails],
-  );
-  const residentOrdinalBounds = (() => {
-    const rows = activeSealedTurnQuery.data ?? [];
-    if (rows.length === 0) return null;
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-    for (const row of rows) {
-      min = Math.min(min, row.ordinal);
-      max = Math.max(max, row.ordinal);
-    }
-    return { min, max };
-  })();
-  const activeSealedDetailQuery = useLiveQuery(
-    (query) => remote.threadDetails === null || activeRemoteThreadId === null || activeConnectionId === "" || residentOrdinalBounds === null
-      ? undefined
-      : query
-          .from({ row: remote.threadDetails.collection })
-          .where(({ row }) => and(
-            eq(row.connectionId, activeConnectionId),
-            eq(row.remoteThreadId, activeRemoteThreadId),
-            eq(row.sealed, true),
-            or(eq(row.kind, "turnMeta"), eq(row.kind, "activity")),
-            gte(row.ordinal, residentOrdinalBounds.min),
-            lte(row.ordinal, residentOrdinalBounds.max),
-          )),
-    [activeConnectionId, activeRemoteThreadId, remote.threadDetails, residentOrdinalBounds?.max, residentOrdinalBounds?.min],
-  );
-  const activeLiveDetailQuery = useLiveQuery(
-    (query) => remote.threadDetails === null || activeRemoteThreadId === null || activeConnectionId === ""
-      ? undefined
-      : query
-          .from({ row: remote.threadDetails.collection })
-          .where(({ row }) => and(
-            eq(row.connectionId, activeConnectionId),
-            eq(row.remoteThreadId, activeRemoteThreadId),
-            eq(row.sealed, false),
-          )),
-    [activeConnectionId, activeRemoteThreadId, remote.threadDetails],
-  );
-  const activePendingTimeline = materializePendingTimeline(activeLiveDetailQuery.data ?? []);
-  const activePendingDeliveries: Array<NativeCommandDelivery & { attachments: ComposerAttachment[] }> = activePendingTimeline
-    .filter(({ presentation }) => presentation === "delivery")
-    .map((entry) => ({
-      connectionId: activeConnectionId,
-      commandId: entry.commandId,
-      method: entry.method,
-      threadId: activeRemoteThreadId,
-      targetCommandId: null,
-      text: entry.text,
-      attachments: entry.attachments,
-      ...(entry.workspaceRequestId === undefined ? {} : { workspaceRequestId: entry.workspaceRequestId }),
-      state: entry.state,
-      attempts: entry.attempts,
-      lastError: entry.lastError,
-      createdAt: entry.createdAt,
-      updatedAt: entry.updatedAt,
-    }));
-  const activeQueuedPrompts: QueuedPrompt[] = activePendingTimeline
-    .filter(({ presentation, state }) => presentation === "queue" && state !== "delivered")
-    .map(({ commandId, text, attachments, createdAt, state, lastError }) => ({
-      commandId,
-      text,
-      attachments,
-      createdAt,
-      state: state === "uncertain" || state === "failed" ? state : "queued",
-      lastError,
-    }));
-  const activeComposerStateQuery = useLiveQuery(
-    (query) => remote.threadUiStateDatabase === null || composerThreadId === null || activeConnectionId === ""
-      ? undefined
-      : query
-          .from({ state: remote.threadUiStateDatabase.collection })
-          .where(({ state }) => and(
-            eq(state.connectionId, activeConnectionId),
-            eq(state.threadId, composerThreadId),
-          )),
-    [activeConnectionId, composerThreadId, remote.threadUiStateDatabase],
-  );
-  const activeComposerState = activeComposerStateQuery.data?.[0] ?? null;
-  const activeSealedTurns = materializeThreadTurns([
-      ...(activeSealedTurnQuery.data ?? []),
-      ...(activeSealedDetailQuery.data ?? []),
-    ]);
-  const activeLiveSnapshot = (() => {
-    if (remote.threadDetails === null || activeRemoteThreadId === null) return null;
-    const snapshot = materializeThreadDetails(activeLiveDetailQuery.data ?? [], remote.threadDetails.sessionId)[0] ?? null;
-    if (snapshot?.connectionId !== activeConnectionId || snapshot.thread.id !== activeRemoteThreadId) return null;
-    return snapshot;
-  })();
-  const activeMergedTurns = activeLiveSnapshot === null
-    ? []
-    : mergeThreadPartitions(activeSealedTurns, activeLiveSnapshot.thread.turns);
-  const activeLiveTurnIds = new Set(activeLiveSnapshot?.thread.turns.map(({ id }) => id) ?? []);
-  const activeVisibleSealedTurns = activeMergedTurns.filter(({ id }) => !activeLiveTurnIds.has(id));
-  const activeVisibleLiveTurns = activeMergedTurns.filter(({ id }) => activeLiveTurnIds.has(id));
-  const activeRemoteSnapshot = (() => {
-    if (activeLiveSnapshot === null) return null;
-    return {
-      ...activeLiveSnapshot,
-      thread: {
-        ...activeLiveSnapshot.thread,
-        turns: activeMergedTurns,
-      },
-    };
-  })();
-  const activeTimelinePartitions = activeRemoteSnapshot === null || activeLiveSnapshot === null
-    ? {}
-    : { remoteSealedTurns: activeVisibleSealedTurns, remoteLiveTurns: activeVisibleLiveTurns };
-  const remoteThread = !remote.native
-    ? testWorkspace?.threads[0] !== undefined && activeThreadKey === threadSelectionKey(testWorkspace.threads[0]) ? injectedRemoteThread : null
-    : activeRemoteSnapshot?.thread ?? activeStoredThread?.provisionalThread ?? null;
-  // thread/start creates a real server thread before a rollout exists. Keep
-  // treating that shell as provisional even after its seeded detail row is
-  // visible; otherwise the hydration resource immediately calls
-  // thread/resume and paints a false "not materialized" failure. The summary
-  // projection clears provisionalThread on the first authoritative thread
-  // event, which is the correct point to enable normal hydration.
-  const activeProvisionalThread = activeStoredThread?.provisionalThread ?? null;
   const activeThreadLifecycleActive = isThreadLifecycleActive(activeThread?.state);
-  const activeThreadLoadState: ThreadLoadState = !remote.native
-    ? { phase: "ready", nextCursor: null, loadingOlder: false, residentOffset: 0, error: null }
-    : activeThreadHydrationScope === null
-      ? { phase: "ready", nextCursor: null, loadingOlder: false, residentOffset: 0, error: null }
-      : activeThreadLoadResource ?? {
-          phase: activeProvisionalThread !== null ? "ready" : remoteThread === null ? "loading" : activeRemoteSnapshot?.fresh === true || !activeConnectionAvailable ? "ready" : "refreshing",
-          nextCursor: null,
-          loadingOlder: false,
-          residentOffset: 0,
-          error: null,
-        };
   const activePendingRequests = remote.pendingRequests.filter((request) =>
     request.connectionId === activeConnectionId && request.params.threadId === activeRemoteThreadId,
   );
   const activePendingRequest = activePendingRequests[0] ?? null;
-  const remoteNative = remote.native;
-  const readRemoteThread = remote.readThread;
-  const reconcileRemoteThreadLifecycle = remote.reconcileThreadLifecycle;
-  const receiveDeepLink = useEffectEvent((raw: string | null) => {
+  useDeepLinkListener((raw) => {
     if (raw === null) return;
     if (raw.startsWith("codewide://pair") || raw.startsWith("codexremote://pair")) {
+      setConnectionSheetOpenedAt(Date.now());
       setPendingPairingCode(raw);
       setConnectionSheetVisible(true);
       return;
     }
     const parsed = parseThreadDeepLink(raw);
     if (parsed !== null) {
-      setNewChatDraft(null);
-      setActiveServerId(parsed.connectionId);
-      setActiveThreadId(threadSelectionKey({ serverId: parsed.connectionId, id: parsed.threadId }));
+      setActiveThreadId(
+        threadSelectionKey({ serverId: parsed.connectionId, id: parsed.threadId }),
+        undefined,
+        true,
+        parsed.connectionId,
+      );
     }
   });
-
-  useEffect(() => {
-    void Linking.getInitialURL().then(receiveDeepLink);
-    const subscription = Linking.addEventListener("url", ({ url }) => receiveDeepLink(url));
-    return () => subscription.remove();
-  }, []);
 
   const forkCurrentThread = async (options: ThreadForkOptions): Promise<void> => {
     if (activeThread === null || activeRemoteThreadId === null || activeConnectionId === "") throw new Error("No thread selected");
-    if (remote.native) {
-      const forkedId = await remote.forkThread(activeConnectionId, activeRemoteThreadId, options);
-      const selectionKey = threadSelectionKey({ serverId: activeConnectionId, id: forkedId });
-      setActiveThreadId(selectionKey);
-      return;
-    }
-    demoForkCounterRef.current += 1;
-    const forkedId = `${activeRemoteThreadId}-fork-${demoForkCounterRef.current}`;
-    const scope = options.boundary.kind === "all" ? "all history" : `${options.boundary.kind} ${options.boundary.turnId}`;
-    const { state: _sourceState, ...sourceWithoutState } = activeThread;
-    const forked: DemoThread = {
-      ...sourceWithoutState,
-      id: forkedId,
-      title: `${activeThread.title.replace(/\s+·\s+fork.*$/u, "")} · fork`,
-      preview: `${options.ephemeral ? "Ephemeral" : "Durable"} fork · ${scope}`,
-      pinned: false,
-      unread: 0,
-      time: "now",
-    };
-    setDemoThreadState((current) => [forked, ...current]);
-    setActiveServerId(activeConnectionId);
-    setActiveThreadId(threadSelectionKey(forked));
-  };
-
-  const activeHydrationTaskKey = !remoteNative
-    || activeConnectionId === ""
-    || activeRemoteThreadId === null
-    || activeThreadKey === null
-    || activeThreadHydrationScope === null
-    || activeThreadId !== activeThreadKey
-    || !activeConnectionAvailable
-      ? null
-      : `thread-hydration:${activeThreadLoadResourceId}:${activeStoredThread?.recencyAt ?? activeStoredThread?.updatedAt ?? 0}:${activeProvisionalThread === null ? "materialized" : "provisional"}`;
-  const activeControlsTaskKey = !remoteNative
-    || activeConnectionId === ""
-    || !activeConnectionAvailable
-      ? null
-      : `turn-controls:${activeConnectionId}:${activeCwd}`;
-  const activeThreadResourcesTaskKey = !remoteNative
-    || activeConnectionId === ""
-    || activeRemoteThreadId === null
-    || !activeConnectionAvailable
-      ? null
-      : `${activeConnectionId}\u0000${activeRemoteThreadId}`;
-  useAsyncResource<TurnControls>(remoteNative ? "active-turn-controls" : null, activeControlsTaskKey ?? "inactive", async () => {
-    if (activeControlsTaskKey === null) return EMPTY_TURN_CONTROLS;
-    return await remote.loadTurnControls(activeConnectionId, activeCwd);
-  });
-  useAsyncResource<ThreadResourcesValue>(activeThreadResourcesTaskKey === null ? null : "active-thread-resources", activeThreadResourcesTaskKey ?? "inactive", async () => {
-    return await remote.loadThreadResources(activeConnectionId, activeRemoteThreadId as string);
-  });
-  useAsyncResource<ThreadLoadState>(remoteNative ? "active-thread-hydration" : null, activeHydrationTaskKey ?? "inactive", async (_publish, signal) => {
-    if (activeHydrationTaskKey === null) {
-      return { phase: "ready", nextCursor: null, loadingOlder: false, residentOffset: 0, error: null };
-    }
-    const loadingState: ThreadLoadState = {
-      phase: "loading",
-      nextCursor: null,
-      loadingOlder: false,
-      residentOffset: 0,
-      error: null,
-    };
-    putActiveThreadLoadState(loadingState);
-    const openedAt = monotonicNowMs();
-    markThreadNavigationStage(activeConnectionId, activeRemoteThreadId as string, "hydration_start");
-    // Never paint persisted history as if it were current: a cold open waits
-    // for one authoritative bounded snapshot. Only this runtime's warm view
-    // may stay visible while refreshing, so switching cannot replay stale
-    // turns into the conversation one by one.
-    const result = await readRemoteThread(activeConnectionId, activeRemoteThreadId as string, null).then(
-      (window) => ({ window, cause: null }),
-      (cause: unknown) => ({ window: null, cause }),
-    );
-    markThreadNavigationStage(activeConnectionId, activeRemoteThreadId as string, "hydration_result", {
-      values: { rpcMs: monotonicNowMs() - openedAt },
-      tags: { outcome: signal.aborted ? "aborted" : result.cause === null ? "success" : activeProvisionalThread === null ? "error" : "provisional" },
-    });
-    // Aborting is normal when the user switches threads. Return without
-    // publishing another state; useAsyncResource drops aborted completions.
-    if (signal.aborted) return loadingState;
-    if (result.cause !== null) {
-      // A freshly started thread can exist briefly before its rollout is
-      // materialized. Keep that local shell usable, but still attempt the read:
-      // old app versions could persist the same shell after the companion had
-      // already acquired the complete conversation. Skipping hydration here
-      // made those threads permanently empty.
-      if (activeProvisionalThread !== null) {
-        const state: ThreadLoadState = {
-          phase: "ready",
-          nextCursor: null,
-          loadingOlder: false,
-          residentOffset: 0,
-          error: null,
-        };
-        putActiveThreadLoadState(state);
-        return state;
-      }
-      const state: ThreadLoadState = {
-        phase: "error",
-        nextCursor: null,
-        loadingOlder: false,
-        residentOffset: 0,
-        error: result.cause instanceof Error ? result.cause.message : "Could not load messages",
-      };
-      putActiveThreadLoadState(state);
-      return state;
-    }
-    const window = result.window;
-    if (window !== null) recordTiming("thread_fresh_visible_ms", monotonicNowMs() - openedAt);
-    const state: ThreadLoadState = {
-      phase: window === null ? "error" : "ready",
-      nextCursor: window?.nextCursor ?? null,
-      loadingOlder: false,
-      residentOffset: 0,
-      error: window === null ? "Could not load messages" : null,
-    };
-    putActiveThreadLoadState(state);
-    return state;
-  });
-
-  const staleLifecycleTurnId = !remoteNative
-    || activeConnectionId === ""
-    || activeRemoteThreadId === null
-    || activeThreadKey === null
-    || !activeConnectionAvailable
-    || activeThreadLifecycleActive
-    || remoteThread === null
-      ? null
-      : activeTurnId(remoteThread);
-  const lifecycleRepairTaskKey = staleLifecycleTurnId === null
-    ? null
-    : `thread-lifecycle-repair:${activeConnectionId}:${activeRemoteThreadId}:${staleLifecycleTurnId}`;
-  useAsyncResource<boolean>(remoteNative ? "active-thread-lifecycle-repair" : null, lifecycleRepairTaskKey ?? "inactive", async () => {
-    if (lifecycleRepairTaskKey === null) return false;
-    // The summary already reached a terminal state while detail still says
-    // in-progress. Reconcile from one authoritative snapshot; do not replay
-    // terminal events or expose the stale detail state as typing/running.
-    await reconcileRemoteThreadLifecycle(activeConnectionId, activeRemoteThreadId as string, staleLifecycleTurnId as string, remoteThread as Thread);
-    return true;
-  });
-
-  const loadOlderTurns = async (): Promise<void> => {
-    if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null || activeThreadKey === null || activeThreadHydrationScope === null) return;
-    const state = activeThreadLoadResource;
-    if (state?.nextCursor === null || state?.nextCursor === undefined || state.loadingOlder) return;
-    putActiveThreadLoadState({ ...state, loadingOlder: true, error: null });
-    try {
-      const page = await remote.loadOlderTurns(activeConnectionId, activeRemoteThreadId, state.nextCursor);
-      putActiveThreadLoadState({
-        phase: "ready",
-        nextCursor: page.nextCursor,
-        loadingOlder: false,
-        residentOffset: advanceResidentOffset(state.residentOffset, activeSealedTurns.length, page.turns.length),
-        error: null,
-      });
-    } catch (cause) {
-      putActiveThreadLoadState({ ...state, phase: "ready", loadingOlder: false, error: cause instanceof Error ? cause.message : "Could not load older messages" });
-    }
-  };
-
-  const revealNewerTurns = async (): Promise<void> => {
-    const state = activeThreadLoadResource;
-    if (state === null || state.residentOffset === 0) return;
-    putActiveThreadLoadState({
-      ...state,
-      residentOffset: retreatResidentOffset(state.residentOffset),
-    });
-  };
-
-  const loadTurnItems = async (turnId: string): Promise<void> => {
-    if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null || activeThreadKey === null) return;
-    await remote.loadTurnItems(activeConnectionId, activeRemoteThreadId, turnId);
+    const forkedId = await remote.forkThread(activeConnectionId, activeRemoteThreadId, options);
+    setActiveThreadId(threadSelectionKey({ serverId: activeConnectionId, id: forkedId }));
   };
 
   const markActiveThreadRead = () => {
@@ -1196,83 +1477,39 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
     // Server and thread selection are one atomic navigation action. Deferring
     // either half leaves the previous composer interactive for a frame and can
     // persist input under the wrong thread.
-    setNewChatDraft(null);
-    setActiveServerId(serverId);
-    setActiveThreadId(desktop && first !== undefined ? threadSelectionKey(first) : null);
+    setThreadListLimit(THREAD_LIST_PAGE_SIZE);
+    setActiveThreadId(desktop && first !== undefined ? threadSelectionKey(first) : null, undefined, true, serverId);
   };
 
-  const openConnectionSheet = () => setConnectionSheetVisible(true);
+  const openConnectionSheet = () => {
+    setConnectionSheetOpenedAt(Date.now());
+    setConnectionSheetVisible(true);
+  };
 
   const saveConnection = async (input: ConnectionInput): Promise<void> => {
-    if (remote.native) {
-      const added = await remote.addConnection(input);
-      setActiveServerId(added.id);
-      setActiveThreadId(null);
-      return;
-    }
-    const index = demoServerState.length + 1;
-    const server: DemoServer = {
-      id: `server-${index}`,
-      name: input.displayName.trim(),
-      emoji: input.emoji.trim(),
-      status: "syncing",
-      endpoint: input.endpoint,
-      token: input.token,
-      ...(input.tlsPinSha256 === undefined ? {} : { tlsPinSha256: input.tlsPinSha256 }),
-    };
-    setDemoServerState((current) => [...current, server]);
-    selectServer(server.id);
+    const added = await remote.addConnection(input);
+    setActiveThreadId(null, undefined, false, added.id);
   };
 
-  const toggleConnection = async (connectionId: string, enabled: boolean): Promise<void> => {
-    if (remote.native) return await remote.setConnectionEnabled(connectionId, enabled);
-    setDemoServerState((current) => current.map((server) => server.id === connectionId ? { ...server, status: enabled ? "connecting" : "offline" } : server));
-  };
+  const toggleConnection = async (connectionId: string, enabled: boolean): Promise<void> => await remote.setConnectionEnabled(connectionId, enabled);
 
-  const reconnectSavedConnection = async (connectionId: string): Promise<void> => {
-    if (remote.native) return await remote.reconnectConnection(connectionId);
-    setDemoServerState((current) => current.map((server) => server.id === connectionId ? { ...server, status: "live" } : server));
-  };
+  const reconnectSavedConnection = async (connectionId: string): Promise<void> => await remote.reconnectConnection(connectionId);
 
-  const deleteSavedConnection = async (connectionId: string): Promise<void> => {
-    if (remote.native) return await remote.deleteConnection(connectionId);
-    setDemoServerState((current) => current.filter((server) => server.id !== connectionId));
-    setDemoThreadState((current) => current.filter((thread) => thread.serverId !== connectionId));
-  };
+  const deleteSavedConnection = async (connectionId: string): Promise<void> => await remote.deleteConnection(connectionId);
 
   const updateSavedConnection = async (connectionId: string, input: ConnectionUpdateInput): Promise<void> => {
     const current = settingsConnections.find((connection) => connection.id === connectionId);
     if (current === undefined) throw new Error("Connection not found");
-    if (remote.native) {
-      if (isProfileOnlyConnectionUpdate(input, current)) {
-        const profile = validateConnectionProfile(input.displayName, input.emoji);
-        return await remote.updateConnectionProfile(connectionId, profile.displayName, profile.emoji);
-      }
-      return await remote.updateConnection(connectionId, input);
+    if (isProfileOnlyConnectionUpdate(input, current)) {
+      const profile = validateConnectionProfile(input.displayName, input.emoji);
+      return await remote.updateConnectionProfile(connectionId, profile.displayName, profile.emoji);
     }
-    const validated = validateConnectionUpdateInput(input, current.token);
-    setDemoServerState((serversState) => serversState.map((server) => {
-      if (server.id !== connectionId) return server;
-      const { tlsPinSha256: _oldPin, ...serverWithoutPin } = server;
-      return {
-        ...serverWithoutPin,
-        name: validated.displayName,
-        emoji: validated.emoji,
-        endpoint: validated.endpoint,
-        token: validated.token,
-        ...(validated.tlsPinSha256 === undefined ? {} : { tlsPinSha256: validated.tlsPinSha256 }),
-      };
-    }));
+    await remote.updateConnection(connectionId, input);
   };
 
-  const moveSavedConnection = async (connectionId: string, direction: -1 | 1): Promise<void> => {
-    if (remote.native) return await remote.moveConnection(connectionId, direction);
-    setDemoServerState((current) => moveItem(current, connectionId, direction));
-  };
+  const moveSavedConnection = async (connectionId: string, direction: -1 | 1): Promise<void> => await remote.moveConnection(connectionId, direction);
 
-  const defaultProjectCwd = (serverId: string): string | null => remote.native
-    ? projectsByConnection[serverId]?.[0]?.path ?? deriveThreadProjects(remote.threads, serverId)[0]?.cwd ?? null
-    : deriveThreadProjects(remote.threads, serverId)[0]?.cwd ?? null;
+  const defaultProjectCwd = (serverId: string): string | null => projectsByConnection[serverId]?.[0]?.path ?? null;
 
   const createThread = (): void => {
     const route = resolveNewThreadRoute({
@@ -1294,15 +1531,17 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const openNewChat = async (requestedServerId: string, cwd: string | null): Promise<void> => {
     if (requestedServerId === "") return;
     newChatCounterRef.current += 1;
-    setNewChatDraft({
-      id: `new-chat-${Date.now()}-${newChatCounterRef.current}`,
-      serverId: requestedServerId,
-      cwd,
-      workspaceMode: "current",
+    startThreadTransition(() => {
+      setNewChatDraft({
+        id: `new-chat-${Date.now()}-${newChatCounterRef.current}`,
+        serverId: requestedServerId,
+        cwd,
+        workspaceMode: "current",
+      });
+      setActiveServerId(requestedServerId);
+      setThreadSelection((current) => ({ id: null, generation: current.generation + 1 }));
+      setNewThreadVisible(false);
     });
-    setActiveServerId(requestedServerId);
-    setActiveThreadId(null);
-    setNewThreadVisible(false);
   };
 
   const changeEmptyThreadProject = async (cwd: string | null): Promise<void> => {
@@ -1313,28 +1552,21 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
       return;
     }
     if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null) return;
-    if ((remoteThread?.turns.length ?? 0) > 0 || activePendingDeliveries.length > 0) {
+    if ((remote.threadDetails?.getThread(activeConnectionId, activeRemoteThreadId)?.turns.length ?? 0) > 0
+      || (remote.threadDetails?.listQueued(activeConnectionId, activeRemoteThreadId).length ?? 0) > 0) {
       throw new Error("Project can only be changed before the first message");
     }
     if ((cwd ?? null) === (activeStoredThread?.cwd || null)) return;
     const previousThreadId = activeRemoteThreadId;
     const nextThreadId = await remote.startThread(activeConnectionId, cwd ?? undefined);
-    setActiveServerId(activeConnectionId);
-    setActiveThreadId(threadSelectionKey({ id: nextThreadId, serverId: activeConnectionId }));
+    setActiveThreadId(threadSelectionKey({ id: nextThreadId, serverId: activeConnectionId }), undefined, false, activeConnectionId);
     await remote.deleteThread(activeConnectionId, previousThreadId);
   };
 
   const addActiveProject = async (path: string): Promise<RemoteProject> => {
     if (!remote.native || activeConnectionId === "") throw new Error("No server selected");
     const project = await remote.addProject(activeConnectionId, path);
-    setProjectsByConnection((current) => {
-      const existing = current[activeConnectionId] ?? [];
-      return {
-        ...current,
-        [activeConnectionId]: [project, ...existing.filter((candidate) => candidate.path !== project.path)],
-      };
-    });
-    setProjectErrorsByConnection((current) => ({ ...current, [activeConnectionId]: null }));
+    projectCatalog.mergeProject(activeConnectionId, project);
     return project;
   };
 
@@ -1345,30 +1577,11 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
 
   const createRepairThread = async (title: string, prompt: string): Promise<void> => {
     if (activeConnectionId === "") throw new Error("No server selected");
-    if (remote.native) {
-      const currentCwd = remote.threads.find((candidate) => candidate.connectionId === activeConnectionId && candidate.remoteThreadId === activeRemoteThreadId)?.cwd;
-      const threadId = await remote.startThread(activeConnectionId, currentCwd);
-      await remote.renameThread(activeConnectionId, threadId, title);
-      await remote.sendText(activeConnectionId, threadId, prompt, { type: "start" });
-      const selectionKey = threadSelectionKey({ serverId: activeConnectionId, id: threadId });
-      setActiveServerId(activeConnectionId);
-      setActiveThreadId(selectionKey);
-      return;
-    }
-    const id = `fix-renderer-${Date.now()}`;
-    const fixThread: DemoThread = {
-      id,
-      serverId: activeConnectionId,
-      title,
-      preview: "Renderer fix prompt is ready.",
-      time: "now",
-      pinned: false,
-      unread: 0,
-    };
-    demoComposerMemory.writeDraft(`${activeConnectionId}\u0000${id}`, prompt);
-    setDemoThreadState((current) => [fixThread, ...current]);
-    setActiveServerId(activeConnectionId);
-    setActiveThreadId(threadSelectionKey(fixThread));
+    const currentCwd = loadedThreadSummaries.find((candidate) => candidate.connectionId === activeConnectionId && candidate.remoteThreadId === activeRemoteThreadId)?.cwd;
+    const threadId = await remote.startThread(activeConnectionId, currentCwd);
+    await remote.renameThread(activeConnectionId, threadId, title);
+    await remote.sendText(activeConnectionId, threadId, prompt, { type: "start" });
+    setActiveThreadId(threadSelectionKey({ serverId: activeConnectionId, id: threadId }), undefined, false, activeConnectionId);
   };
 
   const createUnsupportedFixThread = async (block: RenderBlock): Promise<void> => {
@@ -1398,94 +1611,65 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
     );
   };
 
-  const toggleListThreadPin = async (thread: DemoThread): Promise<void> => {
-    if (remote.native) await remote.setThreadPinned(thread.serverId, thread.id, !thread.pinned);
-    else setDemoThreadState((current) => current.map((candidate) =>
-      threadSelectionKey(candidate) === threadSelectionKey(thread) ? { ...candidate, pinned: !candidate.pinned } : candidate,
-    ));
+  const toggleListThreadPin = async (thread: ThreadListItem): Promise<void> => {
+    await remote.setThreadPinned(thread.serverId, thread.id, !thread.pinned);
   };
 
-  const archiveListThread = async (thread: DemoThread): Promise<void> => {
-    if (remote.native) await remote.archiveThread(thread.serverId, thread.id);
-    else setDemoThreadState((current) => current.map((candidate) =>
-      threadSelectionKey(candidate) === threadSelectionKey(thread) ? { ...candidate, archived: true } : candidate,
-    ));
+  const archiveListThread = async (thread: ThreadListItem): Promise<void> => {
+    await remote.archiveThread(thread.serverId, thread.id);
     if (activeThreadId === threadSelectionKey(thread)) setActiveThreadId(null);
   };
 
-  const unarchiveListThread = async (thread: DemoThread): Promise<void> => {
-    if (remote.native) await remote.unarchiveThread(thread.serverId, thread.id);
-    else setDemoThreadState((current) => current.map((candidate) =>
-      threadSelectionKey(candidate) === threadSelectionKey(thread) ? { ...candidate, archived: false } : candidate,
-    ));
+  const unarchiveListThread = async (thread: ThreadListItem): Promise<void> => {
+    await remote.unarchiveThread(thread.serverId, thread.id);
     if (activeThreadId === threadSelectionKey(thread)) setActiveThreadId(null);
   };
 
-  const markListThreadRead = async (thread: DemoThread): Promise<void> => {
-    if (remote.native) await remote.markThreadRead(thread.serverId, thread.id);
-    else setDemoThreadState((current) => current.map((candidate) =>
-      threadSelectionKey(candidate) === threadSelectionKey(thread) ? { ...candidate, unread: 0 } : candidate,
-    ));
+  const markListThreadRead = async (thread: ThreadListItem): Promise<void> => {
+    await remote.markThreadRead(thread.serverId, thread.id);
   };
-
-  const useLocalConversationState = !remote.native;
-  const activeDemoComposerKey = `${activeConnectionId}\u0000${composerThreadId ?? "none"}`;
-  const activeDemoComposer = demoComposerMemory.read(activeDemoComposerKey);
+  const activeConversationNavigationKey = newChatDraft !== null
+    ? `new-chat:${newChatDraft.serverId}:${newChatDraft.id}`
+    : requestedThreadId ?? activeThreadKey ?? "none";
+  const activeConversationRoute: ConversationDestinationProps["route"] | null = newChatDraft !== null
+    ? {
+        kind: "new",
+        remote,
+        connectionId: newChatDraft.serverId,
+        draftId: newChatDraft.id,
+      }
+    : activeRemoteThreadId !== null && activeConnectionId !== ""
+      ? {
+          kind: "thread",
+          remote,
+          connectionId: activeConnectionId,
+          threadId: activeRemoteThreadId,
+          threadOpenGeneration,
+          connectionAvailable: activeConnectionAvailable,
+          threadLifecycleActive: activeThreadLifecycleActive,
+        }
+      : null;
   const conversationActions = newChatDraft !== null
     ? {
         onSend: async (text: string, _mode: SendMode, options: TurnSendOptions) => {
           const draftChat = newChatDraft;
-          if (remote.native) {
-            let threadId: string;
-            if (draftChat.workspaceMode === "isolated") {
-              if (draftChat.cwd === null) throw new Error("Select a project before creating a workspace");
-              threadId = await remote.startThreadInWorkspace(draftChat.serverId, draftChat.cwd, draftChat.id);
-            } else {
-              threadId = await remote.startThread(draftChat.serverId, draftChat.cwd ?? undefined);
-            }
-            const commandId = await remote.sendText(
-              draftChat.serverId,
-              threadId,
-              text,
-              { type: "start" },
-              draftChat.workspaceMode === "isolated"
-                ? { ...options, workspaceRequestId: draftChat.id }
-                : options,
-            );
-            setActiveServerId(draftChat.serverId);
-            setNewChatDraft(null);
-            setActiveThreadId(threadSelectionKey({ id: threadId, serverId: draftChat.serverId }));
-            return commandId;
+          let threadId: string;
+          if (draftChat.workspaceMode === "isolated") {
+            if (draftChat.cwd === null) throw new Error("Select a project before creating a workspace");
+            threadId = await remote.startThreadInWorkspace(draftChat.serverId, draftChat.cwd, draftChat.id);
+          } else {
+            threadId = await remote.startThread(draftChat.serverId, draftChat.cwd ?? undefined);
           }
-          const threadId = `new-${Date.now()}`;
-          const now = Date.now() * 1_000;
-          const commandId = `demo-command-${now}-${demoDeliveryCounterRef.current++}`;
-          setDemoThreadState((current) => [{
-            id: threadId,
-            serverId: draftChat.serverId,
-            title: "New Chat",
-            preview: text,
-            time: "now",
-            pinned: false,
-            unread: 0,
-          }, ...current]);
-          setDemoPendingDeliveries((current) => [...current, {
-            connectionId: draftChat.serverId,
-            commandId,
-            method: "turn/start",
+          const commandId = await remote.sendText(
+            draftChat.serverId,
             threadId,
-            targetCommandId: null,
             text,
-            attachments: options.attachments ?? [],
-            state: "sending",
-            attempts: 1,
-            lastError: null,
-            createdAt: now,
-            updatedAt: now,
-          }]);
-          setActiveServerId(draftChat.serverId);
-          setNewChatDraft(null);
-          setActiveThreadId(threadSelectionKey({ id: threadId, serverId: draftChat.serverId }));
+            { type: "start" },
+            draftChat.workspaceMode === "isolated"
+              ? { ...options, workspaceRequestId: draftChat.id }
+              : options,
+          );
+          setActiveThreadId(threadSelectionKey({ id: threadId, serverId: draftChat.serverId }), undefined, true, draftChat.serverId);
           return commandId;
         },
         onLoadControls: async (cwd: string) => await remote.loadTurnControls(newChatDraft.serverId, cwd),
@@ -1494,8 +1678,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
       }
     : activeRemoteThreadId === null
     ? {}
-    : remote.native
-      ? {
+    : {
           onSend: async (text: string, mode: SendMode, options: TurnSendOptions) => await remote.sendText(activeConnectionId, activeRemoteThreadId, text, mode, options),
           onRetryFailedMessage: async (commandId: string) => await remote.retryFailedMessage(activeConnectionId, commandId),
           onLoadControls: async (cwd: string) => await remote.loadTurnControls(activeConnectionId, cwd),
@@ -1520,148 +1703,19 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           onRespondToRequest: remote.respondToServerRequest,
           getTransferAccess: async (forceRefresh = false) => await remote.transferAccess(activeConnectionId, forceRefresh),
           onStartVoiceTranscription: async (listener: (event: VoiceTranscriptionEvent) => void, options?: VoiceTranscriptionOptions) => await remote.startVoiceTranscription(activeConnectionId, activeRemoteThreadId, listener, options),
-        }
-      : {
-          onSend: async (text: string, mode: SendMode, options: TurnSendOptions) => {
-            const now = Date.now() * 1_000;
-            const commandId = `demo-command-${now}-${demoDeliveryCounterRef.current++}`;
-            setDemoPendingDeliveries((current) => [...current, {
-              connectionId: activeConnectionId,
-              commandId,
-              method: mode.type === "queue" ? "companion/queue/put" : mode.type === "steer" ? "turn/steer" : "turn/start",
-              threadId: activeRemoteThreadId,
-              targetCommandId: mode.type === "steer" ? mode.expectedTurnId : null,
-              text,
-              attachments: options.attachments ?? [],
-              state: "sending",
-              attempts: 1,
-              lastError: null,
-              createdAt: now,
-              updatedAt: now,
-            }]);
-            return commandId;
-          },
         };
 
-  const nativePortForwarding: PortForwardingManagerProps | undefined = remote.native && activeConnectionId !== "" ? {
-    serverName: servers.find((server) => server.id === activeConnectionId)?.name ?? "Server",
-    profiles: nativePortForwardProfiles,
-    discoveredPorts: nativePortForwardingSnapshot.discoveredPorts,
-    discoveryStatus: nativePortForwardingSnapshot.discoveryStatus,
-    discoveryError: nativePortForwardingSnapshot.discoveryError,
-    onOpen: (profile) => {
-      if (profile.status !== "live" || profile.previewUrl === null) return;
-      setLoopbackBrowser({ title: profile.label, url: profile.previewUrl });
-    },
-    onRefresh: async () => await nativePortForwardingStore.refreshDiscovery(activeConnectionId),
-    onSelectPort: async (candidate) => {
-      await nativePortForwardingStore.upsert({
-        connectionId: activeConnectionId,
-        profileId: createNativePortForwardId(),
-        label: candidate.name,
-        remotePort: candidate.port,
-        preferredLocalPort: null,
-        startImmediately: true,
-        serviceKey: candidate.forwardingKey,
-        preference: "included",
-      });
-    },
-    onExcludePort: async (candidate) => {
-      await nativePortForwardingStore.upsert({
-        connectionId: activeConnectionId,
-        profileId: `excluded-${candidate.forwardingKey.slice(0, 40)}`,
-        label: candidate.name,
-        remotePort: candidate.port,
-        preferredLocalPort: null,
-        startImmediately: false,
-        serviceKey: candidate.forwardingKey,
-        preference: "excluded",
-      });
-    },
-    onAdd: async (input) => {
-      await nativePortForwardingStore.upsert({
-        connectionId: activeConnectionId,
-        profileId: createNativePortForwardId(),
-        label: input.label,
-        remotePort: input.remotePort,
-        preferredLocalPort: input.preferredLocalPort,
-        startImmediately: input.startImmediately,
-        serviceKey: null,
-        preference: "included",
-      });
-    },
-    onEdit: async (profileId, input) => {
-      const existing = nativePortForwardProfiles.find((profile) => profile.id === profileId);
-      await nativePortForwardingStore.upsert({
-        connectionId: activeConnectionId,
-        profileId,
-        label: input.label,
-        remotePort: input.remotePort,
-        preferredLocalPort: input.preferredLocalPort,
-        startImmediately: input.startImmediately,
-        serviceKey: existing?.serviceKey ?? null,
-        preference: existing?.preference === "excluded" ? "included" : existing?.preference ?? "included",
-      });
-    },
-    onStart: async (profileId) => {
-      const profile = nativePortForwardProfiles.find((value) => value.id === profileId);
-      if (profile?.preference === "excluded") {
-        await nativePortForwardingStore.setPreference({
-          connectionId: activeConnectionId,
-          profileId,
-          label: profile.label,
-          remotePort: profile.remotePort,
-          preferredLocalPort: profile.preferredLocalPort,
-          serviceKey: profile.serviceKey,
-          preference: "included",
-          startImmediately: true,
-        });
-      } else await nativePortForwardingStore.start(activeConnectionId, profileId);
-    },
-    onStop: async (profileId) => {
-      const profile = nativePortForwardProfiles.find((value) => value.id === profileId);
-      if (profile !== undefined && profile.serviceKey !== null) {
-        await nativePortForwardingStore.setPreference({
-          connectionId: activeConnectionId,
-          profileId,
-          label: profile.label,
-          remotePort: profile.remotePort,
-          preferredLocalPort: profile.preferredLocalPort,
-          serviceKey: profile.serviceKey,
-          preference: "excluded",
-          startImmediately: false,
-        });
-      } else await nativePortForwardingStore.stop(activeConnectionId, profileId);
-    },
-    onReconnect: async (profileId) => await nativePortForwardingStore.reconnect(activeConnectionId, profileId),
-    onRemove: async (profileId) => await nativePortForwardingStore.remove(activeConnectionId, profileId),
-    onSetPreference: async (profileId, preference) => {
-      const profile = nativePortForwardProfiles.find((value) => value.id === profileId);
-      if (profile === undefined) throw new Error("Port forward not found");
-      const candidate = nativePortForwardingSnapshot.discoveredPorts.find((value) => value.forwardingKey === profile.serviceKey);
-      await nativePortForwardingStore.setPreference({
-        connectionId: activeConnectionId,
-        profileId,
-        label: profile.label,
-        remotePort: candidate?.port ?? profile.remotePort,
-        preferredLocalPort: profile.preferredLocalPort,
-        serviceKey: profile.serviceKey,
-        preference,
-        startImmediately: preference === "included" || (preference === "automatic" && candidate?.defaultForwardingEnabled === true),
-      });
-    },
-  } : undefined;
-  const activePortForwarding = nativePortForwarding;
-  // The stop action switches the controller to `finishing` synchronously.
-  // Keep the aura tied to live capture so it starts disappearing on that tap,
-  // instead of lingering for the full transcription request.
+  // Recording state intentionally remains workspace-owned. It coordinates the
+  // global aura and the active composer and is outside resource-isolation work.
   const voiceAuraResource = voiceInputsQuery.data?.find((resource) => resource?.phase === "recording") ?? null;
   const voiceAuraPhase = voiceAuraResource === null ? "idle" : "recording";
   const voiceInputRuntime: AppVoiceInputRuntime = {
     controller: remote.voiceController,
     resources: remote.resourceDatabase,
     scopePrefix: `${activeConnectionId || "local"}\u0000${composerThreadId ?? "workspace"}`,
-    thread: remoteThread ?? null,
+    // The workspace provider never materializes a selected chat. Each
+    // ConversationPane installs its own thread-scoped provider below Suspense.
+    thread: null,
     ...(remote.native && activeConnectionId !== ""
       ? {
           startRemote: async (listener, options) => await remote.startVoiceTranscription(
@@ -1710,6 +1764,12 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
       <VoiceAura phase={voiceAuraPhase} controller={remote.voiceController} scope={voiceAuraResource?.scope ?? null} reducedMotion={reduceVoiceMotion}>
       <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}> 
         {activeThreadId === null && newChatDraft === null ? (
+          <RecoverableRenderBoundary
+            scope="surface"
+            label="Chat list"
+            resetKey={`mobile-chat-list:${activeServerId}:${threadListMode}`}
+          >
+          <Suspense fallback={<ThreadListSuspenseFallback />}>
           <MobileThreads
             servers={servers}
             activeServerId={activeServerId}
@@ -1719,9 +1779,11 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             query={mobileThreadQuery}
             onQueryChange={setMobileThreadQuery}
             onModeChange={setThreadListMode}
+            onLoadMore={loadMoreThreads}
             initialOffset={mobileThreadOffset.read()}
             onOffsetChange={(offset) => mobileThreadOffset.write(offset)}
             onSelectThread={selectThread}
+            onPreloadThread={preloadThread}
             onSelectServer={selectServer}
             onAddServer={openConnectionSheet}
             onNewThread={() => void createThread()}
@@ -1735,6 +1797,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
               onRefreshAccountRateLimits: async () => await remote.refreshAccountRateLimits(activeServerId),
             })}
           />
+          </Suspense>
+          </RecoverableRenderBoundary>
         ) : (
           <RecoverableRenderBoundary
             scope="surface"
@@ -1743,53 +1807,48 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             resetKey={`${activeConnectionId}:${composerThreadId ?? "none"}`}
             onDismiss={closeActiveConversation}
           >
-          <ConversationPane
+          <Suspense fallback={<ConversationNavigationLoader thread={visibleConversationThread} server={servers.find((server) => server.id === activeConnectionId)} cwd={activeCwd} compact onBack={closeActiveConversation} />}>
+          {activeConversationRoute === null ? null : <ConversationDestination
+            route={activeConversationRoute}
+            navigationKey={activeConversationNavigationKey}
+            navigationConnectionId={activeConnectionId}
+            navigationThreadId={activeRemoteThreadId}
             thread={visibleConversationThread}
             newChat={newChatDraft !== null}
             server={servers.find((server) => server.id === activeConnectionId)}
-            demo={useLocalConversationState}
-            demoComposer={activeDemoComposer}
-            demoControls={testWorkspace?.controls ?? null}
             onBack={closeActiveConversation}
             compact
-            remoteThread={remoteThread}
             accountRateLimits={activeAccountRateLimits}
             {...(activeConnectionId === "" ? {} : {
               onRefreshAccountRateLimits: async () => await remote.refreshAccountRateLimits(activeConnectionId),
             })}
-            {...activeTimelinePartitions}
-            loadState={activeThreadLoadState}
-            onLoadOlder={loadOlderTurns}
-            onRevealNewer={revealNewerTurns}
-            onLoadTurnItems={loadTurnItems}
-            pendingDeliveries={useLocalConversationState ? demoPendingDeliveries : activePendingDeliveries}
-            queuedPrompts={useLocalConversationState ? [] : activeQueuedPrompts}
-            composerState={useLocalConversationState ? null : activeComposerState}
-            controlsResource={useLocalConversationState ? null : activeControlsResource}
-            terminalsResource={useLocalConversationState ? null : activeTerminalsResource}
-            threadResources={useLocalConversationState ? null : visibleThreadResources}
-            goalResource={useLocalConversationState ? null : activeGoalResource}
-            tunnelResource={useLocalConversationState ? null : activeTunnelResource}
-            {...(activePortForwarding === undefined ? {} : { portForwarding: activePortForwarding })}
+            workspaceResources={remote.resourceDatabase}
+            controlsResourceId={activeControlsResourceId}
+            backgroundTerminalsResourceId={activeThreadResourceId}
+            threadResourcesModel={remote.resourceDatabase?.threadResources ?? null}
+            threadResourceId={activeThreadResourceId}
+            threadResourceRevision={activeConnectionState}
+            goalResourceId={activeThreadResourceId}
+            tunnelResourceId={activeTunnelResourceId}
+            portForwardingConnectionId={remote.native && activeConnectionId !== "" ? activeConnectionId : null}
+            portForwardingServerName={servers.find((server) => server.id === activeConnectionId)?.name ?? "Server"}
+            onOpenPortForward={(title, url) => setLoopbackBrowser({ title, url })}
             {...(openActiveLoopbackLink === undefined ? {} : { onOpenLoopbackLink: openActiveLoopbackLink })}
-            voiceResource={useLocalConversationState ? null : activeVoiceResource}
-            reviewVoiceResource={useLocalConversationState ? null : activeReviewVoiceResource}
-            voiceController={useLocalConversationState ? null : remote.voiceController}
-            fileTransferResource={useLocalConversationState ? null : activeFileTransferResource}
-            fileTransferController={useLocalConversationState ? null : remote.fileTransferController}
-            subagents={useLocalConversationState ? [] : remote.subagents}
-            subagentSummaryDatabase={useLocalConversationState ? null : remote.threadSummaryDatabase}
-            subagentThreadDetails={useLocalConversationState ? null : remote.threadDetails}
-            {...(useLocalConversationState ? {} : {
-              onReadSubagentThread: remote.readSubagentThread,
-              onRefreshSubagents: async (rootThreadId: string) => await remote.refreshSubagents(activeConnectionId, rootThreadId),
-            })}
-            {...(useLocalConversationState ? {} : { loadDraft: remote.loadDraft })}
-            saveDraft={useLocalConversationState ? saveDemoDraft : remote.saveDraft}
-            saveDraftAttachments={useLocalConversationState ? saveDemoDraftAttachments : remote.saveDraftAttachments}
-            loadScrollOffset={useLocalConversationState ? loadDemoScrollOffset : remote.loadScrollOffset}
-            saveScrollOffset={useLocalConversationState ? saveDemoScrollOffset : remote.saveScrollOffset}
-            saveComposerPreferences={useLocalConversationState ? saveDemoPreferences : remote.saveComposerPreferences}
+            voiceResource={activeVoiceResource}
+            reviewVoiceResource={activeReviewVoiceResource}
+            voiceController={remote.voiceController}
+            fileTransferResource={activeFileTransferResource}
+            fileTransferController={remote.fileTransferController}
+            subagentSummaryDatabase={remote.threadSummaryDatabase}
+            subagentThreadDetails={remote.threadDetails}
+            onReadSubagentThread={remote.readSubagentThread}
+            onRefreshSubagents={async (rootThreadId: string) => await remote.refreshSubagents(activeConnectionId, rootThreadId)}
+            loadDraft={remote.loadDraft}
+            saveDraft={remote.saveDraft}
+            saveDraftAttachments={remote.saveDraftAttachments}
+            loadScrollOffset={remote.loadScrollOffset}
+            saveScrollOffset={remote.saveScrollOffset}
+            saveComposerPreferences={remote.saveComposerPreferences}
             pendingRequest={activePendingRequest}
             pendingRequestCount={activePendingRequests.length}
             pinned={activeThread?.pinned ?? false}
@@ -1805,41 +1864,39 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             onChangeWorkspaceMode={(workspaceMode) => {
               setNewChatDraft((current) => current === null ? null : { ...current, workspaceMode });
             }}
-            {...(remote.native ? { onAddProject: addActiveProject, onReadDirectory: readActiveDirectory } : {})}
+            onAddProject={addActiveProject}
+            onReadDirectory={readActiveDirectory}
             onRename={async (name) => {
-              if (remote.native && activeRemoteThreadId !== null) await remote.renameThread(activeConnectionId, activeRemoteThreadId, name);
-              else if (activeRemoteThreadId !== null) setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, title: name } : candidate));
+              if (activeRemoteThreadId !== null) await remote.renameThread(activeConnectionId, activeRemoteThreadId, name);
             }}
             onArchive={async () => {
-              if (remote.native && activeRemoteThreadId !== null) await remote.archiveThread(activeConnectionId, activeRemoteThreadId);
-              else if (activeThreadId !== null) setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, archived: true } : candidate));
+              if (activeRemoteThreadId !== null) await remote.archiveThread(activeConnectionId, activeRemoteThreadId);
               setActiveThreadId(null);
             }}
             onUnarchive={async () => {
-              if (remote.native && activeRemoteThreadId !== null) await remote.unarchiveThread(activeConnectionId, activeRemoteThreadId);
-              else if (activeThreadId !== null) setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, archived: false } : candidate));
+              if (activeRemoteThreadId !== null) await remote.unarchiveThread(activeConnectionId, activeRemoteThreadId);
               setThreadListMode("active");
               setActiveThreadId(null);
             }}
             archived={activeThread?.archived ?? false}
             onDelete={async () => {
-              if (remote.native && activeRemoteThreadId !== null) await remote.deleteThread(activeConnectionId, activeRemoteThreadId);
-              else if (activeThreadId !== null) setDemoThreadState((current) => current.filter((candidate) => threadSelectionKey(candidate) !== activeThreadId));
+              if (activeRemoteThreadId !== null) await remote.deleteThread(activeConnectionId, activeRemoteThreadId);
               setActiveThreadId(null);
             }}
             onFork={forkCurrentThread}
             onFixUnsupportedBlock={createUnsupportedFixThread}
             onTogglePin={async () => {
               if (activeRemoteThreadId === null || activeThreadId === null) return;
-              if (remote.native) await remote.setThreadPinned(activeConnectionId, activeRemoteThreadId, !(activeThread?.pinned ?? false));
-              else setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, pinned: !candidate.pinned } : candidate));
+              await remote.setThreadPinned(activeConnectionId, activeRemoteThreadId, !(activeThread?.pinned ?? false));
             }}
             {...conversationActions}
-          />
+          />}
+          </Suspense>
           </RecoverableRenderBoundary>
         )}
         <ConnectionSheet
           visible={connectionSheetVisible}
+          openedAt={connectionSheetOpenedAt}
           localReady={remote.ready && remote.error === null}
           localError={remote.error}
           onRetryStartup={remote.retryStartup}
@@ -1895,6 +1952,12 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           onAdd={openConnectionSheet}
           onSettings={() => setSettingsVisible(true)}
         />
+        <RecoverableRenderBoundary
+          scope="surface"
+          label="Chat list"
+          resetKey={`desktop-chat-list:${activeServerId}:${threadListMode}`}
+        >
+        <Suspense fallback={<ThreadListSuspenseFallback />}>
         <ThreadSidebar
           width={Math.max(280, Math.min(480, Math.floor(viewportWidth * 0.32)))}
           server={servers.find((server) => server.id === activeServerId)}
@@ -1903,7 +1966,9 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           mode={threadListMode}
           activeThreadId={activeThread === null ? null : threadSelectionKey(activeThread)}
           onModeChange={setThreadListMode}
+          onLoadMore={loadMoreThreads}
           onSelect={selectThread}
+          onPreload={preloadThread}
           onNewThread={() => void createThread()}
           onTogglePin={toggleListThreadPin}
           onArchive={archiveListThread}
@@ -1914,6 +1979,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             onRefreshAccountRateLimits: async () => await remote.refreshAccountRateLimits(activeServerId),
           })}
         />
+        </Suspense>
+        </RecoverableRenderBoundary>
         <RecoverableRenderBoundary
           scope="surface"
           label="Conversation"
@@ -1921,51 +1988,46 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           resetKey={`${activeConnectionId}:${composerThreadId ?? "none"}`}
           onDismiss={closeActiveConversation}
         >
-        <ConversationPane
+        <Suspense fallback={<ConversationNavigationLoader thread={visibleConversationThread} server={servers.find((server) => server.id === activeConnectionId)} cwd={activeCwd} compact={false} onBack={undefined} />}>
+        {activeConversationRoute === null ? null : <ConversationDestination
+          route={activeConversationRoute}
+          navigationKey={activeConversationNavigationKey}
+          navigationConnectionId={activeConnectionId}
+          navigationThreadId={activeRemoteThreadId}
           thread={visibleConversationThread}
           newChat={newChatDraft !== null}
           server={servers.find((server) => server.id === activeConnectionId)}
-          demo={useLocalConversationState}
-          demoComposer={activeDemoComposer}
-          demoControls={testWorkspace?.controls ?? null}
-          remoteThread={remoteThread}
           accountRateLimits={activeAccountRateLimits}
           {...(activeConnectionId === "" ? {} : {
             onRefreshAccountRateLimits: async () => await remote.refreshAccountRateLimits(activeConnectionId),
           })}
-          {...activeTimelinePartitions}
-          loadState={activeThreadLoadState}
-          onLoadOlder={loadOlderTurns}
-          onRevealNewer={revealNewerTurns}
-          onLoadTurnItems={loadTurnItems}
-          pendingDeliveries={useLocalConversationState ? demoPendingDeliveries : activePendingDeliveries}
-          queuedPrompts={useLocalConversationState ? [] : activeQueuedPrompts}
-          composerState={useLocalConversationState ? null : activeComposerState}
-          controlsResource={useLocalConversationState ? null : activeControlsResource}
-          terminalsResource={useLocalConversationState ? null : activeTerminalsResource}
-          threadResources={useLocalConversationState ? null : visibleThreadResources}
-          goalResource={useLocalConversationState ? null : activeGoalResource}
-          tunnelResource={useLocalConversationState ? null : activeTunnelResource}
-          {...(activePortForwarding === undefined ? {} : { portForwarding: activePortForwarding })}
+          workspaceResources={remote.resourceDatabase}
+          controlsResourceId={activeControlsResourceId}
+          backgroundTerminalsResourceId={activeThreadResourceId}
+          threadResourcesModel={remote.resourceDatabase?.threadResources ?? null}
+          threadResourceId={activeThreadResourceId}
+          threadResourceRevision={activeConnectionState}
+          goalResourceId={activeThreadResourceId}
+          tunnelResourceId={activeTunnelResourceId}
+          portForwardingConnectionId={remote.native && activeConnectionId !== "" ? activeConnectionId : null}
+          portForwardingServerName={servers.find((server) => server.id === activeConnectionId)?.name ?? "Server"}
+          onOpenPortForward={(title, url) => setLoopbackBrowser({ title, url })}
           {...(openActiveLoopbackLink === undefined ? {} : { onOpenLoopbackLink: openActiveLoopbackLink })}
-          voiceResource={useLocalConversationState ? null : activeVoiceResource}
-          reviewVoiceResource={useLocalConversationState ? null : activeReviewVoiceResource}
-          voiceController={useLocalConversationState ? null : remote.voiceController}
-          fileTransferResource={useLocalConversationState ? null : activeFileTransferResource}
-          fileTransferController={useLocalConversationState ? null : remote.fileTransferController}
-          subagents={useLocalConversationState ? [] : remote.subagents}
-          subagentSummaryDatabase={useLocalConversationState ? null : remote.threadSummaryDatabase}
-          subagentThreadDetails={useLocalConversationState ? null : remote.threadDetails}
-          {...(useLocalConversationState ? {} : {
-            onReadSubagentThread: remote.readSubagentThread,
-            onRefreshSubagents: async (rootThreadId: string) => await remote.refreshSubagents(activeConnectionId, rootThreadId),
-          })}
-          {...(useLocalConversationState ? {} : { loadDraft: remote.loadDraft })}
-          saveDraft={useLocalConversationState ? saveDemoDraft : remote.saveDraft}
-          saveDraftAttachments={useLocalConversationState ? saveDemoDraftAttachments : remote.saveDraftAttachments}
-          loadScrollOffset={useLocalConversationState ? loadDemoScrollOffset : remote.loadScrollOffset}
-          saveScrollOffset={useLocalConversationState ? saveDemoScrollOffset : remote.saveScrollOffset}
-          saveComposerPreferences={useLocalConversationState ? saveDemoPreferences : remote.saveComposerPreferences}
+          voiceResource={activeVoiceResource}
+          reviewVoiceResource={activeReviewVoiceResource}
+          voiceController={remote.voiceController}
+          fileTransferResource={activeFileTransferResource}
+          fileTransferController={remote.fileTransferController}
+          subagentSummaryDatabase={remote.threadSummaryDatabase}
+          subagentThreadDetails={remote.threadDetails}
+          onReadSubagentThread={remote.readSubagentThread}
+          onRefreshSubagents={async (rootThreadId: string) => await remote.refreshSubagents(activeConnectionId, rootThreadId)}
+          loadDraft={remote.loadDraft}
+          saveDraft={remote.saveDraft}
+          saveDraftAttachments={remote.saveDraftAttachments}
+          loadScrollOffset={remote.loadScrollOffset}
+          saveScrollOffset={remote.saveScrollOffset}
+          saveComposerPreferences={remote.saveComposerPreferences}
           pendingRequest={activePendingRequest}
           pendingRequestCount={activePendingRequests.length}
           pinned={activeThread?.pinned ?? false}
@@ -1981,41 +2043,39 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           onChangeWorkspaceMode={(workspaceMode) => {
             setNewChatDraft((current) => current === null ? null : { ...current, workspaceMode });
           }}
-          {...(remote.native ? { onAddProject: addActiveProject, onReadDirectory: readActiveDirectory } : {})}
+          onAddProject={addActiveProject}
+          onReadDirectory={readActiveDirectory}
           onRename={async (name) => {
-            if (remote.native && activeRemoteThreadId !== null) await remote.renameThread(activeConnectionId, activeRemoteThreadId, name);
-            else if (activeThreadId !== null) setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, title: name } : candidate));
+            if (activeRemoteThreadId !== null) await remote.renameThread(activeConnectionId, activeRemoteThreadId, name);
           }}
           onArchive={async () => {
-            if (remote.native && activeRemoteThreadId !== null) await remote.archiveThread(activeConnectionId, activeRemoteThreadId);
-            else if (activeThreadId !== null) setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, archived: true } : candidate));
+            if (activeRemoteThreadId !== null) await remote.archiveThread(activeConnectionId, activeRemoteThreadId);
             setActiveThreadId(null);
           }}
           onUnarchive={async () => {
-            if (remote.native && activeRemoteThreadId !== null) await remote.unarchiveThread(activeConnectionId, activeRemoteThreadId);
-            else if (activeThreadId !== null) setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, archived: false } : candidate));
+            if (activeRemoteThreadId !== null) await remote.unarchiveThread(activeConnectionId, activeRemoteThreadId);
             setThreadListMode("active");
             setActiveThreadId(null);
           }}
           archived={activeThread?.archived ?? false}
           onDelete={async () => {
-            if (remote.native && activeRemoteThreadId !== null) await remote.deleteThread(activeConnectionId, activeRemoteThreadId);
-            else if (activeThreadId !== null) setDemoThreadState((current) => current.filter((candidate) => threadSelectionKey(candidate) !== activeThreadId));
+            if (activeRemoteThreadId !== null) await remote.deleteThread(activeConnectionId, activeRemoteThreadId);
             setActiveThreadId(null);
           }}
           onFork={forkCurrentThread}
           onFixUnsupportedBlock={createUnsupportedFixThread}
           onTogglePin={async () => {
             if (activeRemoteThreadId === null || activeThreadId === null) return;
-            if (remote.native) await remote.setThreadPinned(activeConnectionId, activeRemoteThreadId, !(activeThread?.pinned ?? false));
-            else setDemoThreadState((current) => current.map((candidate) => threadSelectionKey(candidate) === activeThreadId ? { ...candidate, pinned: !candidate.pinned } : candidate));
+            await remote.setThreadPinned(activeConnectionId, activeRemoteThreadId, !(activeThread?.pinned ?? false));
           }}
           {...conversationActions}
-        />
+        />}
+        </Suspense>
         </RecoverableRenderBoundary>
       </View>
       <ConnectionSheet
         visible={connectionSheetVisible}
+        openedAt={connectionSheetOpenedAt}
         localReady={remote.ready && remote.error === null}
         localError={remote.error}
         onRetryStartup={remote.retryStartup}
@@ -2095,7 +2155,7 @@ function ServerRail({
   onAdd,
   onSettings,
 }: {
-  servers: DemoServer[];
+  servers: ThreadListServer[];
   activeServerId: string;
   onSelect(id: string): void;
   onAdd(): void;
@@ -2224,7 +2284,7 @@ function connectionDiagnosticTime(timestamp: number | null): string | null {
 
 type ThreadListRow =
   | { kind: "header"; title: string }
-  | { kind: "thread"; thread: DemoThread };
+  | { kind: "thread"; thread: ThreadListItem };
 
 type ThreadListMode = "active" | "archived";
 
@@ -2240,6 +2300,7 @@ function threadListRowsEqual(previous: ThreadListRow, next: ThreadListRow): bool
     && left.title === right.title
     && left.preview === right.preview
     && left.time === right.time
+    && left.timestamp === right.timestamp
     && left.pinned === right.pinned
     && left.archived === right.archived
     && left.unread === right.unread
@@ -2255,7 +2316,9 @@ function ThreadSidebar({
   mode,
   activeThreadId,
   onModeChange,
+  onLoadMore,
   onSelect,
+  onPreload,
   onNewThread,
   onTogglePin,
   onArchive,
@@ -2265,18 +2328,20 @@ function ThreadSidebar({
   onRefreshAccountRateLimits,
 }: {
   width: number;
-  server: DemoServer | undefined;
-  threads: DemoThread[];
-  archivedThreads: DemoThread[];
+  server: ThreadListServer | undefined;
+  threads: ThreadListItem[];
+  archivedThreads: ThreadListItem[];
   mode: ThreadListMode;
   activeThreadId: string | null;
   onModeChange(mode: ThreadListMode): void;
+  onLoadMore(): void;
   onSelect(id: string): void;
+  onPreload(id: string): (() => void) | undefined;
   onNewThread(): void;
-  onTogglePin(thread: DemoThread): Promise<void>;
-  onArchive(thread: DemoThread): Promise<void>;
-  onUnarchive(thread: DemoThread): Promise<void>;
-  onMarkRead(thread: DemoThread): Promise<void>;
+  onTogglePin(thread: ThreadListItem): Promise<void>;
+  onArchive(thread: ThreadListItem): Promise<void>;
+  onUnarchive(thread: ThreadListItem): Promise<void>;
+  onMarkRead(thread: ThreadListItem): Promise<void>;
   accountRateLimits?: AccountRateLimitsRow | null;
   onRefreshAccountRateLimits?(): Promise<unknown>;
 }) {
@@ -2360,6 +2425,8 @@ function ThreadSidebar({
         itemsAreEqual={threadListRowsEqual}
         keyExtractor={(row) => row.kind === "header" ? `header-${row.title}` : threadSelectionKey(row.thread)}
         keyboardShouldPersistTaps="handled"
+        onEndReached={onLoadMore}
+        onEndReachedThreshold={0.4}
         ListEmptyComponent={<ThreadListEmpty archived={mode === "archived"} />}
         renderItem={({ item }) =>
           item.kind === "header" ? (
@@ -2368,6 +2435,7 @@ function ThreadSidebar({
             <ThreadRow
               thread={item.thread}
               selected={threadSelectionKey(item.thread) === activeThreadId}
+              onPressIn={() => onPreload(threadSelectionKey(item.thread))}
               onPress={() => onSelect(threadSelectionKey(item.thread))}
               onTogglePin={() => onTogglePin(item.thread)}
               onArchive={() => onArchive(item.thread)}
@@ -2480,6 +2548,14 @@ function ThreadListEmpty({ archived }: { archived: boolean }) {
   );
 }
 
+function ThreadListSuspenseFallback() {
+  return (
+    <View accessibilityLabel="Loading chats" style={styles.threadListEmpty} testID="thread-list-suspense-fallback">
+      <ActivityIndicator color={colors.accent} />
+    </View>
+  );
+}
+
 function ThreadListExperimentSuspended() {
   return (
     <View style={styles.threadListEmpty}>
@@ -2491,7 +2567,7 @@ function ThreadListExperimentSuspended() {
 
 type ThreadListFilter = "all" | "running" | "approval" | "unread" | "pinned";
 
-function threadMatchesFilter(thread: DemoThread, filter: ThreadListFilter): boolean {
+function threadMatchesFilter(thread: ThreadListItem, filter: ThreadListFilter): boolean {
   if (filter === "running") return thread.state === "running";
   if (filter === "approval") return thread.state === "approval";
   if (filter === "unread") return thread.unread > 0;
@@ -2502,14 +2578,16 @@ function threadMatchesFilter(thread: DemoThread, filter: ThreadListFilter): bool
 function ThreadRow({
   thread,
   selected,
+  onPressIn,
   onPress,
   onTogglePin,
   onArchive,
   onUnarchive,
   onMarkRead,
 }: {
-  thread: DemoThread;
+  thread: ThreadListItem;
   selected: boolean;
+  onPressIn?(): (() => void) | undefined;
   onPress(): void;
   onTogglePin?(): Promise<void>;
   onArchive?(): Promise<void>;
@@ -2518,6 +2596,8 @@ function ThreadRow({
 }) {
   const dialog = useAppDialog();
   const swipeableRef = useRef<SwipeableMethods | null>(null);
+  const pressIntentCancelRef = useRef<(() => void) | null>(null);
+  const pressIntentReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [webContextVisible, setWebContextVisible] = useState(false);
   const archiveAction = thread.archived ? onUnarchive : onArchive;
   const archiveLabel = thread.archived ? "Unarchive" : "Archive";
@@ -2535,16 +2615,45 @@ function ThreadRow({
     void action().catch((cause) => dialog.alert(`${label} failed`, cause instanceof Error ? cause.message : "Thread action failed"));
     if (closeSwipe) swipeableRef.current?.close();
   };
-  useEffect(() => {
+  const closeSwipe = useEvent(() => {
     swipeableRef.current?.close();
-  }, [selected, thread.id]);
+  });
   const row = (
+    <ThreadRowCommitBoundary>
+    <CommitOnChangeProbe scope={thread.id} revision={selected ? 1 : 0} onCommit={closeSwipe} />
     <GesturePressable
       {...(selected ? { testID: "selected-thread-row" } : {})}
       accessibilityRole="button"
       cancelable
       delayLongPress={350}
-      onPress={onPress}
+      onPressIn={() => {
+        if (pressIntentReleaseTimerRef.current !== null) clearTimeout(pressIntentReleaseTimerRef.current);
+        pressIntentReleaseTimerRef.current = null;
+        pressIntentCancelRef.current?.();
+        pressIntentCancelRef.current = onPressIn?.() ?? null;
+      }}
+      onPressOut={() => {
+        const cancel = pressIntentCancelRef.current;
+        if (cancel === null) return;
+        // Gesture Handler dispatches onPressOut before onPress. Defer release
+        // one task so a completed press can transfer the same intent instead
+        // of evicting it in the gap between the two callbacks.
+        pressIntentReleaseTimerRef.current = setTimeout(() => {
+          pressIntentReleaseTimerRef.current = null;
+          if (pressIntentCancelRef.current !== cancel) return;
+          pressIntentCancelRef.current = null;
+          cancel();
+        }, 0);
+      }}
+      onPress={() => {
+        if (pressIntentReleaseTimerRef.current !== null) clearTimeout(pressIntentReleaseTimerRef.current);
+        pressIntentReleaseTimerRef.current = null;
+        // The database keeps the transient lease until the mounted
+        // conversation acquires its own lease in the retention effect.
+        pressIntentCancelRef.current = null;
+        swipeableRef.current?.close();
+        onPress();
+      }}
       {...(Platform.OS === "web" ? { onLongPress: () => setWebContextVisible(true), delayLongPress: 350 } : {})}
       style={({ pressed }) => [
         styles.threadRow,
@@ -2553,7 +2662,6 @@ function ThreadRow({
         pressed && styles.pressed,
       ]}
     >
-      {operationalDiagnosticsEnabled() && <ThreadRowCommitProbe />}
       {selected && <View style={styles.selectionBar} />}
       <View style={styles.threadText}>
         <View style={styles.threadTitleLine}>
@@ -2581,7 +2689,7 @@ function ThreadRow({
                 />
               )}
             </View>
-            <Text testID="thread-time" numberOfLines={1} style={styles.threadTime}>{thread.time}</Text>
+            <Text testID="thread-time" numberOfLines={1} style={styles.threadTime}>{thread.time ?? formatThreadTime(thread.timestamp ?? 0)}</Text>
           </View>
         </View>
         <View style={styles.threadPreviewLine}>
@@ -2589,6 +2697,7 @@ function ThreadRow({
         </View>
       </View>
     </GesturePressable>
+    </ThreadRowCommitBoundary>
   );
   const rowMenu = Platform.OS === "web" ? row : (
     <ActionMenu
@@ -2644,18 +2753,27 @@ function ThreadRow({
   );
 }
 
-function ThreadRowCommitProbe() {
-  useEffect(() => {
+function ThreadRowCommitBoundary({ children }: { children: ReactNode }) {
+  if (!operationalDiagnosticsEnabled()) return <>{children}</>;
+  const onCommit = () => {
     incrementDiagnosticMetric("thread_row_commits");
-  });
-  return null;
+  };
+  return <>{children}<EveryCommitProbe onCommit={onCommit} /></>;
 }
 
-function ThreadNavigationRowCommitProbe({ connectionId, threadId, rowKey }: { connectionId: string; threadId: string; rowKey: string }) {
-  useLayoutEffect(() => {
-    recordThreadNavigationRowCommit(connectionId, threadId, rowKey);
-  });
-  return null;
+function ThreadNavigationRowCommitBoundary({
+  connectionId,
+  threadId,
+  rowKey,
+  children,
+}: {
+  connectionId: string;
+  threadId: string;
+  rowKey: string;
+  children: ReactNode;
+}) {
+  if (!isThreadNavigationActiveFor(connectionId, threadId)) return <>{children}</>;
+  return <>{children}<EveryCommitProbe onCommit={() => recordThreadNavigationRowCommit(connectionId, threadId, rowKey)} /></>;
 }
 
 function ThreadSwipeAction({
@@ -2705,9 +2823,11 @@ function MobileThreads({
   query,
   onQueryChange,
   onModeChange,
+  onLoadMore,
   initialOffset,
   onOffsetChange,
   onSelectThread,
+  onPreloadThread,
   onSelectServer,
   onAddServer,
   onNewThread,
@@ -2719,25 +2839,27 @@ function MobileThreads({
   accountRateLimits = null,
   onRefreshAccountRateLimits,
 }: {
-  servers: DemoServer[];
+  servers: ThreadListServer[];
   activeServerId: string;
-  threads: DemoThread[];
-  archivedThreads: DemoThread[];
+  threads: ThreadListItem[];
+  archivedThreads: ThreadListItem[];
   mode: ThreadListMode;
   query: string;
   onQueryChange(query: string): void;
   onModeChange(mode: ThreadListMode): void;
+  onLoadMore(): void;
   initialOffset: number;
   onOffsetChange(offset: number): void;
   onSelectThread(id: string): void;
+  onPreloadThread(id: string): (() => void) | undefined;
   onSelectServer(id: string): void;
   onAddServer(): void;
   onNewThread(): void;
   onSettings(): void;
-  onTogglePin(thread: DemoThread): Promise<void>;
-  onArchive(thread: DemoThread): Promise<void>;
-  onUnarchive(thread: DemoThread): Promise<void>;
-  onMarkRead(thread: DemoThread): Promise<void>;
+  onTogglePin(thread: ThreadListItem): Promise<void>;
+  onArchive(thread: ThreadListItem): Promise<void>;
+  onUnarchive(thread: ThreadListItem): Promise<void>;
+  onMarkRead(thread: ThreadListItem): Promise<void>;
   accountRateLimits?: AccountRateLimitsRow | null;
   onRefreshAccountRateLimits?(): Promise<unknown>;
 }) {
@@ -2830,6 +2952,8 @@ function MobileThreads({
         getItemType={(item) => item.kind}
         itemsAreEqual={threadListRowsEqual}
         onScroll={({ nativeEvent }) => onOffsetChange(nativeEvent.contentOffset.y)}
+        onEndReached={onLoadMore}
+        onEndReachedThreshold={0.4}
         scrollEventThrottle={100}
         keyExtractor={(item) => item.kind === "header" ? `header-${item.title}` : threadSelectionKey(item.thread)}
         ListEmptyComponent={<ThreadListEmpty archived={mode === "archived"} />}
@@ -2837,6 +2961,7 @@ function MobileThreads({
           item.kind === "header" ? <Text style={styles.sectionHeader}>{item.title}</Text> : <ThreadRow
               thread={item.thread}
               selected={false}
+              onPressIn={() => onPreloadThread(threadSelectionKey(item.thread))}
               onPress={() => onSelectThread(threadSelectionKey(item.thread))}
               onTogglePin={() => onTogglePin(item.thread)}
               onArchive={() => onArchive(item.thread)}
@@ -2871,7 +2996,7 @@ function TopBarAction({ icon, accessibilityLabel, active = false, onPress }: { i
   );
 }
 
-function MobileServerSheet({ visible, servers, activeServerId, onSelect, onAddServer, onSettings, onClose }: { visible: boolean; servers: DemoServer[]; activeServerId: string; onSelect(id: string): void; onAddServer(): void; onSettings(): void; onClose(): void }) {
+function MobileServerSheet({ visible, servers, activeServerId, onSelect, onAddServer, onSettings, onClose }: { visible: boolean; servers: ThreadListServer[]; activeServerId: string; onSelect(id: string): void; onAddServer(): void; onSettings(): void; onClose(): void }) {
   return (
     <AppSheet isOpen={visible} onOpenChange={(open) => { if (!open) onClose(); }} contentProps={{ index: 0, enableDynamicSizing: true }}>
       <Text style={styles.sheetTitle}>Server</Text>
@@ -2906,15 +3031,7 @@ function VoiceCaptureStatus({
   scope: string;
 }) {
   const level = useVoiceInputLevel(controller, phase === "recording" ? scope : null);
-  const [clock, setClock] = useState(0);
-
-  // The clock invalidates only this tiny status row. Recording time is not
-  // application state and must never make the thread/sidebar render again.
-  useEffect(() => {
-    if (phase !== "recording") return;
-    const timer = setInterval(() => setClock(Date.now()), 1_000);
-    return () => clearInterval(timer);
-  }, [phase, startedAt]);
+  const clock = useSecondClock(phase === "recording");
 
   const elapsedSeconds = phase === "recording"
     ? Math.max(0, Math.floor((Math.max(startedAt, clock) - startedAt) / 1_000))
@@ -2940,13 +3057,173 @@ function VoiceCaptureStatus({
   );
 }
 
+function ComposerControlChips({
+  resources,
+  resourceId,
+  cwd,
+  remoteThread,
+  readOnly,
+  selectedModel,
+  selectedEffort,
+  selectedPersonality,
+  selectedPermissions,
+  error,
+  load,
+  onQuickOpen,
+  onFallback,
+  onClose,
+  onSelectModel,
+  onSelectEffort,
+  onSelectPersonality,
+  onSelectPermissions,
+}: {
+  resources: WorkspaceResourceDatabase | null;
+  resourceId: string | null;
+  cwd: string;
+  remoteThread: Thread | null | undefined;
+  readOnly: boolean;
+  selectedModel: string | null;
+  selectedEffort: string | null;
+  selectedPersonality: Personality | null;
+  selectedPermissions: string | null;
+  error: string | null;
+  load?: (cwd: string) => Promise<TurnControls>;
+  onQuickOpen(scope: "model-menu" | "permissions-menu"): void;
+  onFallback(page: "model" | "permissions"): void;
+  onClose(scope: "model-menu" | "permissions-menu"): void;
+  onSelectModel(model: string, effort: string): void;
+  onSelectEffort(effort: string): void;
+  onSelectPersonality(personality: Personality | null): void;
+  onSelectPermissions(permissions: string): void;
+}) {
+  const resource = useTurnControlsRow(resources, resourceId);
+  useAsyncResource<TurnControls>(
+    load === undefined || resourceId === null ? null : "conversation-turn-controls",
+    resourceId ?? "inactive",
+    async () => load === undefined ? EMPTY_TURN_CONTROLS : await load(cwd),
+  );
+  const controls = resource?.value ?? EMPTY_TURN_CONTROLS;
+  const loading = resource?.status === "loading" && resource.value === null;
+  const refreshing = resource?.status === "loading" || resource?.status === "refreshing";
+  const pending = load !== undefined && (resource === null || refreshing);
+  const effectiveError = error ?? resource?.error ?? null;
+  const serverExecution = remoteThread === null || remoteThread === undefined ? null : latestProjectedThreadExecutionSettings(remoteThread);
+  const catalogDefaultModel = controls.models.find((candidate) => candidate.isDefault) ?? null;
+  const effectiveModel = selectedModel ?? serverExecution?.model ?? controls.defaults.model ?? catalogDefaultModel?.id ?? null;
+  const effectiveModelCatalog = controls.models.find((candidate) => candidate.id === effectiveModel) ?? null;
+  const effectiveEffort = selectedEffort
+    ?? serverExecution?.effort
+    ?? (selectedModel === null && serverExecution?.model == null ? controls.defaults.effort : null)
+    ?? effectiveModelCatalog?.defaultEffort
+    ?? null;
+  const effectivePermissions = selectedPermissions ?? serverExecution?.permissions ?? controls.defaults.permissions;
+  const modelLabel = controls.models.find((candidate) => candidate.id === effectiveModel)?.label ?? effectiveModel ?? (pending ? "Loading model…" : "Model unavailable");
+  const permissionLabel = effectivePermissions === null ? executionPermissionsLabel(serverExecution, pending) : permissionProfileLabel(effectivePermissions);
+  const modelPending = pending && effectiveModel === null;
+  const permissionsPending = pending && effectivePermissions === null;
+  return <>
+    {readOnly ? <View testID="readonly-model-chip" style={styles.composerContextChip}>
+      <Ionicons name="sparkles-outline" size={15} color={colors.textMuted} />
+      <ComposerContextLabel loading={modelPending} testID="composer-model-label" text={modelPending ? "Loading model…" : `${modelLabel} · ${effectiveEffort ?? "default"}`} />
+    </View> : <ModelThinkingMenu
+      accessibilityLabel={`Model and thinking: ${modelLabel}, ${effectiveEffort ?? "server default"}`}
+      triggerStyle={styles.composerContextChip}
+      triggerChildren={<><Ionicons name="sparkles-outline" size={15} color={colors.textMuted} /><ComposerContextLabel loading={modelPending} testID="composer-model-label" text={modelPending ? "Loading model…" : `${modelLabel} · ${effectiveEffort ?? "default"}`} /></>}
+      models={controls.models}
+      loading={loading}
+      error={effectiveError}
+      selectedModel={effectiveModel}
+      selectedEffort={effectiveEffort}
+      selectedPersonality={selectedPersonality}
+      onOpen={() => onQuickOpen("model-menu")}
+      onClose={() => onClose("model-menu")}
+      onFallbackPress={() => onFallback("model")}
+      onSelectModel={onSelectModel}
+      onSelectEffort={onSelectEffort}
+      onSelectPersonality={onSelectPersonality}
+    />}
+    {readOnly ? <View testID="readonly-permissions-chip" style={styles.composerContextChip}>
+      <Ionicons name="shield-checkmark-outline" size={15} color={colors.textMuted} />
+      <ComposerContextLabel loading={permissionsPending} testID="composer-permissions-label" text={permissionsPending ? "Loading access…" : permissionLabel} />
+    </View> : <PermissionsMenu
+      accessibilityLabel={`Permissions: ${permissionLabel}`}
+      triggerStyle={styles.composerContextChip}
+      triggerChildren={<><Ionicons name="shield-checkmark-outline" size={15} color={colors.textMuted} /><ComposerContextLabel loading={permissionsPending} testID="composer-permissions-label" text={permissionsPending ? "Loading access…" : permissionLabel} /></>}
+      permissions={controls.permissions}
+      loading={loading}
+      error={effectiveError}
+      selectedPermissions={effectivePermissions}
+      onOpen={() => onQuickOpen("permissions-menu")}
+      onClose={() => onClose("permissions-menu")}
+      onFallbackPress={() => onFallback("permissions")}
+      onSelectPermissions={onSelectPermissions}
+    />}
+  </>;
+}
+
+function ComposerPortContextChip({ connectionId, onOpen }: { connectionId: string | null; onOpen(): void }) {
+  if (connectionId === null) return null;
+  return <ComposerPortContextChipLoaded connectionId={connectionId} onOpen={onOpen} />;
+}
+
+function ComposerPortContextChipLoaded({ connectionId, onOpen }: { connectionId: string; onOpen(): void }) {
+  const snapshot = useNativePortForwarding(connectionId);
+  if (snapshot.profiles.length === 0) return null;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Ports: ${snapshot.profiles.length}`} onPress={onOpen} style={styles.composerContextChip}>
+    <Ionicons name="git-network-outline" size={15} color={snapshot.profiles.some(({ status }) => status === "live") ? colors.green : colors.textMuted} />
+    <ComposerContextCount label="Ports" value={snapshot.profiles.length} testID="composer-ports-label" />
+  </Pressable>;
+}
+
+function ComposerTerminalContextChip({ connectionId, threadId, onOpen }: { connectionId: string | null; threadId: string | null; onOpen(): void }) {
+  const workspace = useInteractiveTerminalWorkspace(connectionId, threadId);
+  if (workspace.tabs.length === 0) return null;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Terminals: ${workspace.tabs.length}`} onPress={onOpen} style={styles.composerContextChip}>
+    <Ionicons name="terminal-outline" size={15} color={workspace.tabs.some(({ status }) => status === "open") ? colors.green : colors.textMuted} />
+    <ComposerContextCount label="Terminals" value={workspace.tabs.length} testID="composer-terminals-label" />
+  </Pressable>;
+}
+
+function ComposerSubagentContextChip({ database, connectionId, parentThreadId, onOpen }: {
+  database: ThreadSummaryDatabase | null;
+  connectionId: string | null;
+  parentThreadId: string | null;
+  onOpen(summaries: readonly StoredThreadSummary[]): void;
+}) {
+  if (database === null || connectionId === null || parentThreadId === null) return null;
+  return <Suspense fallback={null}><ComposerSubagentContextChipLoaded database={database} connectionId={connectionId} parentThreadId={parentThreadId} onOpen={onOpen} /></Suspense>;
+}
+
+function ComposerSubagentContextChipLoaded({ database, connectionId, parentThreadId, onOpen }: {
+  database: ThreadSummaryDatabase;
+  connectionId: string;
+  parentThreadId: string;
+  onOpen(summaries: readonly StoredThreadSummary[]): void;
+}) {
+  const view = useThreadSummaryView(database, {
+    viewId: `subagents:${connectionId}:${parentThreadId}`,
+    connectionId: null,
+    recentLimit: 0,
+    archivedLimit: 0,
+    selectedConnectionId: null,
+    selectedThreadId: null,
+    subagentConnectionId: connectionId,
+    subagentLimit: SUBAGENT_LIST_LIMIT,
+  });
+  const [projection] = useState(() => new SubagentListProjection());
+  const summaries = projection.project(view?.subagents ?? []);
+  const visible = subagentsForThread(summaries, parentThreadId);
+  if (visible.length === 0) return null;
+  return <Pressable accessibilityRole="button" accessibilityLabel={`Subagents: ${visible.length}`} onPress={() => onOpen(summaries)} style={styles.composerContextChip}>
+    <Ionicons name="people-outline" size={15} color={visible.some((summary) => summary.status.type === "active") ? colors.green : colors.textMuted} />
+    <ComposerContextCount label="Subagents" value={visible.length} />
+  </Pressable>;
+}
+
 function ConversationPane({
   thread,
   server,
   newChat = false,
-  demo = false,
-  demoComposer,
-  demoControls = null,
   compact = false,
   readOnly = false,
   onBack,
@@ -2955,26 +3232,29 @@ function ConversationPane({
   onRefreshAccountRateLimits,
   remoteSealedTurns,
   remoteLiveTurns,
-  loadState = { phase: "ready", nextCursor: null, loadingOlder: false, residentOffset: 0, error: null },
-  onLoadOlder,
-  onRevealNewer,
+  historyViewport = COMPLETE_STATIC_THREAD_HISTORY,
   onLoadTurnItems,
   pendingDeliveries = [],
   queuedPrompts = [],
   composerState = null,
-  controlsResource = null,
-  terminalsResource = null,
-  threadResources = null,
-  goalResource = null,
-  tunnelResource = null,
-  portForwarding,
+  historyRestoreReady = true,
+  workspaceResources = null,
+  controlsResourceId = null,
+  backgroundTerminalsResourceId = null,
+  threadResourcesModel = null,
+  threadResourceId = null,
+  threadResourceRevision = "default",
+  goalResourceId = null,
+  tunnelResourceId = null,
+  portForwardingConnectionId = null,
+  portForwardingServerName = "Server",
+  onOpenPortForward,
   onOpenLoopbackLink,
   voiceResource = null,
   reviewVoiceResource = null,
   voiceController = null,
   fileTransferResource = null,
   fileTransferController = null,
-  subagents = [],
   subagentSummaryDatabase = null,
   subagentThreadDetails = null,
   onReadSubagentThread,
@@ -3034,12 +3314,9 @@ function ConversationPane({
   getTransferAccess,
   onStartVoiceTranscription,
 }: {
-  thread: DemoThread | null;
-  server: DemoServer | undefined;
+  thread: ThreadListItem | null;
+  server: ThreadListServer | undefined;
   newChat?: boolean;
-  demo?: boolean;
-  demoComposer?: { draft: string; attachments: ComposerAttachment[]; preferences: StoredComposerPreferences };
-  demoControls?: TurnControls | null;
   compact?: boolean;
   readOnly?: boolean;
   onBack?(): void;
@@ -3048,26 +3325,29 @@ function ConversationPane({
   onRefreshAccountRateLimits?(): Promise<unknown>;
   remoteSealedTurns?: readonly Thread["turns"][number][];
   remoteLiveTurns?: readonly Thread["turns"][number][];
-  loadState?: ThreadLoadState;
-  onLoadOlder?(): Promise<void>;
-  onRevealNewer?(): Promise<void>;
+  historyViewport?: ThreadHistoryViewport;
   onLoadTurnItems?(turnId: string): Promise<void>;
   pendingDeliveries?: Array<NativeCommandDelivery & { attachments?: ComposerAttachment[] }>;
   queuedPrompts?: QueuedPrompt[];
   composerState?: ThreadUiStateRow | null;
-  controlsResource?: TurnControlsRow | null;
-  terminalsResource?: BackgroundTerminalsRow | null;
-  threadResources?: ThreadResourcesRow | null;
-  goalResource?: ThreadGoalRow | null;
-  tunnelResource?: TunnelRow | null;
-  portForwarding?: PortForwardingManagerProps;
+  historyRestoreReady?: boolean;
+  workspaceResources?: WorkspaceResourceDatabase | null;
+  controlsResourceId?: string | null;
+  backgroundTerminalsResourceId?: string | null;
+  threadResourcesModel?: ThreadResourcesModel | null;
+  threadResourceId?: string | null;
+  threadResourceRevision?: string;
+  goalResourceId?: string | null;
+  tunnelResourceId?: string | null;
+  portForwardingConnectionId?: string | null;
+  portForwardingServerName?: string;
+  onOpenPortForward?(title: string, url: string): void;
   onOpenLoopbackLink?(target: LoopbackLinkTarget): Promise<void>;
   voiceResource?: VoiceInputRow | null;
   reviewVoiceResource?: VoiceInputRow | null;
   voiceController?: VoiceInputController | null;
   fileTransferResource?: FileTransferRow | null;
   fileTransferController?: FileTransferController | null;
-  subagents?: readonly StoredThreadSummary[];
   subagentSummaryDatabase?: ThreadSummaryDatabase | null;
   subagentThreadDetails?: ThreadDetailDatabase | null;
   onReadSubagentThread?(connectionId: string, threadId: string): Promise<import("./data/use-remote-workspace").ThreadWindow | null>;
@@ -3079,7 +3359,7 @@ function ConversationPane({
   saveDraft?(connectionId: string, threadId: string, text: string): Promise<void>;
   saveDraftAttachments?(connectionId: string, threadId: string, attachments: ComposerAttachment[]): Promise<void>;
   loadScrollOffset?(connectionId: string, threadId: string): Promise<number | null>;
-  saveScrollOffset?(connectionId: string, threadId: string, offset: number): Promise<void>;
+  saveScrollOffset?(connectionId: string, threadId: string, offset: number, historyAnchorTurnId: string | null, historyAnchorOffsetPx: number | null): Promise<void>;
   saveComposerPreferences?(connectionId: string, threadId: string, preferences: StoredComposerPreferences): Promise<void>;
   onRename?(name: string): Promise<void>;
   onArchive?(): Promise<void>;
@@ -3129,13 +3409,21 @@ function ConversationPane({
 }) {
   const windowLayout = useWindowLayout();
   const dialog = useAppDialog();
-  const appVoiceInputRuntime = useAppVoiceInputRuntime();
+  const parentVoiceInputRuntime = useAppVoiceInputRuntime();
   const conversationInsets = useSafeAreaInsets();
   const openDocument = useDocumentPreview();
   const downloadDocument = useDocumentDownload();
   const draftConnectionId = server?.id ?? null;
   const draftThreadId = thread?.id ?? null;
-  const composerScope = `${draftConnectionId ?? "demo"}\u0000${draftThreadId ?? "none"}`;
+  const composerScope = `${draftConnectionId ?? "no-connection"}\u0000${draftThreadId ?? "no-thread"}`;
+  const appVoiceInputRuntime: AppVoiceInputRuntime = {
+    controller: parentVoiceInputRuntime?.controller ?? voiceController,
+    resources: parentVoiceInputRuntime?.resources ?? null,
+    scopePrefix: composerScope,
+    thread: remoteThread ?? null,
+    ...(onStartVoiceTranscription === undefined ? {} : { startRemote: onStartVoiceTranscription }),
+  };
+  const conversationOwner = useConversationOwner(composerScope);
   const [changesPreferencesState, setChangesPreferencesState] = useState(() => ({
     key: composerScope,
     value: readChangesPreferences(composerScope),
@@ -3147,7 +3435,10 @@ function ConversationPane({
     changesPreferencesByThread.set(composerScope, next);
     setChangesPreferencesState({ key: composerScope, value: next });
   };
-  const interactiveTerminals = useInteractiveTerminalWorkspace(draftConnectionId, draftThreadId);
+  const currentControlsResource = (): TurnControlsRow | null => workspaceResources === null || controlsResourceId === null
+    ? null
+    : workspaceResources.turnControls.get(controlsResourceId) ?? null;
+  const controlsResource = currentControlsResource();
   const [narrowConversationPane, setNarrowConversationPane] = useState(false);
   const timelineCompact = compact || narrowConversationPane;
   const [composerTrayVisible, setComposerTrayVisible] = useState(false);
@@ -3157,86 +3448,66 @@ function ConversationPane({
   const [projectChangeError, setProjectChangeError] = useState<string | null>(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuInitialPage, setMenuInitialPage] = useState<ComposerMenuPage>("model");
-  const [demoDraft, setDemoDraft] = useState(() => demoComposer?.draft ?? "");
   const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_MIN_HEIGHT);
   const composerInputWidthRef = useRef(0);
-  const [demoAttachments, setDemoAttachments] = useState<ComposerAttachment[]>(() => demoComposer?.attachments ?? []);
+  const [pastedAttachmentPending, setPastedAttachmentPending] = useState(false);
+  const pastedAttachmentPendingRef = useRef(false);
+  const largePasteOperationRef = useRef<({
+    scope: string;
+    connectionId: string | null;
+    threadId: string | null;
+    capture: ClipboardLargePasteCapture;
+  }) | null>(null);
   const voicePhase = voiceResource?.phase ?? "idle";
   const voiceBackend = voiceResource?.backend ?? "remote";
   const voiceError = voiceResource?.error ?? null;
   const voiceRetryAvailable = voiceResource?.retryAvailable ?? false;
   const pendingVoiceSelection = voiceResource?.pendingSelection ?? null;
-  const controls = demo ? demoControls ?? EMPTY_TURN_CONTROLS : controlsResource?.value ?? EMPTY_TURN_CONTROLS;
-  const threadResourcePending = (kind: "changes" | "attachments") => threadResources === null
-    || (threadResources.pendingKinds === undefined
-      ? threadResources.status === "loading"
-      : threadResources.pendingKinds.includes(kind));
-  const changesPending = threadResourcePending("changes");
-  const attachmentsPending = threadResourcePending("attachments");
-  const threadResourceReady = (kind: "changes" | "attachments") => threadResources?.readyKinds === undefined
-    ? threadResources?.value != null
-    : threadResources.readyKinds.includes(kind);
-  const changesReady = threadResourceReady("changes");
-  const attachmentsReady = threadResourceReady("attachments");
-  const changesLoadingWithoutContent = changesPending && (!changesReady || (threadResources?.value?.changes.length ?? 0) === 0);
-  const attachmentsInitialLoading = attachmentsPending && !attachmentsReady;
-  const changesRefreshing = changesPending && changesReady && !changesLoadingWithoutContent;
-  const attachmentsRefreshing = attachmentsPending && attachmentsReady;
-  const changesError = threadResources?.resourceErrors?.changes
-    ?? (threadResources?.status === "error" ? threadResources.error : null);
-  const attachmentsError = threadResources?.resourceErrors?.attachments
-    ?? (threadResources?.status === "error" ? threadResources.error : null);
-  const controlsLoading = controlsResource?.status === "loading" && controlsResource.value === null;
-  const controlsRefreshing = controlsResource?.status === "loading" || controlsResource?.status === "refreshing";
-  const controlsPending = !demo
-    && onLoadControls !== undefined
-    && (controlsResource === null || controlsRefreshing);
+  const controls = controlsResource?.value ?? EMPTY_TURN_CONTROLS;
   const [controlError, setControlError] = useState<string | null>(null);
-  const effectiveControlError = controlError ?? controlsResource?.error ?? null;
 
-  const [demoPreferences, setDemoPreferences] = useState<StoredComposerPreferences>(() => demoComposer?.preferences ?? EMPTY_COMPOSER_PREFERENCES);
-  const draft = demo ? demoDraft : composerState?.draftText ?? "";
+  const draft = composerState?.draftText ?? "";
   const visibleComposerInputHeight = draft === "" ? COMPOSER_MIN_HEIGHT : composerInputHeight;
-  const attachments = demo ? demoAttachments : composerState?.attachments ?? EMPTY_COMPOSER_ATTACHMENTS;
-  const latestDraftRef = useRef({ scope: composerScope, rendered: draft, latest: draft });
-  const latestAttachmentsRef = useRef({ scope: composerScope, rendered: attachments, latest: attachments });
-  useLayoutEffect(() => {
-    latestDraftRef.current = reconcileComposerLatestValue(latestDraftRef.current, composerScope, draft);
-  }, [composerScope, draft]);
-  useLayoutEffect(() => {
-    latestAttachmentsRef.current = reconcileComposerLatestValue(latestAttachmentsRef.current, composerScope, attachments);
-  }, [composerScope, attachments]);
-  const visibleSubagents = draftThreadId === null ? [] : subagentsForThread(subagents, draftThreadId);
-  const portForwardCount = portForwarding?.profiles.length ?? 0;
-  const hasLivePortForward = portForwarding?.profiles.some(({ status }) => status === "live") ?? false;
-  const sessionChangeCount = threadResources?.value?.changes.length ?? 0;
-  const availableChangeScopes = threadResources?.value?.changeScopes ?? ["session" as const, "lastTurn" as const];
-  const effectiveChangeScope = changesPreferences.scope !== null && availableChangeScopes.includes(changesPreferences.scope)
-    ? changesPreferences.scope
-    : threadResources?.value?.changeScope ?? availableChangeScopes[0] ?? "session";
-  const effectiveChangesPreferences: ChangesPreferences = { ...changesPreferences, scope: effectiveChangeScope };
-  const sessionAttachmentCount = threadResources?.value?.attachments.length ?? 0;
-  const sessionChangesEmpty = changesReady && !changesPending && sessionChangeCount === 0;
-  const sessionAttachmentsEmpty = attachmentsReady && !attachmentsPending && sessionAttachmentCount === 0;
-  const sessionChangesLabel = changesLoadingWithoutContent
-    ? "Loading changes…"
-    : changesError !== null && !changesReady
-      ? "Changes unavailable"
-      : sessionChangesEmpty
-        ? "No changes"
-        : `Changes · ${sessionChangeCount}`;
-  const sessionAttachmentsLabel = attachmentsInitialLoading
-    ? "Loading attachments…"
-    : attachmentsError !== null && !attachmentsReady
-      ? "Attachments unavailable"
-      : sessionAttachmentsEmpty
-        ? "No attachments"
-        : `Attachments · ${sessionAttachmentCount}`;
-  const composerPreferences = demo ? demoPreferences : composerState?.preferences ?? EMPTY_COMPOSER_PREFERENCES;
+  const attachments = composerState?.attachments ?? EMPTY_COMPOSER_ATTACHMENTS;
+  const composerPreferences = composerState?.preferences ?? EMPTY_COMPOSER_PREFERENCES;
+  const latestComposerValues = useComposerLatestValues(composerScope, draft, attachments, composerPreferences);
+  const latestDraftRef = latestComposerValues.draft;
+  const latestAttachmentsRef = latestComposerValues.attachments;
+  const latestComposerPreferencesRef = latestComposerValues.preferences;
+  const [contentReviewAttachmentIds, setContentReviewAttachmentIds] = useState(() => new Map<string, string>());
+  const contentReviewAttachmentId = contentReviewAttachmentIds.get(composerScope) ?? null;
+  const setContentReviewAttachmentId = (scope: string, attachmentId: string | null) => {
+    setContentReviewAttachmentIds((current) => {
+      if ((current.get(scope) ?? null) === attachmentId) return current;
+      const next = new Map(current);
+      if (attachmentId === null) next.delete(scope);
+      else next.set(scope, attachmentId);
+      return next;
+    });
+  };
+  const clearContentReviewAttachmentId = (scope: string, expectedAttachmentId: string) => {
+    setContentReviewAttachmentIds((current) => {
+      if (current.get(scope) !== expectedAttachmentId) return current;
+      const next = new Map(current);
+      next.delete(scope);
+      return next;
+    });
+  };
+  const currentThreadResources = (): ThreadResourcesRow | null => threadResourcesModel === null || threadResourceId === null
+    ? null
+    : threadResourcesModel.get(threadResourceId) ?? null;
+  const currentChangePresentation = () => {
+    const resource = currentThreadResources()?.value ?? null;
+    const scopes = resource?.changeScopes ?? ["session" as const, "lastTurn" as const];
+    const scope = changesPreferences.scope !== null && scopes.includes(changesPreferences.scope)
+      ? changesPreferences.scope
+      : resource?.changeScope ?? scopes[0] ?? "session";
+    return { resource, scopes, scope };
+  };
   const composerStateMissing = composerState === null;
   const updateComposerPreferences = (apply: (current: StoredComposerPreferences) => StoredComposerPreferences) => {
-    const next = apply(composerPreferences);
-    if (demo) setDemoPreferences(next);
+    const next = apply(latestComposerPreferencesRef.current.latest);
+    latestComposerPreferencesRef.current.latest = next;
     if (saveComposerPreferences !== undefined && draftConnectionId !== null && draftThreadId !== null) {
       void saveComposerPreferences(draftConnectionId, draftThreadId, next).catch(() => undefined);
     }
@@ -3271,22 +3542,53 @@ function ConversationPane({
   const timelineViewportRef = useRef<View | null>(null);
   const latestUnreadAgentRef = useRef<View | null>(null);
   const unreadVisibilityFrameRef = useRef<number | null>(null);
+  const unreadVisibilityScheduledKeyRef = useRef<string | null>(null);
   const latestUnreadReceiptKeyRef = useRef<string | null>(null);
   const acknowledgedUnreadReceiptKeyRef = useRef<string | null>(null);
+  const settingsMutationRef = useRef({ model: 0, effort: 0, permissions: 0 });
   const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timelinePositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timelineSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timelineIndexRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchOriginOffsetRef = useRef<number | null>(null);
   const timelineInteractionScopeRef = useRef("");
-  const olderLoadInFlightRef = useRef(false);
-  const firstVisibleTimelineIndexRef = useRef<number | null>(null);
+  const residentRangeMoveInFlightRef = useRef(false);
+  const pendingResidentRangeMoveRef = useRef<{ turnId: string; direction: ResidentRangeDirection; move: ThreadHistoryViewport["move"] } | null>(null);
+  const scrollGestureActiveRef = useRef(false);
+  const scrollDirectionRef = useRef<ResidentRangeDirection | null>(null);
+  const firstVisibleHistoryAnchorRef = useRef<string | null>(null);
+  const firstVisibleHistoryAnchorKeyRef = useRef<string | null>(null);
   const lastTimelineOffsetYRef = useRef<number | null>(null);
-  const onTimelineViewableItemsChanged = ({ viewableItems }: { viewableItems: Array<{ index: number | null; isViewable: boolean }> }) => {
-    firstVisibleTimelineIndexRef.current = viewableItems
-      .filter((item) => item.isViewable && item.index !== null)
-      .reduce<number | null>((first, item) => first === null ? item.index : Math.min(first, item.index as number), null);
+  const onTimelineFirstVisibleItemChanged = ({ index, item }: { index: number; item: TimelineItem; key: string }) => {
+    const anchor = item.kind === "turn"
+      ? item
+      : timeline.slice(index + 1).find((candidate): candidate is Extract<TimelineItem, { kind: "turn" }> => candidate.kind === "turn") ?? null;
+    firstVisibleHistoryAnchorRef.current = anchor?.id ?? null;
+    firstVisibleHistoryAnchorKeyRef.current = anchor === null ? null : timelineItemKey(anchor);
+    const turnId = anchor?.id ?? null;
+    const direction = scrollDirectionRef.current;
+    if (turnId !== null
+      && direction !== null
+      && scrollGestureActiveRef.current
+      && timelineInteractionScopeRef.current === composerScope) {
+      requestResidentRangeMove(turnId, direction, historyViewport.move);
+    }
   };
+  function requestResidentRangeMove(turnId: string, direction: ResidentRangeDirection, move: ThreadHistoryViewport["move"]): void {
+    if (residentRangeMoveInFlightRef.current) {
+      pendingResidentRangeMoveRef.current = { turnId, direction, move };
+      return;
+    }
+    residentRangeMoveInFlightRef.current = true;
+    void move(turnId, direction).finally(() => {
+      residentRangeMoveInFlightRef.current = false;
+      const pending = pendingResidentRangeMoveRef.current;
+      pendingResidentRangeMoveRef.current = null;
+      if (pending !== null && scrollGestureActiveRef.current) {
+        requestResidentRangeMove(pending.turnId, pending.direction, pending.move);
+      }
+    });
+  }
   const timelineRef = useRef<ThreadTimelineListRef>(null);
   const timelineOverlayFreeze = useSharedValue(false);
   const timelineOverlay = useTimelineOverlayScrollGuard({
@@ -3319,10 +3621,14 @@ function ConversationPane({
   const followingLatestRef = useRef(false);
   const momentumActiveRef = useRef(false);
   const scrollRestoredRef = useRef(false);
-  const pendingRestoreOffsetRef = useRef<number | null>(sessionConversationScrollOffsets.get(composerScope) ?? 0);
+  const initialRestoreOffset = historyRestoreReady ? sessionConversationScrollOffsets.get(composerScope) ?? composerState?.scrollOffset ?? 0 : null;
+  const pendingRestoreOffsetRef = useRef<number | null>(initialRestoreOffset);
+  const initialSessionHistoryAnchor = sessionConversationHistoryAnchors.get(composerScope);
+  const initialRestoreAnchorTurnId = historyRestoreReady ? initialSessionHistoryAnchor?.turnId ?? composerState?.historyAnchorTurnId ?? null : null;
+  const pendingRestoreAnchorTurnIdRef = useRef<string | null>(initialRestoreAnchorTurnId);
+  const pendingRestoreAnchorOffsetRef = useRef<number | null>(historyRestoreReady ? initialSessionHistoryAnchor?.viewportOffsetPx ?? composerState?.historyAnchorOffsetPx ?? null : null);
   const [composerDockHeight, setComposerDockHeight] = useState(touchTarget + 12);
-  const [timelinePositionedScope, setTimelinePositionedScope] = useState("");
-  const [timelineInteractionScope, setTimelineInteractionScope] = useState("");
+  const [timelineDidPosition, setTimelineDidPosition] = useState(false);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const [timelineTailFollowEnabled, setTimelineTailFollowEnabled] = useState(false);
   const mountedConversationScopeRef = useRef({
@@ -3338,25 +3644,9 @@ function ConversationPane({
   const serverExecution = remoteThread === null || remoteThread === undefined ? null : latestProjectedThreadExecutionSettings(remoteThread);
   const catalogDefaultModel = controls.models.find((candidate) => candidate.isDefault) ?? null;
   const effectiveModel = selectedModel ?? serverExecution?.model ?? controls.defaults.model ?? catalogDefaultModel?.id ?? null;
-  const effectiveModelCatalog = controls.models.find((candidate) => candidate.id === effectiveModel) ?? null;
-  const effectiveEffort = selectedEffort
-    ?? serverExecution?.effort
-    ?? (selectedModel === null && serverExecution?.model == null ? controls.defaults.effort : null)
-    ?? effectiveModelCatalog?.defaultEffort
-    ?? null;
-  const effectivePermissions = selectedPermissions ?? serverExecution?.permissions ?? controls.defaults.permissions;
-  const effectiveModelLabel = controls.models.find((candidate) => candidate.id === effectiveModel)?.label
-    ?? effectiveModel
-    ?? (controlsPending ? "Loading model…" : "Model unavailable");
-  const effectivePermissionLabel = effectivePermissions === null
-    ? executionPermissionsLabel(serverExecution, controlsPending)
-    : permissionProfileLabel(effectivePermissions);
-  const modelLabelPending = controlsPending && effectiveModel === null;
-  const permissionLabelPending = controlsPending && effectivePermissions === null;
   const serverBackedSettings = onUpdateSettings !== undefined;
-  const timelineInteracted = timelineInteractionScope === composerScope;
 
-  const projectedPendingDeliveries = (() => {
+  const projectedPendingDeliveries = measureThreadNavigationWork(draftConnectionId ?? "", draftThreadId, "project_pending_deliveries", () => {
     if (draftConnectionId === null || draftThreadId === null) return [];
     return pendingDeliveries.flatMap((delivery) => {
       if (delivery.connectionId !== draftConnectionId || (delivery.method !== "turn/start" && delivery.method !== "turn/steer")) return [];
@@ -3378,22 +3668,22 @@ function ConversationPane({
         createdAt: delivery.createdAt,
       }];
     });
-  })();
+  }, { values: { deliveryCount: pendingDeliveries.length } });
 
-  // The TanStack thread timeline is the only optimistic-message source.
+  // The Legend thread timeline is the only optimistic-message source.
   // Kotlin owns durable delivery; React only renders the unified projection.
   const optimistic = projectedPendingDeliveries.slice(-MAX_OPTIMISTIC_MESSAGES);
 
   const requestControls = () => {
-    if (onLoadControls === undefined || controlsLoading) return;
-    const scope = composerScope;
+    const current = currentControlsResource();
+    if (onLoadControls === undefined || (current?.status === "loading" && current.value === null)) return;
     setControlError(null);
     void onLoadControls(cwd).then((next) => {
-      if (mountedConversationScopeRef.current.scope !== scope) return;
+      if (!conversationOwner.isCurrent()) return;
       setSelectedModel((current) => current !== null && !next.models.some((candidate) => candidate.id === current) ? null : current);
       setSelectedEffort((current) => current !== null && !next.models.some((candidate) => candidate.efforts.includes(current)) ? null : current);
     }).catch((cause) => {
-      if (mountedConversationScopeRef.current.scope !== scope) return;
+      if (!conversationOwner.isCurrent()) return;
       setControlError(cause instanceof Error ? cause.message : "Could not load turn controls");
     });
   };
@@ -3401,18 +3691,34 @@ function ConversationPane({
   const timelineRemoteThreadId = remoteThread?.id;
   const sealedTimeline = remoteSealedTurns === undefined || timelineRemoteThreadId === undefined
       ? []
-      : projectTimelineTurns(remoteSealedTurns, composerScope, server?.id ?? "remote", timelineRemoteThreadId);
+      : measureThreadNavigationWork(
+          draftConnectionId ?? "",
+          draftThreadId,
+          "project_sealed_timeline",
+          () => projectTimelineTurns(remoteSealedTurns, composerScope, server?.id ?? "remote", timelineRemoteThreadId),
+          { values: { turnCount: remoteSealedTurns.length } },
+        );
   const liveTimeline = remoteLiveTurns === undefined || timelineRemoteThreadId === undefined
       ? []
-      : projectTimelineTurns(remoteLiveTurns, composerScope, server?.id ?? "remote", timelineRemoteThreadId, thread?.state);
+      : measureThreadNavigationWork(
+          draftConnectionId ?? "",
+          draftThreadId,
+          "project_live_timeline",
+          () => projectTimelineTurns(remoteLiveTurns, composerScope, server?.id ?? "remote", timelineRemoteThreadId, thread?.state),
+          { values: { turnCount: remoteLiveTurns.length } },
+        );
   const fullTimeline = remoteThread === null || remoteThread === undefined
       ? []
-      : projectTimelineTurns(remoteThread.turns, composerScope, server?.id ?? "remote", remoteThread.id, thread?.state);
+      : measureThreadNavigationWork(
+          draftConnectionId ?? "",
+          draftThreadId,
+          "project_full_timeline",
+          () => projectTimelineTurns(remoteThread.turns, composerScope, server?.id ?? "remote", remoteThread.id, thread?.state),
+          { values: { turnCount: remoteThread.turns.length } },
+        );
   const completeTurnHeadersResident = remoteThread !== null
     && remoteThread !== undefined
-    && loadState.nextCursor === null
-    && loadState.residentOffset === 0
-    && (remoteSealedTurns === undefined || remoteSealedTurns.length < THREAD_RESIDENT_TURN_LIMIT);
+    && historyViewport.completeTurnHeaders;
   const sessionCompactionCount = completeTurnHeadersResident
     && remoteThread.turns.every((candidate) => candidate.itemsView === "full")
       ? remoteThread.turns.reduce(
@@ -3420,7 +3726,7 @@ function ConversationPane({
           0,
         )
       : null;
-  const timeline: TimelineItem[] = (() => {
+  const timeline: TimelineItem[] = measureThreadNavigationWork(draftConnectionId ?? "", draftThreadId, "assemble_timeline", () => {
     const partitioned = remoteSealedTurns !== undefined && remoteLiveTurns !== undefined;
     const content: TimelineItem[] = remoteThread === null || remoteThread === undefined
       ? []
@@ -3438,8 +3744,8 @@ function ConversationPane({
       })),
       pending.map((value) => ({ value, timestampMs: value.createdAt })),
     );
-  })();
-  const latestUnreadAgentTurnId = (() => {
+  }, { values: { sealedItemCount: sealedTimeline.length, liveItemCount: liveTimeline.length, fullItemCount: fullTimeline.length } });
+  const latestUnreadAgentTurnId = measureThreadNavigationWork(draftConnectionId ?? "", draftThreadId, "scan_unread_agent_turn", () => {
     if (unread <= 0) return null;
     for (let index = timeline.length - 1; index >= 0; index -= 1) {
       const item = timeline[index];
@@ -3447,87 +3753,71 @@ function ConversationPane({
       if (selectTurnRenderWindow(item.turn).latestAgentIndex >= 0) return item.id;
     }
     return null;
-  })();
+  }, { values: { itemCount: timeline.length } });
   const latestUnreadReceiptKey = latestUnreadAgentTurnId === null
     ? null
     : `${composerScope}\u0000${latestUnreadAgentTurnId}`;
-  useLayoutEffect(() => {
-    latestUnreadReceiptKeyRef.current = latestUnreadReceiptKey;
-  }, [latestUnreadReceiptKey]);
-  const checkUnreadAgentVisibility = useCallback(() => {
-    const receiptKey = latestUnreadReceiptKey;
+  const acknowledgeUnreadReceipt = useEvent((receiptKey: string) => {
+    const claimed = claimUnreadReceipt(
+      latestUnreadReceiptKeyRef.current,
+      acknowledgedUnreadReceiptKeyRef.current,
+      receiptKey,
+    );
+    if (claimed === null) return;
+    acknowledgedUnreadReceiptKeyRef.current = claimed;
+    onViewedLatest?.();
+  });
+  const checkUnreadAgentVisibility = useEvent((receiptKey: string) => {
     const viewport = timelineViewportRef.current;
     const agent = latestUnreadAgentRef.current;
-    if (receiptKey === null || viewport === null || agent === null) return;
+    if (viewport === null || agent === null) return;
     if (acknowledgedUnreadReceiptKeyRef.current === receiptKey) return;
     viewport.measureInWindow((_viewportX, viewportY, _viewportWidth, viewportHeight) => {
       agent.measureInWindow((_agentX, agentY, _agentWidth, agentHeight) => {
         if (latestUnreadReceiptKeyRef.current !== receiptKey) return;
         if (!shouldMarkAgentResponseRead(agentY, agentHeight, viewportY, viewportHeight)) return;
-        acknowledgedUnreadReceiptKeyRef.current = receiptKey;
-        onViewedLatest?.();
+        acknowledgeUnreadReceipt(receiptKey);
       });
     });
-  }, [latestUnreadReceiptKey, onViewedLatest]);
-  const scheduleUnreadAgentVisibilityCheck = useCallback(() => {
-    if (unreadVisibilityFrameRef.current !== null) return;
+  });
+  const scheduleUnreadAgentVisibilityCheck = useEvent(() => {
+    const receiptKey = latestUnreadReceiptKey;
+    latestUnreadReceiptKeyRef.current = receiptKey;
+    if (receiptKey === null) {
+      if (unreadVisibilityFrameRef.current !== null) cancelAnimationFrame(unreadVisibilityFrameRef.current);
+      unreadVisibilityFrameRef.current = null;
+      unreadVisibilityScheduledKeyRef.current = null;
+      return;
+    }
+    if (unreadVisibilityFrameRef.current !== null) {
+      if (unreadVisibilityScheduledKeyRef.current === receiptKey) return;
+      cancelAnimationFrame(unreadVisibilityFrameRef.current);
+    }
+    unreadVisibilityScheduledKeyRef.current = receiptKey;
     unreadVisibilityFrameRef.current = requestAnimationFrame(() => {
       unreadVisibilityFrameRef.current = null;
-      checkUnreadAgentVisibility();
+      unreadVisibilityScheduledKeyRef.current = null;
+      checkUnreadAgentVisibility(receiptKey);
     });
-  }, [checkUnreadAgentVisibility]);
+  });
+  const commitUnreadReceipt = () => {
+    latestUnreadReceiptKeyRef.current = latestUnreadReceiptKey;
+    if (latestUnreadReceiptKey === null) acknowledgedUnreadReceiptKeyRef.current = null;
+    scheduleUnreadAgentVisibilityCheck();
+    return () => {
+      if (unreadVisibilityFrameRef.current !== null) cancelAnimationFrame(unreadVisibilityFrameRef.current);
+      unreadVisibilityFrameRef.current = null;
+      unreadVisibilityScheduledKeyRef.current = null;
+    };
+  };
   const setLatestUnreadAgentNode = (node: View | null) => {
     latestUnreadAgentRef.current = node;
     if (node !== null) scheduleUnreadAgentVisibilityCheck();
   };
-  useEffect(() => {
-    if (latestUnreadReceiptKey === null) acknowledgedUnreadReceiptKeyRef.current = null;
-    if (unreadVisibilityFrameRef.current === null) {
-      unreadVisibilityFrameRef.current = requestAnimationFrame(() => {
-        unreadVisibilityFrameRef.current = null;
-        checkUnreadAgentVisibility();
-      });
-    }
-    return () => {
-      if (unreadVisibilityFrameRef.current !== null) cancelAnimationFrame(unreadVisibilityFrameRef.current);
-      unreadVisibilityFrameRef.current = null;
-    };
-  }, [latestUnreadReceiptKey, checkUnreadAgentVisibility]);
   const timelinePositioned = timeline.length === 0
-    ? loadState.phase === "ready" || loadState.phase === "error"
-    : timelinePositionedScope === composerScope;
-
-  useLayoutEffect(() => {
-    if (draftConnectionId === null || draftThreadId === null) return;
-    if (remoteThread === null && loadState.phase === "loading") return;
-    markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_model_ready", {
-      values: {
-        itemCount: timeline.length,
-        turnCount: remoteThread?.turns.length ?? 0,
-      },
-      tags: { loadPhase: loadState.phase },
-    });
-  }, [draftConnectionId, draftThreadId, loadState.phase, remoteThread, timeline.length]);
-
-  useLayoutEffect(() => {
-    if (!timelinePositioned || draftConnectionId === null || draftThreadId === null) return;
-    markThreadNavigationStage(draftConnectionId, draftThreadId, "visible_commit", {
-      values: { itemCount: timeline.length },
-      tags: { timeline: timeline.length === 0 ? "empty" : "populated" },
-    });
-    const connectionId = draftConnectionId;
-    const threadId = draftThreadId;
-    const frame = requestAnimationFrame(() => {
-      const completed = markThreadNavigationStage(connectionId, threadId, "next_frame", {
-        values: { itemCount: timeline.length },
-      });
-      if (completed !== null) {
-        void endNavigationFrameTrace(completed.id)
-          .then((frames) => finalizeThreadNavigationProfile(completed, frames));
-      }
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [composerScope, draftConnectionId, draftThreadId, timeline.length, timelinePositioned]);
+    ? historyViewport.status !== "idle" && historyViewport.status !== "initial-loading"
+    : timelineDidPosition;
+  const timelineModelReady = remoteThread !== null || historyViewport.status !== "initial-loading";
 
   const visibleQueuedPrompts = queuedPrompts;
   const inlineQueue = visibleQueuedPrompts.map((entry) => ({ id: entry.commandId, text: entry.text, state: entry.state }));
@@ -3543,8 +3833,19 @@ function ConversationPane({
   const displayedTimeline = threadSearchActive
     ? threadSearchMatches.flatMap((index) => timeline[index] === undefined ? [] : [timeline[index]])
     : timeline;
-  const emptyRemoteThread = newChat || (!demo
-    && remoteThread !== null
+  const initialHistoryAnchorTurnId = initialSessionHistoryAnchor?.turnId ?? composerState?.historyAnchorTurnId ?? null;
+  const initialHistoryAnchorIndex = initialHistoryAnchorTurnId === null
+    ? -1
+    : timeline.findIndex((item) => item.kind === "turn" && item.id === initialHistoryAnchorTurnId);
+  const timelineInitialPosition: TimelineInitialPosition = initialHistoryAnchorIndex < 0
+    ? { kind: "tail" }
+    : {
+        kind: "item",
+        index: initialHistoryAnchorIndex,
+        viewOffset: initialSessionHistoryAnchor?.viewportOffsetPx ?? composerState?.historyAnchorOffsetPx ?? 0,
+        viewPosition: 0,
+      };
+  const emptyRemoteThread = newChat || (remoteThread !== null
     && remoteThread !== undefined
     && remoteThread.turns.length === 0
     && optimistic.length === 0);
@@ -3563,29 +3864,19 @@ function ConversationPane({
   const openThreadResources = (kind: "changes" | "attachments") => {
     if (kind === "changes") {
       dismissComposerKeyboardForOverlay();
+      const { resource } = currentChangePresentation();
       if (onLoadThreadResources === undefined) {
-        if (threadResources?.value === null || threadResources?.value === undefined) return;
-        presentThreadChanges(threadResources.value);
+        if (resource === null) return;
+        presentThreadChanges(resource);
         return;
       }
-      presentThreadChanges(threadResources?.value ?? null, true);
+      presentThreadChanges(resource, true);
       return;
     }
     timelineOverlay.begin("thread-resources");
     dismissComposerKeyboardForOverlay();
     setThreadResourceSheet("attachments");
     void onLoadThreadResources?.(undefined, "attachments").catch(() => undefined);
-  };
-  const selectChangesMenuAction = (id: string) => {
-    if (id.startsWith("scope:")) {
-      const scope = id.slice("scope:".length) as ThreadChangeScope;
-      if (!availableChangeScopes.includes(scope)) return;
-      const next = { ...effectiveChangesPreferences, scope };
-      setChangesPreferences(next);
-      void onLoadThreadResources?.(scope, "changes").catch((cause) => {
-        dialog.alert("Changes unavailable", cause instanceof Error ? cause.message : "Could not load changes");
-      });
-    }
   };
   const closeThreadResources = () => {
     setThreadResourceSheet(null);
@@ -3628,7 +3919,7 @@ function ConversationPane({
       ? `Thread: ${item.threadId}\nTurn: ${item.id}`
       : `Timeline item: ${boundaryKey}`;
     const usage = item.kind === "turn" ? projectedTurnMetadata(item.turn)?.usage ?? null : null;
-    return (
+    const row = (
     // The virtualized row owns one stable document identity. Recycling is off,
     // so leaving the render window unmounts this subtree instead of rebinding
     // its markdown/activity state to a different turn.
@@ -3636,7 +3927,6 @@ function ConversationPane({
     <MarkdownLocalLinkProvider onOpen={openThreadDocumentLink}>
     <PrivateImageAccessProvider scope={composerScope} {...(getTransferAccess === undefined ? {} : { getAccess: getStableTransferAccess })}>
     <View style={[styles.timelineItem, !timelineCompact && styles.timelineItemWide]}>
-      {item.kind === "turn" && <ThreadNavigationRowCommitProbe connectionId={item.connectionId} threadId={item.threadId} rowKey={item.key} />}
       {item.kind === "turn" && (
         <TurnTimelineItem
           turn={item}
@@ -3672,6 +3962,9 @@ function ConversationPane({
     </MarkdownLocalLinkProvider>
     </RecoverableRenderBoundary>
     );
+    return item.kind === "turn"
+      ? <ThreadNavigationRowCommitBoundary connectionId={item.connectionId} threadId={item.threadId} rowKey={item.key}>{row}</ThreadNavigationRowCommitBoundary>
+      : row;
   };
 
   const scrollToThreadSearchIndex = (index: number) => {
@@ -3716,13 +4009,46 @@ function ConversationPane({
     const resolvedHeight = measuredHeight ?? timelineContentHeightRef.current;
     const pendingOffset = pendingRestoreOffsetRef.current;
     if (pendingOffset === null || timeline.length === 0 || timelineViewportHeightRef.current === 0) return;
-    const scope = composerScope;
-    if (pendingOffset <= 1) {
+    const pendingAnchorTurnId = pendingRestoreAnchorTurnIdRef.current;
+    if (pendingAnchorTurnId !== null) {
+      const anchorIndex = timeline.findIndex((item) => item.kind === "turn" && item.id === pendingAnchorTurnId);
+      if (anchorIndex < 0 && !historyRestoreReady) return;
+      if (anchorIndex >= 0) {
+        const anchorOffset = pendingOffset;
+        pendingRestoreOffsetRef.current = null;
+        pendingRestoreAnchorTurnIdRef.current = null;
+        pendingRestoreAnchorOffsetRef.current = null;
+        // LegendList fires onLoad only after both container layout and its
+        // bootstrap initial scroll have completed. A second animation frame
+        // here delayed presentation without changing the native position.
+        scrollOffsetRef.current = anchorOffset;
+        updateFollowingLatest(false);
+        awayFromLatestRef.current = true;
+        setAwayFromLatest(true);
+        scrollRestoredRef.current = true;
+        if (draftConnectionId !== null && draftThreadId !== null) {
+          markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
+            values: {
+              itemCount: timeline.length,
+              restoredOffsetPx: anchorOffset,
+              contentHeightPx: resolvedHeight,
+              viewportHeightPx: timelineViewportHeightRef.current,
+            },
+            tags: { restore: "semantic_anchor" },
+          });
+        }
+        setTimelineDidPosition(true);
+        return;
+      }
+      // The stored turn was evicted or deleted. The anchor query has settled,
+      // so fall back to the live tail instead of keeping the chat concealed.
+      pendingRestoreAnchorTurnIdRef.current = null;
+      pendingRestoreAnchorOffsetRef.current = null;
+      pendingRestoreOffsetRef.current = 0;
       scrollOffsetRef.current = 0;
       updateFollowingLatest(true);
       awayFromLatestRef.current = false;
       setAwayFromLatest(false);
-      pendingRestoreOffsetRef.current = null;
       scrollRestoredRef.current = true;
       if (draftConnectionId !== null && draftThreadId !== null) {
         markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
@@ -3732,85 +4058,67 @@ function ConversationPane({
             contentHeightPx: resolvedHeight,
             viewportHeightPx: timelineViewportHeightRef.current,
           },
-          tags: { restore: "latest" },
+          tags: { restore: "missing_anchor_fallback" },
         });
       }
-      setTimelinePositionedScope(scope);
+      setTimelineDidPosition(true);
       return;
     }
-    if (resolvedHeight === 0) return;
-    if (timelinePositionTimerRef.current !== null) clearTimeout(timelinePositionTimerRef.current);
-    requestAnimationFrame(() => {
-      const contentHeight = timelineContentHeightRef.current;
-      timelineRef.current?.scrollToOffset({
-        offset: Math.max(0, contentHeight - timelineViewportHeightRef.current - pendingOffset),
-        animated: false,
+    // Legacy rows only stored a distance from the end. Reconstructing a global
+    // pixel offset requires measuring every historical row and defeats bounded
+    // windowing, so old rows intentionally fall back to the live tail.
+    scrollOffsetRef.current = 0;
+    updateFollowingLatest(true);
+    awayFromLatestRef.current = false;
+    setAwayFromLatest(false);
+    pendingRestoreOffsetRef.current = null;
+    pendingRestoreAnchorTurnIdRef.current = null;
+    pendingRestoreAnchorOffsetRef.current = null;
+    scrollRestoredRef.current = true;
+    if (draftConnectionId !== null && draftThreadId !== null) {
+      markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
+        values: {
+          itemCount: timeline.length,
+          restoredOffsetPx: 0,
+          contentHeightPx: resolvedHeight,
+          viewportHeightPx: timelineViewportHeightRef.current,
+        },
+        tags: { restore: pendingOffset <= 1 ? "latest" : "legacy_offset_fallback" },
       });
-      scrollOffsetRef.current = pendingOffset;
-      updateFollowingLatest(pendingOffset <= LATEST_TIMELINE_THRESHOLD_PX);
-      awayFromLatestRef.current = pendingOffset > LATEST_TIMELINE_THRESHOLD_PX;
-      setAwayFromLatest(awayFromLatestRef.current);
-      pendingRestoreOffsetRef.current = null;
-      scrollRestoredRef.current = true;
-      if (draftConnectionId !== null && draftThreadId !== null) {
-        markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
-          values: {
-            itemCount: timeline.length,
-            restoredOffsetPx: pendingOffset,
-            contentHeightPx: contentHeight,
-            viewportHeightPx: timelineViewportHeightRef.current,
-          },
-          tags: { restore: "saved_offset" },
-        });
-      }
-      setTimelinePositionedScope(scope);
-    });
+    }
+    setTimelineDidPosition(true);
   };
-  const requestOlderTurns = () => {
-    if (
-      timelineOverlay.isActive()
-      || !scrollRestoredRef.current
-      || timelineInteractionScopeRef.current !== composerScope
-      || olderLoadInFlightRef.current
-      || loadState.nextCursor === null
-      || loadState.loadingOlder
-      || onLoadOlder === undefined
-    ) return;
-    const scope = composerScope;
-    olderLoadInFlightRef.current = true;
-    void onLoadOlder().finally(() => {
-      olderLoadInFlightRef.current = false;
-    });
-  };
-
-  const requestNewerTurns = () => {
-    if (
-      timelineOverlay.isActive()
-      || !scrollRestoredRef.current
-      || timelineInteractionScopeRef.current !== composerScope
-      || loadState.residentOffset === 0
-      || onRevealNewer === undefined
-    ) return;
-    void onRevealNewer();
+  const currentHistoryAnchor = (offset: number): { turnId: string | null; viewportOffsetPx: number | null } => {
+    if (offset <= LATEST_TIMELINE_THRESHOLD_PX) return { turnId: null, viewportOffsetPx: null };
+    const turnId = firstVisibleHistoryAnchorRef.current;
+    const itemKey = turnId === null ? null : firstVisibleHistoryAnchorKeyRef.current;
+    return {
+      turnId,
+      viewportOffsetPx: itemKey === null ? null : timelineRef.current?.getItemViewportOffset(itemKey) ?? null,
+    };
   };
 
   const persistTimelineOffset = (offset: number) => {
     scrollOffsetRef.current = offset;
     sessionConversationScrollOffsets.set(composerScope, offset);
+    const historyAnchor = currentHistoryAnchor(offset);
+    if (historyAnchor.turnId === null) sessionConversationHistoryAnchors.delete(composerScope);
+    else sessionConversationHistoryAnchors.set(composerScope, { turnId: historyAnchor.turnId, viewportOffsetPx: historyAnchor.viewportOffsetPx });
     if (scrollSaveTimerRef.current !== null) clearTimeout(scrollSaveTimerRef.current);
     if (saveScrollOffset === undefined || draftConnectionId === null || draftThreadId === null) return;
     scrollSaveTimerRef.current = setTimeout(() => {
       scrollSaveTimerRef.current = null;
-      void saveScrollOffset(draftConnectionId, draftThreadId, offset).catch(() => undefined);
+      void saveScrollOffset(draftConnectionId, draftThreadId, offset, historyAnchor.turnId, historyAnchor.viewportOffsetPx).catch(() => undefined);
     }, 250);
   };
 
   const markTimelineAtLatest = () => {
+    if (!historyViewport.atLiveTail) void historyViewport.revealLatest();
     persistTimelineOffset(0);
     awayFromLatestRef.current = false;
     updateFollowingLatest(true);
     setAwayFromLatest(false);
-    if (unread > 0) onViewedLatest?.();
+    if (latestUnreadReceiptKey !== null) acknowledgeUnreadReceipt(latestUnreadReceiptKey);
   };
 
   const jumpTimelineToLatest = () => {
@@ -3819,7 +4127,14 @@ function ConversationPane({
     // The real onScroll position confirms the jump and clears the badge.
     updateFollowingLatest(true);
     momentumActiveRef.current = false;
-    void timelineRef.current?.scrollToEnd({ animated: false });
+    const reveal = !historyViewport.atLiveTail
+      ? historyViewport.revealLatest()
+      : Promise.resolve();
+    void reveal.then(() => {
+      requestAnimationFrame(() => {
+        void timelineRef.current?.scrollToEnd({ animated: false });
+      });
+    });
   };
 
   const reconcileTimelineEndPosition = (contentHeight: number, viewportHeight: number, offsetY: number, settleFollowing: boolean) => {
@@ -3853,97 +4168,23 @@ function ConversationPane({
     latestUnreadAgentRef.current = null;
     timelineOverlay.reset();
   };
-  const transitionConversationScope = useEffectEvent(() => {
-    const previous = mountedConversationScopeRef.current;
-    if (previous.scope === composerScope) return;
-    clearTimelineRuntime();
-    if (scrollRestoredRef.current) {
-      sessionConversationScrollOffsets.set(previous.scope, scrollOffsetRef.current);
-      if (previous.saveScrollOffset !== undefined && previous.connectionId !== null && previous.threadId !== null) {
-        void previous.saveScrollOffset(previous.connectionId, previous.threadId, scrollOffsetRef.current).catch(() => undefined);
-      }
-    }
-    mountedConversationScopeRef.current = {
-      scope: composerScope,
-      connectionId: draftConnectionId,
-      threadId: draftThreadId,
-      saveScrollOffset,
-    };
-
-    const persistedOffset = composerState?.connectionId === draftConnectionId
-      && composerState.threadId === draftThreadId
-      ? composerState.scrollOffset
-      : null;
-    const restoreOffset = sessionConversationScrollOffsets.get(composerScope) ?? persistedOffset ?? 0;
-    if (draftConnectionId !== null && draftThreadId !== null) {
-      markThreadNavigationStage(draftConnectionId, draftThreadId, "scope_commit", {
-        values: { restoredOffsetPx: restoreOffset },
-        tags: { restore: restoreOffset <= 1 ? "latest" : "saved_offset" },
-      });
-    }
-    pendingRestoreOffsetRef.current = restoreOffset;
-    scrollOffsetRef.current = restoreOffset;
-    scrollRestoredRef.current = false;
-    timelineContentHeightRef.current = 0;
-    firstVisibleTimelineIndexRef.current = null;
-    lastTimelineOffsetYRef.current = null;
-    timelineInteractionScopeRef.current = "";
-    olderLoadInFlightRef.current = false;
-    momentumActiveRef.current = false;
-    searchOriginOffsetRef.current = null;
-    followingLatestRef.current = false;
-    awayFromLatestRef.current = false;
-
-    setTimelinePositionedScope("");
-    setTimelineInteractionScope("");
-    setTimelineTailFollowEnabled(false);
-    setAwayFromLatest(false);
-    setComposerTrayVisible(false);
-    setThreadResourceSheet(null);
-    fullscreenOverlay.dismissScope(previous.scope);
-    setProjectPickerVisible(false);
-    setProjectChangeBusy(false);
-    setProjectChangeError(null);
-    setMenuVisible(false);
-    setThreadRenameVisible(false);
-    setThreadSearchVisible(false);
-    setThreadSearch("");
-    setThreadSearchMatch(0);
-    setControlError(null);
-    draftSelectionRef.current = { start: 0, end: 0 };
-    composerContentHeightRef.current = 0;
-    setComposerInputHeight(draft === "" ? COMPOSER_MIN_HEIGHT : composerHeightForContent(draft, 0));
-  });
-  useLayoutEffect(() => {
-    transitionConversationScope();
-  }, [composerScope, draftConnectionId, draftThreadId]);
-
-  const cleanUpTimeline = useEffectEvent(() => {
+  const cleanUpTimeline = () => {
     clearTimelineRuntime();
     const current = mountedConversationScopeRef.current;
     pendingRestoreOffsetRef.current = null;
+    pendingRestoreAnchorTurnIdRef.current = null;
+    pendingRestoreAnchorOffsetRef.current = null;
     if (scrollRestoredRef.current) sessionConversationScrollOffsets.set(current.scope, scrollOffsetRef.current);
     if (current.saveScrollOffset !== undefined && current.connectionId !== null && current.threadId !== null) {
-      void current.saveScrollOffset(current.connectionId, current.threadId, scrollOffsetRef.current).catch(() => undefined);
+      const historyAnchor = currentHistoryAnchor(scrollOffsetRef.current);
+      void current.saveScrollOffset(current.connectionId, current.threadId, scrollOffsetRef.current, historyAnchor.turnId, historyAnchor.viewportOffsetPx).catch(() => undefined);
     }
-  });
-  useEffect(() => {
-    return cleanUpTimeline;
-  }, []);
-
-  const handleAndroidBack = useEffectEvent(() => onBack?.());
+    fullscreenOverlay.dismissScope(current.scope);
+  };
   const androidBackEnabled = Platform.OS === "android" && compact && onBack !== undefined;
-  useEffect(() => {
-    if (!androidBackEnabled) return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      handleAndroidBack();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [androidBackEnabled]);
+  useAndroidBackHandler(androidBackEnabled, () => onBack?.());
 
-  const composerSeedTaskKey = demo
-    || !composerStateMissing
+  const composerSeedTaskKey = !composerStateMissing
     || loadDraft === undefined
     || draftConnectionId === null
     || draftThreadId === null
@@ -3959,7 +4200,6 @@ function ConversationPane({
 
   const updateDraft = (text: string) => {
     latestDraftRef.current.latest = text;
-    if (demo) setDemoDraft(text);
     if (text === "") composerContentHeightRef.current = 0;
     setComposerInputHeight(composerHeightForContent(text, composerContentHeightRef.current));
     if (saveDraft === undefined || draftConnectionId === null || draftThreadId === null) return;
@@ -3968,7 +4208,6 @@ function ConversationPane({
 
   const updateAttachments = (next: ComposerAttachment[]) => {
     latestAttachmentsRef.current.latest = next;
-    if (demo) setDemoAttachments(next);
     if (saveDraftAttachments === undefined || draftConnectionId === null || draftThreadId === null) return;
     void saveDraftAttachments(draftConnectionId, draftThreadId, next).catch(() => undefined);
   };
@@ -3987,6 +4226,7 @@ function ConversationPane({
   };
 
   const send = (textOverride?: string, preference: ComposerSendPreference = "start") => {
+    if (pastedAttachmentPendingRef.current) return;
     // Voice completion passes its final draft explicitly. Reading `draft`
     // here would use the render captured when recording started and can send
     // the pre-transcription text instead of the latest transcript.
@@ -3994,11 +4234,13 @@ function ConversationPane({
     const sentAttachments = latestAttachmentsRef.current.latest;
     if ((!text && sentAttachments.length === 0) || onSend === undefined) return;
     const scope = composerScope;
+    const sentContentReviewAttachmentId = contentReviewAttachmentId;
     // Delivery mode is a one-shot command for this draft. Normal Send uses the
     // durable queue while a turn is active and starts immediately when idle;
     // opening the long-press menu must never mutate a persisted default.
     const mode: SendMode = resolveComposerSendMode(preference, threadLifecycleActive, currentTurnId);
-    const skills = controls.skills.filter((skill) => selectedSkills.includes(skill.path)).map(({ name, path }) => ({ name, path }));
+    const currentControls = currentControlsResource()?.value ?? EMPTY_TURN_CONTROLS;
+    const skills = currentControls.skills.filter((skill) => selectedSkills.includes(skill.path)).map(({ name, path }) => ({ name, path }));
     const operation = onSend(text, mode, {
       ...(selectedModel === null ? {} : { model: selectedModel }),
       ...(selectedEffort === null ? {} : { effort: selectedEffort }),
@@ -4019,25 +4261,33 @@ function ConversationPane({
       });
     }
     void operation.then(() => {
+      if (sentContentReviewAttachmentId !== null) clearContentReviewAttachmentId(scope, sentContentReviewAttachmentId);
       if (mode.type === "queue" && onListQueue !== undefined) {
         void onListQueue().catch(() => undefined);
       }
     }).catch(() => {
       // Native persistence failed before Kotlin accepted ownership. Restore
       // the composer; successful submissions are rendered exclusively from
-      // the TanStack delivery/queue collections.
-      if (mountedConversationScopeRef.current.scope === scope) {
-        updateDraft(text);
-        updateAttachments(sentAttachments);
+      // the Legend delivery/queue projection.
+      if (conversationOwner.isCurrent()) {
+        const recoveredDraft = mergeFailedComposerText(latestDraftRef.current.latest, text);
+        if (recoveredDraft !== latestDraftRef.current.latest) updateDraft(recoveredDraft);
+        const recoveredAttachments = mergeFailedComposerAttachments(latestAttachmentsRef.current.latest, sentAttachments);
+        if (recoveredAttachments !== latestAttachmentsRef.current.latest) updateAttachments(recoveredAttachments);
         return;
       }
+      if (conversationOwner.hasReplacement()) return;
       // The user already navigated away. Restore the failed submission in its
       // owning thread without mutating the newly selected composer's local UI.
+      const recoveredDraft = mergeFailedComposerText(latestDraftRef.current.latest, text);
+      latestDraftRef.current.latest = recoveredDraft;
       if (saveDraft !== undefined && draftConnectionId !== null && draftThreadId !== null) {
-        void saveDraft(draftConnectionId, draftThreadId, text).catch(() => undefined);
+        void saveDraft(draftConnectionId, draftThreadId, recoveredDraft).catch(() => undefined);
       }
+      const recoveredAttachments = mergeFailedComposerAttachments(latestAttachmentsRef.current.latest, sentAttachments);
+      latestAttachmentsRef.current.latest = recoveredAttachments;
       if (saveDraftAttachments !== undefined && draftConnectionId !== null && draftThreadId !== null) {
-        void saveDraftAttachments(draftConnectionId, draftThreadId, sentAttachments).catch(() => undefined);
+        void saveDraftAttachments(draftConnectionId, draftThreadId, recoveredAttachments).catch(() => undefined);
       }
     });
   };
@@ -4050,7 +4300,8 @@ function ConversationPane({
     setMenuVisible(true);
     // A failed/background prefetch may be retried, but an already loaded sheet
     // never refetches its model, skill and permission lists.
-    if (initialPage !== "ports" && (controlsResource === null || controlsResource.status === "error") && !controlsLoading) requestControls();
+    const current = currentControlsResource();
+    if (initialPage !== "ports" && (current === null || current.status === "error")) requestControls();
   };
   const closeControls = () => {
     setMenuVisible(false);
@@ -4060,7 +4311,8 @@ function ConversationPane({
     setComposerTrayVisible(false);
     timelineOverlay.begin(scope);
     dismissComposerKeyboardForOverlay();
-    if ((controlsResource === null || controlsResource.status === "error") && !controlsLoading) requestControls();
+    const current = currentControlsResource();
+    if (current === null || current.status === "error") requestControls();
   };
   const closeQuickControlMenu = (scope: "model-menu" | "permissions-menu") => {
     timelineOverlay.end(scope);
@@ -4078,11 +4330,10 @@ function ConversationPane({
   };
   const selectProject = async (nextCwd: string | null) => {
     if (onChangeProject === undefined || projectChangeBusy) return;
-    const scope = composerScope;
     setProjectChangeBusy(true);
     setProjectChangeError(null);
     const cause = await onChangeProject(nextCwd).then(() => null, (error: unknown) => error);
-    if (mountedConversationScopeRef.current.scope !== scope) return;
+    if (!conversationOwner.isCurrent()) return;
     setProjectChangeBusy(false);
     if (cause === null) {
       closeProjectPicker();
@@ -4098,29 +4349,41 @@ function ConversationPane({
     setThreadRenameVisible(false);
     timelineOverlay.end("thread-rename");
   };
-  const openSubagents = (initialThreadId: string | null = null) => {
+  const [subagentEventProjection] = useState(() => new SubagentListProjection());
+  const currentSubagentSummaries = (): readonly StoredThreadSummary[] => {
+    if (subagentSummaryDatabase === null || draftConnectionId === null || draftThreadId === null) return [];
+    const resource = subagentSummaryDatabase.viewResource({
+      viewId: `subagents:${draftConnectionId}:${draftThreadId}`,
+      connectionId: null,
+      recentLimit: 0,
+      archivedLimit: 0,
+      selectedConnectionId: null,
+      selectedThreadId: null,
+      subagentConnectionId: draftConnectionId,
+      subagentLimit: SUBAGENT_LIST_LIMIT,
+    });
+    return subagentEventProjection.project(resource.view$.peek().subagents);
+  };
+  const openSubagents = useEvent((summaries: readonly StoredThreadSummary[], initialThreadId: string | null = null) => {
     if (draftConnectionId === null || draftThreadId === null || onReadSubagentThread === undefined) return;
+    // Opening the sheet is the user event that starts the background catalog
+    // refresh. The sheet itself only reads Legend-owned resources.
+    void onRefreshSubagents?.(draftThreadId).catch(() => {
+      // Retain the complete local subagent list when the server is unavailable.
+    });
     fullscreenOverlay.present(({ close }) => (
       <SubagentSheet
         connectionId={draftConnectionId}
         parentThreadId={draftThreadId}
         parentThread={remoteThread ?? null}
-        summaries={subagents}
-        summaryDatabase={subagentSummaryDatabase}
+        summaries={summaries}
         threadDetails={subagentThreadDetails}
         onReadThread={onReadSubagentThread}
         initialThreadId={initialThreadId}
-        {...(onRefreshSubagents === undefined ? {} : { onRefresh: async () => await onRefreshSubagents(draftThreadId) })}
         renderThread={({ summary, thread: subagentThread, compact: subagentCompact, onBack: onBackToSubagents, onOpenSubagent }) => (
-          <RecoverableRenderBoundary
-            scope="surface"
-            label="Subagent conversation"
-            context={`Connection: ${draftConnectionId}\nThread: ${subagentThread.id}`}
-            resetKey={`${draftConnectionId}:${subagentThread.id}`}
-            {...(onBackToSubagents === undefined ? {} : { onDismiss: onBackToSubagents })}
-          >
           <ConversationPane
-            thread={subagentDemoThread(summary, subagentThread, draftConnectionId)}
+            key={`${draftConnectionId}:${subagentThread.id}`}
+            thread={subagentThreadListItem(summary, subagentThread, draftConnectionId)}
             server={server}
             compact={subagentCompact}
             readOnly
@@ -4129,7 +4392,6 @@ function ConversationPane({
             remoteSealedTurns={subagentThread.turns.filter((turn) => turn.status !== "inProgress")}
             remoteLiveTurns={subagentThread.turns.filter((turn) => turn.status === "inProgress")}
             cwd={subagentThread.cwd}
-            subagents={subagents}
             subagentSummaryDatabase={subagentSummaryDatabase}
             subagentThreadDetails={subagentThreadDetails}
             onReadSubagentThread={onReadSubagentThread}
@@ -4138,12 +4400,11 @@ function ConversationPane({
             {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
             {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock: fixUnsupportedBlock })}
           />
-          </RecoverableRenderBoundary>
         )}
         onClose={close}
       />
-    ));
-  };
+    ), { dismissOnScopeUnmount: false });
+  });
   const presentTerminal = () => {
     if (draftConnectionId === null || draftThreadId === null) return;
     fullscreenOverlay.present(({ close }) => (
@@ -4152,7 +4413,7 @@ function ConversationPane({
   };
   const openTerminal = () => {
     if (draftConnectionId === null || draftThreadId === null) return;
-    if (Platform.OS === "android" && interactiveTerminals.tabs.length === 0) {
+    if (Platform.OS === "android" && readInteractiveTerminalWorkspace(draftConnectionId, draftThreadId).tabs.length === 0) {
       createInteractiveTerminalTab({ connectionId: draftConnectionId, threadId: draftThreadId, cwd: cwd ?? null });
     }
     presentTerminal();
@@ -4178,6 +4439,7 @@ function ConversationPane({
   const uploadSelectedAttachment = async (
     selected: SelectedUpload,
     onUploaded?: (attachment: ComposerAttachment) => void,
+    offerRetry = true,
   ): Promise<ComposerAttachment | null> => {
     if (fileTransferController === null || getTransferAccess === undefined || draftThreadId === null) return null;
     let uploaded: ComposerAttachment | null = null;
@@ -4205,10 +4467,12 @@ function ConversationPane({
       dialog.alert(
         "Could not attach file",
         cause instanceof Error ? cause.message : "File upload failed",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Retry", onPress: () => void uploadSelectedAttachment(selected) },
-        ],
+        offerRetry
+          ? [
+              { text: "Cancel", style: "cancel" },
+              { text: "Retry", onPress: () => void uploadSelectedAttachment(selected) },
+            ]
+          : [{ text: "OK" }],
       );
       return null;
     }
@@ -4231,18 +4495,28 @@ function ConversationPane({
     );
     return await uploadSelectedAttachment(selected) !== null;
   };
-  const attachContentReview = async (markdown: string): Promise<boolean> => {
-    if (markdown === "") return false;
+  const attachContentReview = async (markdown: string): Promise<string | null> => {
+    if (markdown === "") return null;
+    const scope = composerScope;
+    const previousAttachmentId = contentReviewAttachmentId;
     const selected = createTextUpload(
       `codex-content-review-${new Date().toISOString().replace(/[:.]/g, "-")}.md`,
       "text/markdown",
       markdown,
     );
-    return await uploadSelectedAttachment(selected) !== null;
+    return await uploadSelectedAttachment(selected, (attachment) => {
+      const current = latestAttachmentsRef.current.latest;
+      updateAttachments([
+        ...current.filter((candidate) => candidate.id !== previousAttachmentId && candidate.id !== attachment.id),
+        attachment,
+      ]);
+      setContentReviewAttachmentId(scope, attachment.id);
+    }).then((attachment) => attachment?.id ?? null);
   };
   useImagePreviewAnnotationHandler(attachImageReview);
   useContentReviewRuntime({
     attach: attachContentReview,
+    attachmentId: contentReviewAttachmentId,
     thread: remoteThread ?? null,
     voiceScope: `${composerScope}\u0000review`,
     voiceResource: reviewVoiceResource,
@@ -4250,11 +4524,12 @@ function ConversationPane({
     ...(onStartVoiceTranscription === undefined ? {} : { startVoice: onStartVoiceTranscription }),
   });
   function presentThreadChanges(resource: ThreadResourcesValue | null, refreshOnOpen = false) {
+    const presentation = currentChangePresentation();
     fullscreenOverlay.present(({ close }) => (
       <CodeReviewWorkspace
         changes={resource?.changes ?? []}
-        changeScope={resource?.changeScope ?? effectiveChangeScope}
-        changeScopes={resource?.changeScopes ?? availableChangeScopes}
+        changeScope={resource?.changeScope ?? presentation.scope}
+        changeScopes={resource?.changeScopes ?? presentation.scopes}
         initialMode={changesPreferences.mode}
         initialWrapLines={changesPreferences.wrapLines}
         cwd={cwd}
@@ -4272,11 +4547,12 @@ function ConversationPane({
       />
     ));
   }
-  const openCodeDocument = (request: DocumentPreviewRequest) => {
+  const openCodeDocument = useEvent((request: DocumentPreviewRequest) => {
+    const resource = currentThreadResources()?.value ?? null;
     fullscreenOverlay.present(({ close }) => (
       <CodeReviewWorkspace
         key={`${request.path}:${request.line ?? ""}:${request.column ?? ""}`}
-        changes={codeReviewFilesForDocument(threadResources?.value?.changes ?? [], request.path)}
+        changes={codeReviewFilesForDocument(resource?.changes ?? [], request.path)}
         initialPath={request.path}
         {...(request.line === undefined ? {} : { initialLine: request.line })}
         {...(request.column === undefined ? {} : { initialColumn: request.column })}
@@ -4287,10 +4563,10 @@ function ConversationPane({
         onAttach={attachCodeReview}
         onClose={close}
         onDownload={() => void downloadDocument(request)}
-        {...(onLoadThreadChangeDiff === undefined ? {} : { onLoadDiff: (path: string) => onLoadThreadChangeDiff(path, threadResources?.value?.changeScope) })}
+        {...(onLoadThreadChangeDiff === undefined ? {} : { onLoadDiff: (path: string) => onLoadThreadChangeDiff(path, resource?.changeScope) })}
       />
     ));
-  };
+  });
   const pickComposerAttachment = async () => {
     setComposerTrayVisible(false);
     if (!fileAttachmentEnabled) return;
@@ -4315,6 +4591,79 @@ function ConversationPane({
     if (selected === null) return null;
     return await uploadSelectedAttachment(selected, () => undefined);
   };
+  const clearLargePasteOperation = (operation: NonNullable<typeof largePasteOperationRef.current>) => {
+    if (largePasteOperationRef.current !== operation) return;
+    largePasteOperationRef.current = null;
+    pastedAttachmentPendingRef.current = false;
+    setPastedAttachmentPending(false);
+  };
+  const flushLargePasteCapture = async (operation: NonNullable<typeof largePasteOperationRef.current>) => {
+    if (largePasteOperationRef.current !== operation || operation.scope !== composerScope) return;
+    const projection = operation.capture;
+
+    let selected: SelectedUpload;
+    try {
+      selected = createTextUpload(
+        `pasted-snippet-${new Date().toISOString().replace(/[:.]/g, "-")}.txt`,
+        "text/plain",
+        projection.attachmentText,
+      );
+    } catch (cause) {
+      clearLargePasteOperation(operation);
+      dialog.alert("Could not attach pasted text", cause instanceof Error ? cause.message : "Could not create the text attachment");
+      return;
+    }
+
+    const attachmentsBeforeUpload = [...latestAttachmentsRef.current.latest];
+    updateDraft(projection.draftText);
+    draftSelectionRef.current = { start: projection.insertionOffset, end: projection.insertionOffset };
+    voiceController?.setPendingSelection(composerScope, draftSelectionRef.current);
+    const attachment = await uploadSelectedAttachment(selected, (uploaded) => {
+      const next = [...attachmentsBeforeUpload.filter((candidate) => candidate.id !== uploaded.id), uploaded];
+      if (largePasteOperationRef.current === operation && conversationOwner.isCurrent()) {
+        updateAttachments(next);
+      } else if (!conversationOwner.hasReplacement() && saveDraftAttachments !== undefined && operation.connectionId !== null && operation.threadId !== null) {
+        void saveDraftAttachments(operation.connectionId, operation.threadId, next).catch(() => undefined);
+      }
+    }, false);
+    if (attachment === null) {
+      if (largePasteOperationRef.current === operation && conversationOwner.isCurrent()) {
+        const current = latestDraftRef.current.latest;
+        const offset = Math.min(projection.insertionOffset, current.length);
+        updateDraft(`${current.slice(0, offset)}${projection.attachmentText}${current.slice(offset)}`);
+      } else if (!conversationOwner.hasReplacement() && saveDraft !== undefined && operation.connectionId !== null && operation.threadId !== null) {
+        void saveDraft(operation.connectionId, operation.threadId, operation.capture.pastedDraftText).catch(() => undefined);
+      }
+    }
+    clearLargePasteOperation(operation);
+  };
+  const handleComposerTextChange = (nextText: string) => {
+    updateDraft(nextText);
+  };
+  const handleComposerLargePaste = (event: LargePasteEvent) => {
+    if (largePasteOperationRef.current?.scope === composerScope) return;
+    const capture = captureClipboardLargePaste(
+      latestDraftRef.current.latest,
+      event.text,
+      { start: event.start, end: event.end },
+    );
+    if (capture === null) return;
+    const operation = {
+      scope: composerScope,
+      connectionId: draftConnectionId,
+      threadId: draftThreadId,
+      capture,
+    };
+    largePasteOperationRef.current = operation;
+    pastedAttachmentPendingRef.current = true;
+    setPastedAttachmentPending(true);
+    void flushLargePasteCapture(operation);
+  };
+  useUnmount(() => {
+    cleanUpTimeline();
+    const operation = largePasteOperationRef.current;
+    if (operation?.scope === composerScope) clearLargePasteOperation(operation);
+  });
   const openAccessoryAction = (action: ComposerAccessoryAction) => {
     setComposerTrayVisible(false);
     if (action === "files") {
@@ -4336,7 +4685,7 @@ function ConversationPane({
   const anchoredComposerActions: ActionMenuItem[] = [
     { id: "files", label: "Attach file", icon: "attach-outline", disabled: !fileAttachmentEnabled },
     { id: "terminal", label: "Terminal", icon: "terminal-outline", disabled: newChat || Platform.OS !== "android" || draftConnectionId === null || draftThreadId === null },
-    { id: "ports", label: "Port forward", icon: "git-network-outline", disabled: portForwarding === undefined },
+    { id: "ports", label: "Port forward", icon: "git-network-outline", disabled: portForwardingConnectionId === null },
     { id: "skills", label: "Skills", icon: "sparkles-outline" },
     { id: "goal", label: "Goal", icon: "flag-outline" },
   ];
@@ -4356,45 +4705,62 @@ function ConversationPane({
     else send(undefined, id);
   };
   const selectModel = (model: string, effort: string) => {
-    const scope = composerScope;
+    const modelMutation = ++settingsMutationRef.current.model;
+    const effortMutation = ++settingsMutationRef.current.effort;
     const previousModel = selectedModel;
     const previousEffort = selectedEffort;
     updateComposerPreferences((current) => ({ ...current, model, effort }));
     if (onUpdateSettings === undefined) return;
     setControlError(null);
     void onUpdateSettings({ model, effort }).catch((cause) => {
-      updateComposerPreferences((current) => current.model === model && current.effort === effort
-        ? { ...current, model: previousModel, effort: previousEffort }
-        : current);
-      if (mountedConversationScopeRef.current.scope === scope) {
+      const ownsModel = settingsMutationRef.current.model === modelMutation;
+      const ownsEffort = settingsMutationRef.current.effort === effortMutation;
+      if ((ownsModel || ownsEffort) && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
+        updateComposerPreferences((current) => ({
+          ...current,
+          ...rollbackOwnedModelSelection(
+            current,
+            { model, effort },
+            { model: previousModel, effort: previousEffort },
+            { model: ownsModel, effort: ownsEffort },
+          ),
+        }));
+      }
+      if ((ownsModel || ownsEffort) && conversationOwner.isCurrent()) {
         setControlError(cause instanceof Error ? cause.message : "Could not update model settings");
       }
     });
   };
 
   const selectEffort = (effort: string) => {
-    const scope = composerScope;
+    const mutation = ++settingsMutationRef.current.effort;
     const previous = selectedEffort;
     setSelectedEffort(effort);
     if (onUpdateSettings === undefined) return;
     setControlError(null);
     void onUpdateSettings({ effort }).catch((cause) => {
-      setSelectedEffort((current) => current === effort ? previous : current);
-      if (mountedConversationScopeRef.current.scope === scope) {
+      const ownsMutation = settingsMutationRef.current.effort === mutation;
+      if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
+        setSelectedEffort((current) => current === effort ? previous : current);
+      }
+      if (ownsMutation && conversationOwner.isCurrent()) {
         setControlError(cause instanceof Error ? cause.message : "Could not update thinking effort");
       }
     });
   };
 
   const selectPermissions = (permissions: string | null) => {
-    const scope = composerScope;
+    const mutation = ++settingsMutationRef.current.permissions;
     const previous = selectedPermissions;
     setSelectedPermissions(permissions);
     if (onUpdateSettings === undefined) return;
     setControlError(null);
     void onUpdateSettings({ permissions }).catch((cause) => {
-      setSelectedPermissions((current) => current === permissions ? previous : current);
-      if (mountedConversationScopeRef.current.scope === scope) {
+      const ownsMutation = settingsMutationRef.current.permissions === mutation;
+      if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
+        setSelectedPermissions((current) => current === permissions ? previous : current);
+      }
+      if (ownsMutation && conversationOwner.isCurrent()) {
         setControlError(cause instanceof Error ? cause.message : "Could not update permissions");
       }
     });
@@ -4436,25 +4802,32 @@ function ConversationPane({
     );
   }
 
-  const serverActivity = server === undefined ? null : connectionActivity(server.status);
-  const conversationActivity = serverActivity
-    ?? (loadState.phase === "loading" || loadState.phase === "refreshing" || !timelinePositioned ? "updating" : null);
+  // Authoritative revalidation is deliberately invisible: resident content
+  // remains the presented truth while fresh rows reconcile in place. Only a
+  // real connection transition or an actionable retry state changes chrome.
+  const conversationActivity: ConnectionActivity | null = server?.status === "connecting"
+    ? "connecting"
+    : null;
   const conversationSubtitle = conversationActivity === "connecting"
     ? "connecting…"
-    : conversationActivity === "updating"
-      ? "updating…"
+    : historyViewport.status === "background-retrying"
+      ? "update delayed"
       : threadContextLabel(server?.name ?? "", cwd);
   const conversationSubtitleColor = conversationActivity !== null
     ? connectionActivityColor(conversationActivity)
-    : colors.textMuted;
+    : historyViewport.status === "background-retrying"
+      ? colors.amber
+      : colors.textMuted;
   const stoppingResponse = currentTurnId !== null && voicePhase === "idle" && draft.trim() === "" && attachments.length === 0;
   const sendDisabled = voicePhase === "finishing"
+    || pastedAttachmentPending
     || (voicePhase === "idle" && !stoppingResponse && draft.trim() === "" && attachments.length === 0);
   return (
+    <AppVoiceInputProvider runtime={appVoiceInputRuntime}>
     <AppFullscreenOverlayBoundary scope={composerScope} lifecycle={fullscreenOverlayLifecycle}>
     <SubagentNavigationContext.Provider value={onOpenSubagentThread
       ?? (draftConnectionId !== null && draftThreadId !== null && onReadSubagentThread !== undefined
-        ? (threadId) => openSubagents(threadId)
+        ? (threadId) => openSubagents(currentSubagentSummaries(), threadId)
         : null)}>
     <LargeContentViewerHost>
     <View
@@ -4547,14 +4920,33 @@ function ConversationPane({
       <ThreadCwdContext.Provider value={cwd}>
       <ThreadCodeDocumentContext.Provider value={openCodeDocument}>
       <View ref={timelineViewportRef} style={styles.timelineShell}>
+      <CommitOnChangeProbe
+        scope={composerScope}
+        revision={latestUnreadReceiptKey}
+        onCommit={commitUnreadReceipt}
+      />
+      <ThreadTimelineNavigationCommit
+        connectionId={draftConnectionId}
+        threadId={draftThreadId}
+        modelReady={timelineModelReady}
+        visible={timelinePositioned}
+        itemCount={timeline.length}
+        turnCount={remoteThread?.turns.length ?? 0}
+        loadStatus={historyViewport.status}
+        restoreOffset={initialRestoreOffset}
+        restoreAnchorTurnId={initialRestoreAnchorTurnId}
+      >
+      <NavigationReactProfiler connectionId={draftConnectionId ?? ""} threadId={draftThreadId} name="react_timeline_list_commit">
       <ThreadTimelineList
         ref={timelineRef}
         freeze={timelineOverlayFreeze}
         testID="conversation-timeline"
         data={displayedTimeline}
+        initialPosition={timelineInitialPosition}
         extraData={`${threadSearch}:${threadSearchMatch}:${windowLayout.measurementRevision}`}
-        renderRevision={`${composerScope}:${windowLayout.measurementRevision}`}
-        style={StyleSheet.flatten([styles.conversationScroll, !timelinePositioned && styles.timelineConcealed])}
+        renderRevision={composerScope}
+        measurementRevision={windowLayout.measurementRevision}
+        style={styles.conversationScroll}
         contentContainerStyle={[styles.conversationContent, timelineCompact ? styles.conversationContentCompact : styles.conversationContentWide, liveTurnPlanVisible && styles.conversationContentLivePlanInset]}
         keyboardLiftBehavior="whenAtEnd"
         keyboardOffset={conversationInsets.bottom}
@@ -4568,6 +4960,7 @@ function ConversationPane({
         scrollEventThrottle={16}
         onLoad={({ elapsedTimeInMs }) => {
           recordTiming("timeline_first_draw_ms", elapsedTimeInMs);
+          historyViewport.prefetch();
           if (draftConnectionId !== null && draftThreadId !== null) {
             markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_first_draw", {
               values: { nativeListDrawMs: elapsedTimeInMs, itemCount: displayedTimeline.length },
@@ -4588,10 +4981,12 @@ function ConversationPane({
           if (threadSearchActive || timelineOverlay.isActive()) return;
           timelineInteractionScopeRef.current = composerScope;
           lastTimelineOffsetYRef.current = nativeEvent.contentOffset.y;
+          scrollGestureActiveRef.current = true;
+          scrollDirectionRef.current = null;
+          historyViewport.freeze();
           updateFollowingLatest(false);
           momentumActiveRef.current = false;
           if (timelineSettleTimerRef.current !== null) clearTimeout(timelineSettleTimerRef.current);
-          setTimelineInteractionScope(composerScope);
         }}
         onScroll={({ nativeEvent }) => {
           timelineViewportHeightRef.current = nativeEvent.layoutMeasurement.height;
@@ -4599,9 +4994,10 @@ function ConversationPane({
           scheduleUnreadAgentVisibilityCheck();
           if (timelineOverlay.observeNativeOffset(nativeEvent.contentOffset.y) || threadSearchActive) return;
           const previousOffsetY = lastTimelineOffsetYRef.current;
-          const scrollingTowardOlder = previousOffsetY !== null && nativeEvent.contentOffset.y < previousOffsetY;
+          if (previousOffsetY !== null && Math.abs(nativeEvent.contentOffset.y - previousOffsetY) >= 0.5) {
+            scrollDirectionRef.current = nativeEvent.contentOffset.y < previousOffsetY ? "older" : "newer";
+          }
           lastTimelineOffsetYRef.current = nativeEvent.contentOffset.y;
-          if (shouldPrefetchOlderPage(firstVisibleTimelineIndexRef.current, scrollingTowardOlder)) requestOlderTurns();
           const distance = Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y);
           scrollOffsetRef.current = distance;
           if (!scrollRestoredRef.current) return;
@@ -4615,6 +5011,7 @@ function ConversationPane({
         }}
         onScrollEndDrag={({ nativeEvent }) => {
           if (threadSearchActive || timelineOverlay.isActive()) return;
+          scrollGestureActiveRef.current = false;
           reconcileTimelineEndPosition(nativeEvent.contentSize.height, nativeEvent.layoutMeasurement.height, nativeEvent.contentOffset.y, false);
           if (timelineSettleTimerRef.current !== null) clearTimeout(timelineSettleTimerRef.current);
           timelineSettleTimerRef.current = setTimeout(() => {
@@ -4625,16 +5022,20 @@ function ConversationPane({
         onMomentumScrollBegin={() => {
           if (threadSearchActive || timelineOverlay.isActive()) return;
           momentumActiveRef.current = true;
+          scrollGestureActiveRef.current = true;
           if (timelineSettleTimerRef.current !== null) clearTimeout(timelineSettleTimerRef.current);
           timelineSettleTimerRef.current = null;
         }}
         onMomentumScrollEnd={({ nativeEvent }) => {
           if (threadSearchActive || timelineOverlay.isActive()) return;
           momentumActiveRef.current = false;
+          scrollGestureActiveRef.current = false;
+          scrollDirectionRef.current = null;
           reconcileTimelineEndPosition(nativeEvent.contentSize.height, nativeEvent.layoutMeasurement.height, nativeEvent.contentOffset.y, true);
         }}
         onContentSizeChange={(_width, height) => {
           timelineContentHeightRef.current = height;
+          historyViewport.prefetch();
           scheduleUnreadAgentVisibilityCheck();
           if (timelineOverlay.isActive()) {
             timelineOverlay.restore(false);
@@ -4642,23 +5043,14 @@ function ConversationPane({
           }
           if (threadSearchActive) return;
           if (pendingRestoreOffsetRef.current !== null) {
-            // Variable-height cells only expose a reliable total height after
-            // LegendList has materialized its tail. Keep that jump concealed.
+            // The list owns initial placement. This callback only marks the
+            // already positioned semantic anchor as ready for display.
             scheduleInitialTimelinePosition(height);
           }
         }}
-        onStartReached={!threadSearchActive && timelineInteracted ? requestOlderTurns : undefined}
-        onStartReachedThreshold={0.5}
-        onEndReached={!threadSearchActive && timelineInteracted ? requestNewerTurns : undefined}
-        onEndReachedThreshold={0.25}
-        viewabilityConfig={timelineViewabilityConfig}
-        onViewableItemsChanged={onTimelineViewableItemsChanged}
+        showsVerticalScrollIndicator={false}
+        onFirstVisibleItemChanged={onTimelineFirstVisibleItemChanged}
         keyExtractor={timelineItemKey}
-        ListHeaderComponent={loadState.loadingOlder ? (
-          <View style={styles.timelineHeaderContent}>
-            <ActivityIndicator size="small" color={colors.accent} />
-          </View>
-        ) : null}
         ListEmptyComponent={
           <View style={styles.emptyConversation}>
             {emptyRemoteThread && !threadSearchActive ? (
@@ -4720,22 +5112,26 @@ function ConversationPane({
               </View>
             ) : (
               <>
-                {!threadSearchActive && (loadState.phase === "loading" || loadState.phase === "refreshing") ? <ActivityIndicator size="small" color={colors.accent} /> : null}
-                <Text style={styles.emptyText}>{threadSearchActive ? "No matches" : loadState.phase === "error" ? loadState.error ?? "Could not load messages" : loadState.phase === "loading" || loadState.phase === "refreshing" ? "Loading messages…" : "Start by typing a message"}</Text>
+                {!threadSearchActive && historyViewport.status === "initial-loading" ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+                <Text style={styles.emptyText}>{threadSearchActive ? "No matches" : historyViewport.status === "initial-error" ? historyViewport.error ?? "Could not load messages" : historyViewport.status === "initial-loading" ? "Loading messages…" : "Start by typing a message"}</Text>
               </>
             )}
           </View>
         }
         renderItem={renderTimelineItem}
       />
+      </NavigationReactProfiler>
+      </ThreadTimelineNavigationCommit>
+      {historyViewport.status === "loading-history" && timeline.length > 0 && (
+        <View pointerEvents="none" testID="history-loading-indicator" style={styles.historyLoadingIndicator}>
+          <View style={styles.historyLoadingIndicatorPill}>
+            <ActivityIndicator size="small" color={colors.textMuted} />
+          </View>
+        </View>
+      )}
       {liveTurnPlanVisible && (
         <View pointerEvents="box-none" testID="live-plan-float" style={styles.livePlanFloat}>
           <LiveTurnPlanPopover plan={liveTurnPlan} />
-        </View>
-      )}
-      {!timelinePositioned && timeline.length > 0 && (
-        <View pointerEvents="none" testID="timeline-positioning-loader" style={styles.timelineLoadingOverlay}>
-          <ActivityIndicator size="small" color={colors.accent} />
         </View>
       )}
       </View>
@@ -4783,124 +5179,43 @@ function ConversationPane({
         }}
       >
       <ScrollView testID="composer-context-strip" horizontal showsHorizontalScrollIndicator={false} style={styles.composerContextStrip} contentContainerStyle={styles.composerContextContent}>
-        {readOnly ? <View testID="readonly-model-chip" style={styles.composerContextChip}>
-          <Ionicons name="sparkles-outline" size={15} color={colors.textMuted} />
-          <ComposerContextLabel
-            loading={modelLabelPending}
-            testID="composer-model-label"
-            text={modelLabelPending ? "Loading model…" : `${effectiveModelLabel} · ${effectiveEffort ?? "default"}`}
-          />
-        </View> : <ModelThinkingMenu
-          accessibilityLabel={`Model and thinking: ${effectiveModelLabel}, ${effectiveEffort ?? "server default"}`}
-          triggerStyle={styles.composerContextChip}
-          triggerChildren={<>
-            <Ionicons name="sparkles-outline" size={15} color={colors.textMuted} />
-            <ComposerContextLabel
-              loading={modelLabelPending}
-              testID="composer-model-label"
-              text={modelLabelPending ? "Loading model…" : `${effectiveModelLabel} · ${effectiveEffort ?? "default"}`}
-            />
-          </>}
-          models={controls.models}
-          loading={controlsLoading}
-          error={effectiveControlError}
-          selectedModel={effectiveModel}
-          selectedEffort={effectiveEffort}
+        <ComposerControlChips
+          resources={workspaceResources}
+          resourceId={controlsResourceId}
+          cwd={cwd}
+          remoteThread={remoteThread}
+          readOnly={readOnly}
+          selectedModel={selectedModel}
+          selectedEffort={selectedEffort}
           selectedPersonality={selectedPersonality}
-          onOpen={() => openQuickControlMenu("model-menu")}
-          onClose={() => closeQuickControlMenu("model-menu")}
-          onFallbackPress={() => openControls("model")}
+          selectedPermissions={selectedPermissions}
+          error={controlError}
+          {...(onLoadControls === undefined ? {} : { load: onLoadControls })}
+          onQuickOpen={openQuickControlMenu}
+          onClose={closeQuickControlMenu}
+          onFallback={openControls}
           onSelectModel={selectModel}
           onSelectEffort={selectEffort}
           onSelectPersonality={setSelectedPersonality}
-        />}
-        {readOnly ? <View testID="readonly-permissions-chip" style={styles.composerContextChip}>
-          <Ionicons name="shield-checkmark-outline" size={15} color={colors.textMuted} />
-          <ComposerContextLabel
-            loading={permissionLabelPending}
-            testID="composer-permissions-label"
-            text={permissionLabelPending ? "Loading access…" : effectivePermissionLabel}
-          />
-        </View> : <PermissionsMenu
-          accessibilityLabel={`Permissions: ${effectivePermissionLabel}`}
-          triggerStyle={styles.composerContextChip}
-          triggerChildren={<>
-            <Ionicons name="shield-checkmark-outline" size={15} color={colors.textMuted} />
-            <ComposerContextLabel
-              loading={permissionLabelPending}
-              testID="composer-permissions-label"
-              text={permissionLabelPending ? "Loading access…" : effectivePermissionLabel}
-            />
-          </>}
-          permissions={controls.permissions}
-          loading={controlsLoading}
-          error={effectiveControlError}
-          selectedPermissions={effectivePermissions}
-          onOpen={() => openQuickControlMenu("permissions-menu")}
-          onClose={() => closeQuickControlMenu("permissions-menu")}
-          onFallbackPress={() => openControls("permissions")}
           onSelectPermissions={selectPermissions}
+        />
+        {onLoadThreadResources !== undefined && <ThreadResourceContextChips
+          model={threadResourcesModel}
+          resourceId={threadResourceId}
+          revision={threadResourceRevision}
+          load={onLoadThreadResources}
+          preferences={changesPreferences}
+          onPreferencesChange={setChangesPreferences}
+          onOpen={openThreadResources}
         />}
-        {onLoadThreadResources !== undefined && <ActionMenu
-          accessibilityLabel="Choose changes scope"
-          actions={changeScopeMenuActions(availableChangeScopes, effectiveChangeScope)}
-          trigger="long-press"
-          placement="top"
-          align="start"
-          onSelect={selectChangesMenuAction}
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`${sessionChangesLabel}, ${changeScopeTitle(effectiveChangeScope)}. Long press to choose changes scope.`}
-            onPress={() => openThreadResources("changes")}
-            style={styles.composerContextChip}
-          >
-            <Ionicons name="git-compare-outline" size={15} color={sessionChangesEmpty ? colors.textDim : colors.textMuted} />
-            {changesLoadingWithoutContent || sessionChangesEmpty || changesError !== null && !changesReady
-              ? <ComposerContextLabel loading={changesLoadingWithoutContent} testID="composer-changes-label" text={sessionChangesLabel} />
-              : <ComposerContextCount label="Changes" value={sessionChangeCount} refreshing={changesRefreshing} testID="composer-changes-label" />}
-          </Pressable>
-        </ActionMenu>}
-        {onLoadThreadResources !== undefined && <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={sessionAttachmentsLabel}
-          accessibilityState={{ disabled: sessionAttachmentsEmpty }}
-          disabled={sessionAttachmentsEmpty}
-          onPress={() => openThreadResources("attachments")}
-          style={[styles.composerContextChip, sessionAttachmentsEmpty && styles.disabled]}
-        >
-          <Ionicons name="attach-outline" size={15} color={sessionAttachmentsEmpty ? colors.textDim : colors.textMuted} />
-          {attachmentsInitialLoading || sessionAttachmentsEmpty || attachmentsError !== null && !attachmentsReady
-            ? <ComposerContextLabel loading={attachmentsInitialLoading} testID="composer-attachments-label" text={sessionAttachmentsLabel} />
-            : <ComposerContextCount label="Attachments" value={sessionAttachmentCount} refreshing={attachmentsRefreshing} testID="composer-attachments-label" />}
-        </Pressable>}
-        {portForwarding !== undefined && portForwardCount > 0 && <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Ports: ${portForwardCount}`}
-          onPress={() => openControls("ports")}
-          style={styles.composerContextChip}
-        >
-          <Ionicons name="git-network-outline" size={15} color={hasLivePortForward ? colors.green : colors.textMuted} />
-          <ComposerContextCount label="Ports" value={portForwardCount} testID="composer-ports-label" />
-        </Pressable>}
-        {interactiveTerminals.tabs.length > 0 && <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Terminals: ${interactiveTerminals.tabs.length}`}
-          onPress={openTerminal}
-          style={styles.composerContextChip}
-        >
-          <Ionicons name="terminal-outline" size={15} color={interactiveTerminals.tabs.some(({ status }) => status === "open") ? colors.green : colors.textMuted} />
-          <ComposerContextCount label="Terminals" value={interactiveTerminals.tabs.length} testID="composer-terminals-label" />
-        </Pressable>}
-        {visibleSubagents.length > 0 && onReadSubagentThread !== undefined && <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Subagents: ${visibleSubagents.length}`}
-          onPress={() => openSubagents()}
-          style={styles.composerContextChip}
-        >
-          <Ionicons name="people-outline" size={15} color={visibleSubagents.some((summary) => summary.status.type === "active") ? colors.green : colors.textMuted} />
-          <ComposerContextCount label="Subagents" value={visibleSubagents.length} />
-        </Pressable>}
+        <ComposerPortContextChip connectionId={portForwardingConnectionId} onOpen={() => openControls("ports")} />
+        <ComposerTerminalContextChip connectionId={draftConnectionId} threadId={draftThreadId} onOpen={openTerminal} />
+        {onReadSubagentThread !== undefined && <ComposerSubagentContextChip
+          database={subagentSummaryDatabase}
+          connectionId={draftConnectionId}
+          parentThreadId={draftThreadId}
+          onOpen={(summaries) => openSubagents(summaries)}
+        />}
       </ScrollView>
       {!readOnly && <>
       {inlineQueue.length > 0 && (
@@ -4919,14 +5234,17 @@ function ConversationPane({
           testID="composer-attachment-strip"
           attachments={attachments}
           {...(getTransferAccess === undefined ? {} : { getTransferAccess: getStableTransferAccess })}
-          onRemove={(attachmentId) => updateAttachments(attachments.filter((candidate) => candidate.id !== attachmentId))}
+          onRemove={(attachmentId) => {
+            updateAttachments(latestAttachmentsRef.current.latest.filter((candidate) => candidate.id !== attachmentId));
+            if (contentReviewAttachmentId === attachmentId) setContentReviewAttachmentId(composerScope, null);
+          }}
         />
       )}
       {composerTrayVisible && !useAnchoredComposerMenu && (
         <ComposerAccessoryTray
           fileEnabled={fileAttachmentEnabled}
           terminalEnabled={Platform.OS === "android" && draftConnectionId !== null && draftThreadId !== null}
-          portForwardEnabled={portForwarding !== undefined}
+          portForwardEnabled={portForwardingConnectionId !== null}
           onSelect={openAccessoryAction}
         />
       )}
@@ -4971,8 +5289,14 @@ function ConversationPane({
             <TextInput
               voiceInput={false}
               accessibilityLabel="Message Codex"
+              {...(fileAttachmentEnabled && !pastedAttachmentPending && attachments.length < MAX_TURN_ATTACHMENTS
+                ? {
+                    largePasteThreshold: AUTO_ATTACH_PASTE_MIN_CHARS,
+                    onLargePaste: handleComposerLargePaste,
+                  }
+                : {})}
               value={draft}
-              onChangeText={updateDraft}
+              onChangeText={handleComposerTextChange}
               onSubmitEditing={() => send()}
               selection={pendingVoiceSelection ?? undefined}
               onSelectionChange={({ nativeEvent }) => {
@@ -4983,7 +5307,6 @@ function ConversationPane({
                   && pendingVoiceSelection.end === nativeEvent.selection.end
                 ) voiceController?.clearPendingSelection(composerScope);
               }}
-              maxLength={MAX_TURN_TEXT_CHARS}
               placeholder="Message Codex…"
               placeholderTextColor={colors.textDim}
               multiline
@@ -5066,27 +5389,31 @@ function ConversationPane({
       </View>
       </KeyboardStickyView>
 
-      <ComposerMenu
+      <ContentReviewComposer targetPrefix="agent-response:" />
+
+      <ResourceComposerMenu
         visible={menuVisible}
         thread={remoteThread ?? null}
         initialPage={menuInitialPage}
         onClose={closeControls}
-        controls={controls}
+        resources={workspaceResources}
+        controlsResourceId={controlsResourceId}
+        backgroundTerminalsResourceId={backgroundTerminalsResourceId}
+        goalResourceId={goalResourceId}
+        tunnelResourceId={tunnelResourceId}
+        portForwardingConnectionId={portForwardingConnectionId}
+        portForwardingServerName={portForwardingServerName}
+        {...(onOpenPortForward === undefined ? {} : { onOpenPortForward })}
+        controlError={controlError}
         queuedPrompts={visibleQueuedPrompts}
         activeTurnId={currentTurnId}
-        terminalsResource={terminalsResource}
-        goalResource={goalResource}
         voiceScope={composerScope}
         voiceResource={voiceResource}
         voiceController={voiceController}
-        tunnelResource={tunnelResource}
-        {...(portForwarding === undefined ? {} : { portForwarding })}
-        loading={controlsLoading}
-        error={effectiveControlError}
-        selectedModel={effectiveModel}
-        selectedEffort={effectiveEffort}
+        selectedModel={selectedModel}
+        selectedEffort={selectedEffort}
         selectedPersonality={selectedPersonality}
-        selectedPermissions={effectivePermissions}
+        selectedPermissions={selectedPermissions}
         onSelectModel={selectModel}
         onSelectEffort={selectEffort}
         onSelectPersonality={setSelectedPersonality}
@@ -5126,7 +5453,9 @@ function ConversationPane({
       />
       <ThreadResourcesSheet
         visible={threadResourceSheet !== null}
-        resource={threadResources}
+        model={threadResourcesModel}
+        resourceId={threadResourceId}
+        revision={threadResourceRevision}
         cwd={cwd}
         thread={remoteThread ?? null}
         voiceRuntime={appVoiceInputRuntime}
@@ -5141,18 +5470,20 @@ function ConversationPane({
     </LargeContentViewerHost>
     </SubagentNavigationContext.Provider>
     </AppFullscreenOverlayBoundary>
+    </AppVoiceInputProvider>
   );
 }
 
 type ThreadResourceDocumentRoute = {
   request: DocumentPreviewRequest;
-  result: DocumentPreviewResult;
   revision: number;
 };
 
 function ThreadResourcesSheet({
   visible,
-  resource,
+  model,
+  resourceId,
+  revision,
   cwd,
   thread,
   voiceRuntime,
@@ -5163,7 +5494,9 @@ function ThreadResourcesSheet({
   onClose,
 }: {
   visible: boolean;
-  resource: ThreadResourcesRow | null;
+  model: ThreadResourcesModel | null;
+  resourceId: string | null;
+  revision: string;
   cwd: string;
   thread: Thread | null;
   voiceRuntime: AppVoiceInputRuntime | null;
@@ -5173,48 +5506,61 @@ function ThreadResourcesSheet({
   onReload?(): Promise<ThreadResourcesValue>;
   onClose(): void;
 }) {
+  const resource = useThreadResources(model, resourceId, onReload, { revision });
   const dialog = useAppDialog();
   const openDocument = useDocumentPreview();
   const downloadDocument = useDocumentDownload();
   const fullscreenOverlay = useAppFullscreenOverlay();
+  const previewResourceOwnerId = useId();
   const previewRevisionRef = useRef(0);
-  const previewLoadRef = useRef<AbortController | null>(null);
   const [documentStack, setDocumentStack] = useState<ThreadResourceDocumentRoute[]>([]);
   const [documentViewportWidth, setDocumentViewportWidth] = useState(0);
   const changes = resource?.value?.changes ?? [];
   const attachments = resource?.value?.attachments ?? [];
+  const attachmentsPending = resource === null
+    || (resource.pendingKinds === undefined
+      ? resource.status === "loading"
+      : resource.pendingKinds.includes("attachments"));
+  const attachmentsReady = resource?.readyKinds === undefined
+    ? resource?.value != null
+    : resource.readyKinds.includes("attachments");
+  const attachmentsInitialLoading = attachmentsPending && !attachmentsReady;
+  const attachmentsError = resource?.resourceErrors?.attachments
+    ?? (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
   const title = `Attachments · ${attachments.length}`;
   const document = documentStack.at(-1) ?? null;
+  const documentSource = document?.request.source ?? (document === null ? null : { kind: "path" as const, path: document.request.path });
+  const documentPreviewResource = useEphemeralAsyncResource<Extract<DocumentPreviewResult, { phase: "ready" }>>(
+    document === null || documentSource === null
+      ? null
+      : `thread-resource-document:${previewResourceOwnerId}:${privateAssetCacheKey(documentSource)}`,
+    document === null ? "none" : `${document.request.kind}:${document.revision}`,
+    async (_publish, signal) => {
+      if (document === null) throw new Error("Document preview is closed");
+      const loaded = await loadDocumentPreview(document.request, signal);
+      return {
+        phase: "ready",
+        source: loaded.source,
+        segments: document.request.kind === "markdown" ? projectCompleteMarkdown(loaded.source) : [],
+        truncated: loaded.truncated,
+      };
+    },
+    (value) => value.source.length * 2,
+  );
+  const documentResult: DocumentPreviewResult = documentPreviewResource.status === "ready" && documentPreviewResource.value !== null
+    ? documentPreviewResource.value
+    : documentPreviewResource.status === "error"
+      ? { phase: "error", message: documentPreviewResource.error ?? "Document preview failed" }
+      : { phase: "loading" };
   const reload = () => {
-    if (onReload === undefined || resource?.status === "loading") return;
+    if (onReload === undefined || attachmentsPending) return;
     void onReload().catch((cause) => dialog.alert("Refresh failed", cause instanceof Error ? cause.message : "Could not refresh session resources"));
-  };
-  const updatePreviewResult = (revision: number, result: DocumentPreviewResult) => {
-    setDocumentStack((current) => current.map((entry) => entry.revision === revision ? { ...entry, result } : entry));
   };
   const loadPreview = (request: DocumentPreviewRequest, replace: boolean) => {
     previewRevisionRef.current += 1;
     const revision = previewRevisionRef.current;
-    previewLoadRef.current?.abort();
-    const controller = new AbortController();
-    previewLoadRef.current = controller;
-    const route: ThreadResourceDocumentRoute = { request, revision, result: { phase: "loading" } };
+    const route: ThreadResourceDocumentRoute = { request, revision };
     setDocumentStack((current) => replace ? [...current.slice(0, -1), route] : [...current, route]);
-    void loadDocumentPreview(request, controller.signal).then(
-      (loaded) => {
-        if (controller.signal.aborted || previewRevisionRef.current !== revision) return;
-        updatePreviewResult(revision, {
-          phase: "ready",
-          source: loaded.source,
-          segments: request.kind === "markdown" ? projectCompleteMarkdown(loaded.source) : [],
-          truncated: loaded.truncated,
-        });
-      },
-      (cause) => {
-        if (controller.signal.aborted || previewRevisionRef.current !== revision) return;
-        updatePreviewResult(revision, { phase: "error", message: cause instanceof Error ? cause.message : "Document preview failed" });
-      },
-    );
   };
   const openPreview = (request: DocumentPreviewRequest) => {
     if (request.kind === "download") {
@@ -5251,15 +5597,11 @@ function ThreadResourcesSheet({
   };
   const closeSheet = () => {
     previewRevisionRef.current += 1;
-    previewLoadRef.current?.abort();
-    previewLoadRef.current = null;
     setDocumentStack([]);
     onClose();
   };
   const navigateBack = () => {
     previewRevisionRef.current += 1;
-    previewLoadRef.current?.abort();
-    previewLoadRef.current = null;
     setDocumentStack((current) => current.slice(0, -1));
   };
   const openPath = (name: string, sourcePath: string) => {
@@ -5303,19 +5645,19 @@ function ThreadResourcesSheet({
           </View>
           <Text numberOfLines={1} ellipsizeMode="tail" style={styles.sheetTitle}>{title}</Text>
           <View style={styles.flex} />
-          <Pressable accessibilityLabel="Refresh session resources" disabled={onReload === undefined || resource?.status === "loading"} onPress={reload} style={[styles.headerIcon, (onReload === undefined || resource?.status === "loading") && styles.disabled]}>
-            {resource?.status === "loading" ? <ActivityIndicator size="small" color={colors.accent} /> : <Ionicons name="refresh" size={20} color={colors.text} />}
+          <Pressable accessibilityLabel="Refresh session resources" disabled={onReload === undefined || attachmentsPending} onPress={reload} style={[styles.headerIcon, (onReload === undefined || attachmentsPending) && styles.disabled]}>
+            {attachmentsInitialLoading ? <ActivityIndicator size="small" color={colors.accent} /> : <Ionicons name="refresh" size={20} color={colors.text} />}
           </Pressable>
           <Pressable accessibilityLabel="Close attachments" onPress={closeSheet} style={styles.headerIcon}>
             <Ionicons name="close" size={21} color={colors.text} />
           </Pressable>
         </View>
         <AppSheetScrollView style={styles.menuScroll} contentContainerStyle={styles.threadResourcesContent} keyboardShouldPersistTaps="handled">
-          {resource?.status === "error" && <Text selectable style={styles.errorText}>{resource.error ?? "Could not load session resources"}</Text>}
+          {attachmentsError !== null && <Text selectable style={styles.errorText}>{attachmentsError}</Text>}
           {attachments.map((attachment) => (
             <ThreadAttachmentResourceRow key={attachment.key} attachment={attachment} onPress={() => openAttachment(attachment)} />
           ))}
-          {resource?.status !== "loading" && attachments.length === 0 && (
+          {attachmentsReady && attachments.length === 0 && (
             <View style={styles.threadResourcesEmpty}>
               <Ionicons name="attach-outline" size={28} color={colors.textDim} />
               <Text style={styles.menuNotice}>No attachments in this thread.</Text>
@@ -5342,25 +5684,25 @@ function ThreadResourcesSheet({
               <Ionicons name="close" size={21} color={colors.text} />
             </Pressable>
           </View>
-          {document.result.phase === "loading" && (
+          {documentResult.phase === "loading" && (
             <View style={styles.threadResourcePreviewCenter}>
               <ActivityIndicator color={colors.accent} />
               <Text style={styles.menuNotice}>Loading document…</Text>
             </View>
           )}
-          {document.result.phase === "error" && (
+          {documentResult.phase === "error" && (
             <View style={styles.threadResourcePreviewCenter}>
-              <Text selectable style={styles.errorText}>{document.result.message}</Text>
+              <Text selectable style={styles.errorText}>{documentResult.message}</Text>
               <Pressable accessibilityRole="button" onPress={retryPreview} style={styles.primaryAction}>
                 <Ionicons name="refresh" size={18} color={colors.onPrimary} />
                 <Text style={styles.primaryActionText}>Retry</Text>
               </Pressable>
             </View>
           )}
-          {document.result.phase === "ready" && document.request.kind === "html" && (
+          {documentResult.phase === "ready" && document.request.kind === "html" && (
             <WebView
               testID="thread-resource-html-preview"
-              source={{ html: isolatedHtmlDocument(document.result.source), baseUrl: "about:blank" }}
+              source={{ html: isolatedHtmlDocument(documentResult.source), baseUrl: "about:blank" }}
               style={styles.threadResourceWebView}
               javaScriptEnabled={false}
               domStorageEnabled={false}
@@ -5375,7 +5717,7 @@ function ThreadResourcesSheet({
               }}
             />
           )}
-          {document.result.phase === "ready" && document.request.kind !== "html" && (
+          {documentResult.phase === "ready" && document.request.kind !== "html" && (
             <AppSheetScrollView
               style={styles.menuScroll}
               contentContainerStyle={styles.threadResourceDocumentContent}
@@ -5387,7 +5729,7 @@ function ThreadResourcesSheet({
             >
               {document.request.kind === "text"
                 ? <NativeCodeBlock
-                    value={document.result.source}
+                    value={documentResult.source}
                     language={nativeCodeLanguageForPath(document.request.path)}
                     maxHeight={TOOL_RESULT_MAX_HEIGHT}
                     fillAvailableWidth
@@ -5395,7 +5737,7 @@ function ThreadResourcesSheet({
                 : (
                   <RichContentWidthProvider width={documentViewportWidth > 0 ? documentViewportWidth : null}>
                     <MarkdownLocalLinkProvider onOpen={openNestedDocument}>
-                      {document.result.segments.map((segment, index) => (
+                      {documentResult.segments.map((segment, index) => (
                         <RichMarkdown
                           key={index}
                           source={segment}
@@ -5410,8 +5752,11 @@ function ThreadResourcesSheet({
                     </MarkdownLocalLinkProvider>
                   </RichContentWidthProvider>
                 )}
-              {document.result.truncated && <Text style={styles.menuNotice}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text>}
+              {documentResult.truncated && <Text style={styles.menuNotice}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text>}
             </AppSheetScrollView>
+          )}
+          {documentResult.phase === "ready" && document.request.kind === "markdown" && (
+            <ContentReviewComposer targetId={`markdown-document:${document.request.path}`} />
           )}
         </View>
       )}
@@ -6164,7 +6509,12 @@ function ReviewSheet({
     setBusy(true);
     setError(null);
     setResult(null);
-    const operation = onStartReview === undefined ? Promise.resolve("demo-review-thread") : onStartReview(target, delivery);
+    if (onStartReview === undefined) {
+      setBusy(false);
+      setError("Review is unavailable for this conversation");
+      return;
+    }
+    const operation = onStartReview(target, delivery);
     void operation.then((reviewThreadId) => {
       setResult(delivery === "detached" ? `Review started in ${reviewThreadId}` : "Inline review started");
     }, (cause: unknown) => {
@@ -6284,6 +6634,65 @@ function ComposerAccessoryTray({
   );
 }
 
+type ComposerMenuProps = Parameters<typeof ComposerMenu>[0];
+
+function ResourceComposerMenu({
+  resources,
+  controlsResourceId,
+  backgroundTerminalsResourceId,
+  goalResourceId,
+  tunnelResourceId,
+  portForwardingConnectionId,
+  portForwardingServerName,
+  onOpenPortForward,
+  controlError,
+  ...props
+}: Omit<ComposerMenuProps, "controls" | "terminalsResource" | "goalResource" | "tunnelResource" | "portForwarding" | "loading" | "error"> & {
+  resources: WorkspaceResourceDatabase | null;
+  controlsResourceId: string | null;
+  backgroundTerminalsResourceId: string | null;
+  goalResourceId: string | null;
+  tunnelResourceId: string | null;
+  portForwardingConnectionId: string | null;
+  portForwardingServerName: string;
+  onOpenPortForward?(title: string, url: string): void;
+  controlError: string | null;
+}) {
+  const controlsResource = useTurnControlsRow(resources, controlsResourceId);
+  const terminalsResource = useBackgroundTerminalsRow(resources, backgroundTerminalsResourceId);
+  const goalResource = useThreadGoalRow(resources, goalResourceId);
+  const tunnelResource = useTunnelRow(resources, tunnelResourceId);
+  const portSnapshot = useNativePortForwarding(portForwardingConnectionId);
+  const controls = controlsResource?.value ?? EMPTY_TURN_CONTROLS;
+  const loading = controlsResource?.status === "loading" && controlsResource.value === null;
+  const serverExecution = props.thread === null ? null : latestProjectedThreadExecutionSettings(props.thread);
+  const defaultModel = controls.models.find((candidate) => candidate.isDefault) ?? null;
+  const selectedModel = props.selectedModel ?? serverExecution?.model ?? controls.defaults.model ?? defaultModel?.id ?? null;
+  const selectedModelCatalog = controls.models.find((candidate) => candidate.id === selectedModel) ?? null;
+  const selectedEffort = props.selectedEffort
+    ?? serverExecution?.effort
+    ?? (props.selectedModel === null && serverExecution?.model == null ? controls.defaults.effort : null)
+    ?? selectedModelCatalog?.defaultEffort
+    ?? null;
+  const selectedPermissions = props.selectedPermissions ?? serverExecution?.permissions ?? controls.defaults.permissions;
+  const portForwarding = portForwardingConnectionId === null || onOpenPortForward === undefined
+    ? undefined
+    : nativePortForwardingManagerProps(portForwardingConnectionId, portForwardingServerName, portSnapshot, onOpenPortForward);
+  return <ComposerMenu
+    {...props}
+    selectedModel={selectedModel}
+    selectedEffort={selectedEffort}
+    selectedPermissions={selectedPermissions}
+    controls={controls}
+    terminalsResource={terminalsResource}
+    goalResource={goalResource}
+    tunnelResource={tunnelResource}
+    {...(portForwarding === undefined ? {} : { portForwarding })}
+    loading={loading}
+    error={controlError ?? controlsResource?.error ?? null}
+  />;
+}
+
 function ComposerMenu({
   visible,
   initialPage,
@@ -6367,12 +6776,22 @@ function ComposerMenu({
 }) {
   const page = initialPage;
   const [runtimeSection, setRuntimeSection] = useState<"terminals" | "tunnel">(onListTerminals === undefined && onCreateTunnel !== undefined ? "tunnel" : "terminals");
-  const [localGoal, setLocalGoal] = useState<ThreadGoal | null>(null);
   const model = controls.models.find((candidate) => candidate.id === selectedModel) ?? controls.models[0];
   const reasoningEfforts = model === undefined ? [] : model.efforts.length > 0 ? model.efforts : [model.defaultEffort];
   if (page === "goal") {
     if (!visible) return null;
-    const currentGoal = goalResource?.goal ?? localGoal;
+    if (onSetGoal === undefined || onClearGoal === undefined) {
+      return (
+        <AppSheet
+          isOpen={visible}
+          onOpenChange={(open) => { if (!open) onClose(); }}
+          contentProps={{ index: 0, enableDynamicSizing: true }}
+        >
+          <Text style={styles.errorText}>Goals are unavailable for this conversation</Text>
+        </AppSheet>
+      );
+    }
+    const currentGoal = goalResource?.goal ?? null;
     return (
       <ThreadGoalDialog
         key={currentGoal?.updatedAt ?? "empty"}
@@ -6383,22 +6802,8 @@ function ComposerMenu({
         voiceScope={voiceScope}
         voiceResource={voiceResource}
         voiceController={voiceController}
-        onSet={onSetGoal ?? (async (input) => {
-          const now = Math.floor(Date.now() / 1_000);
-          const next: ThreadGoal = {
-            threadId: "demo",
-            objective: input.objective,
-            status: input.status,
-            tokenBudget: input.tokenBudget,
-            tokensUsed: localGoal?.tokensUsed ?? 12_480,
-            timeUsedSeconds: localGoal?.timeUsedSeconds ?? 742,
-            createdAt: localGoal?.createdAt ?? now,
-            updatedAt: now,
-          };
-          setLocalGoal(next);
-          return next;
-        })}
-        onClear={onClearGoal ?? (async () => { const existed = localGoal !== null; setLocalGoal(null); return existed; })}
+        onSet={onSetGoal}
+        onClear={onClearGoal}
       />
     );
   }
@@ -7036,7 +7441,13 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
         <ImagePreviewGroup id={`${item.scope}:${item.id}:user`}>
         <View style={styles.userMessageRow}>
           <Text style={styles.messageTime}>{formatClockTime(item.createdAt / 1_000)}</Text>
-          <Bubble variant="user" testID="user-bubble">
+          <Bubble
+            variant="user"
+            testID="user-bubble"
+            errorLabel="Pending user message"
+            errorContext={`Delivery: ${item.id}`}
+            errorResetKey={`${item.scope}:${item.id}`}
+          >
           <BubbleContent>
             <UserMessageContent
               content={item.text === "" ? [] : [{ type: "text", text: item.text }]}
@@ -7088,70 +7499,28 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
 }
 
 type CachedTurnProjection = {
-  topologyRevision: string;
   renderWindow: ReturnType<typeof selectTurnRenderWindow>;
-  userRevision: string;
   userBlocks: RenderBlock[];
-  latestAgentRevision: string;
   latestAgentBlock: RenderBlock | null;
-  liveActivityRevision: string;
   liveActivityBlocks: RenderBlock[];
 };
 
-const turnProjectionCache = new Map<string, CachedTurnProjection>();
-const TURN_PROJECTION_CACHE_MAX_ENTRIES = 64;
-
-function cachedThreadItemBlock(
-  turn: Extract<TimelineItem, { kind: "turn" }>,
-  item: Thread["turns"][number]["items"][number],
-  index: number,
-): RenderBlock {
-  const revision = threadItemRenderRevision(item);
-  const cached = liveBlockProjectionCache.get(item);
-  if (cached?.revision === revision) return cached.block;
-  const block = projectThreadItem(turn, item, index);
-  liveBlockProjectionCache.set(item, { revision, block });
-  return block;
-}
-
-function cachedTurnProjection(turn: Extract<TimelineItem, { kind: "turn" }>): CachedTurnProjection {
+function projectTurnProjection(turn: Extract<TimelineItem, { kind: "turn" }>): CachedTurnProjection {
   const rawTurn = turn.turn;
-  const key = `${turn.scope}\u0000${turn.id}`;
-  const topologyRevision = turnProjectionTopologyRevision(rawTurn);
-  const previous = turnProjectionCache.get(key);
-  const renderWindow = previous?.topologyRevision === topologyRevision
-    ? previous.renderWindow
-    : selectTurnRenderWindow(rawTurn);
-  const userRevision = renderWindow.userItemIndexes.map((index) => threadItemRenderRevision(rawTurn.items[index])).join("\u0001");
-  const userBlocks = previous?.userRevision === userRevision
-    ? previous.userBlocks
-    : renderWindow.userItemIndexes.flatMap((index) => {
-        const item = rawTurn.items[index];
-        return item === undefined ? [] : [cachedThreadItemBlock(turn, item, index)];
-      });
+  const renderWindow = selectTurnRenderWindow(rawTurn);
+  const userBlocks = renderWindow.userItemIndexes.flatMap((index) => {
+    const item = rawTurn.items[index];
+    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
+  });
   const latestAgentItem = renderWindow.latestAgentIndex < 0 ? undefined : rawTurn.items[renderWindow.latestAgentIndex];
-  const latestAgentRevision = threadItemRenderRevision(latestAgentItem);
-  const latestAgentBlock = previous?.latestAgentRevision === latestAgentRevision
-    ? previous.latestAgentBlock
-    : latestAgentItem === undefined
-      ? null
-      : cachedThreadItemBlock(turn, latestAgentItem, renderWindow.latestAgentIndex);
-  const liveActivityRevision = renderWindow.liveActivityIndexes.map((index) => threadItemRenderRevision(rawTurn.items[index])).join("\u0001");
-  const liveActivityBlocks = previous?.liveActivityRevision === liveActivityRevision
-    ? previous.liveActivityBlocks
-    : renderWindow.liveActivityIndexes.flatMap((index) => {
-        const item = rawTurn.items[index];
-        return item === undefined ? [] : [cachedThreadItemBlock(turn, item, index)];
-      });
-  const next = { topologyRevision, renderWindow, userRevision, userBlocks, latestAgentRevision, latestAgentBlock, liveActivityRevision, liveActivityBlocks };
-  turnProjectionCache.delete(key);
-  turnProjectionCache.set(key, next);
-  while (turnProjectionCache.size > TURN_PROJECTION_CACHE_MAX_ENTRIES) {
-    const oldest = turnProjectionCache.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    turnProjectionCache.delete(oldest);
-  }
-  return next;
+  const latestAgentBlock = latestAgentItem === undefined
+    ? null
+    : projectThreadItem(turn, latestAgentItem, renderWindow.latestAgentIndex);
+  const liveActivityBlocks = renderWindow.liveActivityIndexes.flatMap((index) => {
+    const item = rawTurn.items[index];
+    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
+  });
+  return { renderWindow, userBlocks, latestAgentBlock, liveActivityBlocks };
 }
 
 function TurnTimelineItem({
@@ -7184,7 +7553,7 @@ function TurnTimelineItem({
   onLatestAgentLayout?(): void;
 }) {
   const rawTurn = turn.turn;
-  const { renderWindow, userBlocks, latestAgentBlock, liveActivityBlocks } = cachedTurnProjection(turn);
+  const { renderWindow, userBlocks, latestAgentBlock, liveActivityBlocks } = projectTurnProjection(turn);
   const liveActivityEntries = renderWindow.liveActivityIndexes.flatMap((itemIndex, projectionIndex) => {
     const block = liveActivityBlocks[projectionIndex];
     return block === undefined ? [] : [{ index: itemIndex, block }];
@@ -7219,6 +7588,8 @@ function TurnTimelineItem({
   const canForkThrough = rawTurn.status !== "inProgress" && onForkThroughTurn !== undefined;
   const completedWithoutFinal = rawTurn.status === "completed" && latestAgentBlock === null;
   const completedActivityCount = rawTurn.status === "inProgress" ? 0 : completedActivityItemCount(rawTurn);
+  const agentBubbleFill = latestAgentBlock?.content?.fields["/text"] !== undefined
+    || (latestAgentBlock !== null && richMarkdownLayout(latestAgentBlock.body ?? "") === "fill");
   const hasAgentContent = (rawTurn.status !== "inProgress"
     ? rawTurn.itemsView !== "full" || completedActivityCount > 0 || latestAgentBlock !== null
     : visibleLiveActivitySequence.length > 0 || latestAgentBlock !== null)
@@ -7237,7 +7608,12 @@ function TurnTimelineItem({
           <ImagePreviewGroup id={`${turn.key}:user`}>
           <View style={styles.userMessageRow}>
           {rawTurn.startedAt !== null && <Text style={styles.messageTime}>{formatClockTime(rawTurn.startedAt)}</Text>}
-          <Bubble variant="user" testID="user-bubble">
+          <Bubble
+            variant="user"
+            testID="user-bubble"
+            errorContext={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
+            errorResetKey={`${turn.key}:user`}
+          >
           <BubbleContent>
             <View style={styles.userMessageContent}>
               {userBlocks.map((block, index) => (
@@ -7264,7 +7640,13 @@ function TurnTimelineItem({
         <MessageContextMenu copyText={copyText} forkEnabled={canForkThrough} {...(onForkThroughTurn === undefined ? {} : { onFork: () => onForkThroughTurn(turn.id) })}>
           <ImagePreviewGroup id={`${turn.key}:agent`}>
           <View style={styles.agentMessageRow}>
-          <Bubble variant="agent" testID="codex-bubble">
+          <Bubble
+            variant="agent"
+            fill={agentBubbleFill}
+            testID="codex-bubble"
+            errorContext={`Thread: ${turn.threadId}\nTurn: ${turn.id}`}
+            errorResetKey={`${turn.key}:agent`}
+          >
           <BubbleContent>
           {rawTurn.status !== "inProgress" && (
             <CompletedTurnHistory
@@ -7357,10 +7739,8 @@ function AppendOnlyLiveContent({ cacheKey, source, mode, streamMetricKey = null,
   const visibleMarkdownSource = singleMarkdownTree
     ? markdownProjection?.visibleSource ?? [...projection.segments, visibleRemainder].join("")
     : "";
-  useLayoutEffect(() => {
-    if (source !== "" && streamMetricKey !== null) recordLiveRenderCommit(streamMetricKey);
-  }, [source, streamMetricKey]);
   return (
+    <>
     <View
       testID={mode === "markdown" ? "live-agent-response" : "live-tool-output"}
       style={[styles.liveAgentResponse, mode === "code" && styles.liveAgentResponseFill, mode === "markdown" && styles.liveMarkdownResponse]}
@@ -7372,6 +7752,14 @@ function AppendOnlyLiveContent({ cacheKey, source, mode, streamMetricKey = null,
             {visibleRemainder !== "" && <StableLiveTextSegment text={visibleRemainder} mode={mode} />}
           </>}
     </View>
+    {streamMetricKey === null ? null : (
+      <CommitOnChangeProbe
+        scope={streamMetricKey}
+        revision={source}
+        onCommit={() => { if (source !== "") recordLiveRenderCommit(streamMetricKey); }}
+      />
+    )}
+    </>
   );
 }
 
@@ -7554,80 +7942,6 @@ function projectThreadItem(
   index: number,
 ): RenderBlock {
   return toRenderBlock(normalizeThreadItem(connectionId(row.connectionId), row.threadId, row.turn.id, rawItem, index));
-}
-
-function threadItemRenderRevision(item: Thread["turns"][number]["items"][number] | undefined): string {
-  if (item === undefined) return "missing";
-  const value = item as unknown as Record<string, unknown>;
-  return [
-    item.id,
-    item.type,
-    value.status,
-    value.phase,
-    textSample(value.command),
-    textSample(value.text),
-    textSample(value.aggregatedOutput),
-    textSample(value.error),
-    stringArrayRevision(value.summary),
-    stringArrayRevision(value.content),
-    userContentRevision(value.content),
-    stringArrayRevision(value.progress),
-    objectArrayRevision(value.changes),
-    structuredEdgeRevision(value.arguments),
-    structuredEdgeRevision(value.result),
-    structuredEdgeRevision(value.contentItems),
-    structuredEdgeRevision(value.agentsStates),
-    structuredEdgeRevision(value.codewideOutputFootprint),
-  ].join("\u0000");
-}
-
-function userContentRevision(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  return `${value.length}:${userContentPartRevision(value[0])}:${userContentPartRevision(value.at(-1))}`;
-}
-
-function userContentPartRevision(value: unknown): string {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return "";
-  const part = value as Record<string, unknown>;
-  return `${String(part.type ?? "")}:${String(part.path ?? "")}:${textSample(part.url)}:${textSample(part.text)}`;
-}
-
-function stringArrayRevision(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  return `${value.length}:${textSample(value[0])}:${textSample(value.at(-1))}`;
-}
-
-function objectArrayRevision(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  const first = value[0];
-  const last = value.at(-1);
-  return `${value.length}:${objectEdgeRevision(first)}:${objectEdgeRevision(last)}`;
-}
-
-function objectEdgeRevision(value: unknown): string {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return textSample(value);
-  const entry = value as Record<string, unknown>;
-  return `${String(entry.path ?? "")}:${String(entry.kind ?? "")}:${textSample(entry.diff)}`;
-}
-
-function structuredEdgeRevision(value: unknown): string {
-  if (typeof value === "string") return textSample(value);
-  if (value === null || typeof value !== "object") return String(value ?? "");
-  if (Array.isArray(value)) {
-    return `${value.length}:${structuredEdgeRevision(value[0])}:${structuredEdgeRevision(value.at(-1))}`;
-  }
-  const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
-  const firstKey = keys[0];
-  const lastKey = keys.at(-1);
-  return `${keys.length}:${firstKey ?? ""}=${firstKey === undefined ? "" : structuredLeafRevision(record[firstKey])}:${lastKey ?? ""}=${lastKey === undefined ? "" : structuredLeafRevision(record[lastKey])}`;
-}
-
-function structuredLeafRevision(value: unknown): string {
-  if (typeof value === "string") return textSample(value);
-  if (Array.isArray(value)) return `${value.length}:${textSample(value[0])}:${textSample(value.at(-1))}`;
-  if (value !== null && typeof value === "object") return `object:${Object.keys(value).length}`;
-  return String(value ?? "");
 }
 
 function completedActivityItemCount(turn: Thread["turns"][number]): number {
@@ -7924,7 +8238,7 @@ function CommandExecutionProtocolBlock({ block, getTransferAccess }: {
       {...(block.status === null ? {} : { status: block.status })}
       headerMeta={<OutputFootprintMetric footprint={outputFootprint} />}
       collapsible
-      initiallyExpanded={running}
+      initiallyExpanded={false}
     >
       <View style={styles.commandActivitySection}>
         <View style={styles.commandActivitySectionHeader}>
@@ -8068,11 +8382,11 @@ type LargeContentViewerSelection = LargeContentViewerRequest & {
  */
 function LargeContentViewerHost({ children }: { children: ReactNode }) {
   const fullscreenOverlay = useAppFullscreenOverlay();
-  const open = (request: LargeContentViewerRequest) => {
+  const open = useEvent((request: LargeContentViewerRequest) => {
     fullscreenOverlay.present(({ close }) => (
       <LargeContentViewerSession initialRequest={request} onClose={close} />
     ));
-  };
+  });
   return (
     <LargeContentViewerContext.Provider value={open}>
       {children}
@@ -8087,64 +8401,33 @@ function LargeContentViewerSession({
   initialRequest: LargeContentViewerRequest;
   onClose(): void;
 }) {
-  const requestRevisionRef = useRef(0);
-  const requestAbortRef = useRef<AbortController | null>(null);
-  const [selected, setSelected] = useState<LargeContentViewerSelection>({
-    ...initialRequest,
-    offset: 0,
-    nextOffset: 0,
-    text: null,
-    loading: true,
-    error: null,
-  });
-  const load = (request: LargeContentViewerRequest, offset: number) => {
-    requestRevisionRef.current += 1;
-    const revision = requestRevisionRef.current;
-    requestAbortRef.current?.abort();
-    const controller = new AbortController();
-    requestAbortRef.current = controller;
-    setSelected({ ...request, offset, nextOffset: offset, text: null, loading: true, error: null });
-    void readPrivateAssetText(
-      { kind: "content", id: request.reference.id },
-      request.getTransferAccess,
-      { offset, limit: CONTENT_VIEW_CHUNK_BYTES, accept: request.reference.contentType, signal: controller.signal },
-    ).then(
-      (loaded) => {
-        if (controller.signal.aborted || revision !== requestRevisionRef.current) return;
-        setSelected({ ...request, offset, nextOffset: loaded.nextOffset, text: loaded.text, loading: false, error: null });
+  const resourceNamespace = useId();
+  const [selection, setSelection] = useState({ request: initialRequest, offset: 0 });
+  const resourceRevision = `${selection.request.reference.id}:${selection.request.reference.contentType}:${selection.offset}`;
+  const content = useEphemeralAsyncResource<PrivateAssetTextResult>(
+    `large-content:${resourceNamespace}`,
+    resourceRevision,
+    async (_publish, signal) => await readPrivateAssetText(
+      { kind: "content", id: selection.request.reference.id },
+      selection.request.getTransferAccess,
+      {
+        offset: selection.offset,
+        limit: CONTENT_VIEW_CHUNK_BYTES,
+        accept: selection.request.reference.contentType,
+        signal,
       },
-      (cause: unknown) => {
-        if (controller.signal.aborted || revision !== requestRevisionRef.current) return;
-        setSelected({ ...request, offset, nextOffset: offset, text: null, loading: false, error: cause instanceof Error ? cause.message : "Full content unavailable" });
-      },
-    );
+    ),
+  );
+  const selected: LargeContentViewerSelection = {
+    ...selection.request,
+    offset: selection.offset,
+    nextOffset: content.value?.nextOffset ?? selection.offset,
+    text: content.value?.text ?? null,
+    loading: content.status === "idle" || content.status === "loading",
+    error: content.error,
   };
-  useEffect(() => {
-    requestRevisionRef.current += 1;
-    const revision = requestRevisionRef.current;
-    const controller = new AbortController();
-    requestAbortRef.current = controller;
-    void readPrivateAssetText(
-      { kind: "content", id: initialRequest.reference.id },
-      initialRequest.getTransferAccess,
-      { offset: 0, limit: CONTENT_VIEW_CHUNK_BYTES, accept: initialRequest.reference.contentType, signal: controller.signal },
-    ).then(
-      (loaded) => {
-        if (controller.signal.aborted || revision !== requestRevisionRef.current) return;
-        setSelected({ ...initialRequest, offset: 0, nextOffset: loaded.nextOffset, text: loaded.text, loading: false, error: null });
-      },
-      (cause: unknown) => {
-        if (controller.signal.aborted || revision !== requestRevisionRef.current) return;
-        setSelected({ ...initialRequest, offset: 0, nextOffset: 0, text: null, loading: false, error: cause instanceof Error ? cause.message : "Full content unavailable" });
-      },
-    );
-    return () => controller.abort();
-  }, [initialRequest]);
-  const close = () => {
-    requestRevisionRef.current += 1;
-    requestAbortRef.current?.abort();
-    requestAbortRef.current = null;
-    onClose();
+  const load = (request: LargeContentViewerRequest, offset: number) => {
+    setSelection({ request, offset });
   };
   const request = {
     pointer: selected.pointer,
@@ -8155,7 +8438,7 @@ function LargeContentViewerSession({
   return (
     <FullContentViewer
       selection={selected}
-      onClose={close}
+      onClose={onClose}
       onPrevious={() => void load(request, Math.max(0, selected.offset - CONTENT_VIEW_CHUNK_BYTES))}
       onNext={() => void load(request, selected.nextOffset)}
     />
@@ -8911,11 +9194,6 @@ function UserMessageContent({
   );
 }
 
-function textSample(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return `${value.length}:${value.slice(0, 48)}:${value.slice(-48)}`;
-}
-
 function CollapsibleUserMessage({ text, partIndex }: { text: string; partIndex: number }) {
   const canCollapse = text.length > USER_MESSAGE_COLLAPSED_CHARS || text.split("\n").length > USER_MESSAGE_COLLAPSED_LINES;
   const [expanded, setExpanded] = usePersistentExpansion(`user-message:${partIndex}:${textFingerprint(text)}`, false);
@@ -9086,7 +9364,7 @@ function NewThreadServerSheet({
   onSelect,
 }: {
   visible: boolean;
-  servers: DemoServer[];
+  servers: ThreadListServer[];
   onClose(): void;
   onSelect(serverId: string): Promise<void>;
 }) {
@@ -9131,6 +9409,7 @@ function NewThreadServerSheet({
 
 function ConnectionSheet({
   visible,
+  openedAt,
   localReady,
   localError,
   onRetryStartup,
@@ -9139,6 +9418,7 @@ function ConnectionSheet({
   initialCode,
 }: {
   visible: boolean;
+  openedAt: number;
   localReady: boolean;
   localError: string | null;
   onRetryStartup(): Promise<void>;
@@ -9146,9 +9426,59 @@ function ConnectionSheet({
   onSave(input: ConnectionInput): Promise<void>;
   initialCode: string | null;
 }) {
-  const [openedAt, setOpenedAt] = useState(Date.now);
-  const [initialPairing] = useState(() => initialCode === null ? null : pairingParseResult(initialCode));
+  const [saving, setSaving] = useState(false);
+  const close = () => {
+    if (!saving) onClose();
+  };
+  return (
+    <AppSheet
+      isOpen={visible}
+      onOpenChange={(open) => { if (!open) close(); }}
+      contentProps={{ index: 0, snapPoints: ["55%", "90%"], enableDynamicSizing: false, enableOverDrag: false, contentContainerClassName: "h-full" }}
+    >
+      <ConnectionSheetSession
+        visible={visible}
+        openedAt={openedAt}
+        localReady={localReady}
+        localError={localError}
+        onRetryStartup={onRetryStartup}
+        onClose={close}
+        onSave={onSave}
+        initialCode={initialCode}
+        saving={saving}
+        setSaving={setSaving}
+      />
+    </AppSheet>
+  );
+}
+
+function ConnectionSheetSession({
+  visible,
+  openedAt,
+  localReady,
+  localError,
+  onRetryStartup,
+  onClose,
+  onSave,
+  initialCode,
+  saving,
+  setSaving,
+}: {
+  visible: boolean;
+  openedAt: number;
+  localReady: boolean;
+  localError: string | null;
+  onRetryStartup(): Promise<void>;
+  onClose(): void;
+  onSave(input: ConnectionInput): Promise<void>;
+  initialCode: string | null;
+  saving: boolean;
+  setSaving(value: boolean): void;
+}) {
+  const openIdentity = visible ? initialCode === null ? "manual" : `code:${initialCode}` : null;
+  const initialPairing = initialCode === null ? null : pairingParseResult(initialCode);
   const initialValue = initialPairing?.value ?? null;
+  const [presentedOpenIdentity, setPresentedOpenIdentity] = useState(openIdentity);
   const [mode, setMode] = useState<"choose" | "review" | "manual" | "success">(initialValue === null ? "choose" : "review");
   const [displayName, setDisplayName] = useState(initialValue?.displayName ?? "");
   const [emoji, setEmoji] = useState(initialValue?.emoji ?? "🖥️");
@@ -9156,19 +9486,28 @@ function ConnectionSheet({
   const [token, setToken] = useState(initialValue?.pairingToken ?? "");
   const [tlsPinSha256, setTlsPinSha256] = useState(initialValue?.tlsPinSha256 ?? "");
   const [expiresAt, setExpiresAt] = useState<number | null>(initialValue?.expiresAt ?? null);
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const fullscreenOverlay = useAppFullscreenOverlay();
   const [error, setError] = useState<string | null>(initialPairing?.error ?? null);
-  const [saving, setSaving] = useState(false);
-  const reset = () => {
-    setMode("choose");
-    setDisplayName("");
-    setEmoji("🖥️");
-    setEndpoint("");
-    setToken("");
-    setTlsPinSha256("");
-    setExpiresAt(null);
-    setError(null);
-  };
+  if (openIdentity !== null && openIdentity !== presentedOpenIdentity) {
+    // This is a new pairing session, not synchronization with an external
+    // system. Adjust the session state during render so React discards the
+    // stale render before committing it; keeping the child mounted preserves
+    // AppSheet's close animation and avoids a post-paint reset effect.
+    setPresentedOpenIdentity(openIdentity);
+    setMode(initialValue === null ? "choose" : "review");
+    setDisplayName(initialValue?.displayName ?? "");
+    setEmoji(initialValue?.emoji ?? "🖥️");
+    setEndpoint(initialValue?.endpoint ?? "");
+    setToken(initialValue?.pairingToken ?? "");
+    setTlsPinSha256(initialValue?.tlsPinSha256 ?? "");
+    setExpiresAt(initialValue?.expiresAt ?? null);
+    setError(initialPairing?.error ?? null);
+  } else if (openIdentity === null && presentedOpenIdentity !== null) {
+    // Preserve the rendered contents through the closing animation. Marking
+    // the session closed makes the next open a new identity and resets it.
+    setPresentedOpenIdentity(null);
+  }
   const consumeCode = (raw: string): string | null => {
     const result = pairingParseResult(raw);
     if (result.value !== null) {
@@ -9186,19 +9525,8 @@ function ConnectionSheet({
     setError(result.error);
     return result.error;
   };
-  const beginOpen = useEffectEvent((code: string | null) => {
-    setOpenedAt(Date.now());
-    reset();
-    if (code !== null) consumeCode(code);
-  });
-  useEffect(() => {
-    if (!visible) return;
-    const frame = requestAnimationFrame(() => beginOpen(initialCode));
-    return () => cancelAnimationFrame(frame);
-  }, [initialCode, visible]);
   const close = () => {
     if (saving) return;
-    reset();
     onClose();
   };
   const pasteCode = async () => {
@@ -9209,6 +9537,24 @@ function ConnectionSheet({
       return;
     }
     consumeCode(value);
+  };
+  const openPairingScanner = async () => {
+    let permission = cameraPermission;
+    if (permission?.granted !== true && (permission === null || permission.canAskAgain)) {
+      permission = await requestCameraPermission();
+    }
+    fullscreenOverlay.present(({ close: closeScanner }) => (
+      <PairingQrScanner
+        initialPermission={permission}
+        requestPermission={requestCameraPermission}
+        onClose={closeScanner}
+        onScan={(raw) => {
+          const message = consumeCode(raw);
+          if (message === null) closeScanner();
+          return message;
+        }}
+      />
+    ));
   };
   const save = async () => {
     if (!localReady) {
@@ -9222,8 +9568,9 @@ function ConnectionSheet({
       await onSave(input);
       setMode("success");
       await new Promise((resolve) => setTimeout(resolve, 650));
-      reset();
+      setSaving(false);
       onClose();
+      return;
     } catch (cause) {
       setError(humanPairingError(cause));
     }
@@ -9232,13 +9579,7 @@ function ConnectionSheet({
   const endpointLabel = pairingEndpointLabel(endpoint);
   const minutesLeft = expiresAt === null ? null : Math.max(0, Math.ceil((expiresAt - openedAt) / 60_000));
   return (
-    <>
-      <AppSheet
-        isOpen={visible}
-        onOpenChange={(open) => { if (!open) close(); }}
-        contentProps={{ index: 0, snapPoints: ["55%", "90%"], enableDynamicSizing: false, enableOverDrag: false, contentContainerClassName: "h-full" }}
-      >
-            <AppSheetScrollView
+    <AppSheetScrollView
               style={styles.connectionSheetScroll}
               contentContainerStyle={styles.connectionSheetContent}
               keyboardShouldPersistTaps="handled"
@@ -9262,18 +9603,7 @@ function ConnectionSheet({
                   <Text style={styles.pairingLead}>Connect this phone to Codex running on another machine.</Text>
                   <Text style={styles.pairingHint}>On the host, run <Text style={styles.pairingCode}>codewide-host pair</Text>. Then scan or paste the one-time link.</Text>
                   <View style={styles.pairingActionStack}>
-                    <Pressable accessibilityRole="button" accessibilityLabel="Scan pairing QR" onPress={() => {
-                      fullscreenOverlay.present(({ close: closeScanner }) => (
-                        <PairingQrScanner
-                          onClose={closeScanner}
-                          onScan={(raw) => {
-                            const message = consumeCode(raw);
-                            if (message === null) closeScanner();
-                            return message;
-                          }}
-                        />
-                      ));
-                    }} style={styles.pairingPrimaryAction}>
+                    <Pressable accessibilityRole="button" accessibilityLabel="Scan pairing QR" onPress={() => void openPairingScanner()} style={styles.pairingPrimaryAction}>
                       <Ionicons name="qr-code-outline" size={22} color={colors.onPrimary} />
                       <Text style={styles.pairingPrimaryText}>Scan QR code</Text>
                     </Pressable>
@@ -9339,9 +9669,7 @@ function ConnectionSheet({
                   <Text style={styles.pairingHint}>Connected. Syncing your threads now.</Text>
                 </View>
               )}
-            </AppSheetScrollView>
-      </AppSheet>
-    </>
+    </AppSheetScrollView>
   );
 }
 
@@ -9354,14 +9682,21 @@ function pairingEndpointLabel(endpoint: string): string {
   }
 }
 
-function PairingQrScanner({ onClose, onScan }: { onClose(): void; onScan(raw: string): string | null }) {
-  const [permission, requestPermission] = useCameraPermissions();
+function PairingQrScanner({
+  initialPermission,
+  requestPermission,
+  onClose,
+  onScan,
+}: {
+  initialPermission: ReturnType<typeof useCameraPermissions>[0];
+  requestPermission: ReturnType<typeof useCameraPermissions>[1];
+  onClose(): void;
+  onScan(raw: string): string | null;
+}) {
+  const [permission, setPermission] = useState(initialPermission);
   const [scanned, setScanned] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
-  useEffect(() => {
-    if (permission?.granted === false && permission.canAskAgain) void requestPermission();
-  }, [permission?.canAskAgain, permission?.granted, requestPermission]);
   return (
       <View style={[styles.scannerRoot, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={styles.scannerHeader}>
@@ -9390,7 +9725,7 @@ function PairingQrScanner({ onClose, onScan }: { onClose(): void; onScan(raw: st
         ) : (
           <View style={styles.emptyConversation}>
             <Text style={styles.emptyText}>Camera permission is required to scan the one-time pairing code.</Text>
-            <Pressable onPress={() => void (permission.canAskAgain ? requestPermission() : Linking.openSettings())} style={styles.primaryButton}><Text style={styles.primaryButtonText}>{permission.canAskAgain ? "Allow camera" : "Open settings"}</Text></Pressable>
+            <Pressable onPress={() => void (permission.canAskAgain ? requestPermission().then(setPermission) : Linking.openSettings())} style={styles.primaryButton}><Text style={styles.primaryButtonText}>{permission.canAskAgain ? "Allow camera" : "Open settings"}</Text></Pressable>
           </View>
         )}
       </View>
@@ -9675,6 +10010,7 @@ function AccountPoolEditor({
     profileIds: string;
   } | null>(null);
   const [codeCopied, setCodeCopied] = useState(false);
+  const codeCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loginActionBusy, setLoginActionBusy] = useState(false);
   const profiles = accountPool?.profiles ?? [];
   const profileIds = profiles.map((profile) => profile.id).sort().join("|");
@@ -9682,11 +10018,18 @@ function AccountPoolEditor({
     ? pendingAccountLoginState
     : null;
 
-  useEffect(() => {
-    if (!codeCopied) return undefined;
-    const timeout = setTimeout(() => setCodeCopied(false), 2_400);
-    return () => clearTimeout(timeout);
-  }, [codeCopied]);
+  useUnmount(() => {
+    if (codeCopiedTimerRef.current !== null) clearTimeout(codeCopiedTimerRef.current);
+  });
+
+  const markCodeCopied = () => {
+    if (codeCopiedTimerRef.current !== null) clearTimeout(codeCopiedTimerRef.current);
+    setCodeCopied(true);
+    codeCopiedTimerRef.current = setTimeout(() => {
+      codeCopiedTimerRef.current = null;
+      setCodeCopied(false);
+    }, 2_400);
+  };
 
   const run = async (operation: () => Promise<unknown>) => {
     if (busy) return;
@@ -9713,7 +10056,7 @@ function AccountPoolEditor({
   const copyAccountCode = async () => {
     if (pendingAccountLogin === null) return;
     await Clipboard.setStringAsync(pendingAccountLogin.userCode);
-    setCodeCopied(true);
+    markCodeCopied();
   };
   const openAccountSignIn = async () => {
     if (pendingAccountLogin === null || loginActionBusy) return;
@@ -9721,7 +10064,7 @@ function AccountPoolEditor({
     setError(null);
     try {
       await Clipboard.setStringAsync(pendingAccountLogin.userCode);
-      setCodeCopied(true);
+      markCodeCopied();
       await Linking.openURL(pendingAccountLogin.verificationUrl);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not open Codex sign-in");
@@ -9936,7 +10279,7 @@ function firstLine(value: string): string | null {
   return line === undefined || line === "" ? null : line.slice(0, 80);
 }
 
-function threadSelectionKey(thread: Pick<DemoThread, "id" | "serverId">): string {
+function threadSelectionKey(thread: Pick<ThreadListItem, "id" | "serverId">): string {
   return `${thread.serverId}\u0000${thread.id}`;
 }
 
@@ -9945,28 +10288,6 @@ function parseThreadSelectionKey(value: string | null): { connectionId: string; 
   const separator = value.indexOf("\u0000");
   if (separator <= 0 || separator === value.length - 1) return null;
   return { connectionId: value.slice(0, separator), threadId: value.slice(separator + 1) };
-}
-
-function injectedTestWorkspace(): InjectedTestWorkspace | null {
-  if (typeof __DEV__ === "undefined" || !__DEV__ || Platform.OS !== "web") return null;
-  const value = (globalThis as typeof globalThis & { __CODEWIDE_TEST_WORKSPACE__?: unknown }).__CODEWIDE_TEST_WORKSPACE__;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = value as Partial<InjectedTestWorkspace>;
-  if (!Array.isArray(candidate.servers) || !Array.isArray(candidate.threads)) return null;
-  return {
-    servers: candidate.servers,
-    threads: candidate.threads,
-    thread: candidate.thread ?? null,
-    controls: candidate.controls ?? null,
-  };
-}
-
-function injectedTestThread(): Thread | null {
-  if (typeof __DEV__ === "undefined" || !__DEV__ || Platform.OS !== "web") return null;
-  const value = (globalThis as typeof globalThis & { __CODEWIDE_TEST_THREAD__?: unknown }).__CODEWIDE_TEST_THREAD__;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = value as Partial<Thread>;
-  return typeof candidate.id === "string" && Array.isArray(candidate.turns) ? candidate as Thread : null;
 }
 
 function moveItem<T extends { id: string }>(items: T[], id: string, direction: -1 | 1): T[] {
@@ -10013,7 +10334,7 @@ function RunningThreadTitle({ value }: { value: string }) {
   );
 }
 
-function serverGlyph(server: Pick<DemoServer, "emoji" | "name">): string {
+function serverGlyph(server: Pick<ThreadListServer, "emoji" | "name">): string {
   return Platform.OS === "web" ? (server.name.trim().slice(0, 1).toLocaleUpperCase() || "C") : server.emoji;
 }
 
@@ -10084,7 +10405,13 @@ function timelineSearchText(item: TimelineItem): string {
   return value;
 }
 
-function storedThreadToDemo(thread: StoredThreadSummary): DemoThread {
+function deduplicateThreadSummaries(rows: readonly StoredThreadSummary[]): StoredThreadSummary[] {
+  const byKey = new Map<string, StoredThreadSummary>();
+  for (const row of rows) byKey.set(`${row.connectionId}\u0000${row.remoteThreadId}`, row);
+  return [...byKey.values()];
+}
+
+function storedThreadToListItem(thread: StoredThreadSummary): ThreadListItem {
   const state = thread.pendingRequestCount > 0
     ? "approval"
     : thread.status.type === "active" ? "running" : thread.status.type === "systemError" ? "failed" : null;
@@ -10093,7 +10420,7 @@ function storedThreadToDemo(thread: StoredThreadSummary): DemoThread {
     serverId: thread.connectionId,
     title: thread.name ?? firstLine(thread.preview) ?? "New Chat",
     preview: thread.preview,
-    time: formatThreadTime(thread.recencyAt ?? thread.updatedAt),
+    timestamp: thread.recencyAt ?? thread.updatedAt,
     pinned: thread.pinned,
     archived: thread.archived,
     unread: thread.unread,
@@ -10101,13 +10428,13 @@ function storedThreadToDemo(thread: StoredThreadSummary): DemoThread {
   };
 }
 
-function subagentDemoThread(summary: StoredThreadSummary, thread: Thread, connectionId: string): DemoThread {
+function subagentThreadListItem(summary: StoredThreadSummary, thread: Thread, connectionId: string): ThreadListItem {
   return {
     id: thread.id,
     serverId: connectionId,
     title: subagentDisplayName(summary),
     preview: summary.preview,
-    time: formatThreadTime(summary.recencyAt ?? summary.updatedAt),
+    timestamp: summary.recencyAt ?? summary.updatedAt,
     pinned: false,
     archived: false,
     unread: summary.unread,
@@ -10220,14 +10547,13 @@ const styles = StyleSheet.create({
   conversationScroll: { flex: 1 },
   conversationKeyboardBody: { flex: 1, minHeight: 0 },
   timelineShell: { flex: 1 },
+  historyLoadingIndicator: { position: "absolute", top: spacing.xs, left: 0, right: 0, zIndex: 11, alignItems: "center" },
+  historyLoadingIndicatorPill: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh },
   livePlanFloat: { position: "absolute", left: 0, right: 0, bottom: spacing.sm, zIndex: 10, alignItems: "center" },
-  timelineConcealed: { opacity: 0 },
-  timelineLoadingOverlay: { position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
   conversationContent: { paddingHorizontal: spacing.xs, paddingTop: 6 },
   conversationContentLivePlanInset: { paddingBottom: 58 },
   conversationContentCompact: { flexGrow: 1, justifyContent: "flex-end" },
   conversationContentWide: { flexGrow: 1, paddingLeft: 52, paddingRight: spacing.md },
-  timelineHeaderContent: { gap: spacing.xs, paddingBottom: spacing.xs },
   timelineItem: { width: "100%", maxWidth: 880, alignSelf: "center" },
   timelineItemWide: { alignSelf: "flex-start" },
   turnGroup: { gap: 5 },
@@ -10247,10 +10573,10 @@ const styles = StyleSheet.create({
   agentMessageRow: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 7 },
   userBubble: { minWidth: 0, alignSelf: "flex-end", width: "auto", maxWidth: "82%", backgroundColor: colors.surfaceRaised, borderRadius: radii.selected, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 9 },
   userBubbleText: { color: colors.text, fontSize: 13, lineHeight: 18 },
-  userMessageContent: { minWidth: 0, maxWidth: "100%", gap: 6 },
+  userMessageContent: { minWidth: 0, gap: 6 },
   userMessageMediaContent: { width: 320, maxWidth: "100%" },
-  userMessageBlock: { minWidth: 0, maxWidth: "100%" },
-  userMessageTextBlock: { minWidth: 0, maxWidth: "100%" },
+  userMessageBlock: { minWidth: 0 },
+  userMessageTextBlock: { minWidth: 0 },
   userMessageExpandButton: { minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4, paddingTop: 4 },
   userMessageExpandText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
   userImageGallery: { width: "100%", flexDirection: "row", flexWrap: "wrap", gap: 4, overflow: "hidden", borderRadius: radii.medium },

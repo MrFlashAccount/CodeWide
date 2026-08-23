@@ -1,11 +1,14 @@
-import type { Collection } from "@tanstack/react-db";
 import type { SyncEvent, SyncSnapshotThread } from "@codewide/sync-client";
 
 import type { StoredThreadSummary } from "./thread-summary-types";
 import type { NativeCommandDelivery } from "../native/native-transport";
+import type { ThreadSummaryModel, ThreadSummaryViewRequest, ThreadSummaryViewResource } from "./thread-summary-model";
 
 export type ThreadSummaryDatabase = {
-  collection: Collection<StoredThreadSummary, string>;
+  readonly model: ThreadSummaryModel;
+  prepare(): Promise<void>;
+  viewResource(request: ThreadSummaryViewRequest): ThreadSummaryViewResource;
+  loadView(request: ThreadSummaryViewRequest): Promise<void>;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   mergeSnapshots(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;

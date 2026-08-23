@@ -1,7 +1,6 @@
 import { randomUUID } from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
-import { createCollection, type Collection } from "@tanstack/react-db";
-import { persistedCollectionOptions } from "@tanstack/react-native-db-sqlite-persistence";
+import type { Collection } from "@tanstack/react-db";
 
 import {
   validateConnectionInput,
@@ -11,8 +10,10 @@ import {
   type ConnectionUpdateInput,
 } from "./connection-validation";
 import type { ConnectionProfileRow, StoredConnection } from "./connection-profile-types";
-import { getSettingsPersistence } from "./settings-persistence.native";
-import { openLegacyUiCachePersistence } from "./ui-cache-persistence.native";
+import { readLegacyPersistedRows } from "./legacy-persistence-migration.native";
+import { createPersistentCollectionModel } from "./persistent-collection.native";
+import { getSettingsSqliteDatabase } from "./settings-persistence.native";
+import { openLegacyUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 
 export type ConnectionProfileDatabase = {
   collection: Collection<ConnectionProfileRow, string>;
@@ -40,44 +41,46 @@ export type RuntimeConnectionConfig = {
 };
 
 export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
-  const collection = createCollection(
-    persistedCollectionOptions<ConnectionProfileRow, string>({
-      id: "connection-profiles-v1",
-      schemaVersion: 1,
-      getKey: (row) => row.id,
-      persistence: getSettingsPersistence(),
-    }),
-  );
+  const model = createPersistentCollectionModel<ConnectionProfileRow, string>({
+    id: "connection-profiles-v1",
+    tableName: "codewide_connection_profiles",
+    schemaVersion: 1,
+    database: getSettingsSqliteDatabase(),
+    getKey: (row) => row.id,
+    columns: [
+      { property: "sortOrder", column: "sort_order", type: "INTEGER" },
+      { property: "updatedAt", column: "updated_at", type: "REAL" },
+      { property: "enabled", column: "enabled", type: "INTEGER", encode: (value) => value ? 1 : 0 },
+    ],
+    indexes: [["sortOrder"]],
+    legacyCollectionId: "connection-profiles-v1",
+  });
+  const { collection } = model;
 
-  const project = (rows = collection.toArray): StoredConnection[] => {
+  const project = (rows: readonly ConnectionProfileRow[] = collection.toArray): StoredConnection[] => {
     return [...rows]
       .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
       .map((row) => toStoredConnection(row, ""));
   };
-  const hydrate = async (rows = collection.toArray): Promise<StoredConnection[]> => project(rows);
+  const hydrate = async (rows?: ConnectionProfileRow[]): Promise<StoredConnection[]> => {
+    await model.ready;
+    return project(rows ?? collection.toArray);
+  };
 
   return {
     collection,
     project,
     async importLegacyUiCache() {
+      await model.ready;
       if (collection.toArray.length > 0) return;
-      const legacyPersistence = openLegacyUiCachePersistence();
-      const legacyCollection = createCollection(
-        persistedCollectionOptions<ConnectionProfileRow, string>({
-          id: "connection-profiles-v1",
-          schemaVersion: 1,
-          getKey: (row) => row.id,
-          persistence: legacyPersistence.persistence,
-        }),
-      );
+      const legacy = openLegacyUiCacheSqliteDatabase();
       try {
-        await legacyCollection.preload();
-        if (legacyCollection.toArray.length === 0) return;
-        const transaction = collection.insert(legacyCollection.toArray.map((row) => ({ ...row })));
+        const rows = await readLegacyPersistedRows<ConnectionProfileRow>(legacy.database, "connection-profiles-v1");
+        if (rows.length === 0) return;
+        const transaction = collection.insert(rows.map((row) => ({ ...row })) as never);
         await transaction.isPersisted.promise;
       } finally {
-        legacyCollection.cleanup();
-        legacyPersistence.close();
+        legacy.close();
       }
     },
     async importLegacy(connections) {
@@ -217,7 +220,7 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       await transaction.isPersisted.promise;
     },
     close() {
-      collection.cleanup();
+      model.close();
     },
   };
 }

@@ -29,12 +29,23 @@ class BrowserDevToolsRequestAuthTest {
   }
 
   @Test
-  fun presentsTheBundledFrontendAsADevToolsOrigin() {
-    val header = "GET /devtools/page/abc?codewide_token=secret HTTP/1.1\r\nOrigin: file://\r\n\r\n"
+  fun removesOriginFromChromiumWebSocketHandshake() {
+    val header = "GET /devtools/page/abc?codewide_token=secret HTTP/1.1\r\n" +
+      "Host: 127.0.0.1:38685\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      "Sec-WebSocket-Key: <websocket-key>\r\n" +
+      "Sec-WebSocket-Version: 13\r\n" +
+      "Origin: http://127.0.0.1:38685\r\n\r\n"
     val result = BrowserDevToolsRequestAuth.authenticateAndStrip(header.bytes(), "secret")
 
     assertEquals(
-      "GET /devtools/page/abc HTTP/1.1\r\nOrigin: devtools://devtools\r\n\r\n",
+      "GET /devtools/page/abc HTTP/1.1\r\n" +
+        "Host: 127.0.0.1:38685\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: <websocket-key>\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n",
       result?.toString(StandardCharsets.ISO_8859_1),
     )
   }

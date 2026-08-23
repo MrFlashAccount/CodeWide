@@ -9,6 +9,8 @@ export type ThreadDetailRow = {
   connectionId: string;
   remoteThreadId: string;
   remoteTurnId: string | null;
+  /** Identifies one contiguous cursor chain for this thread. */
+  historyEpoch: number;
   ordinal: number;
   sessionId: string | null;
   lastOpenedAt: number;
@@ -24,6 +26,91 @@ export type ThreadDetailRow = {
    */
   pending?: PendingTimelineEntry | null;
 };
+
+/**
+ * Gives a bounded authoritative page stable global ordinals. Server history
+ * pages do not carry an ordinal, so their array indexes are page-local and
+ * cannot be persisted directly once older or live rows already exist.
+ *
+ * An overlapping turn anchors the page to the existing sequence. If a client
+ * missed more turns than the server overlap and there is no anchor, the
+ * authoritative page is the newest known tail and is appended after the
+ * greatest persisted ordinal.
+ */
+export function projectAuthoritativeTurnOrdinals(
+  existingRows: readonly Pick<ThreadDetailRow, "kind" | "remoteTurnId" | "ordinal">[],
+  incomingTurnIds: readonly string[],
+): ReadonlyMap<string, number> {
+  const existingByTurnId = new Map<string, number>();
+  let maxOrdinal = -1;
+  for (const row of existingRows) {
+    if (row.kind !== "turn" || row.remoteTurnId === null) continue;
+    existingByTurnId.set(row.remoteTurnId, row.ordinal);
+    maxOrdinal = Math.max(maxOrdinal, row.ordinal);
+  }
+
+  let baseOrdinal: number | null = null;
+  for (let index = 0; index < incomingTurnIds.length; index += 1) {
+    const existingOrdinal = existingByTurnId.get(incomingTurnIds[index]!);
+    if (existingOrdinal === undefined) continue;
+    baseOrdinal = existingOrdinal - index;
+    break;
+  }
+  baseOrdinal ??= maxOrdinal + 1;
+
+  return new Map(incomingTurnIds.map((turnId, index) => [turnId, baseOrdinal + index]));
+}
+
+/** Starts a new contiguous cursor chain when the newest authoritative page has
+ * no turn in common with the currently visible history island. */
+export function projectAuthoritativeHistoryEpoch(
+  existingRows: readonly Pick<ThreadDetailRow, "kind" | "remoteTurnId" | "historyEpoch" | "ordinal">[],
+  incomingTurnIds: readonly string[],
+): number {
+  const currentEpoch = existingRows.find((row) => row.kind === "thread")?.historyEpoch ?? 0;
+  const currentTurns = existingRows.flatMap((row) => row.kind === "turn"
+    && row.historyEpoch === currentEpoch
+    && row.remoteTurnId !== null
+    ? [{ id: row.remoteTurnId, ordinal: row.ordinal }]
+    : []);
+  if (currentTurns.length === 0 || incomingTurnIds.length === 0) return currentEpoch;
+  const ordinalsByTurnId = new Map(currentTurns.map(({ id, ordinal }) => [id, ordinal]));
+  const turnIdByOrdinal = new Map(currentTurns.map(({ id, ordinal }) => [ordinal, id]));
+  const firstOverlapIndex = incomingTurnIds.findIndex((turnId) => ordinalsByTurnId.has(turnId));
+  if (firstOverlapIndex < 0) return currentEpoch + 1;
+  const overlapId = incomingTurnIds[firstOverlapIndex]!;
+  const baseOrdinal = ordinalsByTurnId.get(overlapId)! - firstOverlapIndex;
+  const conflicts = incomingTurnIds.some((turnId, index) => {
+    const projectedOrdinal = baseOrdinal + index;
+    const existingOrdinal = ordinalsByTurnId.get(turnId);
+    const existingTurnId = turnIdByOrdinal.get(projectedOrdinal);
+    return (existingOrdinal !== undefined && existingOrdinal !== projectedOrdinal)
+      || (existingTurnId !== undefined && existingTurnId !== turnId);
+  });
+  return conflicts ? currentEpoch + 1 : currentEpoch;
+}
+
+/** Assigns one older cursor page immediately before the current epoch's
+ * minimum. Rows encountered in an obsolete epoch migrate into the current
+ * chain instead of preserving their disconnected ordinal. */
+export function projectPrependedTurnOrdinals(
+  existingRows: readonly Pick<ThreadDetailRow, "kind" | "remoteTurnId" | "historyEpoch" | "ordinal">[],
+  historyEpoch: number,
+  incomingTurnIds: readonly string[],
+): ReadonlyMap<string, number> {
+  const currentOrdinals = new Map(existingRows.flatMap((row) => row.kind === "turn"
+    && row.historyEpoch === historyEpoch
+    && row.remoteTurnId !== null
+    ? [[row.remoteTurnId, row.ordinal] as const]
+    : []));
+  const additions = incomingTurnIds.filter((turnId) => !currentOrdinals.has(turnId));
+  const currentValues = [...currentOrdinals.values()];
+  let nextOrdinal = (currentValues.length === 0 ? 0 : Math.min(...currentValues)) - additions.length;
+  return new Map(incomingTurnIds.map((turnId) => {
+    const existing = currentOrdinals.get(turnId);
+    return [turnId, existing ?? nextOrdinal++] as const;
+  }));
+}
 
 export type PendingTimelineEntry = {
   commandId: string;
@@ -45,6 +132,34 @@ export type PendingTimelineMutation = {
   deletes: readonly string[];
   beforeCommandId?: string | null;
 };
+
+export type PendingTimelineOverlay = {
+  key: string;
+  connectionId: string;
+  threadId: string;
+  row: ThreadDetailRow | null;
+};
+
+/** Applies optimistic pending rows and tombstones to an older SQLite snapshot.
+ * A server turn with the same stable client id always wins the takeover. */
+export function mergePendingTimelineOverlays(
+  persistedRows: readonly ThreadDetailRow[],
+  overlays: readonly PendingTimelineOverlay[],
+  connectionId: string,
+  threadId: string,
+): ThreadDetailRow[] {
+  const rows = new Map<string, ThreadDetailRow | null>(persistedRows.map((row) => [row.id, row]));
+  for (const overlay of overlays) {
+    if (overlay.connectionId !== connectionId || overlay.threadId !== threadId) continue;
+    if (rows.get(overlay.key)?.kind === "turn") continue;
+    rows.set(overlay.key, overlay.row);
+  }
+  return [...rows.values()].flatMap((row) => row === null ? [] : [row]);
+}
+
+export function reusableTurnOrdinal(row: ThreadDetailRow | undefined, historyEpoch: number): number | null {
+  return row?.kind === "turn" && row.historyEpoch === historyEpoch ? row.ordinal : null;
+}
 
 /**
  * Merges native delivery observations with the optimistic JS transaction.
@@ -171,18 +286,21 @@ export function materializeThreadDetail(
   threadId: string,
   currentSessionId: string,
 ): ThreadDetailSnapshot | null {
-  let meta: ThreadDetailRow | null = null;
+  const values = [...rows];
+  const meta = values.find((row) => row.connectionId === connectionId
+    && row.remoteThreadId === threadId
+    && row.kind === "thread") ?? null;
+  if (meta?.thread === null || meta === null) return null;
   const turns = new Map<string, ThreadDetailRow>();
   const turnMetadata = new Map<string, ProjectedTurnMetadata>();
   const activities = new Map<string, Turn["items"]>();
-  for (const row of rows) {
+  for (const row of values) {
     if (row.connectionId !== connectionId || row.remoteThreadId !== threadId) continue;
-    if (row.kind === "thread") meta = row;
-    else if (row.remoteTurnId !== null && row.kind === "turn") turns.set(row.remoteTurnId, row);
+    if (row.kind !== "thread" && row.kind !== "pending" && row.historyEpoch !== meta.historyEpoch) continue;
+    if (row.remoteTurnId !== null && row.kind === "turn") turns.set(row.remoteTurnId, row);
     else if (row.remoteTurnId !== null && row.kind === "turnMeta" && row.turnMetadata !== null) turnMetadata.set(row.remoteTurnId, row.turnMetadata);
     else if (row.remoteTurnId !== null && row.kind === "activity" && row.activityItems !== null) activities.set(row.remoteTurnId, row.activityItems);
   }
-  if (meta?.thread === null || meta === null) return null;
   const ordered = deduplicateThreadTurns([...turns.values()].sort(compareTurnRows).flatMap((row) => {
     if (row.turn === null) return [];
     const activity = row.remoteTurnId === null ? undefined : activities.get(row.remoteTurnId);
@@ -225,6 +343,27 @@ export function materializePendingTimeline(rows: Iterable<ThreadDetailRow>): Pen
   return [...rows]
     .flatMap((row) => row.kind === "pending" && row.pending !== null && row.pending !== undefined ? [row.pending] : [])
     .sort((left, right) => left.order - right.order || left.createdAt - right.createdAt || left.commandId.localeCompare(right.commandId));
+}
+
+/**
+ * Kotlin owns the durable direct-delivery ledger. A pending row that is no
+ * longer present in that ledger is only a stale JS projection, usually left
+ * behind after the canonical turn acknowledged the receipt. Keeping it in the
+ * timeline creates an orphan user bubble and delays history pagination because
+ * the virtual list mistakes the orphan for real conversation content.
+ */
+export function planPendingDeliveryProjectionCleanup(
+  rows: Iterable<ThreadDetailRow>,
+  activeCommandIds: ReadonlySet<string>,
+): PendingTimelineMutation {
+  const deletes = [...rows].flatMap((row) => (
+    row.kind === "pending"
+      && row.pending?.presentation === "delivery"
+      && !activeCommandIds.has(row.pending.commandId)
+      ? [row.id]
+      : []
+  ));
+  return { upserts: [], deletes };
 }
 
 /**
@@ -365,7 +504,9 @@ export function reconcileAuthoritativeThreadDetailRow(
  */
 export function shouldWriteAuthoritativeThreadDetailRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
   if (previous?.kind === "turn" && previous.sealed && next.kind === "turn") {
-    return shouldReplaceSealedChatBoundary(previous.turn, next.turn)
+    return previous.historyEpoch !== next.historyEpoch
+      || previous.ordinal !== next.ordinal
+      || shouldReplaceSealedChatBoundary(previous.turn, next.turn)
       || !sameTurnLifecycle(previous.turn, next.turn);
   }
   return shouldWriteThreadDetailRow(previous, next);
@@ -376,6 +517,11 @@ function shouldReplaceSealedChatBoundary(previous: Turn | null, next: Turn | nul
   if (previous.itemsView === "summary" && next.itemsView === "summary") {
     const previousCounts = chatBoundaryCounts(previous);
     const nextCounts = chatBoundaryCounts(next);
+    // A page can be temporarily incomplete while the rollout tail settles.
+    // Never let it erase the last persisted prompt or final answer. Count
+    // reduction remains valid for cleaning an already-duplicated summary.
+    if ((previousCounts.users > 0 && nextCounts.users === 0)
+      || (previousCounts.agents > 0 && nextCounts.agents === 0)) return false;
     if (previousCounts.users > nextCounts.users || previousCounts.agents > nextCounts.agents) return true;
   }
   const previousScore = chatBoundaryScore(previous);

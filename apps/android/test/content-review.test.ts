@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  contentReviewTextHighlights,
   normalizedReviewPoint,
   serializeContentReviewAttachment,
   type ContentReviewComment,
@@ -11,12 +12,27 @@ import { contentReviewNativeModule } from "../src/rendering/content-review-nativ
 
 const target = { id: "answer-1", label: "Completed agent response", reference: "item-1" };
 const contentReviewHost = readFileSync(new URL("../src/rendering/ContentReviewHost.tsx", import.meta.url), "utf8");
+const reviewableText = readFileSync(new URL("../src/rendering/ReviewableText.native.tsx", import.meta.url), "utf8");
+const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const selectionModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/ContentReviewSelectionModule.kt", import.meta.url), "utf8");
 
 describe("content review", () => {
-  it("keeps the fullscreen review composer attached to the Android keyboard", () => {
+  it("keeps review input inline with the currently visible content", () => {
     expect(contentReviewHost).toContain("<KeyboardStickyView");
-    expect(contentReviewHost).toContain("offset={{ closed: 0, opened: insets.bottom }}");
-    expect(contentReviewHost).toMatch(/<KeyboardStickyView[\s\S]*<View style=\{styles\.composer\}>[\s\S]*<\/KeyboardStickyView>/u);
+    expect(contentReviewHost).toContain("<InlineContentReviewComposer");
+    expect(contentReviewHost).not.toContain("useAppFullscreenOverlay");
+    expect(contentReviewHost).not.toContain("resumeTray");
+    expect(documentPreview).toContain("<ContentReviewComposer targetId={markdownReviewTarget.id} />");
+    expect(screen).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
+    expect(screen).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} />');
+  });
+
+  it("updates one regular Markdown attachment as comments are saved", () => {
+    expect(contentReviewHost).toContain("const attachmentId = await runtime.attach(markdown)");
+    expect(contentReviewHost).toContain("attachmentByScopeRef.current.set(current.scope, attachmentId)");
+    expect(screen).toContain("candidate.id !== previousAttachmentId");
+    expect(screen).toContain("attachmentId: contentReviewAttachmentId");
   });
 
   it("treats a missing native review module as an optional capability", () => {
@@ -26,8 +42,19 @@ describe("content review", () => {
   });
 
   it("accepts a complete native review module", () => {
-    const nativeModule = { install() {}, uninstall() {} };
+    const nativeModule = { install() {}, uninstall() {}, setHighlights() {} };
     expect(contentReviewNativeModule(nativeModule)).toBe(nativeModule);
+  });
+
+  it("keeps reviewed text ranges highlighted through the native TextView", () => {
+    const anchors: ContentReviewComment["anchor"][] = [
+      { kind: "text", target, blockPath: "segment-0/paragraph-2", quote: "first", start: 4, end: 9 },
+      { kind: "text", target: { ...target, id: "other" }, blockPath: "segment-0/paragraph-2", quote: "other", start: 0, end: 5 },
+    ];
+    expect(contentReviewTextHighlights(anchors, target.id, "segment-0/paragraph-2", 2)).toEqual([{ start: 2, end: 7 }]);
+    expect(reviewableText).toContain("nativeModule?.setHighlights?.(reactTag, token, reviewHighlights)");
+    expect(selectionModule).toContain("ReviewHighlightSpan");
+    expect(selectionModule).toContain("REVIEW_HIGHLIGHT_COLOR");
   });
 
   it("serializes selected text as an inline Markdown quote", () => {

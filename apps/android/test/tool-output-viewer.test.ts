@@ -6,6 +6,7 @@ const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url
 const fullscreenOverlay = readFileSync(new URL("../src/ui/AppFullscreenOverlay.tsx", import.meta.url), "utf8");
 const nativeCodeBlock = readFileSync(new URL("../src/rendering/NativeCodeBlock.tsx", import.meta.url), "utf8");
 const nativeCodeView = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockView.kt", import.meta.url), "utf8");
+const asyncResourceStore = readFileSync(new URL("../src/rendering/async-resource-store.ts", import.meta.url), "utf8");
 
 describe("tool output presentation", () => {
   it("reports collapsed output in lines instead of characters", () => {
@@ -26,11 +27,15 @@ describe("tool output presentation", () => {
     expect(controls).not.toContain("readPrivateAssetText");
     expect(screen).toContain("function LargeContentViewerHost");
     expect(screen).toContain("function LargeContentViewerSession");
+    expect(screen).toContain("useEphemeralAsyncResource<PrivateAssetTextResult>(");
+    expect(asyncResourceStore).toContain("const cacheKey = asyncResourceCacheKey(key, revision)");
+    expect(asyncResourceStore).toContain("getAsyncResource<T>(key, revision");
     expect(screen).toContain("<LargeContentViewerHost>");
     expect(screen).toContain("fullscreenOverlay.present(({ close }) => (");
     expect(screen).toContain('<View testID="full-content-viewer"');
     expect(controls).not.toContain("largeContentChunk");
-    expect(screen).toContain('signal: controller.signal');
+    expect(screen).toContain('async (_publish, signal) => await readPrivateAssetText(');
+    expect(screen).toContain('signal,');
   });
 
   it("guards the timeline anchor across the native fullscreen transition", () => {

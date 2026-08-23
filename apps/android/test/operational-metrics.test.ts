@@ -8,9 +8,11 @@ import {
   operationalMetricsSnapshot,
   recordDiagnosticTiming,
   recordLiveRenderCommit,
+  recordSqliteSubsetLoad,
   recordTiming,
   resetOperationalMetricsForTests,
   setOperationalDiagnosticsEnabled,
+  setThreadDetailResidentRows,
 } from "../src/data/operational-metrics";
 
 describe("privacy-safe operational metrics", () => {
@@ -41,7 +43,14 @@ describe("privacy-safe operational metrics", () => {
     expect(operationalMetricsSnapshot()).toEqual({
       timings: {},
       counters: {},
-      gauges: { livePendingStreams: 0, livePendingChars: 0, liveOldestPendingMs: 0 },
+      gauges: {
+        livePendingStreams: 0,
+        livePendingChars: 0,
+        liveOldestPendingMs: 0,
+        sqliteSubsetLastRows: 0,
+        sqliteSubsetMaxRows: 0,
+        threadDetailResidentRows: 0,
+      },
     });
 
     setOperationalDiagnosticsEnabled(true);
@@ -71,6 +80,9 @@ describe("privacy-safe operational metrics", () => {
       livePendingStreams: 1,
       livePendingChars: 8,
       liveOldestPendingMs: 24,
+      sqliteSubsetLastRows: 0,
+      sqliteSubsetMaxRows: 0,
+      threadDetailResidentRows: 0,
     });
     recordLiveRenderCommit(streamKey!);
     recordLiveRenderCommit(streamKey!);
@@ -89,6 +101,22 @@ describe("privacy-safe operational metrics", () => {
       gauges: {
         livePendingStreams: 0,
         livePendingChars: 0,
+      },
+    });
+  });
+
+  it("records bounded SQLite subset and resident row counts", () => {
+    recordSqliteSubsetLoad(18, 4.5);
+    recordSqliteSubsetLoad(6, 1.5);
+    setThreadDetailResidentRows(27);
+
+    expect(operationalMetricsSnapshot()).toMatchObject({
+      timings: { sqlite_subset_load_ms: { totalCount: 2, totalMs: 6 } },
+      counters: { sqlite_subset_loads: 2, sqlite_subset_rows_loaded: 24 },
+      gauges: {
+        sqliteSubsetLastRows: 6,
+        sqliteSubsetMaxRows: 18,
+        threadDetailResidentRows: 27,
       },
     });
   });

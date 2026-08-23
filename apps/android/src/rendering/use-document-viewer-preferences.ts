@@ -1,6 +1,7 @@
 import { useLiveQuery } from "@tanstack/react-db";
 
 import { getUserPreferencesDatabase } from "../data/user-preferences-database";
+import { useEvent } from "../react/useEvent";
 import {
   DEFAULT_DOCUMENT_VIEWER_PREFERENCES,
   DOCUMENT_VIEWER_PREFERENCE_ID,
@@ -31,19 +32,22 @@ export function useDocumentViewerPreferences(): {
       console.warn("Could not save document viewer preferences", cause);
     });
   };
+  const changeTextScale = useEvent((delta: number) => {
+    update((current) => ({
+      ...current,
+      textScale: normalizeDocumentTextScale(current.textScale + delta),
+    }));
+  });
+  const resetTextScale = useEvent(() => {
+    update((current) => ({ ...current, textScale: DEFAULT_DOCUMENT_VIEWER_PREFERENCES.textScale }));
+  });
+  const setLayoutMode = useEvent((layoutMode: DocumentLayoutMode) => {
+    update((current) => ({ ...current, layoutMode }));
+  });
   return {
     preferences,
-    changeTextScale(delta) {
-      update((current) => ({
-        ...current,
-        textScale: normalizeDocumentTextScale(current.textScale + delta),
-      }));
-    },
-    resetTextScale() {
-      update((current) => ({ ...current, textScale: DEFAULT_DOCUMENT_VIEWER_PREFERENCES.textScale }));
-    },
-    setLayoutMode(layoutMode) {
-      update((current) => ({ ...current, layoutMode }));
-    },
+    changeTextScale,
+    resetTextScale,
+    setLayoutMode,
   };
 }

@@ -1,6 +1,7 @@
 export type ContentReviewNativeModule = {
   install(reactTag: number, token: string): void;
   uninstall(reactTag: number, token: string): void;
+  setHighlights?(reactTag: number, token: string, highlights: readonly { start: number; end: number }[]): void;
 };
 
 /** Native review actions are optional so JS updates remain compatible with older Android binaries. */

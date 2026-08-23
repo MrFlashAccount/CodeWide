@@ -99,6 +99,7 @@ export async function writeThirdPartyNotices({ androidRoot, destinationDirectory
     require.resolve("svgbob-wasm/svgbob_wasm_bg.js"),
     require.resolve("@panzoom/panzoom/dist/panzoom.min.js"),
     require.resolve("chii/package.json"),
+    require.resolve("speedscope/package.json"),
   );
   const packageRoots = [...new Set(inputPaths.map(packageRootFor).filter((root) => root !== null))].sort();
   const packages = fillSharedLicenseTexts(await Promise.all(packageRoots.map(readPackageNotice)))
@@ -110,7 +111,7 @@ export async function writeThirdPartyNotices({ androidRoot, destinationDirectory
     "",
     "## Bundled Android WebView dependencies",
     "",
-    "This section is generated from the exact inputs used by the code-review, Mermaid, ASCII-diagram, browser DevTools, and pan/zoom WebView assets.",
+    "This section is generated from the exact inputs used by the code-review, Mermaid, ASCII-diagram, browser DevTools, Speedscope, and pan/zoom WebView assets.",
     "",
     packageTable(packages),
     "",

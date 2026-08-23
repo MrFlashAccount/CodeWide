@@ -919,7 +919,10 @@ impl SyncHub {
                         &method,
                         self.projector(),
                         &self.history,
-                        self.resources(),
+                        RpcResultObservers {
+                            resources: self.resources(),
+                            projects: self.projects(),
+                        },
                     )
                     .await;
                 }
@@ -952,7 +955,10 @@ impl SyncHub {
                         &method,
                         self.projector(),
                         &self.history,
-                        self.resources(),
+                        RpcResultObservers {
+                            resources: self.resources(),
+                            projects: self.projects(),
+                        },
                     )
                     .await
                 }
@@ -967,7 +973,10 @@ impl SyncHub {
             &method,
             self.projector(),
             &self.history,
-            self.resources(),
+            RpcResultObservers {
+                resources: self.resources(),
+                projects: self.projects(),
+            },
         )
         .await
     }
@@ -1838,6 +1847,11 @@ fn rpc_id_key(id: &Value) -> String {
     format!("{kind}:{id}")
 }
 
+struct RpcResultObservers {
+    resources: Option<Arc<ResourceService>>,
+    projects: Option<Arc<ProjectService>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn forward_rpc(
     upstream: &UpstreamHandle,
@@ -1847,12 +1861,12 @@ async fn forward_rpc(
     method: &str,
     projector: Option<Arc<ContentProjector>>,
     history: &HistoryService,
-    resources: Option<Arc<ResourceService>>,
+    observers: RpcResultObservers,
 ) -> Result<(), ()> {
     let result = upstream.request(request).await;
     match result {
         Ok(response) => {
-            forward_rpc_response(socket, response, id, method, projector, history, resources).await
+            forward_rpc_response(socket, response, id, method, projector, history, observers).await
         }
         Err(error) => {
             let code = match error {
@@ -1872,7 +1886,7 @@ async fn forward_rpc_response(
     method: &str,
     projector: Option<Arc<ContentProjector>>,
     history: &HistoryService,
-    resources: Option<Arc<ResourceService>>,
+    observers: RpcResultObservers,
 ) -> Result<(), ()> {
     if !is_read_only_method(method)
         && let Some(error) = response.get("error")
@@ -1894,7 +1908,10 @@ async fn forward_rpc_response(
     {
         *result = history.enrich_thread_list(result.take()).await;
     }
-    if let (Some(resources), Some(result)) = (resources, response.get("result")) {
+    if let (Some(projects), Some(result)) = (observers.projects, response.get("result")) {
+        projects.observe_rpc_result(method, result).await;
+    }
+    if let (Some(resources), Some(result)) = (observers.resources, response.get("result")) {
         resources.observe_rpc_result(method, result).await;
     }
     if let (Some(projector), Some(result)) = (projector, response.get_mut("result")) {
@@ -2096,6 +2113,15 @@ async fn run_outbox_pump(
     workspaces: Arc<std::sync::RwLock<Option<Arc<WorkspaceService>>>>,
 ) {
     let mut status = upstream.subscribe_status();
+    let prune_store = store.clone();
+    match tokio::task::spawn_blocking(move || prune_store.outbox_prune_delivered_receipts()).await {
+        Ok(Ok(removed)) if removed > 0 => {
+            info!(removed, "pruned delivered outbox receipts");
+        }
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => warn!(%error, "delivered outbox receipt pruning failed"),
+        Err(error) => warn!(%error, "delivered outbox receipt pruning worker failed"),
+    }
     let recovery_store = store.clone();
     match tokio::task::spawn_blocking(move || {
         recovery_store.outbox_recover_legacy_account_pool_failures()

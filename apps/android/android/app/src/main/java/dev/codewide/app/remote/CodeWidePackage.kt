@@ -13,7 +13,12 @@ import dev.codewide.app.performance.CodexPerformanceModule
 
 class CodeWidePackage : ReactPackage {
   override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
-    listOf(CodeWideModule(reactContext), CodexPerformanceModule(reactContext), ContentReviewSelectionModule(reactContext))
+    listOf(
+      CodeWideModule(reactContext),
+      CodexPerformanceModule(reactContext),
+      ContentReviewSelectionModule(reactContext),
+      LargePasteModule(reactContext),
+    )
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     listOf(NativeCodeBlockManager(), AnimatedNumberManager(), NativeShimmerTextManager(), NativeRevealManager())

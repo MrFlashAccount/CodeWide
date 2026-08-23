@@ -38,6 +38,18 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   );
 }
 
+export function SuspenseFallback() {
+  return (
+    <View style={styles.boot} testID="root-suspense-state">
+      <View style={styles.bootMark}>
+        <Text style={styles.bootPrompt}>›</Text>
+        <View style={styles.bootCursor} />
+      </View>
+      <Text style={styles.bootTitle}>CodeWide</Text>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   return (
     <GlobalErrorBoundaryHost>

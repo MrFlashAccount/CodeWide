@@ -9,12 +9,22 @@ const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url
 
 describe("Yoga-owned bubble layout", () => {
   it("keeps bubble geometry declarative", () => {
-    expect(bubble).not.toMatch(/measurePretextBubble|useMemo|PixelRatio|onLayout|\bwidth\s*:/u);
+    expect(bubble).not.toMatch(/measurePretextBubble|useMemo|PixelRatio|onLayout/u);
     expect(bubble).not.toMatch(/\bheight\s*:/u);
     expect(bubble).toContain('maxWidth: "88%"');
+    expect(bubble).toContain('width: "88%"');
     expect(bubble).toContain('maxWidth: "82%"');
     expect(bubble).toContain('alignSelf: "flex-start"');
     expect(bubble).toContain('alignSelf: "flex-end"');
+  });
+
+  it("contains every bubble failure inside the shared bubble surface", () => {
+    expect(bubble).toContain('scope="bubble"');
+    expect(bubble).toContain('label={errorLabel ?? (variant === "agent" ? "Agent message" : "User message")}');
+    expect(bubble).toContain('resetKey={errorResetKey ?? `${variant}:${testID ?? "bubble"}`}');
+    expect(screen).toContain('errorResetKey={`${item.scope}:${item.id}`}');
+    expect(screen).toContain('errorResetKey={`${turn.key}:user`}');
+    expect(screen).toContain('errorResetKey={`${turn.key}:agent`}');
   });
 
   it("lets native Text wrap and size Markdown without a second text layout", () => {
@@ -24,12 +34,26 @@ describe("Yoga-owned bubble layout", () => {
     expect(markdown).toContain('<Text selectable reviewBlockPath={path} style={styles.paragraph}>{inline(node.children)}</Text>');
   });
 
-  it("does not select a bubble layout from message content", () => {
+  it("keeps the intrinsic plain-text chain free of percentage width caps", () => {
+    expect(bubble).toContain("surface: {\n    minWidth: 0,\n    borderRadius:");
+    expect(bubble).toContain("content: { minWidth: 0 }");
+    expect(markdown).toContain("document: { minWidth: 0, gap: 5 }");
+    expect(markdown).toContain("paragraph: { minWidth: 0, color:");
+    expect(screen).toContain("userMessageContent: { minWidth: 0, gap: 6 }");
+    expect(screen).toContain("userMessageBlock: { minWidth: 0 }");
+    expect(screen).toContain("userMessageTextBlock: { minWidth: 0 }");
+  });
+
+  it("selects fill layout from Markdown structure without measuring text", () => {
     expect(screen).not.toContain("agentBubbleWidthPolicy");
-    expect(screen).not.toContain("richMarkdownLayout");
+    expect(screen).toContain("richMarkdownLayout");
+    expect(screen).not.toContain('rawTurn.status === "inProgress"\n    || latestAgentBlock?.content?.fields["/text"]');
     expect(screen).not.toContain("measurementSource");
-    expect(screen).toContain('<Bubble variant="agent" testID="codex-bubble">');
-    expect(screen).toContain('<Bubble variant="user" testID="user-bubble">');
+    expect(screen).toContain('variant="agent"');
+    expect(screen).toContain('fill={agentBubbleFill}');
+    expect(screen).toContain('testID="codex-bubble"');
+    expect(screen).toContain('variant="user"');
+    expect(screen).toContain('testID="user-bubble"');
   });
 
   it("lets diagram blocks stretch the bubble without measured width overrides", () => {

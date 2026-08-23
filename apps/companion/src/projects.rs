@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     io,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -20,6 +21,7 @@ const PROJECT_REGISTRY_VERSION: u8 = 1;
 pub struct ProjectService {
     state_path: PathBuf,
     state: std::sync::Arc<Mutex<ProjectRegistry>>,
+    observed: std::sync::Arc<Mutex<HashMap<String, Project>>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -29,6 +31,12 @@ pub struct Project {
     pub name: String,
     pub added_at: u64,
     pub last_used_at: u64,
+    #[serde(default = "default_pinned")]
+    pub pinned: bool,
+}
+
+const fn default_pinned() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -65,6 +73,7 @@ impl ProjectService {
         Ok(std::sync::Arc::new(Self {
             state_path,
             state: std::sync::Arc::new(Mutex::new(state)),
+            observed: std::sync::Arc::new(Mutex::new(HashMap::new())),
         }))
     }
 
@@ -96,6 +105,17 @@ impl ProjectService {
 
     async fn list(&self) -> Vec<Project> {
         let mut projects = self.state.lock().await.projects.clone();
+        let observed = self.observed.lock().await;
+        for candidate in observed.values() {
+            if let Some(explicit) = projects
+                .iter_mut()
+                .find(|project| project.path == candidate.path)
+            {
+                explicit.last_used_at = explicit.last_used_at.max(candidate.last_used_at);
+            } else {
+                projects.push(candidate.clone());
+            }
+        }
         projects.sort_by(|left, right| {
             right
                 .last_used_at
@@ -103,6 +123,39 @@ impl ProjectService {
                 .then_with(|| left.name.cmp(&right.name))
         });
         projects
+    }
+
+    /// Observes authoritative App Server thread results and keeps the project
+    /// catalog on the companion. Paths are the sole identity: the client must
+    /// not reconstruct projects or disambiguate labels from thread history.
+    pub async fn observe_rpc_result(&self, method: &str, result: &Value) {
+        let threads: Vec<&Value> = match method {
+            "thread/list" => result
+                .get("data")
+                .and_then(Value::as_array)
+                .map_or_else(Vec::new, |items| items.iter().collect()),
+            "thread/start" | "thread/resume" | "thread/fork" => {
+                result.get("thread").into_iter().collect()
+            }
+            _ => return,
+        };
+        if threads.is_empty() {
+            return;
+        }
+        let mut observed = self.observed.lock().await;
+        for thread in threads {
+            let Some(project) = project_from_thread(thread) else {
+                continue;
+            };
+            match observed.get_mut(&project.path) {
+                Some(existing) => {
+                    existing.last_used_at = existing.last_used_at.max(project.last_used_at);
+                }
+                None => {
+                    observed.insert(project.path.clone(), project);
+                }
+            }
+        }
     }
 
     async fn add(&self, raw_path: &str) -> Result<Project, ProjectError> {
@@ -147,6 +200,7 @@ impl ProjectService {
                 name,
                 added_at: now,
                 last_used_at: now,
+                pinned: true,
             });
         }
         persist_registry(&self.state_path, &state).await?;
@@ -157,6 +211,36 @@ impl ProjectService {
             .cloned()
             .ok_or(ProjectError::Corrupted)
     }
+}
+
+fn project_from_thread(thread: &Value) -> Option<Project> {
+    let raw_path = thread.get("cwd")?.as_str()?.trim();
+    if raw_path.is_empty() || !Path::new(raw_path).is_absolute() {
+        return None;
+    }
+    let path = if raw_path == "/" {
+        "/".to_owned()
+    } else {
+        raw_path.trim_end_matches('/').to_owned()
+    };
+    let name = Path::new(&path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(path.as_str())
+        .to_owned();
+    let last_used_at = thread
+        .get("recencyAt")
+        .or_else(|| thread.get("updatedAt"))
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    Some(Project {
+        path,
+        name,
+        added_at: last_used_at,
+        last_used_at,
+        pinned: false,
+    })
 }
 
 async fn load_registry(path: &Path) -> Result<ProjectRegistry, ProjectError> {
@@ -247,6 +331,35 @@ mod tests {
 
         assert!(service.add("relative/path").await.is_err());
         assert!(service.add(file.to_string_lossy().as_ref()).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn derives_names_from_basename_and_deduplicates_only_full_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let service = ProjectService::open(temp.path().join("projects.json")).await?;
+        service
+            .observe_rpc_result(
+                "thread/list",
+                &json!({
+                    "data": [
+                        {"cwd": "/work/client/api", "recencyAt": 4},
+                        {"cwd": "/work/server/api", "recencyAt": 3},
+                        {"cwd": "/work/client/api/", "recencyAt": 7}
+                    ]
+                }),
+            )
+            .await;
+
+        let listed = service.handle("companion/project/list", &json!({})).await?;
+        assert_eq!(listed["data"].as_array().map(Vec::len), Some(2));
+        assert_eq!(listed["data"][0]["path"], "/work/client/api");
+        assert_eq!(listed["data"][0]["name"], "api");
+        assert_eq!(listed["data"][0]["lastUsedAt"], 7);
+        assert_eq!(listed["data"][1]["path"], "/work/server/api");
+        assert_eq!(listed["data"][1]["name"], "api");
+        assert_eq!(listed["data"][0]["pinned"], false);
         Ok(())
     }
 }

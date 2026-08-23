@@ -57,11 +57,21 @@ export type PerformanceMetricsSnapshot = {
   recent: PerformanceMetricPoint[];
 };
 
+export type HermesHeapSnapshot = {
+  uri: string;
+  name: string;
+  sizeBytes: number;
+  rawSizeBytes: number;
+  collectedAtMs: number;
+  location: string;
+};
+
 type PerformanceBridge = {
   getPerformanceSnapshot(): Promise<PerformanceMetricsSnapshot>;
   setPerformanceMonitoringEnabled(enabled: boolean): Promise<PerformanceMetricsSnapshot>;
   beginNavigationTrace?(traceId: string): Promise<boolean>;
   endNavigationTrace?(traceId: string): Promise<ThreadNavigationFrameProfile | null>;
+  captureHermesHeapSnapshot?(): Promise<HermesHeapSnapshot>;
 };
 
 const EVENT_NAME = "CodexPerformanceSnapshot";
@@ -146,4 +156,11 @@ export async function beginNavigationFrameTrace(traceId: string): Promise<boolea
 export async function endNavigationFrameTrace(traceId: string): Promise<ThreadNavigationFrameProfile | null> {
   if (bridge === undefined || typeof bridge.endNavigationTrace !== "function") return null;
   return await bridge.endNavigationTrace(traceId).catch(() => null);
+}
+
+export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
+  if (bridge === undefined || typeof bridge.captureHermesHeapSnapshot !== "function") {
+    throw new Error("Hermes heap capture requires a newer Android APK");
+  }
+  return await bridge.captureHermesHeapSnapshot();
 }

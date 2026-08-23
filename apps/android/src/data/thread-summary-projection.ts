@@ -1,7 +1,7 @@
 import type { Thread, ThreadItem, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { threadProjectionPatchFromEvent, type ThreadProjectionPatchV1 } from "@codewide/sync-client";
 
-import type { StoredThreadSummary } from "./thread-summary-types";
+import { normalizeThreadStatus, type StoredThreadSummary } from "./thread-summary-types";
 import { subagentOwnTurns } from "./subagent-projection";
 import { latestThreadMessagePreview, plainThreadPreview } from "./thread-cache";
 
@@ -37,7 +37,7 @@ export function projectThreadSummarySnapshot(
   return {
     connectionId,
     remoteThreadId: thread.id,
-    parentThreadId: thread.parentThreadId,
+    parentThreadId: thread.parentThreadId ?? null,
     agentNickname: thread.agentNickname,
     agentRole: thread.agentRole,
     name: thread.name,
@@ -51,7 +51,7 @@ export function projectThreadSummarySnapshot(
     gitOriginUrl: thread.gitInfo?.originUrl ?? previous?.gitOriginUrl ?? null,
     updatedAt: thread.updatedAt,
     recencyAt: thread.recencyAt,
-    status: thread.status,
+    status: normalizeThreadStatus(thread.status),
     pinned: previous?.pinned ?? false,
     archived,
     pendingRequestCount: previous?.pendingRequestCount ?? 0,
@@ -102,7 +102,7 @@ export function projectThreadSummaryEvent(
   if (previous === undefined) return null;
   const next: StoredThreadSummary = { ...previous };
   if (method === "thread/name/updated") next.name = typeof params.threadName === "string" ? params.threadName : null;
-  else if (method === "thread/status/changed" && object(params.status) !== null) next.status = params.status as Thread["status"];
+  else if (method === "thread/status/changed" && object(params.status) !== null) next.status = normalizeThreadStatus(params.status);
   else if (method === "thread/archived" || method === "thread/unarchived") next.archived = method === "thread/archived";
   else {
     const preview = previewFromEvent(method, params);
@@ -181,7 +181,7 @@ function projectThreadSummaryPatch(
   if (previous === undefined) return null;
   const next: StoredThreadSummary = { ...previous };
   if (operation.kind === "threadName") next.name = typeof operation.threadName === "string" ? operation.threadName : null;
-  else if (operation.kind === "threadStatus" && object(operation.status) !== null) next.status = operation.status as Thread["status"];
+  else if (operation.kind === "threadStatus" && object(operation.status) !== null) next.status = normalizeThreadStatus(operation.status);
   else if (operation.kind === "threadArchived") next.archived = operation.archived === true;
   else {
     const summary = object(operation.summary);

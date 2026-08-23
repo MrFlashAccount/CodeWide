@@ -7,6 +7,7 @@ import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../src/ui/typography-policy";
 const typography = readFileSync(new URL("../src/ui/Typography.tsx", import.meta.url), "utf8");
 const heroNative = readFileSync(new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url), "utf8");
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const timelineList = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("../src/rendering/RichMarkdown.tsx", import.meta.url), "utf8");
 const errorBoundary = readFileSync(new URL("../src/ui/AppErrorBoundary.tsx", import.meta.url), "utf8");
 const portForwarding = readFileSync(new URL("../src/ui/PortForwardingManager.tsx", import.meta.url), "utf8");
@@ -22,7 +23,10 @@ describe("windowed typography scaling contract", () => {
 
   it("invalidates virtualized measurements when density or font scale changes", () => {
     expect(screen).toContain("windowLayout.measurementRevision");
-    expect(screen).toContain('renderRevision={`${composerScope}:${windowLayout.measurementRevision}`}');
+    expect(screen).toContain('renderRevision={composerScope}');
+    expect(screen).toContain('measurementRevision={windowLayout.measurementRevision}');
+    expect(screen).not.toContain('key={`timeline-layout:${windowLayout.measurementRevision}`}');
+    expect(timelineList).toContain('clearCaches({ mode: "sizes" })');
     expect(screen).toContain('dataKey={`desktop-threads:${windowLayout.measurementRevision}`}');
     expect(screen).toContain('dataKey={`mobile-threads:${windowLayout.measurementRevision}`}');
   });
@@ -43,7 +47,8 @@ describe("windowed typography scaling contract", () => {
   });
 
   it("does not shrink text blocks along the vertical flex axis", () => {
-    expect(markdown).toContain('paragraph: { minWidth: 0, maxWidth: "100%"');
+    expect(markdown).toContain("paragraph: { minWidth: 0, color:");
+    expect(markdown).not.toContain('paragraph: { minWidth: 0, maxWidth: "100%"');
     expect(markdown).not.toContain("paragraph: { minWidth: 0, flexShrink: 1");
     expect(screen).not.toContain('agentText: { minWidth: 0, maxWidth: "100%", flexShrink: 1');
     expect(screen).not.toContain('protocolBody: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", flexShrink: 1');

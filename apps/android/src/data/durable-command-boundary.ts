@@ -1,7 +1,7 @@
 /**
  * Crosses the only durable acceptance boundary for a client command.
  *
- * A native failure rejects and lets TanStack roll the optimistic transaction
+ * A native failure rejects and lets the chat model roll the optimistic mutation
  * back. Once Kotlin has accepted the command, the UI projection is merely a
  * reconstructable read model: its failure must never turn an accepted command
  * into a user-visible send failure or invite a duplicate retry.

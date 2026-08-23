@@ -5,7 +5,7 @@ export type RemoteProject = {
   name: string;
   addedAt: number;
   lastUsedAt: number;
-  aliases?: readonly string[];
+  pinned: boolean;
 };
 
 export type RemoteDirectoryEntry = FsReadDirectoryEntry;
@@ -20,12 +20,12 @@ export function partitionDiscoveredProjects(
   discovered: readonly RemoteProject[],
   recentLimit: number,
 ): { recent: RemoteProject[]; other: RemoteProject[] } {
-  const pinnedPaths = new Set(pinned.flatMap(projectPaths).map(normalizeDirectoryPath));
+  const pinnedPaths = new Set(pinned.map(({ path }) => normalizeDirectoryPath(path)));
   const seen = new Set<string>();
   const unpinned = discovered.filter((project) => {
-    const paths = projectPaths(project).map(normalizeDirectoryPath);
-    if (paths.some((path) => pinnedPaths.has(path) || seen.has(path))) return false;
-    for (const path of paths) seen.add(path);
+    const path = normalizeDirectoryPath(project.path);
+    if (pinnedPaths.has(path) || seen.has(path)) return false;
+    seen.add(path);
     return true;
   });
   return {
@@ -35,12 +35,7 @@ export function partitionDiscoveredProjects(
 }
 
 export function projectIncludesDirectory(project: RemoteProject, path: string): boolean {
-  const target = normalizeDirectoryPath(path);
-  return projectPaths(project).some((candidate) => normalizeDirectoryPath(candidate) === target);
-}
-
-function projectPaths(project: RemoteProject): string[] {
-  return [project.path, ...(project.aliases ?? [])];
+  return normalizeDirectoryPath(project.path) === normalizeDirectoryPath(path);
 }
 
 export function parseRemoteProjects(value: unknown): RemoteProject[] {
@@ -134,6 +129,7 @@ function parseRemoteProject(value: unknown): RemoteProject {
     name: project.name,
     addedAt: project.addedAt,
     lastUsedAt: project.lastUsedAt,
+    pinned: project.pinned !== false,
   };
 }
 

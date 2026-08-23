@@ -1,7 +1,5 @@
-import { createCollection } from "@tanstack/react-db";
-import { persistedCollectionOptions } from "@tanstack/react-native-db-sqlite-persistence";
-
-import { getSettingsPersistence } from "./settings-persistence.native";
+import { createPersistentCollectionModel } from "./persistent-collection.native";
+import { getSettingsSqliteDatabase } from "./settings-persistence.native";
 import type { UserPreferencesDatabase } from "./user-preferences-database.types";
 import type { UserPreferenceRow } from "./user-preferences";
 
@@ -11,15 +9,16 @@ let database: UserPreferencesDatabase | null = null;
  * in the settings database rather than the reconstructable thread cache. */
 export function getUserPreferencesDatabase(): UserPreferencesDatabase {
   if (database !== null) return database;
-  const collection = createCollection(
-    persistedCollectionOptions<UserPreferenceRow, string>({
-      id: "user-preferences-v1",
-      schemaVersion: 1,
-      getKey: (row) => row.id,
-      persistence: getSettingsPersistence(),
-    }),
-  );
-  const ready = collection.preload();
+  const model = createPersistentCollectionModel<UserPreferenceRow, string>({
+    id: "user-preferences-v1",
+    tableName: "codewide_user_preferences",
+    schemaVersion: 1,
+    database: getSettingsSqliteDatabase(),
+    getKey: (row) => row.id,
+    columns: [{ property: "updatedAt", column: "updated_at", type: "REAL" }],
+    legacyCollectionId: "user-preferences-v1",
+  });
+  const { collection, ready } = model;
   void ready.catch((cause: unknown) => {
     console.warn("Could not preload user preferences", cause);
   });

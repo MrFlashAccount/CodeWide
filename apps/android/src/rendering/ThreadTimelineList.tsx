@@ -6,11 +6,25 @@ import {
   type ReactElement,
   type RefAttributes,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
 } from "react";
 import type { SharedValue } from "react-native-reanimated";
 
+import { useEvent } from "../react/useEvent";
+import { legendInitialPositionProps, type TimelineInitialPosition } from "./timeline-initial-position";
+
+export type { TimelineInitialPosition } from "./timeline-initial-position";
+
+// Navigation telemetry puts a chat timeline row between 362px and 585px on
+// the current phone/tablet layouts. LegendList's 100px default therefore
+// allocates roughly four times too many expensive Markdown rows while it is
+// resolving initialScrollAtEnd. This is only a first-render hint; measured row
+// sizes take over immediately.
+const TIMELINE_ESTIMATED_ITEM_SIZE = 480;
+
 export interface ThreadTimelineListRef {
+  getItemViewportOffset(itemKey: string): number | null;
   scrollToEnd(options?: { animated?: boolean }): Promise<void>;
   scrollToIndex(options: { index: number; animated?: boolean; viewOffset?: number; viewPosition?: number }): void | Promise<void>;
   scrollToOffset(options: { offset: number; animated?: boolean }): void | Promise<void>;
@@ -19,9 +33,11 @@ export interface ThreadTimelineListRef {
 
 export type ThreadTimelineListProps<ItemT> = Omit<
   LegendListProps<ItemT>,
-  "contentInsetEndAdjustment" | "maintainVisibleContentPosition"
+  "contentInsetEndAdjustment" | "initialScrollAtEnd" | "initialScrollIndex" | "maintainVisibleContentPosition"
 > & {
   renderRevision: string;
+  measurementRevision: string;
+  initialPosition?: TimelineInitialPosition;
   keyboardLiftBehavior?: "always" | "whenAtEnd" | "persistent" | "never";
   keyboardOffset?: number;
   maintainScrollAtEndEnabled?: boolean;
@@ -33,6 +49,8 @@ export type ThreadTimelineListProps<ItemT> = Omit<
 function ThreadTimelineListInner<ItemT>(
   {
     renderRevision,
+    measurementRevision,
+    initialPosition = { kind: "tail" },
     keyboardLiftBehavior = "whenAtEnd",
     keyboardOffset = 0,
     maintainScrollAtEndEnabled = true,
@@ -45,14 +63,37 @@ function ThreadTimelineListInner<ItemT>(
   ref: ForwardedRef<ThreadTimelineListRef>,
 ): ReactElement {
   const internalRef = useRef<LegendListRef>(null);
+  // LegendList owns its measurement cache. Font-scale/density changes make
+  // those native measurements invalid, but remounting the list would also
+  // discard its visible-item anchor and visibly jump the chat. Invalidate the
+  // third-party cache at the list boundary before the revised layout paints.
+  useLayoutEffect(() => {
+    internalRef.current?.clearCaches({ mode: "sizes" });
+  }, [measurementRevision]);
+  const getItemViewportOffset = useEvent((itemKey: string): number | null => {
+    const state = internalRef.current?.getState();
+    if (state === undefined) return null;
+    const position = state.positionByKey(itemKey);
+    if (position === undefined) return null;
+    const offset = position - state.scroll;
+    return Number.isFinite(offset) ? offset : null;
+  });
+  const scrollToEnd = useEvent(async (options?: { animated?: boolean }): Promise<void> => {
+    await internalRef.current?.scrollToEnd(options);
+  });
+  const scrollToIndex = useEvent((options: Parameters<ThreadTimelineListRef["scrollToIndex"]>[0]) =>
+    internalRef.current?.scrollToIndex(options));
+  const scrollToOffset = useEvent((options: Parameters<ThreadTimelineListRef["scrollToOffset"]>[0]) =>
+    internalRef.current?.scrollToOffset(options));
+  const reportContentInset = useEvent((inset?: Partial<Insets> | null) =>
+    internalRef.current?.reportContentInset(inset));
   useImperativeHandle(ref, () => ({
-    scrollToEnd: async (options) => {
-      await internalRef.current?.scrollToEnd(options);
-    },
-    scrollToIndex: (options) => internalRef.current?.scrollToIndex(options),
-    scrollToOffset: (options) => internalRef.current?.scrollToOffset(options),
-    reportContentInset: (inset) => internalRef.current?.reportContentInset(inset),
-  }));
+    getItemViewportOffset,
+    scrollToEnd,
+    scrollToIndex,
+    scrollToOffset,
+    reportContentInset,
+  }), [getItemViewportOffset, reportContentInset, scrollToEnd, scrollToIndex, scrollToOffset]);
 
   const KeyboardAwareTimelineList = KeyboardAwareLegendList as unknown as (props: LegendListProps<ItemT> & {
     contentInsetEndAdjustment?: SharedValue<number>;
@@ -70,8 +111,8 @@ function ThreadTimelineListInner<ItemT>(
       {...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment })}
       {...(freeze === undefined ? {} : { freeze })}
       {...props}
+      {...legendInitialPositionProps(initialPosition)}
       dataKey={renderRevision}
-      initialScrollAtEnd
       alignItemsAtEnd
       maintainScrollAtEnd={maintainScrollAtEndEnabled ? {
         animated: false,
@@ -86,7 +127,8 @@ function ThreadTimelineListInner<ItemT>(
       maintainVisibleContentPosition={maintainVisibleContentPositionEnabled ? { data: true, size: true } : false}
       itemsAreEqual={itemsAreEqual ?? referenceEqual}
       recycleItems={false}
-      drawDistance={500}
+      estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}
+      drawDistance={250}
     />
   );
 }

@@ -21,7 +21,7 @@ function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgres
 }
 
 describe("thread render window", () => {
-  it("invalidates a cached empty agent boundary when history fills its final text", () => {
+  it("invalidates a component-local empty agent boundary when history fills its final text", () => {
     const empty = turn([
       { type: "userMessage", id: "user" },
       { type: "agentMessage", id: "agent", text: "" },

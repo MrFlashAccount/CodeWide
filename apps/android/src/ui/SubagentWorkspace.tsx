@@ -19,8 +19,6 @@ const MASTER_MAX_WIDTH = 360;
 export function SubagentWorkspace({
   subagents,
   selected,
-  loading,
-  error,
   onSelect,
   onBack,
   onClose,
@@ -28,8 +26,6 @@ export function SubagentWorkspace({
 }: {
   subagents: readonly StoredThreadSummary[];
   selected: StoredThreadSummary | null;
-  loading: boolean;
-  error: string | null;
   onSelect(summary: StoredThreadSummary): void;
   onBack(): void;
   onClose(): void;
@@ -89,9 +85,7 @@ export function SubagentWorkspace({
         <View testID="subagent-detail-pane" style={styles.detail}>
           {selected === null
             ? <EmptySelection />
-            : loading || error !== null
-              ? <PendingDetail summary={selected} compact={compact} loading={loading} error={error} onBack={onBack} onClose={onClose} />
-              : renderDetail(compact)}
+            : renderDetail(compact)}
         </View>
       )}
     </View>
@@ -127,7 +121,7 @@ function SubagentRow({ summary, selected, onPress }: { summary: StoredThreadSumm
   );
 }
 
-function PendingDetail({
+export function SubagentPendingDetail({
   summary,
   compact,
   loading,

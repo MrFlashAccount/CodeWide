@@ -7,11 +7,17 @@ import {
   materializePendingTimeline,
   materializeThreadDetails,
   materializeThreadTurns,
+  mergePendingTimelineOverlays,
   mergePendingTimelineEntry,
   pendingTimelineRowId,
+  planPendingDeliveryProjectionCleanup,
   planQueuedMoveMutation,
+  projectAuthoritativeHistoryEpoch,
+  projectAuthoritativeTurnOrdinals,
+  projectPrependedTurnOrdinals,
   reconcileAuthoritativeThread,
   reconcileAuthoritativeThreadDetailRow,
+  reusableTurnOrdinal,
   selectLiveThreadDetailRows,
   shouldApplyLiveThreadRow,
   shouldWriteAuthoritativeThreadDetailRow,
@@ -30,6 +36,7 @@ function row(overrides: Partial<ThreadDetailRow>): ThreadDetailRow {
     connectionId: "server",
     remoteThreadId: "thread",
     remoteTurnId: "turn",
+    historyEpoch: 0,
     ordinal: 0,
     sessionId: null,
     lastOpenedAt: 0,
@@ -47,6 +54,160 @@ function turn(): Turn {
 }
 
 describe("thread detail projection", () => {
+  it("keeps optimistic rows and tombstones atomic over an older SQLite window", () => {
+    const stalePending = row({ id: "client", kind: "pending", sealed: false, remoteTurnId: null });
+    const optimisticPending = row({ ...stalePending, lastOpenedAt: 2 });
+    const otherThread = row({ id: "other", remoteThreadId: "other-thread" });
+
+    expect(mergePendingTimelineOverlays(
+      [stalePending],
+      [{ key: "client", connectionId: "server", threadId: "thread", row: optimisticPending }],
+      "server",
+      "thread",
+    )).toEqual([optimisticPending]);
+    expect(mergePendingTimelineOverlays(
+      [stalePending, otherThread],
+      [{ key: "client", connectionId: "server", threadId: "thread", row: null }],
+      "server",
+      "thread",
+    )).toEqual([otherThread]);
+  });
+
+  it("lets an authoritative stable-client-id turn win over a pending overlay", () => {
+    const authoritative = row({ id: "client", kind: "turn", ordinal: 7 });
+    const optimistic = row({ id: "client", kind: "pending", sealed: false, remoteTurnId: null, ordinal: 1_000_000 });
+
+    expect(mergePendingTimelineOverlays(
+      [authoritative],
+      [{ key: "client", connectionId: "server", threadId: "thread", row: optimistic }],
+      "server",
+      "thread",
+    )).toEqual([authoritative]);
+    expect(reusableTurnOrdinal(optimistic, 0)).toBeNull();
+    expect(reusableTurnOrdinal(authoritative, 0)).toBe(7);
+  });
+
+  it("extends global ordinals from an overlapping authoritative tail page", () => {
+    const existing = [
+      row({ remoteTurnId: "turn-0", ordinal: 0 }),
+      row({ remoteTurnId: "turn-1", ordinal: 1 }),
+      row({ remoteTurnId: "turn-2", ordinal: 2 }),
+      row({ remoteTurnId: "turn-3", ordinal: 3 }),
+      row({ remoteTurnId: "turn-4", ordinal: 4 }),
+      row({ remoteTurnId: "turn-5", ordinal: 5 }),
+    ];
+
+    expect(Array.from(projectAuthoritativeTurnOrdinals(existing, ["turn-4", "turn-5", "turn-6", "turn-7"]))).toEqual([
+      ["turn-4", 4],
+      ["turn-5", 5],
+      ["turn-6", 6],
+      ["turn-7", 7],
+    ]);
+  });
+
+  it("appends an authoritative tail after the persisted maximum when no turn overlaps", () => {
+    const existing = [
+      row({ remoteTurnId: "old-20", ordinal: 20 }),
+      row({ remoteTurnId: "old-21", ordinal: 21 }),
+    ];
+
+    expect(Array.from(projectAuthoritativeTurnOrdinals(existing, ["new-1", "new-2"]))).toEqual([
+      ["new-1", 22],
+      ["new-2", 23],
+    ]);
+  });
+
+  it("isolates a disconnected authoritative tail and prepends cursor pages inside its epoch", () => {
+    const oldIsland = [
+      row({ id: "meta", kind: "thread", remoteTurnId: null, historyEpoch: 0, ordinal: -1 }),
+      ...Array.from({ length: 6 }, (_, index) => row({
+        id: `old-${index}`,
+        remoteTurnId: `old-${index}`,
+        historyEpoch: 0,
+        ordinal: index,
+      })),
+    ];
+    const tailIds = Array.from({ length: 6 }, (_, index) => `new-${index + 15}`);
+    const nextEpoch = projectAuthoritativeHistoryEpoch(oldIsland, tailIds);
+    expect(nextEpoch).toBe(1);
+
+    const tailOrdinals = projectAuthoritativeTurnOrdinals([], tailIds);
+    const withTail = [
+      ...oldIsland,
+      ...tailIds.map((turnId) => row({
+        id: turnId,
+        remoteTurnId: turnId,
+        historyEpoch: nextEpoch,
+        ordinal: tailOrdinals.get(turnId),
+      })),
+    ];
+    const firstOlderIds = Array.from({ length: 12 }, (_, index) => `new-${index + 3}`);
+    const firstOlderOrdinals = projectPrependedTurnOrdinals(withTail, nextEpoch, firstOlderIds);
+    expect(firstOlderIds.map((turnId) => firstOlderOrdinals.get(turnId))).toEqual(
+      Array.from({ length: 12 }, (_, index) => index - 12),
+    );
+
+    const withFirstOlder = [
+      ...withTail,
+      ...firstOlderIds.map((turnId) => row({
+        id: turnId,
+        remoteTurnId: turnId,
+        historyEpoch: nextEpoch,
+        ordinal: firstOlderOrdinals.get(turnId),
+      })),
+    ];
+    const secondOlderIds = [
+      ...Array.from({ length: 6 }, (_, index) => `old-${index}`),
+      "new-0",
+      "new-1",
+      "new-2",
+    ];
+    const secondOlderOrdinals = projectPrependedTurnOrdinals(withFirstOlder, nextEpoch, secondOlderIds);
+    expect(secondOlderIds.map((turnId) => secondOlderOrdinals.get(turnId))).toEqual(
+      Array.from({ length: 9 }, (_, index) => index - 21),
+    );
+
+    const migratedRows = new Map<string, ThreadDetailRow>();
+    for (const candidate of [...withTail, ...withFirstOlder]) {
+      if (candidate.remoteTurnId !== null) migratedRows.set(candidate.remoteTurnId, candidate);
+    }
+    for (const turnId of secondOlderIds) {
+      migratedRows.set(turnId, row({
+        id: turnId,
+        remoteTurnId: turnId,
+        historyEpoch: nextEpoch,
+        ordinal: secondOlderOrdinals.get(turnId),
+      }));
+    }
+    expect([...migratedRows.values()]
+      .filter((candidate) => candidate.historyEpoch === nextEpoch)
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((candidate) => candidate.remoteTurnId)).toEqual([
+      ...secondOlderIds,
+      ...firstOlderIds,
+      ...tailIds,
+    ]);
+  });
+
+  it("starts a new epoch when a lone live overlap would collide with older ordinals", () => {
+    const existing = [
+      row({ id: "meta", kind: "thread", remoteTurnId: null, historyEpoch: 4, ordinal: -1 }),
+      row({ remoteTurnId: "old-0", historyEpoch: 4, ordinal: 0 }),
+      row({ remoteTurnId: "old-1", historyEpoch: 4, ordinal: 1 }),
+      row({ remoteTurnId: "live-edge", historyEpoch: 4, ordinal: 2 }),
+    ];
+
+    expect(projectAuthoritativeHistoryEpoch(existing, ["missed-0", "missed-1", "live-edge"])).toBe(5);
+  });
+
+  it("persists a repaired ordinal even when sealed content is unchanged", () => {
+    const content = turn();
+    const previous = row({ ordinal: 0, turn: content, sealed: true });
+    const next = row({ ordinal: 6, turn: content, sealed: true });
+
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, next)).toBe(true);
+  });
+
   it("does not let a late optimistic acceptance revive a delivered message", () => {
     const delivered = {
       commandId: "command",
@@ -184,6 +345,37 @@ describe("thread detail projection", () => {
     const authoritative = row({ id, kind: "turn", remoteTurnId: "remote", pending: null, turn: { ...turn(), id: "remote" } });
     expect(materializePendingTimeline([authoritative])).toEqual([]);
     expect(materializeThreadTurns([authoritative]).map((entry) => entry.id)).toEqual(["remote"]);
+  });
+
+  it("removes orphan direct-delivery projections after Kotlin retires their receipts", () => {
+    const pending = (commandId: string, presentation: "delivery" | "queue") => row({
+      id: commandId,
+      kind: "pending",
+      remoteTurnId: null,
+      sealed: false,
+      pending: {
+        commandId,
+        method: "turn/start",
+        presentation,
+        text: commandId,
+        attachments: [],
+        state: "delivered",
+        attempts: 1,
+        lastError: null,
+        createdAt: 1,
+        updatedAt: 2,
+        order: 1,
+      },
+    });
+
+    expect(planPendingDeliveryProjectionCleanup([
+      pending("still-native", "delivery"),
+      pending("retired", "delivery"),
+      pending("queued", "queue"),
+    ], new Set(["still-native"]))).toEqual({
+      upserts: [],
+      deletes: ["retired"],
+    });
   });
 
   it("does not refresh a known hot thread from a lossy active rollout summary", () => {
@@ -350,6 +542,23 @@ describe("thread detail projection", () => {
 
     expect(shouldWriteAuthoritativeThreadDetailRow(previous, authoritative)).toBe(true);
     expect(reconcileAuthoritativeThreadDetailRow(previous, authoritative).turn?.items).toEqual([user, final]);
+  });
+
+  it("never erases a persisted final answer when a later summary is incomplete", () => {
+    const user = { type: "userMessage", id: "user", clientId: "command", content: [] } as Turn["items"][number];
+    const final = { type: "agentMessage", id: "final", text: "Done", phase: "final_answer" } as Turn["items"][number];
+    const previous = row({
+      sealed: true,
+      turn: { ...turn(), items: [user, final], itemsView: "summary" } as Turn,
+    });
+    const incomplete = row({
+      sealed: true,
+      turn: { ...turn(), items: [user], itemsView: "summary" } as Turn,
+    });
+
+    const reconciled = reconcileAuthoritativeThreadDetailRow(previous, incomplete);
+    expect(reconciled.turn?.items).toEqual([user, final]);
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, reconciled)).toBe(false);
   });
 
   it("materializes one turn for repeated delivery of the same client command", () => {

@@ -103,8 +103,9 @@ describe("fullscreen workspace presentation", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const strip = screen.slice(start, end);
-    expect(strip.indexOf("sessionAttachmentsLabel")).toBeGreaterThanOrEqual(0);
-    expect(strip.indexOf("Subagents: ${visibleSubagents.length}")).toBeGreaterThan(strip.indexOf("sessionAttachmentsLabel"));
+    expect(strip.indexOf("<ThreadResourceContextChips")).toBeGreaterThanOrEqual(0);
+    expect(strip.indexOf("<ComposerSubagentContextChip")).toBeGreaterThan(strip.indexOf("<ThreadResourceContextChips"));
+    expect(screen).toContain("Subagents: ${visible.length}");
     expect(screen).toContain('composerContextContent: { alignItems: "center", gap: 6, paddingHorizontal: spacing.sm, paddingTop: 2, paddingBottom: spacing.xxs }');
   });
 
@@ -112,10 +113,10 @@ describe("fullscreen workspace presentation", () => {
     const start = screen.indexOf('<ScrollView testID="composer-context-strip"');
     const end = screen.indexOf("</ScrollView>", start);
     const strip = screen.slice(start, end);
-    expect(strip).toContain('testID="composer-ports-label"');
-    expect(strip).toContain("portForwardCount > 0");
-    expect(strip).toContain('onPress={() => openControls("ports")}');
-    expect(strip).toContain('hasLivePortForward ? colors.green : colors.textMuted');
+    expect(strip).toContain('<ComposerPortContextChip connectionId={portForwardingConnectionId} onOpen={() => openControls("ports")} />');
+    expect(screen).toContain('testID="composer-ports-label"');
+    expect(screen).toContain("snapshot.profiles.length === 0");
+    expect(screen).toContain('snapshot.profiles.some(({ status }) => status === "live") ? colors.green : colors.textMuted');
     expect(screen).toContain('page === "ports" ? (');
     expect(screen).toContain('<PortForwardingManager {...portForwarding} />');
     expect(screen).toContain('if (page === "ports") return "Ports";');
@@ -132,8 +133,10 @@ describe("fullscreen workspace presentation", () => {
     expect(header).toContain('accessibilityLabel="Back to conversation"');
     expect(header).toContain('name="arrow-back"');
     expect(header).not.toContain('name="close"');
-    expect(subagentSheet).toContain("summaryDatabase.collection");
-    expect(subagentSheet).toContain("void onRefresh().catch");
+    expect(subagentSheet).toContain("subagentsForThread(summaries, parentThreadId)");
+    expect(subagentSheet).not.toContain("useLiveQuery");
+    expect(subagentSheet).toContain("useAsyncResource<ThreadWindow | null>");
+    expect(screen).toContain("void onRefreshSubagents?.(draftThreadId).catch");
     const subagentRendererStart = screen.indexOf("renderThread={({ summary, thread: subagentThread");
     const subagentRendererEnd = screen.indexOf("onClose={close}", subagentRendererStart);
     const subagentRenderer = screen.slice(subagentRendererStart, subagentRendererEnd);
@@ -141,18 +144,36 @@ describe("fullscreen workspace presentation", () => {
     expect(subagentRenderer).toContain("readOnly");
     expect(subagentRenderer).toContain("onOpenSubagentThread={onOpenSubagent}");
     expect(subagentRenderer).not.toContain("<SubagentTranscript");
+    expect(screen.slice(subagentRendererStart, screen.indexOf("const presentTerminal", subagentRendererStart))).toContain("{ dismissOnScopeUnmount: false }");
     expect(screen).not.toContain('testID="subagent-task-card"');
     expect(subagentSheet).not.toContain("onLoadResources");
     expect(subagentSheet).toContain("initialThreadId");
-    expect(subagentSheet).toContain("onOpenSubagent: openById");
+    expect(subagentSheet).toContain("onOpenSubagent={openById}");
+    expect(subagentSheet).toContain("startSubagentTransition(() => setSelectedId(threadId))");
+    expect(subagentSheet).toContain('<Suspense fallback={(');
+    expect(subagentSheet.indexOf("function SubagentConversationDetail")).toBeGreaterThan(subagentSheet.indexOf("<Suspense fallback={("));
+    expect(fullscreenOverlay).toContain("<Suspense fallback={<FullscreenOverlaySuspenseFallback />}>");
   });
 
   it("keeps cached subagent text visible after refresh failures and updates recycled selection", () => {
-    expect(subagentSheet).toContain("loadError?.threadId === selectedId && conversation === null");
-    expect(subagentSheet).toContain("setLoadError({");
-    expect(subagentSheet).toContain("threadId,");
-    expect(subagentSheet).toContain("error={selectedError}");
+    expect(subagentSheet).toContain("materializedThread ?? remoteThreadResource.value?.thread ?? null");
+    expect(subagentSheet).toContain("if (conversation === null)");
+    expect(subagentSheet).toContain("useState<string | null>(initialThreadId)");
+    expect(subagentSheet).toContain('error={remoteThreadResource.status === "error" ? remoteThreadResource.error : null}');
     expect(subagentWorkspace).toContain("extraData={selected?.remoteThreadId ?? null}");
+  });
+
+  it("contains suspension and render failures at each independently recoverable surface", () => {
+    expect(screen.match(/label="Chat list"/gu)).toHaveLength(2);
+    expect(screen.split("fallback={<ThreadListSuspenseFallback />}")).toHaveLength(3);
+    expect(screen.match(/label="Conversation"/gu)).toHaveLength(2);
+    expect(screen.split("fallback={<ConversationNavigationLoader")).toHaveLength(3);
+    expect(screen).toContain('scope="bubble" label="Conversation item"');
+    expect(subagentSheet).toContain('label="Subagent conversation"');
+    expect(subagentSheet).toContain("<SubagentConversationDetail");
+    expect(fullscreenOverlay).toContain("fullscreen-overlay-suspense-fallback");
+    expect(fullscreenOverlay).toContain('label="Fullscreen overlay content"');
+    expect(fullscreenOverlay).toContain("onDismiss={() => close(entry.id)}");
   });
 
   it("opens a concrete subagent from agent activity instead of expanding an empty card", () => {

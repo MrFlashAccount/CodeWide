@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import type { PerformanceMetricsSnapshot } from "./performance-metrics.native";
+import type { HermesHeapSnapshot, PerformanceMetricsSnapshot } from "./performance-metrics.native";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
 
 const snapshot: PerformanceMetricsSnapshot = {
@@ -37,6 +37,10 @@ export async function beginNavigationFrameTrace(_traceId: string): Promise<boole
 
 export async function endNavigationFrameTrace(_traceId: string): Promise<ThreadNavigationFrameProfile | null> {
   return null;
+}
+
+export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
+  throw new Error("Hermes heap capture is available only in the Android app");
 }
 
 export type { PerformanceMetricsSnapshot } from "./performance-metrics.native";
