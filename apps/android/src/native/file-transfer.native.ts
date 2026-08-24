@@ -14,15 +14,17 @@ export type SelectedUpload = { name: string; size: number; mimeType: string; nat
 export type SelectedDirectory = { name: string; native: Directory };
 export type RunningTransfer = { promise: Promise<{ bytes: number; sha256: string; uri?: string; mimeType?: string }>; cancel(): void };
 
-type FileViewerBridge = {
+type FileTransferBridge = {
   openDocument?(uri: string, mimeType: string | null): Promise<void>;
+  hashContentDocument?(uri: string): Promise<{ bytes: number; sha256: string }>;
+  copyContentDocument?(sourceUri: string, targetUri: string): Promise<{ bytes: number; sha256: string }>;
 };
 
-const fileViewerBridge = NativeModules.CodeWideNative as FileViewerBridge | undefined;
+const fileTransferBridge = NativeModules.CodeWideNative as FileTransferBridge | undefined;
 
 export async function openDownloadedFile(uri: string, mimeType?: string): Promise<void> {
-  if (fileViewerBridge?.openDocument !== undefined) {
-    await fileViewerBridge.openDocument(uri, mimeType ?? null);
+  if (fileTransferBridge?.openDocument !== undefined) {
+    await fileTransferBridge.openDocument(uri, mimeType ?? null);
     return;
   }
   // Compatibility for OTA clients whose native runtime predates openDocument.
@@ -332,17 +334,10 @@ async function finalizeDownloadedFile(
       partial,
       completed,
       expectedBytes,
+      expectedHash,
       (transferred) => onProgress({ transferred, total: expectedBytes, phase: "verifying" }),
       cancelled,
     );
-    const completedHash = await hashFile(
-      completed,
-      (transferred) => onProgress({ transferred, total: expectedBytes, phase: "verifying" }),
-      cancelled,
-    );
-    if (completed.size !== expectedBytes || completedHash !== expectedHash) {
-      throw new Error("Saved file failed SHA-256 integrity verification");
-    }
   } catch (cause) {
     deleteBestEffort(completed);
     throw cause;
@@ -355,9 +350,27 @@ async function copyFileContents(
   source: File,
   target: File,
   expectedBytes: number,
+  expectedHash: string,
   progress: (bytes: number) => void,
   cancelled: () => boolean,
 ): Promise<void> {
+  if (source.uri.startsWith("content://") || target.uri.startsWith("content://")) {
+    if (!source.uri.startsWith("content://") || !target.uri.startsWith("content://")) {
+      throw new Error("Saving between app-private and selected storage is not supported by this runtime");
+    }
+    if (cancelled()) throw new Error("Transfer cancelled");
+    const copyContentDocument = fileTransferBridge?.copyContentDocument;
+    if (copyContentDocument === undefined) {
+      throw new Error("This download requires a newer CodeWide APK");
+    }
+    const copied = await copyContentDocument(source.uri, target.uri);
+    if (cancelled()) throw new Error("Transfer cancelled");
+    progress(copied.bytes);
+    if (copied.bytes !== expectedBytes || copied.sha256 !== expectedHash) {
+      throw new Error("Saved file failed SHA-256 integrity verification");
+    }
+    return;
+  }
   const input = source.open(FileMode.ReadOnly);
   const output = target.open(FileMode.WriteOnly);
   let copied = 0;
@@ -388,6 +401,18 @@ function deleteBestEffort(file: File): void {
 }
 
 async function hashFile(file: File, progress: (bytes: number) => void, cancelled: () => boolean): Promise<string> {
+  if (file.uri.startsWith("content://")) {
+    if (cancelled()) throw new Error("Transfer cancelled");
+    const hashContentDocument = fileTransferBridge?.hashContentDocument;
+    if (hashContentDocument === undefined) {
+      throw new Error("This download requires a newer CodeWide APK");
+    }
+    const result = await hashContentDocument(file.uri);
+    if (cancelled()) throw new Error("Transfer cancelled");
+    progress(result.bytes);
+    if (result.bytes !== file.size) throw new Error("Could not read the complete file");
+    return result.sha256;
+  }
   const hash = sha256.create();
   const handle = file.open();
   let read = 0;

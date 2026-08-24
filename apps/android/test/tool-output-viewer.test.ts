@@ -38,10 +38,9 @@ describe("tool output presentation", () => {
     expect(screen).toContain('signal,');
   });
 
-  it("guards the timeline anchor across the native fullscreen transition", () => {
-    expect(screen).toContain("timelineOverlay.begin(id)");
-    expect(screen).toContain("didOpen: () => timelineOverlay.restore(false)");
-    expect(screen).toContain("didClose: (id) => timelineOverlay.end(id)");
+  it("does not manually reposition the timeline across fullscreen transitions", () => {
+    expect(screen).not.toContain("timelineOverlay");
+    expect(screen).toContain("willOpen: () => dismissComposerKeyboardForOverlay()");
     expect(fullscreenOverlay).toContain("binding.lifecycle?.willOpen?.(id)");
     expect(fullscreenOverlay).toContain("entry.lifecycle?.didOpen?.(entry.id)");
     expect(fullscreenOverlay).toContain("entry.lifecycle?.didClose?.(entry.id)");

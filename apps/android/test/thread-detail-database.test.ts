@@ -347,7 +347,7 @@ describe("thread detail projection", () => {
     expect(materializeThreadTurns([authoritative]).map((entry) => entry.id)).toEqual(["remote"]);
   });
 
-  it("removes orphan direct-delivery projections after Kotlin retires their receipts", () => {
+  it("removes retired direct deliveries from the resident projection", () => {
     const pending = (commandId: string, presentation: "delivery" | "queue") => row({
       id: commandId,
       kind: "pending",
@@ -378,6 +378,33 @@ describe("thread detail projection", () => {
     });
   });
 
+  it("does not require the canonical client-id turn to be resident before cleanup", () => {
+    const commandId = "retired";
+    const pending = row({
+      id: "legacy-pending-row",
+      kind: "pending",
+      remoteTurnId: null,
+      sealed: false,
+      pending: {
+        commandId,
+        method: "turn/start",
+        presentation: "delivery",
+        text: "hello",
+        attachments: [],
+        state: "delivered",
+        attempts: 1,
+        lastError: null,
+        createdAt: 1,
+        updatedAt: 2,
+        order: 1,
+      },
+    });
+    expect(planPendingDeliveryProjectionCleanup([pending], new Set())).toEqual({
+      upserts: [],
+      deletes: ["legacy-pending-row"],
+    });
+  });
+
   it("does not refresh a known hot thread from a lossy active rollout summary", () => {
     expect(shouldRefreshInvalidatedThread(true, true, true)).toBe(false);
     expect(shouldRefreshInvalidatedThread(true, true, false)).toBe(true);
@@ -403,6 +430,20 @@ describe("thread detail projection", () => {
       count: 3,
       kinds: ["commandExecution", "agentMessage", "reasoning"],
     });
+  });
+
+  it("does not let an empty terminal placeholder replace streamed agent text", () => {
+    const user = { id: "user", type: "userMessage", content: [{ type: "text", text: "run" }] } as Turn["items"][number];
+    const streamed = { id: "streamed", type: "agentMessage", text: "Visible streamed answer", phase: "commentary" } as Turn["items"][number];
+    const emptyTerminal = { id: "terminal", type: "agentMessage", text: "", phase: "final_answer" } as Turn["items"][number];
+
+    const compacted = compactCompletedTurnForStorage({
+      ...turn(),
+      itemsView: "full",
+      items: [user, streamed, emptyTerminal],
+    } as Turn);
+
+    expect(compacted.items.map((item) => item.id)).toEqual(["user", "streamed"]);
   });
 
   it("keeps command output footprint when completed activity is compacted", () => {

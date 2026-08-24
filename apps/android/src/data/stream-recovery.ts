@@ -9,6 +9,8 @@ import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
+import { isStableThreadCursorTurn } from "./thread-cursor-sync";
+
 export type TerminalProjectionProof = {
   threadId: string;
   turnId: string;
@@ -23,7 +25,7 @@ export type TerminalProjectionProof = {
  */
 export function streamRepairThreadIds(
   events: SyncEvent[],
-  projectedThreads: ReadonlyMap<string, { before: Thread }>,
+  projectedThreads: ReadonlyMap<string, { before: Thread; after: Thread }>,
 ): string[] {
   const patchesByThread = new Map<string, ThreadProjectionPatchV1[]>();
   for (const event of events) {
@@ -36,12 +38,59 @@ export function streamRepairThreadIds(
   }
   const repair = new Set<string>();
   for (const [threadId, patches] of patchesByThread) {
-    const thread = projectedThreads.get(threadId)?.before;
-    if (thread !== undefined && threadProjectionNeedsAuthoritativeRepair(thread, patches)) {
+    const projection = projectedThreads.get(threadId);
+    if (projection === undefined) continue;
+    const nonTerminalPatches = patches.filter(({ operation }) => operation.kind !== "turnCompleted");
+    if (threadProjectionNeedsAuthoritativeRepair(projection.before, nonTerminalPatches)
+      || terminalProjectionRequiresRepair(projection.before, projection.after, patches)) {
       repair.add(threadId);
     }
   }
   return [...repair];
+}
+
+function terminalProjectionRequiresRepair(
+  before: Thread,
+  after: Thread,
+  patches: readonly ThreadProjectionPatchV1[],
+): boolean {
+  for (const patch of patches) {
+    if (patch.operation.kind !== "turnCompleted") continue;
+    const turn = asRecord(patch.operation.turn);
+    const turnId = typeof turn?.id === "string" ? turn.id : null;
+    if (turnId === null) return true;
+    const previous = before.turns.find((candidate) => candidate.id === turnId);
+    const projected = after.turns.find((candidate) => candidate.id === turnId);
+    if (projected === undefined || projected.status === "inProgress") return true;
+    // A completed envelope without a non-empty agent boundary cannot prove
+    // that all text deltas reached the read model. Repair before ACK so this
+    // incomplete row never becomes an immutable cursor anchor.
+    if (projected.status === "completed" && !isStableThreadCursorTurn(projected)) return true;
+    // An already-loaded live turn was built from the same ordered replay
+    // journal. Completion finalizes that accumulated value; a bounded server
+    // replacement is unnecessary unless the companion supplied a positive
+    // content witness that the projection does not satisfy.
+    const terminal = asRecord(patch.operation.terminalProjection);
+    const agentMessage = asRecord(terminal?.agentMessage);
+    if (terminal?.version === 1
+      && terminal.turnId === turnId
+      && Number.isSafeInteger(agentMessage?.utf8Bytes)
+      && typeof agentMessage?.sha256 === "string") {
+      const proof: TerminalProjectionProof = {
+        threadId: patch.threadId,
+        turnId,
+        agentMessage: {
+          utf8Bytes: agentMessage.utf8Bytes as number,
+          sha256: agentMessage.sha256,
+        },
+      };
+      if (!terminalProjectionMatches(after, proof)) return true;
+    } else if (previous === undefined && (!Array.isArray(turn?.items) || turn.items.length === 0)) {
+      // A cold sparse completion cannot reconstruct a turn by itself.
+      return true;
+    }
+  }
+  return false;
 }
 
 export function terminalProjectionProofs(events: SyncEvent[]): TerminalProjectionProof[] {

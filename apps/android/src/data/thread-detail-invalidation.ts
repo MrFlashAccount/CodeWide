@@ -1,4 +1,4 @@
-import { threadIdFromEvent, type SyncEvent } from "@codewide/sync-client";
+import { threadIdFromEvent, type SyncEvent, type ThreadProjectionPatchV1 } from "@codewide/sync-client";
 
 export function latestThreadInvalidations(events: SyncEvent[]): Map<string, number> {
   const latest = new Map<string, number>();
@@ -12,6 +12,16 @@ export function latestThreadInvalidations(events: SyncEvent[]): Map<string, numb
 
 export function invalidationCanBeCleared(currentCursor: number, refreshStartCursor: number): boolean {
   return currentCursor <= refreshStartCursor;
+}
+
+export function shouldPersistThreadInvalidation(
+  patch: ThreadProjectionPatchV1 | null,
+  loaded: boolean,
+  startedShell: boolean,
+): boolean {
+  return patch?.operation.kind === "threadInvalidated"
+    || patch === null
+    || (!loaded && !startedShell);
 }
 
 /**

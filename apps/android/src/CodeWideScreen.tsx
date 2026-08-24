@@ -50,8 +50,12 @@ import { WebView } from "react-native-webview";
 import { colors, radii, spacing, touchTarget, typeScale } from "./theme";
 import { useRemoteWorkspace, type BackgroundTerminal, type ComposerAttachment, type QueuedPrompt, type RemoteWorkspace, type SendMode, type ThreadChangeDiffValue, type ThreadGoalInput, type ThreadSettings, type TunnelPreview, type TurnControls, type TurnSendOptions, type VoiceTranscriptionEvent, type VoiceTranscriptionOptions, type VoiceTranscriptionSession } from "./data/use-remote-workspace";
 import type { ThreadForkOptions } from "./data/thread-fork";
-import { THREAD_RESIDENT_TURN_LIMIT, type ResidentRangeDirection, type ThreadHistoryState } from "./data/thread-pagination";
+import { type ThreadHistoryState } from "./data/thread-pagination";
 import { COMPLETE_STATIC_THREAD_HISTORY, useThreadHistoryController, type ThreadHistoryViewport } from "./data/use-thread-history-controller";
+import { useThreadHistoryActivity, useThreadHistoryCursor } from "./data/use-thread-history";
+import { recordThreadHistoryTelemetry } from "./data/thread-history-telemetry";
+import type { ThreadHistoryModel } from "./data/thread-history-model";
+import { isPersistableHistoryAnchor } from "./data/thread-history-anchor";
 import { useThreadChatWindow } from "./data/use-thread-chat-window";
 import { useThreadUiState } from "./data/use-thread-ui-state";
 import { useThreadResources } from "./data/use-thread-resources";
@@ -60,8 +64,12 @@ import { useRemoteProjectCatalog } from "./data/use-remote-project-catalog";
 import { useDeepLinkListener } from "./data/use-deep-link-listener";
 import { useSecondClock } from "./data/second-clock";
 import type { ThreadChatWindowRequest } from "./data/thread-chat-model";
-import { projectThreadChatWindow } from "./data/thread-chat-projection";
-import { mergeThreadLoadStatuses, threadLoadBlocksPresentation } from "./data/thread-load-status";
+import {
+  projectThreadChatWindow,
+  type ProjectedThreadChatDelivery,
+  type ProjectedThreadChatTimelineEntry,
+} from "./data/thread-chat-projection";
+import { threadLoadBlocksPresentation } from "./data/thread-load-status";
 import { mergeProjectedThreadPartitions } from "./data/thread-partitions";
 import { plainThreadPreview } from "./data/thread-cache";
 import type { ThreadDetailDatabase } from "./data/thread-detail-database";
@@ -103,7 +111,7 @@ import {
   readInteractiveTerminalWorkspace,
   useInteractiveTerminalWorkspace,
 } from "./data/interactive-terminal-store";
-import { effectiveTurnLifecycleStatus, isThreadLifecycleActive } from "./data/thread-lifecycle";
+import { isThreadLifecycleActive } from "./data/thread-lifecycle";
 import type { StoredConnection } from "./data/connection-profile-types";
 import type { PendingServerRequest } from "./data/pending-request-types";
 import type { StoredThreadSummary } from "./data/thread-summary-types";
@@ -115,7 +123,6 @@ import { useBackgroundTerminalsRow, useThreadGoalRow, useTunnelRow, useTurnContr
 import type { VoiceInputController } from "./data/voice-input-controller";
 import type { FileTransferController } from "./data/file-transfer-controller";
 import { ATTACHMENT_ROOT_ID, attachmentUploadPath } from "./data/attachment-upload";
-import { type NativeCommandDelivery } from "./native/native-transport";
 import { windowLayoutStore } from "./native/window-layout-store";
 import { createTextUpload, pickUploadFile, type SelectedUpload } from "./native/file-transfer";
 import { RichMarkdown } from "./rendering/RichMarkdown";
@@ -140,13 +147,11 @@ import { projectFileChange } from "./rendering/file-change-rendering";
 import { privateImageAssetProjection, safeImageUri } from "./rendering/image-source";
 import { privateAssetCacheKey, readPrivateAssetText, type GetTransferAccess, type PrivateAssetSource, type PrivateAssetTextResult } from "./data/private-transfer";
 import { projectCachedLiveMarkdown, projectCachedLiveText, type LiveMarkdownProjection } from "./rendering/live-text-stream";
-import { mergeChronologicalTimeline, protocolTimestampMs } from "./rendering/optimistic-timeline";
 import { reasoningActivityTitle } from "./rendering/reasoning-title";
 import { richMarkdownLayout } from "./rendering/rich-markdown-layout";
 import { selectLiveTurnPlan } from "./rendering/live-turn-plan";
 import { isAgentMessageStillStreaming, selectTurnRenderWindow } from "./rendering/thread-render-window";
 import { ThreadTimelineList, type ThreadTimelineListRef, type TimelineInitialPosition } from "./rendering/ThreadTimelineList";
-import { useTimelineOverlayScrollGuard } from "./rendering/use-timeline-overlay-scroll-guard";
 import { optimisticTimelineKey, remoteTurnTimelineKey } from "./rendering/timeline-identity";
 import { activeTurnSequence, type TurnSequencePart } from "./rendering/turn-sequence";
 import { Bubble, BubbleContent } from "./rendering/Bubble";
@@ -228,7 +233,6 @@ const TOOL_RESULT_MAX_HEIGHT = 400;
 const TURN_FOOTER_MIN_HEIGHT = 20;
 const USER_MESSAGE_COLLAPSED_LINES = 25;
 const USER_MESSAGE_COLLAPSED_CHARS = 1_800;
-const MAX_OPTIMISTIC_MESSAGES = 1_000;
 const COMPOSER_MIN_HEIGHT = touchTarget;
 const COMPOSER_MAX_HEIGHT = 132;
 const COMPOSER_LINE_HEIGHT = 21;
@@ -248,7 +252,6 @@ const EMPTY_COMPOSER_PREFERENCES: StoredComposerPreferences = {
 };
 const EMPTY_COMPOSER_ATTACHMENTS: ComposerAttachment[] = [];
 const LATEST_TIMELINE_THRESHOLD_PX = 2;
-const sessionConversationScrollOffsets = new Map<string, number>();
 const sessionConversationHistoryAnchors = new Map<string, { turnId: string; viewportOffsetPx: number | null }>();
 const ForceExpandCardsContext = createContext(false);
 const ActiveToolCallContext = createContext(false);
@@ -441,6 +444,8 @@ function ThreadResourceContextChips({
     ?? (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
   const attachmentsError = resource?.resourceErrors?.attachments
     ?? (resource?.readyKinds === undefined && resource?.status === "error" ? resource.error : null);
+  const changesUnavailable = changesError !== null && !changesReady;
+  const attachmentsUnavailable = attachmentsError !== null && !attachmentsReady;
   const changeCount = resource?.value?.changes.length ?? 0;
   const attachmentCount = resource?.value?.attachments.length ?? 0;
   const changeScopes = resource?.value?.changeScopes ?? ["session" as const, "lastTurn" as const];
@@ -451,12 +456,12 @@ function ThreadResourceContextChips({
   const attachmentsEmpty = attachmentsReady && attachmentCount === 0;
   const changesLabel = changesInitialLoading
     ? "Loading changes…"
-    : changesError !== null && !changesReady
+    : changesUnavailable
       ? "Changes unavailable"
       : changesEmpty ? "No changes" : `Changes · ${changeCount}`;
   const attachmentsLabel = attachmentsInitialLoading
     ? "Loading attachments…"
-    : attachmentsError !== null && !attachmentsReady
+    : attachmentsUnavailable
       ? "Attachments unavailable"
       : attachmentsEmpty ? "No attachments" : `Attachments · ${attachmentCount}`;
   const selectScope = (id: string) => {
@@ -470,39 +475,43 @@ function ThreadResourceContextChips({
   };
   return (
     <>
-      <ActionMenu
-        accessibilityLabel="Choose changes scope"
-        actions={changeScopeMenuActions(changeScopes, changeScope)}
-        trigger="long-press"
-        placement="top"
-        align="start"
-        onSelect={selectScope}
-      >
+      {!changesUnavailable && (
+        <ActionMenu
+          accessibilityLabel="Choose changes scope"
+          actions={changeScopeMenuActions(changeScopes, changeScope)}
+          trigger="long-press"
+          placement="top"
+          align="start"
+          onSelect={selectScope}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${changesLabel}, ${changeScopeTitle(changeScope)}. Long press to choose changes scope.`}
+            onPress={() => onOpen("changes")}
+            style={styles.composerContextChip}
+          >
+            <Ionicons name="git-compare-outline" size={15} color={changesEmpty ? colors.textDim : colors.textMuted} />
+            {changesInitialLoading || changesEmpty
+              ? <ComposerContextLabel loading={changesInitialLoading} testID="composer-changes-label" text={changesLabel} />
+              : <ComposerContextCount label="Changes" value={changeCount} testID="composer-changes-label" />}
+          </Pressable>
+        </ActionMenu>
+      )}
+      {!attachmentsUnavailable && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${changesLabel}, ${changeScopeTitle(changeScope)}. Long press to choose changes scope.`}
-          onPress={() => onOpen("changes")}
-          style={styles.composerContextChip}
+          accessibilityLabel={attachmentsLabel}
+          accessibilityState={{ disabled: attachmentsEmpty }}
+          disabled={attachmentsEmpty}
+          onPress={() => onOpen("attachments")}
+          style={[styles.composerContextChip, attachmentsEmpty && styles.disabled]}
         >
-          <Ionicons name="git-compare-outline" size={15} color={changesEmpty ? colors.textDim : colors.textMuted} />
-          {changesInitialLoading || changesEmpty || changesError !== null && !changesReady
-            ? <ComposerContextLabel loading={changesInitialLoading} testID="composer-changes-label" text={changesLabel} />
-            : <ComposerContextCount label="Changes" value={changeCount} testID="composer-changes-label" />}
+          <Ionicons name="attach-outline" size={15} color={attachmentsEmpty ? colors.textDim : colors.textMuted} />
+          {attachmentsInitialLoading || attachmentsEmpty
+            ? <ComposerContextLabel loading={attachmentsInitialLoading} testID="composer-attachments-label" text={attachmentsLabel} />
+            : <ComposerContextCount label="Attachments" value={attachmentCount} testID="composer-attachments-label" />}
         </Pressable>
-      </ActionMenu>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={attachmentsLabel}
-        accessibilityState={{ disabled: attachmentsEmpty }}
-        disabled={attachmentsEmpty}
-        onPress={() => onOpen("attachments")}
-        style={[styles.composerContextChip, attachmentsEmpty && styles.disabled]}
-      >
-        <Ionicons name="attach-outline" size={15} color={attachmentsEmpty ? colors.textDim : colors.textMuted} />
-        {attachmentsInitialLoading || attachmentsEmpty || attachmentsError !== null && !attachmentsReady
-          ? <ComposerContextLabel loading={attachmentsInitialLoading} testID="composer-attachments-label" text={attachmentsLabel} />
-          : <ComposerContextCount label="Attachments" value={attachmentCount} testID="composer-attachments-label" />}
-      </Pressable>
+      )}
     </>
   );
 }
@@ -547,7 +556,6 @@ function ThreadTimelineNavigationCommit({
   itemCount,
   turnCount,
   loadStatus,
-  restoreOffset,
   restoreAnchorTurnId,
   children,
 }: {
@@ -557,8 +565,7 @@ function ThreadTimelineNavigationCommit({
   visible: boolean;
   itemCount: number;
   turnCount: number;
-  loadStatus: ThreadHistoryViewport["status"];
-  restoreOffset: number | null;
+  loadStatus: ThreadHistoryState["status"];
   restoreAnchorTurnId: string | null;
   children: ReactNode;
 }) {
@@ -585,8 +592,7 @@ function ThreadTimelineNavigationCommit({
     if (!scopeReportedRef.current) {
       scopeReportedRef.current = true;
       markThreadNavigationStage(connectionId, threadId, "scope_commit", {
-        values: { restoredOffsetPx: restoreOffset ?? 0 },
-        tags: { restore: restoreOffset === null ? "waiting_for_cursor" : restoreAnchorTurnId === null ? "latest" : "semantic_anchor" },
+        tags: { position: restoreAnchorTurnId === null ? "end" : "anchor" },
       }, navigationId);
     }
     if (modelReady && !modelReportedRef.current) {
@@ -629,7 +635,7 @@ type ConversationDestinationBaseProps = Omit<ConversationPaneProps,
   | "remoteThread"
   | "remoteSealedTurns"
   | "remoteLiveTurns"
-  | "pendingDeliveries"
+  | "timelineEntries"
   | "queuedPrompts"
   | "composerState"
   | "historyRestoreReady"
@@ -685,30 +691,31 @@ function MainConversationDetail({
   });
   const storedThread = summaryView?.selected[0] ?? null;
   const composerState = useThreadUiState(uiStateDatabase, connectionId, threadId);
+  const [initialHistoryAnchorTurnId] = useState(() => composerState.historyAnchorTurnId ?? null);
   const historyResourceId = threadHistoryResourceKey(connectionId, threadId);
-  const historyQuery = useLiveQuery(
-    (query) => remote.resourceDatabase === null
-      ? undefined
-      : query
-          .from({ load: remote.resourceDatabase.threadHistories })
-          .where(({ load }) => eq(load.id, historyResourceId)),
-    [historyResourceId, remote.resourceDatabase],
-  );
-  const historyResourceRaw = historyQuery.data?.[0] ?? null;
+  const historyModel = remote.resourceDatabase?.threadHistories ?? null;
+  const historyResourceRaw = useThreadHistoryCursor(historyModel, historyResourceId);
   const chatWindowRequest: ThreadChatWindowRequest = {
     connectionId,
     threadId,
-    anchorTurnId: composerState.historyAnchorTurnId ?? null,
-    residentHistoryEpoch: historyResourceRaw?.historyEpoch ?? null,
-    residentMaxOrdinal: historyResourceRaw === null ? undefined : historyResourceRaw.residentMaxOrdinal,
-    residentTurnLimit: historyResourceRaw?.residentTurnLimit ?? THREAD_RESIDENT_TURN_LIMIT,
+    anchorTurnId: initialHistoryAnchorTurnId,
   };
   const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest);
   if (chatWindow === null) throw new Error("Conversation window is unavailable");
 
   const chatSnapshot = chatWindow.snapshot;
+  const latestResidentOrdinal = chatWindow.turnRows.reduce<number | null>(
+    (maximum, row) => row.kind !== "turn" || !row.sealed
+      ? maximum
+      : maximum === null ? row.ordinal : Math.max(maximum, row.ordinal),
+    null,
+  );
+  const isLatestRange = chatSnapshot.latestSealedOrdinal === null
+    || (latestResidentOrdinal !== null && latestResidentOrdinal >= chatSnapshot.latestSealedOrdinal);
   const historyEpoch = chatSnapshot.historyEpoch;
-  const historyResource = historyResourceRaw?.historyEpoch === historyEpoch ? historyResourceRaw : null;
+  const historyResource = historyResourceRaw?.historyEpoch === historyEpoch
+    ? historyModel?.get(historyResourceId) ?? null
+    : null;
   const putHistoryState = (state: ThreadHistoryState): void => {
     remote.resourceDatabase?.putThreadHistory({
       id: historyResourceId,
@@ -718,45 +725,23 @@ function MainConversationDetail({
       ...state,
     });
   };
-  const readHistoryState = (): ThreadHistoryState | null => {
-    const row = remote.resourceDatabase?.threadHistories.get(historyResourceId) ?? null;
-    return row?.historyEpoch === historyEpoch ? row : null;
-  };
-  const projection = projectThreadChatWindow(chatDatabase, chatWindow, connectionId, threadId, false);
+  const projection = projectThreadChatWindow(chatDatabase, chatWindow, connectionId, threadId, false, storedThread);
   const remoteThread = projection.remoteThread ?? storedThread?.provisionalThread ?? null;
   const provisionalThread = storedThread?.provisionalThread ?? null;
   const historyRestoreReady = !threadLoadBlocksPresentation(chatSnapshot.status);
-  const persistedResidentMaxOrdinal = chatSnapshot.requestedMaxOrdinal ?? null;
-  const activeResidentMaxOrdinal = historyResource?.residentMaxOrdinal ?? persistedResidentMaxOrdinal;
-  const residentTurnLimit = historyResource?.residentTurnLimit
-    ?? chatSnapshot.residentTurnLimit
-    ?? THREAD_RESIDENT_TURN_LIMIT;
-  const residentOrdinalBounds = (() => {
-    if (chatWindow.turnRows.length === 0) return null;
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-    for (const row of chatWindow.turnRows) {
-      min = Math.min(min, row.ordinal);
-      max = Math.max(max, row.ordinal);
-    }
-    return { min, max };
-  })();
-  const windowReady = chatSnapshot.status === "ready"
-    || chatSnapshot.status === "background-updating"
-    || chatSnapshot.status === "background-retrying";
   const historyState: ThreadHistoryState = historyResource ?? {
     historyEpoch,
-    status: provisionalThread !== null ? "ready" : remoteThread === null ? "initial-loading" : "background-updating",
-    nextCursor: null,
-    residentTurnLimit,
-    residentMaxOrdinal: persistedResidentMaxOrdinal,
+    status: remoteThread === null ? "initial-loading" : "ready",
+    nextCursor: chatDatabase.historyCursor(connectionId, threadId),
     error: null,
   };
-  const presentationState: ThreadHistoryState = {
-    ...historyState,
-    status: mergeThreadLoadStatuses(chatSnapshot.status, historyState.status),
+  const readHistoryState = (): ThreadHistoryState | null => {
+    const row = historyModel?.get(historyResourceId) ?? null;
+    return row?.historyEpoch === historyEpoch ? row : historyState;
   };
-  const hydrationTaskKey = !connectionAvailable || !historyRestoreReady
+  const requiresJournalCatchUp = remoteThread === null
+    || chatDatabase.captureRefreshCursor(connectionId, threadId) !== null;
+  const hydrationTaskKey = !connectionAvailable || !historyRestoreReady || !requiresJournalCatchUp
     ? null
     : `thread-hydration:${historyResourceId}:${threadOpenGeneration}:${historyEpoch}:${provisionalThread === null ? "materialized" : "provisional"}`;
   useAsyncResource<ThreadHistoryState>("active-thread-hydration", hydrationTaskKey ?? "inactive", async (_publish, signal) => {
@@ -765,17 +750,13 @@ function MainConversationDetail({
     const loadingState: ThreadHistoryState = {
       historyEpoch,
       status: cachedSnapshotAvailable ? "background-updating" : "initial-loading",
-      nextCursor: historyResource?.nextCursor ?? null,
-      residentTurnLimit,
-      residentMaxOrdinal: historyResource?.residentMaxOrdinal ?? persistedResidentMaxOrdinal,
+      nextCursor: historyState.nextCursor,
       error: null,
     };
     const navigationId = activeThreadNavigationIdFor(connectionId, threadId);
     recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
       values: {
         historyEpoch,
-        residentMaxOrdinal: loadingState.residentMaxOrdinal ?? -1,
-        residentTurnLimit: loadingState.residentTurnLimit,
       },
       tags: { status: loadingState.status, phase: "start" },
     }, navigationId ?? undefined);
@@ -805,8 +786,6 @@ function MainConversationDetail({
       recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
         values: {
           historyEpoch,
-          residentMaxOrdinal: state.residentMaxOrdinal ?? -1,
-          residentTurnLimit: state.residentTurnLimit,
         },
         tags: { status: state.status, phase: "error" },
       }, navigationId ?? undefined);
@@ -818,14 +797,14 @@ function MainConversationDetail({
     const state: ThreadHistoryState = {
       ...(current ?? loadingState),
       status: result.window === null ? cachedSnapshotAvailable ? "background-retrying" : "initial-error" : "ready",
-      nextCursor: result.window?.nextCursor ?? current?.nextCursor ?? null,
+      nextCursor: current?.nextCursor !== undefined
+        ? current.nextCursor
+        : result.window?.nextCursor,
       error: result.window === null ? "Could not load messages" : null,
     };
     recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
       values: {
         historyEpoch,
-        residentMaxOrdinal: state.residentMaxOrdinal ?? -1,
-        residentTurnLimit: state.residentTurnLimit,
       },
       tags: { status: state.status, phase: "result" },
     }, navigationId ?? undefined);
@@ -833,9 +812,9 @@ function MainConversationDetail({
     return state;
   });
 
-  const staleLifecycleTurnId = !connectionAvailable || threadLifecycleActive || remoteThread === null
+  const staleLifecycleTurnId = !connectionAvailable || threadLifecycleActive
     ? null
-    : activeTurnId(remoteThread);
+    : projection.staleLifecycleTurnId;
   const lifecycleRepairTaskKey = staleLifecycleTurnId === null
     ? null
     : `thread-lifecycle-repair:${connectionId}:${threadId}:${staleLifecycleTurnId}`;
@@ -847,20 +826,15 @@ function MainConversationDetail({
 
   const historyViewport = useThreadHistoryController({
     enabled: true,
-    resourceId: historyResourceId,
     connectionId,
     threadId,
     historyEpoch,
-    state: historyResource,
-    presentationState,
-    residentTurnRows: chatWindow.turnRows,
-    liveRows: chatWindow.liveRows,
-    residentOrdinalBounds,
-    presentedResidentMaxOrdinal: chatSnapshot.requestedMaxOrdinal ?? activeResidentMaxOrdinal,
-    persistedMinimumOrdinal: chatSnapshot.earliestSealedOrdinal,
-    latestSealedOrdinal: chatSnapshot.latestSealedOrdinal,
-    residentQueryReady: windowReady,
+    cursorState: historyState,
+    readState: readHistoryState,
+    isLatestRange,
     putState: putHistoryState,
+    pullRange: async (direction) => await chatDatabase.pullRange(connectionId, threadId, direction),
+    trimRange: async (direction) => await chatDatabase.trimRange(connectionId, threadId, direction),
     loadOlderTurns: remote.loadOlderTurns,
   });
 
@@ -878,12 +852,11 @@ function MainConversationDetail({
       />
       <CommitOnChangeProbe
         scope={`main-window:${navigationKey}`}
-        revision={`${chatSnapshot.requestKey ?? "none"}:${chatSnapshot.status}:${chatSnapshot.layoutRevision}:${chatSnapshot.revision}:${chatWindow.turnRows.length}:${chatWindow.detailRows.length}:${chatWindow.liveRows.length}:${historyResourceRaw === null ? "history-missing" : `history-${historyResourceRaw.generation}`}`}
+        revision={`${chatSnapshot.requestKey ?? "none"}:${chatSnapshot.status}:${chatSnapshot.layoutRevision}:${chatSnapshot.revision}:${chatWindow.turnRows.length}:${chatWindow.detailRows.length}:${chatWindow.liveRows.length}`}
         onCommit={() => {
           recordThreadNavigationVisualEvent(connectionId, threadId, "chat_window_committed", {
             values: {
               historyEpoch: chatSnapshot.historyEpoch,
-              requestedMaxOrdinal: chatSnapshot.requestedMaxOrdinal ?? -1,
               residentTurnLimit: chatSnapshot.residentTurnLimit,
               layoutRevision: chatSnapshot.layoutRevision,
               contentRevision: chatSnapshot.revision,
@@ -893,11 +866,7 @@ function MainConversationDetail({
             },
             tags: {
               status: chatSnapshot.status,
-              request: chatWindowRequest.residentMaxOrdinal === undefined
-                ? "restore"
-                : chatWindowRequest.residentMaxOrdinal === null
-                  ? "tail"
-                  : "ordinal",
+              request: chatWindowRequest.anchorTurnId === null ? "tail" : "anchor",
               history: historyResourceRaw === null ? "missing" : "resident",
             },
           });
@@ -909,11 +878,13 @@ function MainConversationDetail({
         remoteThread={remoteThread}
         remoteSealedTurns={projection.remoteSealedTurns}
         remoteLiveTurns={projection.remoteLiveTurns}
-        pendingDeliveries={projection.pendingDeliveries}
+        timelineEntries={projection.timeline}
         queuedPrompts={projection.queuedPrompts}
         composerState={composerState}
         historyRestoreReady={historyRestoreReady}
         historyViewport={historyViewport}
+        historyActivityModel={historyModel}
+        historyActivityResourceId={historyResourceId}
         onLoadTurnItems={async (turnId) => { await remote.loadTurnItems(connectionId, threadId, turnId); }}
         subagentSummaryDatabase={remote.threadSummaryDatabase}
       />
@@ -945,7 +916,7 @@ function NewConversationDetail({
         remoteThread={null}
         remoteSealedTurns={[]}
         remoteLiveTurns={[]}
-        pendingDeliveries={[]}
+        timelineEntries={[]}
         queuedPrompts={[]}
         composerState={composerState}
         historyRestoreReady
@@ -1051,21 +1022,43 @@ function ConversationNavigationFallback({
 }
 
 const timelineRowCache = new WeakMap<Thread["turns"][number], Extract<TimelineItem, { kind: "turn" }>>();
+const optimisticTimelineRowCache = new WeakMap<object, Extract<TimelineItem, { kind: "optimistic" }>>();
+
+function projectOptimisticTimelineItem(
+  delivery: ProjectedThreadChatDelivery,
+  composerScope: string,
+): Extract<TimelineItem, { kind: "optimistic" }> {
+  const cached = optimisticTimelineRowCache.get(delivery);
+  if (cached?.scope === composerScope) return cached;
+  const item: Extract<TimelineItem, { kind: "optimistic" }> = {
+    kind: "optimistic",
+    scope: composerScope,
+    id: delivery.commandId,
+    text: delivery.text,
+    attachments: delivery.attachments ?? [],
+    ...(delivery.workspaceRequestId === undefined ? {} : { workspaceRequestId: delivery.workspaceRequestId }),
+    status: delivery.state === "failed"
+      ? "failed"
+      : delivery.state === "uncertain"
+        ? "uncertain"
+        : delivery.state === "delivered"
+          ? "delivered"
+          : "sending",
+    lastError: delivery.lastError,
+    createdAt: delivery.createdAt,
+  };
+  optimisticTimelineRowCache.set(delivery, item);
+  return item;
+}
+
 function projectTimelineTurns(
   turns: readonly Thread["turns"][number][],
   composerScope: string,
   connectionId: string,
   threadId: string,
-  threadState?: ThreadListItem["state"],
 ): Extract<TimelineItem, { kind: "turn" }>[] {
   return turns.map((rawTurn) => {
-    const effectiveStatus = threadState === undefined
-      ? rawTurn.status
-      : effectiveTurnLifecycleStatus(rawTurn.status, threadState);
-    const effectiveTurn = effectiveStatus === rawTurn.status
-      ? rawTurn
-      : { ...rawTurn, status: effectiveStatus };
-    const cached = effectiveTurn === rawTurn ? timelineRowCache.get(rawTurn) : undefined;
+    const cached = timelineRowCache.get(rawTurn);
     if (cached !== undefined) return cached;
     const item: Extract<TimelineItem, { kind: "turn" }> = {
       kind: "turn",
@@ -1074,9 +1067,9 @@ function projectTimelineTurns(
       connectionId,
       threadId,
       scope: composerScope,
-      turn: effectiveTurn,
+      turn: rawTurn,
     };
-    if (effectiveTurn === rawTurn) timelineRowCache.set(rawTurn, item);
+    timelineRowCache.set(rawTurn, item);
     return item;
   });
 }
@@ -1290,6 +1283,18 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   ]);
   const projectedThreadSummaries = threadListProjection.project(loadedThreadSummaries, remote.pendingRequests);
   const threads: ThreadListItem[] = projectedThreadSummaries.map(storedThreadToListItem);
+  const scopedThreads = activeServerId === ALL_SERVERS_ID ? threads : threads.filter((thread) => thread.serverId === activeServerId);
+  const serverThreads = scopedThreads.filter((thread) => !thread.archived);
+  const archivedThreads = scopedThreads.filter((thread) => thread.archived);
+  if (desktop && newChatDraft === null && threadSelection.id === null && serverThreads[0] !== undefined) {
+    const defaultThreadId = threadSelectionKey(serverThreads[0]);
+    // Desktop opens the first available conversation, but selection itself is
+    // always an explicit stable id. Updating during render restarts this render
+    // before commit, so a later Recent reorder can never select by row index.
+    setThreadSelection((current) => current.id === null
+      ? { id: defaultThreadId, generation: current.generation + 1 }
+      : current);
+  }
   const loadMoreThreads = () => {
     const loadedCount = threadListMode === "archived"
       ? archivedThreadSummaryRows.length
@@ -1355,15 +1360,9 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
       connectionId: target.connectionId,
       threadId: target.threadId,
       anchorTurnId: uiState?.historyAnchorTurnId ?? null,
-      residentHistoryEpoch: null,
-      residentMaxOrdinal: undefined,
-      residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
     });
   };
 
-  const scopedThreads = activeServerId === ALL_SERVERS_ID ? threads : threads.filter((thread) => thread.serverId === activeServerId);
-  const serverThreads = scopedThreads.filter((thread) => !thread.archived);
-  const archivedThreads = scopedThreads.filter((thread) => thread.archived);
   const normalizedMobileThreadQuery = mobileThreadQuery.trim().toLocaleLowerCase();
   const mobileSearchKey = `${activeServerId}\u0000${normalizedMobileThreadQuery}`;
   const mobileRemoteSearchResource = useAsyncResource<ThreadListItem[]>(
@@ -1390,7 +1389,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const pendingThreadSelection = requestedThreadId !== null
     && selectedThread === null;
   const activeThread = newChatDraft === null
-    ? selectedThread ?? (desktop && !pendingThreadSelection ? (serverThreads[0] ?? null) : null)
+    ? selectedThread
     : null;
   const activeThreadId = activeThread === null
     ? pendingThreadSelection ? requestedThreadId : null
@@ -3256,6 +3255,88 @@ function ComposerSubagentContextChipLoaded({ database, connectionId, parentThrea
   </Pressable>;
 }
 
+function ConversationHistorySubtitle({
+  model,
+  resourceId,
+  server,
+  cwd,
+}: {
+  model: ThreadHistoryModel | null;
+  resourceId: string | null;
+  server: ThreadListServer | undefined;
+  cwd: string;
+}) {
+  const activity = useThreadHistoryActivity(model, resourceId);
+  const connecting = server?.status === "connecting";
+  const text = connecting
+    ? "connecting…"
+    : activity.status === "background-retrying"
+      ? "update delayed"
+      : threadContextLabel(server?.name ?? "", cwd);
+  const color = connecting
+    ? connectionActivityColor("connecting")
+    : activity.status === "background-retrying"
+      ? colors.amber
+      : colors.textMuted;
+  return (
+    <Text
+      testID="conversation-subtitle"
+      numberOfLines={1}
+      ellipsizeMode="middle"
+      style={[styles.conversationSubtitle, { color }]}
+    >
+      {text}
+    </Text>
+  );
+}
+
+function ThreadHistoryLoadingIndicator({
+  model,
+  resourceId,
+  hasTimeline,
+}: {
+  model: ThreadHistoryModel | null;
+  resourceId: string | null;
+  hasTimeline: boolean;
+}) {
+  const activity = useThreadHistoryActivity(model, resourceId);
+  if (!hasTimeline || activity.status !== "loading-history") return null;
+  return (
+    <View pointerEvents="none" testID="history-loading-indicator" style={styles.historyLoadingIndicator}>
+      <View style={styles.historyLoadingIndicatorPill}>
+        <ActivityIndicator size="small" color={colors.textMuted} />
+      </View>
+    </View>
+  );
+}
+
+function ThreadHistoryEmptyState({
+  model,
+  resourceId,
+  threadSearchActive,
+}: {
+  model: ThreadHistoryModel | null;
+  resourceId: string | null;
+  threadSearchActive: boolean;
+}) {
+  const activity = useThreadHistoryActivity(model, resourceId);
+  const initialLoading = !threadSearchActive && activity.status === "initial-loading";
+  return (
+    <>
+      {initialLoading ? <ActivityIndicator size="small" color={colors.accent} /> : null}
+      <Text style={styles.emptyText}>
+        {threadSearchActive
+          ? "No matches"
+          : activity.status === "initial-error"
+            ? activity.error ?? "Could not load messages"
+            : initialLoading
+              ? "Loading messages…"
+              : "Start by typing a message"}
+      </Text>
+    </>
+  );
+}
+
 function ConversationPane({
   thread,
   server,
@@ -3268,9 +3349,11 @@ function ConversationPane({
   onRefreshAccountRateLimits,
   remoteSealedTurns,
   remoteLiveTurns,
+  timelineEntries,
   historyViewport = COMPLETE_STATIC_THREAD_HISTORY,
+  historyActivityModel = null,
+  historyActivityResourceId = null,
   onLoadTurnItems,
-  pendingDeliveries = [],
   queuedPrompts = [],
   composerState = null,
   historyRestoreReady = true,
@@ -3361,9 +3444,11 @@ function ConversationPane({
   onRefreshAccountRateLimits?(): Promise<unknown>;
   remoteSealedTurns?: readonly Thread["turns"][number][];
   remoteLiveTurns?: readonly Thread["turns"][number][];
+  timelineEntries?: readonly ProjectedThreadChatTimelineEntry[];
   historyViewport?: ThreadHistoryViewport;
+  historyActivityModel?: ThreadHistoryModel | null;
+  historyActivityResourceId?: string | null;
   onLoadTurnItems?(turnId: string): Promise<void>;
-  pendingDeliveries?: Array<NativeCommandDelivery & { attachments?: ComposerAttachment[] }>;
   queuedPrompts?: QueuedPrompt[];
   composerState?: ThreadUiStateRow | null;
   historyRestoreReady?: boolean;
@@ -3583,65 +3668,95 @@ function ConversationPane({
   const acknowledgedUnreadReceiptKeyRef = useRef<string | null>(null);
   const settingsMutationRef = useRef({ model: 0, effort: 0, permissions: 0 });
   const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timelinePositionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timelineSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const timelineIndexRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchOriginOffsetRef = useRef<number | null>(null);
-  const timelineInteractionScopeRef = useRef("");
-  const residentRangeMoveInFlightRef = useRef(false);
-  const pendingResidentRangeMoveRef = useRef<{ turnId: string; direction: ResidentRangeDirection; move: ThreadHistoryViewport["move"] } | null>(null);
-  const scrollGestureActiveRef = useRef(false);
-  const scrollDirectionRef = useRef<ResidentRangeDirection | null>(null);
   const firstVisibleHistoryAnchorRef = useRef<string | null>(null);
   const firstVisibleHistoryAnchorKeyRef = useRef<string | null>(null);
+  const firstVisibleHistoryAnchorStatusRef = useRef<Thread["turns"][number]["status"] | null>(null);
   const lastTimelineOffsetYRef = useRef<number | null>(null);
+  const scrollGestureStartedAtRef = useRef<number | null>(null);
+  // A bounded range replacement can make LegendList briefly report the
+  // opposite edge while MVCP restores the retained item. Keep the first edge
+  // reached by a gesture authoritative until the next drag; the list still
+  // decides when to load, but one gesture cannot page forward and immediately
+  // page backward to the range it just evicted.
+  const paginationEdgeLockRef = useRef<"older" | "newer" | null>(null);
+  const paginationTrimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onTimelineFirstVisibleItemChanged = ({ index, item }: { index: number; item: TimelineItem; key: string }) => {
     const anchor = item.kind === "turn"
       ? item
       : timeline.slice(index + 1).find((candidate): candidate is Extract<TimelineItem, { kind: "turn" }> => candidate.kind === "turn") ?? null;
     firstVisibleHistoryAnchorRef.current = anchor?.id ?? null;
     firstVisibleHistoryAnchorKeyRef.current = anchor === null ? null : timelineItemKey(anchor);
-    const turnId = anchor?.id ?? null;
-    const direction = scrollDirectionRef.current;
-    if (turnId !== null
-      && direction !== null
-      && scrollGestureActiveRef.current
-      && timelineInteractionScopeRef.current === composerScope) {
-      requestResidentRangeMove(turnId, direction, historyViewport.move);
-    }
+    firstVisibleHistoryAnchorStatusRef.current = anchor?.turn.status ?? null;
   };
-  function requestResidentRangeMove(turnId: string, direction: ResidentRangeDirection, move: ThreadHistoryViewport["move"]): void {
-    if (residentRangeMoveInFlightRef.current) {
-      pendingResidentRangeMoveRef.current = { turnId, direction, move };
-      return;
+  const loadOlderAtTimelineStart = () => {
+    const oppositeEdge = paginationEdgeLockRef.current === "newer";
+    if (!oppositeEdge) paginationEdgeLockRef.current = "older";
+    if (draftConnectionId !== null && draftThreadId !== null) {
+      recordThreadHistoryTelemetry(draftConnectionId, draftThreadId, "chat.scroll.edge_reached", {
+        ...(firstVisibleHistoryAnchorRef.current === null ? {} : { turnId: firstVisibleHistoryAnchorRef.current }),
+        values: {
+          itemCount: displayedTimeline.length,
+          offsetY: lastTimelineOffsetYRef.current ?? 0,
+          distanceFromEndPx: scrollOffsetRef.current,
+        },
+        tags: {
+          direction: "older",
+          outcome: threadSearchActive
+            ? "ignored_search"
+            : oppositeEdge ? "ignored_opposite_edge" : "requested",
+          status: historyViewport.readStatus(),
+        },
+      });
     }
-    residentRangeMoveInFlightRef.current = true;
-    void move(turnId, direction).finally(() => {
-      residentRangeMoveInFlightRef.current = false;
-      const pending = pendingResidentRangeMoveRef.current;
-      pendingResidentRangeMoveRef.current = null;
-      if (pending !== null && scrollGestureActiveRef.current) {
-        requestResidentRangeMove(pending.turnId, pending.direction, pending.move);
-      }
-    });
-  }
-  const timelineRef = useRef<ThreadTimelineListRef>(null);
-  const timelineOverlayFreeze = useSharedValue(false);
-  const timelineOverlay = useTimelineOverlayScrollGuard({
-    listRef: timelineRef,
-    offsetYRef: lastTimelineOffsetYRef,
-    viewportHeightRef: timelineViewportHeightRef,
-    contentHeightRef: timelineContentHeightRef,
-    distanceFromEndRef: scrollOffsetRef,
-    freeze: timelineOverlayFreeze,
+    if (threadSearchActive || oppositeEdge) return;
+    void historyViewport.loadOlder();
+  };
+  const loadNewerAtTimelineEnd = () => {
+    const oppositeEdge = paginationEdgeLockRef.current === "older";
+    if (!oppositeEdge) paginationEdgeLockRef.current = "newer";
+    if (draftConnectionId !== null && draftThreadId !== null) {
+      recordThreadHistoryTelemetry(draftConnectionId, draftThreadId, "chat.scroll.edge_reached", {
+        ...(firstVisibleHistoryAnchorRef.current === null ? {} : { turnId: firstVisibleHistoryAnchorRef.current }),
+        values: {
+          itemCount: displayedTimeline.length,
+          offsetY: lastTimelineOffsetYRef.current ?? 0,
+          distanceFromEndPx: scrollOffsetRef.current,
+        },
+        tags: {
+          direction: "newer",
+          outcome: threadSearchActive
+            ? "ignored_search"
+            : oppositeEdge ? "ignored_opposite_edge" : "requested",
+          status: historyViewport.readStatus(),
+        },
+      });
+    }
+    if (threadSearchActive || oppositeEdge) return;
+    void historyViewport.loadNewer();
+  };
+  const cancelScheduledPaginationTrim = useEvent(() => {
+    if (paginationTrimTimerRef.current === null) return;
+    clearTimeout(paginationTrimTimerRef.current);
+    paginationTrimTimerRef.current = null;
   });
+  const trimPaginationWindow = useEvent(() => {
+    cancelScheduledPaginationTrim();
+    const direction = paginationEdgeLockRef.current;
+    paginationEdgeLockRef.current = null;
+    if (direction !== null) void historyViewport.trimAfterGesture(direction);
+  });
+  const schedulePaginationWindowTrim = useEvent(() => {
+    cancelScheduledPaginationTrim();
+    // Momentum begins immediately after drag end. Give that callback one frame
+    // to cancel the trim; otherwise a slow drag settles without waiting for a
+    // momentum event that will never arrive.
+    paginationTrimTimerRef.current = setTimeout(trimPaginationWindow, 32);
+  });
+  const timelineRef = useRef<ThreadTimelineListRef>(null);
   const fullscreenOverlayLifecycle: AppFullscreenOverlayLifecycle = {
-    willOpen: (id) => {
-      timelineOverlay.begin(id);
-      dismissComposerKeyboardForOverlay();
-    },
-    didOpen: () => timelineOverlay.restore(false),
-    didClose: (id) => timelineOverlay.end(id),
+    willOpen: () => dismissComposerKeyboardForOverlay(),
   };
   const fullscreenOverlay = useAppFullscreenOverlay({
     scope: composerScope,
@@ -3654,19 +3769,23 @@ function ConversationPane({
     KeyboardController.dismiss({ animated: true, keepFocus: false });
   };
   const awayFromLatestRef = useRef(false);
-  const followingLatestRef = useRef(false);
-  const momentumActiveRef = useRef(false);
-  const scrollRestoredRef = useRef(false);
-  const initialRestoreOffset = historyRestoreReady ? sessionConversationScrollOffsets.get(composerScope) ?? composerState?.scrollOffset ?? 0 : null;
-  const pendingRestoreOffsetRef = useRef<number | null>(initialRestoreOffset);
-  const initialSessionHistoryAnchor = sessionConversationHistoryAnchors.get(composerScope);
-  const initialRestoreAnchorTurnId = historyRestoreReady ? initialSessionHistoryAnchor?.turnId ?? composerState?.historyAnchorTurnId ?? null : null;
-  const pendingRestoreAnchorTurnIdRef = useRef<string | null>(initialRestoreAnchorTurnId);
-  const pendingRestoreAnchorOffsetRef = useRef<number | null>(historyRestoreReady ? initialSessionHistoryAnchor?.viewportOffsetPx ?? composerState?.historyAnchorOffsetPx ?? null : null);
+  // A saved anchor is only a bootstrap input for this mounted conversation.
+  // Reading the mutable session/SQLite value on every render lets later
+  // pagination change initialScrollIndex while LegendList is preserving its
+  // own visible item, so two independent owners can move the viewport.
+  const [initialHistoryRestore] = useState(() => {
+    const sessionAnchor = sessionConversationHistoryAnchors.get(composerScope);
+    return {
+      turnId: historyRestoreReady
+        ? sessionAnchor?.turnId ?? composerState?.historyAnchorTurnId ?? null
+        : null,
+      viewportOffsetPx: sessionAnchor?.viewportOffsetPx ?? composerState?.historyAnchorOffsetPx ?? 0,
+    };
+  });
+  const initialRestoreAnchorTurnId = initialHistoryRestore.turnId;
   const [composerDockHeight, setComposerDockHeight] = useState(touchTarget + 12);
-  const [timelineDidPosition, setTimelineDidPosition] = useState(false);
+  const [timelineDidLoad, setTimelineDidLoad] = useState(false);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
-  const [timelineTailFollowEnabled, setTimelineTailFollowEnabled] = useState(false);
   const mountedConversationScopeRef = useRef({
     scope: composerScope,
     connectionId: draftConnectionId,
@@ -3681,34 +3800,6 @@ function ConversationPane({
   const catalogDefaultModel = controls.models.find((candidate) => candidate.isDefault) ?? null;
   const effectiveModel = selectedModel ?? serverExecution?.model ?? controls.defaults.model ?? catalogDefaultModel?.id ?? null;
   const serverBackedSettings = onUpdateSettings !== undefined;
-
-  const projectedPendingDeliveries = measureThreadNavigationWork(draftConnectionId ?? "", draftThreadId, "project_pending_deliveries", () => {
-    if (draftConnectionId === null || draftThreadId === null) return [];
-    return pendingDeliveries.flatMap((delivery) => {
-      if (delivery.connectionId !== draftConnectionId || (delivery.method !== "turn/start" && delivery.method !== "turn/steer")) return [];
-      if (delivery.threadId !== draftThreadId) return [];
-      return [{
-        scope: composerScope,
-        id: delivery.commandId,
-        text: delivery.text,
-        attachments: delivery.attachments ?? [],
-        ...(delivery.workspaceRequestId === undefined ? {} : { workspaceRequestId: delivery.workspaceRequestId }),
-        status: delivery.state === "failed"
-          ? "failed" as const
-          : delivery.state === "uncertain"
-            ? "uncertain" as const
-            : delivery.state === "delivered"
-              ? "delivered" as const
-              : "sending" as const,
-        lastError: delivery.lastError,
-        createdAt: delivery.createdAt,
-      }];
-    });
-  }, { values: { deliveryCount: pendingDeliveries.length } });
-
-  // The Legend thread timeline is the only optimistic-message source.
-  // Kotlin owns durable delivery; React only renders the unified projection.
-  const optimistic = projectedPendingDeliveries.slice(-MAX_OPTIMISTIC_MESSAGES);
 
   const requestControls = () => {
     const current = currentControlsResource();
@@ -3740,7 +3831,7 @@ function ConversationPane({
           draftConnectionId ?? "",
           draftThreadId,
           "project_live_timeline",
-          () => projectTimelineTurns(remoteLiveTurns, composerScope, server?.id ?? "remote", timelineRemoteThreadId, thread?.state),
+          () => projectTimelineTurns(remoteLiveTurns, composerScope, server?.id ?? "remote", timelineRemoteThreadId),
           { values: { turnCount: remoteLiveTurns.length } },
         );
   const fullTimeline = remoteThread === null || remoteThread === undefined
@@ -3749,9 +3840,20 @@ function ConversationPane({
           draftConnectionId ?? "",
           draftThreadId,
           "project_full_timeline",
-          () => projectTimelineTurns(remoteThread.turns, composerScope, server?.id ?? "remote", remoteThread.id, thread?.state),
+          () => projectTimelineTurns(remoteThread.turns, composerScope, server?.id ?? "remote", remoteThread.id),
           { values: { turnCount: remoteThread.turns.length } },
         );
+  const modelTimeline = timelineEntries === undefined || timelineRemoteThreadId === undefined
+    ? null
+    : measureThreadNavigationWork(
+        draftConnectionId ?? "",
+        draftThreadId,
+        "project_model_timeline",
+        () => timelineEntries.map((entry) => entry.kind === "turn"
+          ? projectTimelineTurns([entry.turn], composerScope, server?.id ?? "remote", timelineRemoteThreadId)[0]!
+          : projectOptimisticTimelineItem(entry.delivery, composerScope)),
+        { values: { itemCount: timelineEntries.length } },
+      );
   const completeTurnHeadersResident = remoteThread !== null
     && remoteThread !== undefined
     && historyViewport.completeTurnHeaders;
@@ -3763,24 +3865,21 @@ function ConversationPane({
         )
       : null;
   const timeline: TimelineItem[] = measureThreadNavigationWork(draftConnectionId ?? "", draftThreadId, "assemble_timeline", () => {
+    if (modelTimeline !== null) return modelTimeline;
     const partitioned = remoteSealedTurns !== undefined && remoteLiveTurns !== undefined;
-    const content: TimelineItem[] = remoteThread === null || remoteThread === undefined
+    return remoteThread === null || remoteThread === undefined
       ? []
       : partitioned
         ? mergeProjectedThreadPartitions(remoteThread.turns, sealedTimeline, liveTimeline)
         : fullTimeline;
-    const pending = optimistic
-      .filter((message) => message.scope === composerScope)
-      .map((message) => ({ kind: "optimistic" as const, ...message }));
-    if (pending.length === 0) return content;
-    return mergeChronologicalTimeline(
-      content.map((value) => ({
-        value,
-        timestampMs: value.kind === "turn" ? protocolTimestampMs(value.turn.startedAt) : null,
-      })),
-      pending.map((value) => ({ value, timestampMs: value.createdAt })),
-    );
   }, { values: { sealedItemCount: sealedTimeline.length, liveItemCount: liveTimeline.length, fullItemCount: fullTimeline.length } });
+  const latestTimelineTurnId = (() => {
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      const item = timeline[index];
+      if (item?.kind === "turn") return item.id;
+    }
+    return null;
+  })();
   const latestUnreadAgentTurnId = measureThreadNavigationWork(draftConnectionId ?? "", draftThreadId, "scan_unread_agent_turn", () => {
     if (unread <= 0) return null;
     for (let index = timeline.length - 1; index >= 0; index -= 1) {
@@ -3850,10 +3949,11 @@ function ConversationPane({
     latestUnreadAgentRef.current = node;
     if (node !== null) scheduleUnreadAgentVisibilityCheck();
   };
-  const timelinePositioned = timeline.length === 0
-    ? historyViewport.status !== "idle" && historyViewport.status !== "initial-loading"
-    : timelineDidPosition;
-  const timelineModelReady = remoteThread !== null || historyViewport.status !== "initial-loading";
+  // Initial history loading is owned by the local Suspense boundary. Once the
+  // conversation renders, an empty timeline is a positioned empty state; a
+  // background transport status must never make the model unready again.
+  const timelinePositioned = timeline.length === 0 ? true : timelineDidLoad;
+  const timelineModelReady = true;
 
   const visibleQueuedPrompts = queuedPrompts;
   const inlineQueue = visibleQueuedPrompts.map((entry) => ({ id: entry.commandId, text: entry.text, state: entry.state }));
@@ -3869,26 +3969,27 @@ function ConversationPane({
   const displayedTimeline = threadSearchActive
     ? threadSearchMatches.flatMap((index) => timeline[index] === undefined ? [] : [timeline[index]])
     : timeline;
-  const initialHistoryAnchorTurnId = initialSessionHistoryAnchor?.turnId ?? composerState?.historyAnchorTurnId ?? null;
-  const initialHistoryAnchorIndex = initialHistoryAnchorTurnId === null
-    ? -1
-    : timeline.findIndex((item) => item.kind === "turn" && item.id === initialHistoryAnchorTurnId);
-  const timelineInitialPosition: TimelineInitialPosition = initialHistoryAnchorIndex < 0
-    ? { kind: "tail" }
-    : {
-        kind: "item",
-        index: initialHistoryAnchorIndex,
-        viewOffset: initialSessionHistoryAnchor?.viewportOffsetPx ?? composerState?.historyAnchorOffsetPx ?? 0,
-        viewPosition: 0,
-      };
+  // LegendList may consult its initial target again while a bootstrap layout
+  // is still settling. Freeze both the target and its index for the lifetime
+  // of this keyed ConversationPane; window prepend/append must be governed
+  // exclusively by maintainVisibleContentPosition after that.
+  const [timelineInitialPosition] = useState<TimelineInitialPosition>(() => {
+    const anchorIndex = initialRestoreAnchorTurnId === null
+      ? -1
+      : timeline.findIndex((item) => item.kind === "turn" && item.id === initialRestoreAnchorTurnId);
+    return anchorIndex < 0
+      ? { kind: "tail" }
+      : {
+          kind: "item",
+          index: anchorIndex,
+          viewOffset: initialHistoryRestore.viewportOffsetPx,
+          viewPosition: 0,
+        };
+  });
   const emptyRemoteThread = newChat || (remoteThread !== null
     && remoteThread !== undefined
     && remoteThread.turns.length === 0
-    && optimistic.length === 0);
-  const updateFollowingLatest = (value: boolean) => {
-    followingLatestRef.current = value;
-    setTimelineTailFollowEnabled((current) => current === value ? current : value);
-  };
+    && !timeline.some((item) => item.kind === "optimistic"));
   const respondToRequest = async (request: PendingServerRequest, result: unknown) => {
     if (onRespondToRequest === undefined) throw new Error("Request response is unavailable");
     await onRespondToRequest(request, result);
@@ -3909,14 +4010,12 @@ function ConversationPane({
       presentThreadChanges(resource, true);
       return;
     }
-    timelineOverlay.begin("thread-resources");
     dismissComposerKeyboardForOverlay();
     setThreadResourceSheet("attachments");
     void onLoadThreadResources?.(undefined, "attachments").catch(() => undefined);
   };
   const closeThreadResources = () => {
     setThreadResourceSheet(null);
-    timelineOverlay.end("thread-resources");
   };
   const openDocumentLinkFromCwd = (href: string, sourceCwd: string) => {
     const loopback = parseLoopbackLink(href);
@@ -4041,119 +4140,35 @@ function ConversationPane({
     scrollToThreadSearchIndex(next);
   };
 
-  const scheduleInitialTimelinePosition = (measuredHeight?: number) => {
-    const resolvedHeight = measuredHeight ?? timelineContentHeightRef.current;
-    const pendingOffset = pendingRestoreOffsetRef.current;
-    if (pendingOffset === null || timeline.length === 0 || timelineViewportHeightRef.current === 0) return;
-    const pendingAnchorTurnId = pendingRestoreAnchorTurnIdRef.current;
-    if (pendingAnchorTurnId !== null) {
-      const anchorIndex = timeline.findIndex((item) => item.kind === "turn" && item.id === pendingAnchorTurnId);
-      if (anchorIndex < 0 && !historyRestoreReady) return;
-      if (anchorIndex >= 0) {
-        const anchorOffset = pendingOffset;
-        pendingRestoreOffsetRef.current = null;
-        pendingRestoreAnchorTurnIdRef.current = null;
-        pendingRestoreAnchorOffsetRef.current = null;
-        // LegendList fires onLoad only after both container layout and its
-        // bootstrap initial scroll have completed. A second animation frame
-        // here delayed presentation without changing the native position.
-        scrollOffsetRef.current = anchorOffset;
-        updateFollowingLatest(false);
-        awayFromLatestRef.current = true;
-        setAwayFromLatest(true);
-        scrollRestoredRef.current = true;
-        if (draftConnectionId !== null && draftThreadId !== null) {
-          markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
-            values: {
-              itemCount: timeline.length,
-              restoredOffsetPx: anchorOffset,
-              contentHeightPx: resolvedHeight,
-              viewportHeightPx: timelineViewportHeightRef.current,
-            },
-            tags: { restore: "semantic_anchor" },
-          });
-          recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_position_applied", {
-            values: {
-              itemCount: timeline.length,
-              restoredOffsetPx: anchorOffset,
-              contentHeightPx: resolvedHeight,
-              viewportHeightPx: timelineViewportHeightRef.current,
-            },
-            tags: { restore: "semantic_anchor" },
-          });
-        }
-        setTimelineDidPosition(true);
-        return;
-      }
-      // The stored turn was evicted or deleted. The anchor query has settled,
-      // so fall back to the live tail instead of keeping the chat concealed.
-      pendingRestoreAnchorTurnIdRef.current = null;
-      pendingRestoreAnchorOffsetRef.current = null;
-      pendingRestoreOffsetRef.current = 0;
-      scrollOffsetRef.current = 0;
-      updateFollowingLatest(true);
-      awayFromLatestRef.current = false;
-      setAwayFromLatest(false);
-      scrollRestoredRef.current = true;
-      if (draftConnectionId !== null && draftThreadId !== null) {
-        markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
-          values: {
-            itemCount: timeline.length,
-            restoredOffsetPx: 0,
-            contentHeightPx: resolvedHeight,
-            viewportHeightPx: timelineViewportHeightRef.current,
-          },
-          tags: { restore: "missing_anchor_fallback" },
-        });
-        recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_position_applied", {
-          values: {
-            itemCount: timeline.length,
-            restoredOffsetPx: 0,
-            contentHeightPx: resolvedHeight,
-            viewportHeightPx: timelineViewportHeightRef.current,
-          },
-          tags: { restore: "missing_anchor_fallback" },
-        });
-      }
-      setTimelineDidPosition(true);
-      return;
-    }
-    // Legacy rows only stored a distance from the end. Reconstructing a global
-    // pixel offset requires measuring every historical row and defeats bounded
-    // windowing, so old rows intentionally fall back to the live tail.
-    scrollOffsetRef.current = 0;
-    updateFollowingLatest(true);
-    awayFromLatestRef.current = false;
-    setAwayFromLatest(false);
-    pendingRestoreOffsetRef.current = null;
-    pendingRestoreAnchorTurnIdRef.current = null;
-    pendingRestoreAnchorOffsetRef.current = null;
-    scrollRestoredRef.current = true;
+  const commitInitialTimelineLoad = () => {
+    const restoredToAnchor = timelineInitialPosition.kind === "item";
+    awayFromLatestRef.current = restoredToAnchor;
+    setAwayFromLatest(restoredToAnchor);
     if (draftConnectionId !== null && draftThreadId !== null) {
+      const values = {
+        itemCount: timeline.length,
+        contentHeightPx: timelineContentHeightRef.current,
+        viewportHeightPx: timelineViewportHeightRef.current,
+      };
       markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_positioned", {
-        values: {
-          itemCount: timeline.length,
-          restoredOffsetPx: 0,
-          contentHeightPx: resolvedHeight,
-          viewportHeightPx: timelineViewportHeightRef.current,
-        },
-        tags: { restore: pendingOffset <= 1 ? "latest" : "legacy_offset_fallback" },
+        values,
+        tags: { position: restoredToAnchor ? "anchor" : "end" },
       });
       recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_position_applied", {
-        values: {
-          itemCount: timeline.length,
-          restoredOffsetPx: 0,
-          contentHeightPx: resolvedHeight,
-          viewportHeightPx: timelineViewportHeightRef.current,
-        },
-        tags: { restore: pendingOffset <= 1 ? "latest" : "legacy_offset_fallback" },
+        values,
+        tags: { position: restoredToAnchor ? "anchor" : "end" },
       });
     }
-    setTimelineDidPosition(true);
+    setTimelineDidLoad(true);
   };
-  const currentHistoryAnchor = (offset: number): { turnId: string | null; viewportOffsetPx: number | null } => {
-    if (offset <= LATEST_TIMELINE_THRESHOLD_PX) return { turnId: null, viewportOffsetPx: null };
+  const currentHistoryAnchor = (): { turnId: string | null; viewportOffsetPx: number | null } => {
     const turnId = firstVisibleHistoryAnchorRef.current;
+    if (!isPersistableHistoryAnchor({
+      atEnd: !awayFromLatestRef.current,
+      anchorTurnId: turnId,
+      anchorTurnStatus: firstVisibleHistoryAnchorStatusRef.current,
+      activeTurnId: currentTurnId,
+    })) return { turnId: null, viewportOffsetPx: null };
     const itemKey = turnId === null ? null : firstVisibleHistoryAnchorKeyRef.current;
     return {
       turnId,
@@ -4163,8 +4178,7 @@ function ConversationPane({
 
   const persistTimelineOffset = (offset: number) => {
     scrollOffsetRef.current = offset;
-    sessionConversationScrollOffsets.set(composerScope, offset);
-    const historyAnchor = currentHistoryAnchor(offset);
+    const historyAnchor = currentHistoryAnchor();
     if (historyAnchor.turnId === null) sessionConversationHistoryAnchors.delete(composerScope);
     else sessionConversationHistoryAnchors.set(composerScope, { turnId: historyAnchor.turnId, viewportOffsetPx: historyAnchor.viewportOffsetPx });
     if (scrollSaveTimerRef.current !== null) clearTimeout(scrollSaveTimerRef.current);
@@ -4175,71 +4189,43 @@ function ConversationPane({
     }, 250);
   };
 
-  const markTimelineAtLatest = () => {
-    if (!historyViewport.atLiveTail) void historyViewport.revealLatest();
-    persistTimelineOffset(0);
+  const persistTimelineAtEnd = () => {
+    scrollOffsetRef.current = 0;
+    sessionConversationHistoryAnchors.delete(composerScope);
+    if (scrollSaveTimerRef.current !== null) clearTimeout(scrollSaveTimerRef.current);
+    if (saveScrollOffset !== undefined && draftConnectionId !== null && draftThreadId !== null) {
+      scrollSaveTimerRef.current = setTimeout(() => {
+        scrollSaveTimerRef.current = null;
+        void saveScrollOffset(draftConnectionId, draftThreadId, 0, null, null).catch(() => undefined);
+      }, 250);
+    }
     awayFromLatestRef.current = false;
-    updateFollowingLatest(true);
     setAwayFromLatest(false);
     if (latestUnreadReceiptKey !== null) acknowledgeUnreadReceipt(latestUnreadReceiptKey);
   };
 
   const jumpTimelineToLatest = () => {
-    // Do not hide the button optimistically. A virtualized list can defer or cancel an
-    // animated scroll while variable-height cells are being materialized.
-    // The real onScroll position confirms the jump and clears the badge.
-    updateFollowingLatest(true);
-    momentumActiveRef.current = false;
-    const reveal = !historyViewport.atLiveTail
-      ? historyViewport.revealLatest()
-      : Promise.resolve();
-    void reveal.then(() => {
+    void historyViewport.loadLatest().then(() => {
       requestAnimationFrame(() => {
         void timelineRef.current?.scrollToEnd({ animated: false });
       });
     });
   };
 
-  const reconcileTimelineEndPosition = (contentHeight: number, viewportHeight: number, offsetY: number, settleFollowing: boolean) => {
-    const distance = Math.max(0, contentHeight - viewportHeight - offsetY);
-    persistTimelineOffset(distance);
-    if (!scrollRestoredRef.current) return;
-    if (settleFollowing && distance <= LATEST_TIMELINE_THRESHOLD_PX) {
-      markTimelineAtLatest();
-      return;
-    }
-    if (distance > LATEST_TIMELINE_THRESHOLD_PX) {
-      updateFollowingLatest(false);
-      if (!awayFromLatestRef.current) {
-        awayFromLatestRef.current = true;
-        setAwayFromLatest(true);
-      }
-    }
-  };
-
   const clearTimelineRuntime = () => {
     if (scrollSaveTimerRef.current !== null) clearTimeout(scrollSaveTimerRef.current);
-    if (timelinePositionTimerRef.current !== null) clearTimeout(timelinePositionTimerRef.current);
-    if (timelineSettleTimerRef.current !== null) clearTimeout(timelineSettleTimerRef.current);
     if (timelineIndexRetryTimerRef.current !== null) clearTimeout(timelineIndexRetryTimerRef.current);
     if (unreadVisibilityFrameRef.current !== null) cancelAnimationFrame(unreadVisibilityFrameRef.current);
     scrollSaveTimerRef.current = null;
-    timelinePositionTimerRef.current = null;
-    timelineSettleTimerRef.current = null;
     timelineIndexRetryTimerRef.current = null;
     unreadVisibilityFrameRef.current = null;
     latestUnreadAgentRef.current = null;
-    timelineOverlay.reset();
   };
   const cleanUpTimeline = () => {
     clearTimelineRuntime();
     const current = mountedConversationScopeRef.current;
-    pendingRestoreOffsetRef.current = null;
-    pendingRestoreAnchorTurnIdRef.current = null;
-    pendingRestoreAnchorOffsetRef.current = null;
-    if (scrollRestoredRef.current) sessionConversationScrollOffsets.set(current.scope, scrollOffsetRef.current);
     if (current.saveScrollOffset !== undefined && current.connectionId !== null && current.threadId !== null) {
-      const historyAnchor = currentHistoryAnchor(scrollOffsetRef.current);
+      const historyAnchor = currentHistoryAnchor();
       void current.saveScrollOffset(current.connectionId, current.threadId, scrollOffsetRef.current, historyAnchor.turnId, historyAnchor.viewportOffsetPx).catch(() => undefined);
     }
     fullscreenOverlay.dismissScope(current.scope);
@@ -4285,7 +4271,6 @@ function ConversationPane({
     draftSelectionRef.current = { start: cursor, end: cursor };
     voiceController?.setPendingSelection(composerScope, { start: cursor, end: cursor });
     setMenuVisible(false);
-    timelineOverlay.end("composer-menu");
   };
 
   const send = (textOverride?: string, preference: ComposerSendPreference = "start") => {
@@ -4314,15 +4299,10 @@ function ConversationPane({
     });
     updateDraft("");
     updateAttachments([]);
-    if (mode.type !== "queue") {
-      // Sending is an explicit request to resume tail-following. Coordinate
-      // the jump with LegendList's native keyboard integration instead of
-      // waiting for a later content-size mutation to snap the viewport.
-      updateFollowingLatest(true);
-      requestAnimationFrame(() => {
-        void timelineRef.current?.scrollToEnd({ animated: false });
-      });
-    }
+    // Do not move or replace the resident history window here. The delivery is
+    // already a row in the model-owned timeline. LegendList MVCP remains the
+    // only position owner; calling loadLatest or scrollToEnd from Send can
+    // replace the range underneath an already measured list.
     void operation.then(() => {
       if (sentContentReviewAttachmentId !== null) clearContentReviewAttachmentId(scope, sentContentReviewAttachmentId);
       if (mode.type === "queue" && onListQueue !== undefined) {
@@ -4357,7 +4337,6 @@ function ConversationPane({
 
   const openControls = (initialPage: ComposerMenuPage) => {
     setComposerTrayVisible(false);
-    timelineOverlay.begin("composer-menu");
     dismissComposerKeyboardForOverlay();
     setMenuInitialPage(initialPage);
     setMenuVisible(true);
@@ -4368,28 +4347,22 @@ function ConversationPane({
   };
   const closeControls = () => {
     setMenuVisible(false);
-    timelineOverlay.end("composer-menu");
   };
   const openQuickControlMenu = (scope: "model-menu" | "permissions-menu") => {
     setComposerTrayVisible(false);
-    timelineOverlay.begin(scope);
     dismissComposerKeyboardForOverlay();
     const current = currentControlsResource();
     if (current === null || current.status === "error") requestControls();
   };
-  const closeQuickControlMenu = (scope: "model-menu" | "permissions-menu") => {
-    timelineOverlay.end(scope);
-  };
+  const closeQuickControlMenu = (_scope: "model-menu" | "permissions-menu") => undefined;
   const openProjectPicker = () => {
     if (onChangeProject === undefined) return;
-    timelineOverlay.begin("project-picker");
     dismissComposerKeyboardForOverlay();
     setProjectChangeError(null);
     setProjectPickerVisible(true);
   };
   const closeProjectPicker = () => {
     setProjectPickerVisible(false);
-    timelineOverlay.end("project-picker");
   };
   const selectProject = async (nextCwd: string | null) => {
     if (onChangeProject === undefined || projectChangeBusy) return;
@@ -4405,12 +4378,10 @@ function ConversationPane({
     }
   };
   const openThreadRename = () => {
-    timelineOverlay.begin("thread-rename");
     setThreadRenameVisible(true);
   };
   const closeThreadRename = () => {
     setThreadRenameVisible(false);
-    timelineOverlay.end("thread-rename");
   };
   const [subagentEventProjection] = useState(() => new SubagentListProjection());
   const currentSubagentSummaries = (): readonly StoredThreadSummary[] => {
@@ -4633,24 +4604,20 @@ function ConversationPane({
   const pickComposerAttachment = async () => {
     setComposerTrayVisible(false);
     if (!fileAttachmentEnabled) return;
-    timelineOverlay.begin("file-picker");
     dismissComposerKeyboardForOverlay();
     const selected = await pickUploadFile().catch((cause): null => {
       dialog.alert("Could not choose file", cause instanceof Error ? cause.message : "System file picker failed");
       return null;
     });
-    timelineOverlay.end("file-picker");
     if (selected !== null) await uploadSelectedAttachment(selected);
   };
   const pickQueuedAttachment = async (): Promise<ComposerAttachment | null> => {
     if (!fileAttachmentEnabled) return null;
-    timelineOverlay.begin("queue-file-picker");
     dismissComposerKeyboardForOverlay();
     const selected = await pickUploadFile().catch((cause): null => {
       dialog.alert("Could not choose file", cause instanceof Error ? cause.message : "System file picker failed");
       return null;
     });
-    timelineOverlay.end("queue-file-picker");
     if (selected === null) return null;
     return await uploadSelectedAttachment(selected, () => undefined);
   };
@@ -4865,22 +4832,6 @@ function ConversationPane({
     );
   }
 
-  // Authoritative revalidation is deliberately invisible: resident content
-  // remains the presented truth while fresh rows reconcile in place. Only a
-  // real connection transition or an actionable retry state changes chrome.
-  const conversationActivity: ConnectionActivity | null = server?.status === "connecting"
-    ? "connecting"
-    : null;
-  const conversationSubtitle = conversationActivity === "connecting"
-    ? "connecting…"
-    : historyViewport.status === "background-retrying"
-      ? "update delayed"
-      : threadContextLabel(server?.name ?? "", cwd);
-  const conversationSubtitleColor = conversationActivity !== null
-    ? connectionActivityColor(conversationActivity)
-    : historyViewport.status === "background-retrying"
-      ? colors.amber
-      : colors.textMuted;
   const stoppingResponse = currentTurnId !== null && voicePhase === "idle" && draft.trim() === "" && attachments.length === 0;
   const sendDisabled = voicePhase === "finishing"
     || pastedAttachmentPending
@@ -4913,9 +4864,12 @@ function ConversationPane({
           <Text testID="conversation-title" numberOfLines={1} ellipsizeMode="tail" style={styles.conversationTitle}>
             {emojiSafeTitle(thread.title)}
           </Text>
-          <Text testID="conversation-subtitle" numberOfLines={1} ellipsizeMode="middle" style={[styles.conversationSubtitle, { color: conversationSubtitleColor }]}> 
-            {conversationSubtitle}
-          </Text>
+          <ConversationHistorySubtitle
+            model={historyActivityModel}
+            resourceId={historyActivityResourceId}
+            server={server}
+            cwd={cwd}
+          />
         </View>
         {!newChat && <Pressable onPress={() => { if (threadSearchVisible) closeThreadSearch(); else setThreadSearchVisible(true); }} style={styles.headerIcon} accessibilityLabel="Search in thread">
           <Ionicons name="search" size={21} color={colors.text} />
@@ -4990,7 +4944,7 @@ function ConversationPane({
           onCommit={() => {
             const navigationId = recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_surface_visible", {
               values: { itemCount: timeline.length },
-              tags: { readOnly: readOnly ? "true" : "false", status: historyViewport.status },
+              tags: { readOnly: readOnly ? "true" : "false", status: historyViewport.readStatus() },
             });
             return navigationId === null
               ? undefined
@@ -5010,13 +4964,11 @@ function ConversationPane({
         visible={timelinePositioned}
         itemCount={timeline.length}
         turnCount={remoteThread?.turns.length ?? 0}
-        loadStatus={historyViewport.status}
-        restoreOffset={initialRestoreOffset}
+        loadStatus={historyViewport.readStatus()}
         restoreAnchorTurnId={initialRestoreAnchorTurnId}
       >
       <ThreadTimelineList
         ref={timelineRef}
-        freeze={timelineOverlayFreeze}
         testID="conversation-timeline"
         data={displayedTimeline}
         initialPosition={timelineInitialPosition}
@@ -5027,12 +4979,11 @@ function ConversationPane({
         contentContainerStyle={[styles.conversationContent, timelineCompact ? styles.conversationContentCompact : styles.conversationContentWide, liveTurnPlanVisible && styles.conversationContentLivePlanInset]}
         keyboardLiftBehavior="whenAtEnd"
         keyboardOffset={conversationInsets.bottom}
-        maintainScrollAtEndEnabled={timelineTailFollowEnabled}
+        followTail={historyViewport.containsLatest && !awayFromLatest && !threadSearchActive}
         automaticallyAdjustContentInsets={false}
         contentInsetAdjustmentBehavior="never"
         keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
-        maintainVisibleContentPositionEnabled={!threadSearchActive}
         getItemType={(item) => item.kind}
         scrollEventThrottle={16}
         onLoad={({ elapsedTimeInMs }) => {
@@ -5040,81 +4991,95 @@ function ConversationPane({
           if (draftConnectionId !== null && draftThreadId !== null) {
             recordThreadNavigationVisualEvent(draftConnectionId, draftThreadId, "timeline_first_draw", {
               values: { nativeListDrawMs: elapsedTimeInMs, itemCount: displayedTimeline.length },
-              tags: { status: historyViewport.status },
+              tags: { status: historyViewport.readStatus() },
             });
           }
-          historyViewport.prefetch();
           if (draftConnectionId !== null && draftThreadId !== null) {
             markThreadNavigationStage(draftConnectionId, draftThreadId, "timeline_first_draw", {
               values: { nativeListDrawMs: elapsedTimeInMs, itemCount: displayedTimeline.length },
             });
           }
-          scheduleInitialTimelinePosition();
+          commitInitialTimelineLoad();
         }}
         onLayout={({ nativeEvent }) => {
           timelineViewportHeightRef.current = nativeEvent.layout.height;
           scheduleUnreadAgentVisibilityCheck();
-          if (timelineOverlay.isActive()) {
-            timelineOverlay.restore(false);
-            return;
-          }
-          scheduleInitialTimelinePosition();
         }}
         onScrollBeginDrag={({ nativeEvent }) => {
-          if (threadSearchActive || timelineOverlay.isActive()) return;
-          timelineInteractionScopeRef.current = composerScope;
+          if (threadSearchActive) return;
+          cancelScheduledPaginationTrim();
+          paginationEdgeLockRef.current = null;
+          scrollGestureStartedAtRef.current = performance.now();
           lastTimelineOffsetYRef.current = nativeEvent.contentOffset.y;
-          scrollGestureActiveRef.current = true;
-          scrollDirectionRef.current = null;
-          historyViewport.freeze();
-          updateFollowingLatest(false);
-          momentumActiveRef.current = false;
-          if (timelineSettleTimerRef.current !== null) clearTimeout(timelineSettleTimerRef.current);
+          if (draftConnectionId !== null && draftThreadId !== null) {
+            recordThreadHistoryTelemetry(draftConnectionId, draftThreadId, "chat.scroll.gesture_started", {
+              ...(firstVisibleHistoryAnchorRef.current === null ? {} : { turnId: firstVisibleHistoryAnchorRef.current }),
+              values: {
+                offsetY: nativeEvent.contentOffset.y,
+                contentHeightPx: nativeEvent.contentSize.height,
+                viewportHeightPx: nativeEvent.layoutMeasurement.height,
+                distanceFromEndPx: Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y),
+                itemCount: displayedTimeline.length,
+              },
+              tags: { status: historyViewport.readStatus() },
+            });
+          }
         }}
         onScroll={({ nativeEvent }) => {
           timelineViewportHeightRef.current = nativeEvent.layoutMeasurement.height;
           timelineContentHeightRef.current = nativeEvent.contentSize.height;
           scheduleUnreadAgentVisibilityCheck();
-          if (timelineOverlay.observeNativeOffset(nativeEvent.contentOffset.y) || threadSearchActive) return;
-          const previousOffsetY = lastTimelineOffsetYRef.current;
-          if (previousOffsetY !== null && Math.abs(nativeEvent.contentOffset.y - previousOffsetY) >= 0.5) {
-            scrollDirectionRef.current = nativeEvent.contentOffset.y < previousOffsetY ? "older" : "newer";
-          }
+          if (threadSearchActive) return;
           lastTimelineOffsetYRef.current = nativeEvent.contentOffset.y;
           const distance = Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y);
           scrollOffsetRef.current = distance;
-          if (!scrollRestoredRef.current) return;
-          const away = distance > LATEST_TIMELINE_THRESHOLD_PX;
+          const away = !historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;
           const wasAway = awayFromLatestRef.current;
           if (awayFromLatestRef.current !== away) {
             awayFromLatestRef.current = away;
             setAwayFromLatest(away);
           }
-          if (!away && wasAway && followingLatestRef.current) markTimelineAtLatest();
+          if (!away && wasAway) persistTimelineAtEnd();
         }}
         onScrollEndDrag={({ nativeEvent }) => {
-          if (threadSearchActive || timelineOverlay.isActive()) return;
-          scrollGestureActiveRef.current = false;
-          reconcileTimelineEndPosition(nativeEvent.contentSize.height, nativeEvent.layoutMeasurement.height, nativeEvent.contentOffset.y, false);
-          if (timelineSettleTimerRef.current !== null) clearTimeout(timelineSettleTimerRef.current);
-          timelineSettleTimerRef.current = setTimeout(() => {
-            timelineSettleTimerRef.current = null;
-            if (!momentumActiveRef.current && scrollOffsetRef.current <= LATEST_TIMELINE_THRESHOLD_PX) markTimelineAtLatest();
-          }, 96);
+          if (threadSearchActive) return;
+          schedulePaginationWindowTrim();
+          persistTimelineOffset(Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y));
+          if (draftConnectionId !== null && draftThreadId !== null) {
+            recordThreadHistoryTelemetry(draftConnectionId, draftThreadId, "chat.scroll.drag_ended", {
+              ...(firstVisibleHistoryAnchorRef.current === null ? {} : { turnId: firstVisibleHistoryAnchorRef.current }),
+              values: {
+                durationMs: scrollGestureStartedAtRef.current === null ? 0 : performance.now() - scrollGestureStartedAtRef.current,
+                offsetY: nativeEvent.contentOffset.y,
+                contentHeightPx: nativeEvent.contentSize.height,
+                viewportHeightPx: nativeEvent.layoutMeasurement.height,
+                distanceFromEndPx: Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y),
+                itemCount: displayedTimeline.length,
+              },
+              tags: { status: historyViewport.readStatus() },
+            });
+          }
         }}
-        onMomentumScrollBegin={() => {
-          if (threadSearchActive || timelineOverlay.isActive()) return;
-          momentumActiveRef.current = true;
-          scrollGestureActiveRef.current = true;
-          if (timelineSettleTimerRef.current !== null) clearTimeout(timelineSettleTimerRef.current);
-          timelineSettleTimerRef.current = null;
-        }}
+        onMomentumScrollBegin={cancelScheduledPaginationTrim}
         onMomentumScrollEnd={({ nativeEvent }) => {
-          if (threadSearchActive || timelineOverlay.isActive()) return;
-          momentumActiveRef.current = false;
-          scrollGestureActiveRef.current = false;
-          scrollDirectionRef.current = null;
-          reconcileTimelineEndPosition(nativeEvent.contentSize.height, nativeEvent.layoutMeasurement.height, nativeEvent.contentOffset.y, true);
+          if (threadSearchActive) return;
+          trimPaginationWindow();
+          persistTimelineOffset(Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y));
+          if (draftConnectionId !== null && draftThreadId !== null) {
+            recordThreadHistoryTelemetry(draftConnectionId, draftThreadId, "chat.scroll.momentum_ended", {
+              ...(firstVisibleHistoryAnchorRef.current === null ? {} : { turnId: firstVisibleHistoryAnchorRef.current }),
+              values: {
+                durationMs: scrollGestureStartedAtRef.current === null ? 0 : performance.now() - scrollGestureStartedAtRef.current,
+                offsetY: nativeEvent.contentOffset.y,
+                contentHeightPx: nativeEvent.contentSize.height,
+                viewportHeightPx: nativeEvent.layoutMeasurement.height,
+                distanceFromEndPx: Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y),
+                itemCount: displayedTimeline.length,
+              },
+              tags: { status: historyViewport.readStatus() },
+            });
+          }
+          scrollGestureStartedAtRef.current = null;
         }}
         onContentSizeChange={(_width, height) => {
           timelineContentHeightRef.current = height;
@@ -5127,24 +5092,17 @@ function ConversationPane({
               },
               tags: {
                 positioned: timelinePositioned ? "true" : "false",
-                status: historyViewport.status,
+                status: historyViewport.readStatus(),
               },
             });
           }
-          historyViewport.prefetch();
           scheduleUnreadAgentVisibilityCheck();
-          if (timelineOverlay.isActive()) {
-            timelineOverlay.restore(false);
-            return;
-          }
-          if (threadSearchActive) return;
-          if (pendingRestoreOffsetRef.current !== null) {
-            // The list owns initial placement. This callback only marks the
-            // already positioned semantic anchor as ready for display.
-            scheduleInitialTimelinePosition(height);
-          }
         }}
         showsVerticalScrollIndicator={false}
+        onStartReached={loadOlderAtTimelineStart}
+        onStartReachedThreshold={0.5}
+        onEndReached={loadNewerAtTimelineEnd}
+        onEndReachedThreshold={0.5}
         onFirstVisibleItemChanged={onTimelineFirstVisibleItemChanged}
         keyExtractor={timelineItemKey}
         ListEmptyComponent={
@@ -5207,23 +5165,22 @@ function ConversationPane({
                 ) : null}
               </View>
             ) : (
-              <>
-                {!threadSearchActive && historyViewport.status === "initial-loading" ? <ActivityIndicator size="small" color={colors.accent} /> : null}
-                <Text style={styles.emptyText}>{threadSearchActive ? "No matches" : historyViewport.status === "initial-error" ? historyViewport.error ?? "Could not load messages" : historyViewport.status === "initial-loading" ? "Loading messages…" : "Start by typing a message"}</Text>
-              </>
+              <ThreadHistoryEmptyState
+                model={historyActivityModel}
+                resourceId={historyActivityResourceId}
+                threadSearchActive={threadSearchActive}
+              />
             )}
           </View>
         }
         renderItem={renderTimelineItem}
       />
       </ThreadTimelineNavigationCommit>
-      {historyViewport.status === "loading-history" && timeline.length > 0 && (
-        <View pointerEvents="none" testID="history-loading-indicator" style={styles.historyLoadingIndicator}>
-          <View style={styles.historyLoadingIndicatorPill}>
-            <ActivityIndicator size="small" color={colors.textMuted} />
-          </View>
-        </View>
-      )}
+      <ThreadHistoryLoadingIndicator
+        model={historyActivityModel}
+        resourceId={historyActivityResourceId}
+        hasTimeline={timeline.length > 0}
+      />
       {liveTurnPlanVisible && (
         <View pointerEvents="box-none" testID="live-plan-float" style={styles.livePlanFloat}>
           <LiveTurnPlanPopover plan={liveTurnPlan} />

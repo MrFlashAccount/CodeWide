@@ -61,13 +61,15 @@ describe("append-only live text projection", () => {
     expect([...second.segments, second.remainder].join("")).toBe(second.source);
   });
 
-  it("reveals the final word when the agent item has completed", () => {
+  it("reveals sentence punctuation before completion and uses completion for an unfinished tail", () => {
     clearLiveTextProjectionCache();
-    const streaming = projectCachedLiveMarkdown("completed-agent", "This fix will ship.");
-    const completed = projectCachedLiveMarkdown("completed-agent", "This fix will ship.", true);
+    const sentence = projectCachedLiveMarkdown("sentence-agent", "This fix will ship.");
+    const streaming = projectCachedLiveMarkdown("completed-agent", "This fix will ship");
+    const completed = projectCachedLiveMarkdown("completed-agent", "This fix will ship", true);
 
+    expect(sentence.visibleSource).toBe("This fix will ship.");
     expect(streaming.visibleSource).toBe("This fix will ");
-    expect(completed.visibleSource).toBe("This fix will ship.");
+    expect(completed.visibleSource).toBe("This fix will ship");
   });
 
   it("bounds a pathological long line without losing its text", () => {

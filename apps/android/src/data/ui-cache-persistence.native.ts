@@ -1,6 +1,6 @@
 import { open } from "@op-engineering/op-sqlite";
 import { wrapSqliteDatabase, type SqliteDatabase, type SqliteDatabaseLike } from "@codewide/tanstack-db-sqlite";
-import { cacheDirectory } from "expo-file-system/legacy";
+import { cacheDirectory, getInfoAsync } from "expo-file-system/legacy";
 import { AppState } from "react-native";
 
 const LIVE_COLLECTIONS = new Set(["thread-details-v2"]);
@@ -10,11 +10,41 @@ let sharedSqliteDatabase: SqliteDatabase | null = null;
 let lifecycleFlushInstalled = false;
 const flushersByCollection = new Map<string, Set<() => Promise<void>>>();
 
+export type UiCacheFileDiagnostics = {
+  mainFileBytes: number;
+  walFileBytes: number;
+  shmFileBytes: number;
+};
+
+function uiCacheDirectory(): string {
+  if (cacheDirectory === null) throw new Error("Android cache directory is unavailable");
+  return `${cacheDirectory}codex-remote/sqlite`;
+}
+
 function getUiCacheNativeDatabase(): ReturnType<typeof open> {
   if (sharedDatabase !== null) return sharedDatabase;
-  if (cacheDirectory === null) throw new Error("Android cache directory is unavailable");
-  sharedDatabase = open({ name: "codex-remote-ui-cache.db", location: `${cacheDirectory}codex-remote/sqlite` });
+  sharedDatabase = open({ name: "codex-remote-ui-cache.db", location: uiCacheDirectory() });
   return sharedDatabase;
+}
+
+export async function getUiCacheFileDiagnostics(): Promise<UiCacheFileDiagnostics> {
+  const path = `${uiCacheDirectory()}/codex-remote-ui-cache.db`;
+  const [mainFileBytes, walFileBytes, shmFileBytes] = await Promise.all([
+    fileSize(path),
+    fileSize(`${path}-wal`),
+    fileSize(`${path}-shm`),
+  ]);
+  return { mainFileBytes, walFileBytes, shmFileBytes };
+}
+
+async function fileSize(path: string): Promise<number> {
+  try {
+    const info = await getInfoAsync(path);
+    return info.exists && typeof info.size === "number" ? info.size : 0;
+  } catch {
+    // Diagnostics are best effort and must never block opening the cache.
+    return 0;
+  }
 }
 
 export function getUiCacheSqliteDatabase(): SqliteDatabase {

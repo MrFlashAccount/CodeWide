@@ -1,16 +1,24 @@
 import type { ThreadDetailRow } from "./thread-detail-projection";
-import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
+import { getUiCacheFileDiagnostics, getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import { incrementMetric, recordSqliteSubsetLoad, recordTiming } from "./operational-metrics";
 import { readLegacyPersistedRows } from "./legacy-persistence-migration.native";
 
 const TABLE = "codewide_thread_details";
 const META_TABLE = "__tanstack_db_sqlite_meta";
 const BOOTSTRAP_TABLE = "__tanstack_db_sqlite_bootstrap";
+const CACHE_META_TABLE = "codewide_thread_detail_cache_meta";
 const RUNTIME_ID = "thread-details-v2";
 const LEGACY_BOOTSTRAP_ID = `tanstack-persistence:${RUNTIME_ID}:v1`;
+const PURGE_LEGACY_PENDING_MIGRATION_ID = "purge-persisted-pending:v1";
 const SCHEMA_VERSION = 1;
 const CHECKPOINT_DELAY_MS = 250;
 const CHECKPOINT_ATTEMPTS = 3;
+// History is a reconstructable FIFO cache, not an LRU. Let it grow to 2 GiB,
+// then rotate the oldest inserted sealed turn families down to 1 GiB. The
+// remaining history reuses the freed pages for newer rows.
+const HISTORY_CACHE_SOFT_LIMIT_BYTES = 1 * 1024 * 1024 * 1024;
+const HISTORY_CACHE_HARD_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
+const HISTORY_CACHE_MAINTENANCE_WRITE_BYTES = 64 * 1024 * 1024;
 
 type SqliteValue = string | number | boolean | null | ArrayBuffer | ArrayBufferView;
 type Executor = { execute(sql: string, params?: readonly SqliteValue[]): Promise<unknown> };
@@ -43,8 +51,28 @@ export type ResolvedThreadDetailWindow = ThreadDetailWindowRows & {
   historyEpoch: number;
   latestSealedOrdinal: number | null;
   earliestSealedOrdinal: number | null;
-  requestedMaxOrdinal: number | null;
 };
+
+export type ThreadDetailSqliteDiagnostics = {
+  rowCount: number;
+  payloadBytes: number;
+  historyPayloadBytes: number;
+  pendingRows: number;
+  pendingDeliveryRows: number;
+  physicalBytes: number;
+  reusableBytes: number;
+  mainFileBytes: number;
+  walFileBytes: number;
+  shmFileBytes: number;
+  staleDeliveryRowsRemoved: number;
+  historyFamiliesEvicted: number;
+  historyBytesEvicted: number;
+};
+
+type ThreadDetailSqliteMaintenance = Pick<
+  ThreadDetailSqliteDiagnostics,
+  "staleDeliveryRowsRemoved" | "historyFamiliesEvicted" | "historyBytesEvicted"
+>;
 
 type PendingCheckpoint = {
   changes: Map<string, ThreadDetailChange>;
@@ -54,6 +82,7 @@ type PendingCheckpoint = {
 
 export type ThreadDetailSqlite = ThreadDetailSqliteControls & {
   prepare(): Promise<void>;
+  diagnostics(): Promise<ThreadDetailSqliteDiagnostics>;
   flush(): Promise<void>;
   close(): Promise<void>;
   loadThreadMeta(connectionId: string, threadId: string): Promise<ThreadDetailRow | null>;
@@ -64,11 +93,17 @@ export type ThreadDetailSqlite = ThreadDetailSqliteControls & {
     connectionId: string;
     threadId: string;
     anchorTurnId: string | null;
-    residentHistoryEpoch: number | null;
-    residentMaxOrdinal: number | null | undefined;
-    residentTurnLimit: number;
-    restoreNewerBuffer: number;
+    turnLimit: number;
+    newerBuffer: number;
   }): Promise<ResolvedThreadDetailWindow>;
+  loadAdjacentWindow(input: {
+    connectionId: string;
+    threadId: string;
+    historyEpoch: number;
+    boundaryOrdinal: number;
+    direction: "older" | "newer";
+    turnLimit: number;
+  }): Promise<ThreadDetailWindowRows>;
   loadAuthoritativeFacts(connectionId: string, threadId: string, incomingTurnIds: readonly string[]): Promise<ThreadDetailRow[]>;
   loadPrependFacts(connectionId: string, threadId: string, historyEpoch: number, turnIds: readonly string[]): Promise<ThreadDetailRow[]>;
 };
@@ -85,13 +120,21 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
   let checkpointTimer: ReturnType<typeof setTimeout> | null = null;
   let checkpointTail = Promise.resolve();
   let latestCheckpoint = Promise.resolve();
+  let historyBytesWrittenSinceMaintenance = 0;
   let prepared: Promise<void> | null = null;
+  let maintenance: ThreadDetailSqliteMaintenance = {
+    staleDeliveryRowsRemoved: 0,
+    historyFamiliesEvicted: 0,
+    historyBytesEvicted: 0,
+  };
   let closed = false;
 
   const ensurePrepared = (): Promise<void> => {
     if (prepared === null) {
       let attempt!: Promise<void>;
-      attempt = prepareSchema(database).catch((cause) => {
+      attempt = prepareSchema(database).then((result) => {
+        maintenance = result;
+      }).catch((cause) => {
         if (prepared === attempt) prepared = null;
         throw cause;
       });
@@ -110,7 +153,16 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
 
   const enqueueCheckpoint = (changes: Map<string, ThreadDetailChange>, waitForDurability: boolean): Promise<void> => {
     pending ??= { changes: new Map(), transactions: 0, waiters: [] };
-    for (const [key, change] of changes) pending.changes.set(key, change);
+    for (const [key, change] of changes) {
+      pending.changes.set(key, change);
+      if (change.type !== "delete"
+        && change.value.sealed
+        && ["turn", "turnMeta", "activity"].includes(change.value.kind)) {
+        // A conservative UTF-8 upper bound is sufficient to decide when the
+        // exact SQLite byte count should be checked.
+        historyBytesWrittenSinceMaintenance += JSON.stringify(change.value).length * 3;
+      }
+    }
     pending.transactions += 1;
     const checkpoint = waitForDurability
       ? new Promise<void>((resolve, reject) => pending?.waiters.push({ resolve, reject }))
@@ -135,6 +187,22 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
           await database.transaction(async (executor) => {
             for (const change of checkpoint.changes.values()) await persistChange(executor, change);
           });
+          if (historyBytesWrittenSinceMaintenance >= HISTORY_CACHE_MAINTENANCE_WRITE_BYTES) {
+            try {
+              const rotation = await database.transaction(rotateHistoryCache);
+              historyBytesWrittenSinceMaintenance = 0;
+              maintenance = {
+                ...maintenance,
+                historyFamiliesEvicted: maintenance.historyFamiliesEvicted + rotation.historyFamiliesEvicted,
+                historyBytesEvicted: maintenance.historyBytesEvicted + rotation.historyBytesEvicted,
+              };
+            } catch (cause) {
+              // Cache maintenance must not turn an already durable chat write
+              // into a failed projection. Keep the counter armed and retry on
+              // the next checkpoint.
+              console.warn("Thread history FIFO maintenance failed", cause);
+            }
+          }
           break;
         } catch (cause) {
           if (attempts >= CHECKPOINT_ATTEMPTS) throw cause;
@@ -179,6 +247,14 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
 
   return {
     prepare: ensurePrepared,
+    async diagnostics() {
+      await ensurePrepared();
+      await flushPending();
+      return {
+        ...(await collectDiagnostics(database)),
+        ...maintenance,
+      };
+    },
     begin() {
       if (currentChanges !== null) throw new Error("Thread detail SQLite transaction is already open");
       currentChanges = new Map();
@@ -242,17 +318,17 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
           `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "sealed" = 1 AND "kind" IN ('turnMeta', 'activity') AND "ordinal" >= ? AND "ordinal" <= ?`,
           [connectionId, threadId, historyEpoch, Math.min(...ordinals), Math.max(...ordinals)],
         );
-        const liveRows = await executeRows(
+        const liveRows = (await executeRows(
           executor,
           `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "sealed" = 0 AND ("kind" = 'pending' OR "history_epoch" = ?)`,
           [connectionId, threadId, historyEpoch],
-        );
+        )).filter(isResidentLiveRow);
         return { turnRows, detailRows, liveRows };
       });
       recordSqliteSubsetLoad(result.turnRows.length + result.detailRows.length + result.liveRows.length, performance.now() - startedAt);
       return result;
     },
-    async loadResolvedWindow({ connectionId, threadId, anchorTurnId, residentHistoryEpoch, residentMaxOrdinal, residentTurnLimit, restoreNewerBuffer }) {
+    async loadResolvedWindow({ connectionId, threadId, anchorTurnId, turnLimit, newerBuffer }) {
       await ensurePrepared();
       await flushPending();
       const startedAt = performance.now();
@@ -263,16 +339,36 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
             connectionId,
             threadId,
             anchorTurnId,
-            residentHistoryEpoch,
-            residentMaxOrdinal ?? null,
-            residentMaxOrdinal === undefined ? 0 : 1,
-            residentTurnLimit,
-            restoreNewerBuffer,
+            turnLimit,
+            newerBuffer,
           ],
         );
         return parseResolvedWindowRows(extractRows(result));
       });
       recordSqliteSubsetLoad(loaded.turnRows.length + loaded.detailRows.length + loaded.liveRows.length, performance.now() - startedAt);
+      return loaded;
+    },
+    async loadAdjacentWindow({ connectionId, threadId, historyEpoch, boundaryOrdinal, direction, turnLimit }) {
+      await ensurePrepared();
+      await flushPending();
+      const startedAt = performance.now();
+      const loaded = await database.transaction(async (executor) => {
+        const comparison = direction === "older" ? "<" : ">";
+        const order = direction === "older" ? "DESC" : "ASC";
+        const turnRows = await executeRows(
+          executor,
+          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "kind" = 'turn' AND "sealed" = 1 AND "ordinal" ${comparison} ? ORDER BY "ordinal" ${order}, "__key" ${order} LIMIT ?`,
+          [connectionId, threadId, historyEpoch, boundaryOrdinal, turnLimit],
+        );
+        const ordinals = turnRows.map(({ ordinal }) => ordinal);
+        const detailRows = ordinals.length === 0 ? [] : await executeRows(
+          executor,
+          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "sealed" = 1 AND "kind" IN ('turnMeta', 'activity') AND "ordinal" IN (${ordinals.map(() => "?").join(", ")})`,
+          [connectionId, threadId, historyEpoch, ...ordinals],
+        );
+        return { turnRows, detailRows, liveRows: [] };
+      });
+      recordSqliteSubsetLoad(loaded.turnRows.length + loaded.detailRows.length, performance.now() - startedAt);
       return loaded;
     },
     async loadAuthoritativeFacts(connectionId, threadId, incomingTurnIds) {
@@ -306,8 +402,8 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
   };
 }
 
-async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabase>): Promise<void> {
-  await database.transaction(async (executor) => {
+async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabase>): Promise<ThreadDetailSqliteMaintenance> {
+  return await database.transaction(async (executor) => {
     await executor.execute(
       `CREATE TABLE IF NOT EXISTS "${META_TABLE}" ("runtime_id" TEXT PRIMARY KEY NOT NULL, "schema_version" INTEGER NOT NULL)`,
     );
@@ -325,6 +421,7 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_0" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "sealed", "kind", "ordinal")`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_1" ON "${TABLE}" ("connection_id", "thread_id", "turn_id")`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_2" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "kind", "ordinal")`);
+    await prepareHistoryCacheAccounting(executor);
     const bootstrap = await executor.execute(
       `SELECT 1 AS "present" FROM "${BOOTSTRAP_TABLE}" WHERE "runtime_id" = ? AND "bootstrap_id" = ?`,
       [RUNTIME_ID, LEGACY_BOOTSTRAP_ID],
@@ -343,10 +440,20 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
         [RUNTIME_ID, LEGACY_BOOTSTRAP_ID],
       );
     }
+    // Purge every optimistic row written by older builds exactly once. Queue
+    // and delivery state are reconstructed from Kotlin's authoritative outbox,
+    // so no pending projection belongs in the durable UI-history cache.
+    const migratedPendingRowsRemoved = await purgeLegacyPendingRowsOnce(executor);
+    // Keep the narrower invariant after the one-shot migration: a downgrade or
+    // interrupted rollout may still reintroduce direct-delivery projections.
+    const staleDeliveryRowsRemoved = migratedPendingRowsRemoved
+      + await deletePersistedDeliveryProjections(executor);
+    const rotation = await rotateHistoryCache(executor);
     await executor.execute(
       `INSERT INTO "${META_TABLE}" ("runtime_id", "schema_version") VALUES (?, ?) ON CONFLICT("runtime_id") DO UPDATE SET "schema_version" = excluded."schema_version"`,
       [RUNTIME_ID, SCHEMA_VERSION],
     );
+    return { staleDeliveryRowsRemoved, ...rotation };
   });
 }
 
@@ -359,6 +466,7 @@ function normalizeLegacyThreadDetailRow(value: unknown): ThreadDetailRow | null 
     || typeof row.remoteThreadId !== "string"
     || !(row.remoteTurnId === null || typeof row.remoteTurnId === "string")) return null;
   const kind = row.kind as ThreadDetailRow["kind"];
+  const historyCursor = row.historyCursor === null || typeof row.historyCursor === "string" ? row.historyCursor : undefined;
   return {
     ...row,
     id: row.id,
@@ -367,6 +475,7 @@ function normalizeLegacyThreadDetailRow(value: unknown): ThreadDetailRow | null 
     remoteThreadId: row.remoteThreadId,
     remoteTurnId: row.remoteTurnId,
     historyEpoch: Number.isFinite(row.historyEpoch) ? row.historyEpoch as number : 0,
+    ...(historyCursor === undefined ? {} : { historyCursor }),
     ordinal: Number.isFinite(row.ordinal) ? row.ordinal as number : kind === "thread" ? -1 : 0,
     sessionId: typeof row.sessionId === "string" ? row.sessionId : null,
     lastOpenedAt: Number.isFinite(row.lastOpenedAt) ? row.lastOpenedAt as number : 0,
@@ -385,6 +494,12 @@ async function persistChange(executor: Executor, change: ThreadDetailChange): Pr
     return;
   }
   const row = change.value;
+  if (row.kind === "pending" && row.pending?.presentation === "delivery") {
+    // Defense in depth: direct-delivery presentation is reconstructed from the
+    // native outbox and must never become a second durable source of truth.
+    await executor.execute(`DELETE FROM "${TABLE}" WHERE "__key" = ?`, [storageKey(row.id)]);
+    return;
+  }
   const params: SqliteValue[] = [
     storageKey(row.id),
     JSON.stringify(row),
@@ -410,8 +525,8 @@ async function persistChange(executor: Executor, change: ThreadDetailChange): Pr
 function resolvedWindowSql(): string {
   return `
     WITH
-      "args"("connection_id", "thread_id", "anchor_turn_id", "resident_history_epoch", "resident_max_ordinal", "resident_max_supplied", "turn_limit", "newer_buffer") AS (
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      "args"("connection_id", "thread_id", "anchor_turn_id", "turn_limit", "newer_buffer") AS (
+        VALUES (?, ?, ?, ?, ?)
       ),
       "meta" AS (
         SELECT COALESCE((
@@ -478,15 +593,8 @@ function resolvedWindowSql(): string {
           "restored"."history_epoch",
           "restored"."latest_ordinal",
           "restored"."earliest_ordinal",
-          CASE
-            WHEN "args"."resident_history_epoch" IS NOT NULL
-              AND "args"."resident_history_epoch" <> "restored"."history_epoch"
-            THEN "restored"."restored_max_ordinal"
-            WHEN "args"."resident_max_supplied" = 0
-            THEN "restored"."restored_max_ordinal"
-            ELSE "args"."resident_max_ordinal"
-          END AS "requested_max_ordinal"
-        FROM "restored", "args"
+          "restored"."restored_max_ordinal" AS "range_max_ordinal"
+        FROM "restored"
       ),
       "turns" AS (
         SELECT "details"."__payload", "details"."__key", "details"."ordinal"
@@ -496,7 +604,7 @@ function resolvedWindowSql(): string {
           AND "details"."history_epoch" = "resolved"."history_epoch"
           AND "details"."kind" = 'turn'
           AND "details"."sealed" = 1
-          AND ("resolved"."requested_max_ordinal" IS NULL OR "details"."ordinal" <= "resolved"."requested_max_ordinal")
+          AND ("resolved"."range_max_ordinal" IS NULL OR "details"."ordinal" <= "resolved"."range_max_ordinal")
         ORDER BY "details"."ordinal" DESC, "details"."__key" DESC
         LIMIT (SELECT "turn_limit" FROM "args")
       ),
@@ -527,7 +635,6 @@ function resolvedWindowSql(): string {
       "history_epoch",
       "latest_ordinal",
       "earliest_ordinal",
-      "requested_max_ordinal",
       0 AS "result_ordinal"
     FROM "resolved"
     UNION ALL
@@ -535,7 +642,6 @@ function resolvedWindowSql(): string {
       "bucket_order",
       "bucket",
       "__payload",
-      NULL,
       NULL,
       NULL,
       NULL,
@@ -552,11 +658,209 @@ function parseResolvedWindowRows(rows: readonly Record<string, SqliteValue>[]): 
     historyEpoch,
     latestSealedOrdinal: numericSqliteValue(metadata?.latest_ordinal),
     earliestSealedOrdinal: numericSqliteValue(metadata?.earliest_ordinal),
-    requestedMaxOrdinal: numericSqliteValue(metadata?.requested_max_ordinal),
     turnRows: rows.filter(({ bucket }) => bucket === "turn").map(parsePayload),
     detailRows: rows.filter(({ bucket }) => bucket === "detail").map(parsePayload),
-    liveRows: rows.filter(({ bucket }) => bucket === "live").map(parsePayload),
+    liveRows: rows.filter(({ bucket }) => bucket === "live").map(parsePayload).filter(isResidentLiveRow),
   };
+}
+
+function isResidentLiveRow(row: ThreadDetailRow): boolean {
+  return row.kind !== "pending" || row.pending?.presentation !== "delivery";
+}
+
+async function deletePersistedDeliveryProjections(executor: Executor): Promise<number> {
+  const pendingRows = extractRows(await executor.execute(
+    `SELECT "__key", "__payload" FROM "${TABLE}" WHERE "kind" = 'pending'`,
+  ));
+  let removed = 0;
+  for (const candidate of pendingRows) {
+    const payload = candidate.__payload;
+    const key = candidate.__key;
+    if (typeof payload !== "string" || typeof key !== "string") continue;
+    let row: ThreadDetailRow;
+    try {
+      row = JSON.parse(payload) as ThreadDetailRow;
+    } catch {
+      continue;
+    }
+    if (row.kind !== "pending" || row.pending?.presentation !== "delivery") continue;
+    await executor.execute(`DELETE FROM "${TABLE}" WHERE "__key" = ?`, [key]);
+    removed += 1;
+  }
+  return removed;
+}
+
+async function purgeLegacyPendingRowsOnce(executor: Executor): Promise<number> {
+  const migration = await executor.execute(
+    `SELECT 1 AS "present" FROM "${BOOTSTRAP_TABLE}" WHERE "runtime_id" = ? AND "bootstrap_id" = ?`,
+    [RUNTIME_ID, PURGE_LEGACY_PENDING_MIGRATION_ID],
+  );
+  if (extractRows(migration).length > 0) return 0;
+  const count = numericSqliteValue(extractRows(await executor.execute(
+    `SELECT COUNT(*) AS "row_count" FROM "${TABLE}" WHERE "kind" = 'pending'`,
+  ))[0]?.row_count) ?? 0;
+  await executor.execute(`DELETE FROM "${TABLE}" WHERE "kind" = 'pending'`);
+  await executor.execute(
+    `INSERT INTO "${BOOTSTRAP_TABLE}" ("runtime_id", "bootstrap_id") VALUES (?, ?)`,
+    [RUNTIME_ID, PURGE_LEGACY_PENDING_MIGRATION_ID],
+  );
+  return count;
+}
+
+export async function rotateHistoryCache(executor: Executor, limits: {
+  softLimitBytes: number;
+  hardLimitBytes: number;
+} = {
+  softLimitBytes: HISTORY_CACHE_SOFT_LIMIT_BYTES,
+  hardLimitBytes: HISTORY_CACHE_HARD_LIMIT_BYTES,
+}): Promise<Pick<
+  ThreadDetailSqliteMaintenance,
+  "historyFamiliesEvicted" | "historyBytesEvicted"
+>> {
+  const currentBytes = await readHistoryPayloadBytes(executor);
+  if (currentBytes <= limits.hardLimitBytes) {
+    return { historyFamiliesEvicted: 0, historyBytesEvicted: 0 };
+  }
+
+  const reclaimBytes = currentBytes - limits.softLimitBytes;
+  const candidateCte = `
+    WITH "turns" AS (
+      SELECT
+        "connection_id", "thread_id", "history_epoch", "ordinal", MIN("rowid") AS "first_rowid"
+      FROM "${TABLE}"
+      WHERE "sealed" = 1 AND "kind" = 'turn'
+      GROUP BY "connection_id", "thread_id", "history_epoch", "ordinal"
+    ),
+    "families" AS (
+      SELECT
+        "turns".*,
+        COALESCE((
+          SELECT SUM(LENGTH(CAST("family"."__payload" AS BLOB)))
+          FROM "${TABLE}" AS "family"
+          WHERE "family"."connection_id" = "turns"."connection_id"
+            AND "family"."thread_id" = "turns"."thread_id"
+            AND "family"."history_epoch" = "turns"."history_epoch"
+            AND "family"."ordinal" = "turns"."ordinal"
+            AND "family"."sealed" = 1
+            AND "family"."kind" IN ('turn', 'turnMeta', 'activity')
+        ), 0) AS "payload_bytes"
+      FROM "turns"
+    ),
+    "ranked" AS (
+      SELECT
+        "families".*,
+        SUM("payload_bytes") OVER (ORDER BY "first_rowid" ASC) AS "reclaimed_bytes"
+      FROM "families"
+    ),
+    "chosen" AS (
+      SELECT * FROM "ranked" WHERE "reclaimed_bytes" - "payload_bytes" < ?
+    )`;
+  const selected = extractRows(await executor.execute(
+    `${candidateCte} SELECT COUNT(*) AS "family_count", COALESCE(SUM("payload_bytes"), 0) AS "payload_bytes" FROM "chosen"`,
+    [reclaimBytes],
+  ))[0];
+  const historyFamiliesEvicted = numericSqliteValue(selected?.family_count) ?? 0;
+  const historyBytesEvicted = numericSqliteValue(selected?.payload_bytes) ?? 0;
+  if (historyFamiliesEvicted === 0) return { historyFamiliesEvicted, historyBytesEvicted };
+  await executor.execute(
+    `${candidateCte}
+     DELETE FROM "${TABLE}" AS "details"
+     WHERE "details"."sealed" = 1
+       AND "details"."kind" IN ('turn', 'turnMeta', 'activity')
+       AND EXISTS (
+         SELECT 1 FROM "chosen"
+         WHERE "chosen"."connection_id" = "details"."connection_id"
+           AND "chosen"."thread_id" = "details"."thread_id"
+           AND "chosen"."history_epoch" = "details"."history_epoch"
+           AND "chosen"."ordinal" = "details"."ordinal"
+       )`,
+    [reclaimBytes],
+  );
+  return { historyFamiliesEvicted, historyBytesEvicted };
+}
+
+async function collectDiagnostics(database: ReturnType<typeof getUiCacheSqliteDatabase>): Promise<Omit<
+  ThreadDetailSqliteDiagnostics,
+  keyof ThreadDetailSqliteMaintenance
+>> {
+  const [sqlite, files] = await Promise.all([
+    database.transaction(async (executor) => {
+      const totals = extractRows(await executor.execute(
+        `SELECT
+          COUNT(*) AS "row_count",
+          COALESCE(SUM(CASE WHEN "kind" = 'pending' THEN 1 ELSE 0 END), 0) AS "pending_rows"
+         FROM "${TABLE}"`,
+      ))[0];
+      const historyPayloadBytes = await readHistoryPayloadBytes(executor);
+      const otherPayloadBytes = numericSqliteValue(extractRows(await executor.execute(
+        `SELECT COALESCE(SUM(LENGTH(CAST("__payload" AS BLOB))), 0) AS "other_payload_bytes"
+         FROM "${TABLE}"
+         WHERE "sealed" = 0 OR "kind" NOT IN ('turn', 'turnMeta', 'activity')`,
+      ))[0]?.other_payload_bytes) ?? 0;
+      const pendingDeliveryRows = (await executeRows(
+        executor,
+        `SELECT "__payload" FROM "${TABLE}" WHERE "kind" = 'pending'`,
+        [],
+      )).filter((row) => row.pending?.presentation === "delivery").length;
+      const pageCount = numericSqliteValue(extractRows(await executor.execute("PRAGMA page_count"))[0]?.page_count) ?? 0;
+      const freePages = numericSqliteValue(extractRows(await executor.execute("PRAGMA freelist_count"))[0]?.freelist_count) ?? 0;
+      const pageSize = numericSqliteValue(extractRows(await executor.execute("PRAGMA page_size"))[0]?.page_size) ?? 0;
+      return {
+        rowCount: numericSqliteValue(totals?.row_count) ?? 0,
+        payloadBytes: historyPayloadBytes + otherPayloadBytes,
+        historyPayloadBytes,
+        pendingRows: numericSqliteValue(totals?.pending_rows) ?? 0,
+        pendingDeliveryRows,
+        physicalBytes: pageCount * pageSize,
+        reusableBytes: freePages * pageSize,
+      };
+    }),
+    getUiCacheFileDiagnostics(),
+  ]);
+  return { ...sqlite, ...files };
+}
+
+export async function prepareHistoryCacheAccounting(executor: Executor): Promise<void> {
+  await executor.execute(
+    `CREATE TABLE IF NOT EXISTS "${CACHE_META_TABLE}" (`
+      + `"singleton" INTEGER PRIMARY KEY NOT NULL CHECK("singleton" = 1), `
+      + `"history_bytes" INTEGER NOT NULL)`,
+  );
+  const present = extractRows(await executor.execute(
+    `SELECT 1 AS "present" FROM "${CACHE_META_TABLE}" WHERE "singleton" = 1`,
+  )).length > 0;
+  if (!present) {
+    await executor.execute(
+      `INSERT INTO "${CACHE_META_TABLE}" ("singleton", "history_bytes") `
+        + `SELECT 1, COALESCE(SUM(LENGTH(CAST("__payload" AS BLOB))), 0) `
+        + `FROM "${TABLE}" WHERE "sealed" = 1 AND "kind" IN ('turn', 'turnMeta', 'activity')`,
+    );
+  }
+  const newHistory = `NEW."sealed" = 1 AND NEW."kind" IN ('turn', 'turnMeta', 'activity')`;
+  const oldHistory = `OLD."sealed" = 1 AND OLD."kind" IN ('turn', 'turnMeta', 'activity')`;
+  await executor.execute(
+    `CREATE TRIGGER IF NOT EXISTS "${TABLE}__cache_insert" AFTER INSERT ON "${TABLE}" `
+      + `WHEN ${newHistory} BEGIN `
+      + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = "history_bytes" + LENGTH(CAST(NEW."__payload" AS BLOB)) WHERE "singleton" = 1; END`,
+  );
+  await executor.execute(
+    `CREATE TRIGGER IF NOT EXISTS "${TABLE}__cache_delete" AFTER DELETE ON "${TABLE}" `
+      + `WHEN ${oldHistory} BEGIN `
+      + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = MAX(0, "history_bytes" - LENGTH(CAST(OLD."__payload" AS BLOB))) WHERE "singleton" = 1; END`,
+  );
+  await executor.execute(
+    `CREATE TRIGGER IF NOT EXISTS "${TABLE}__cache_update" AFTER UPDATE ON "${TABLE}" BEGIN `
+      + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = MAX(0, "history_bytes" `
+      + `- CASE WHEN ${oldHistory} THEN LENGTH(CAST(OLD."__payload" AS BLOB)) ELSE 0 END `
+      + `+ CASE WHEN ${newHistory} THEN LENGTH(CAST(NEW."__payload" AS BLOB)) ELSE 0 END) `
+      + `WHERE "singleton" = 1; END`,
+  );
+}
+
+async function readHistoryPayloadBytes(executor: Executor): Promise<number> {
+  return numericSqliteValue(extractRows(await executor.execute(
+    `SELECT "history_bytes" FROM "${CACHE_META_TABLE}" WHERE "singleton" = 1`,
+  ))[0]?.history_bytes) ?? 0;
 }
 
 function numericSqliteValue(value: SqliteValue | undefined): number | null {

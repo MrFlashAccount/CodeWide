@@ -36,4 +36,11 @@ describe("composer delivery mode", () => {
     expect(screen).toContain('if (voicePhase !== "idle") void finishVoice(true, id);');
     expect(screen).toContain("voiceController?.finish(sendAfter, (text) => send(text, preference))");
   });
+
+  it("loads the latest range before asking LegendList to reveal a new turn", () => {
+    expect(screen).toContain("void historyViewport.loadLatest().then(() => {");
+    expect(screen).toContain("void timelineRef.current?.scrollToEnd({ animated: false });");
+    expect(screen).not.toContain("historyViewport.revealLatest");
+    expect(screen).not.toContain("markTimelineAtLatest");
+  });
 });

@@ -18,11 +18,12 @@ describe("Android download finalization", () => {
 
   it("keeps a verified download recoverable until the exported file is durable", () => {
     const createIndex = source.indexOf("const completed = directory.createFile(filename, mimeType)");
-    const verifyIndex = source.indexOf("completedHash !== expectedHash", createIndex);
-    const cleanupIndex = source.indexOf("deleteBestEffort(partial)", verifyIndex);
+    const copyIndex = source.indexOf("await copyFileContents(", createIndex);
+    const cleanupIndex = source.indexOf("deleteBestEffort(partial)", copyIndex);
     expect(createIndex).toBeGreaterThan(-1);
-    expect(verifyIndex).toBeGreaterThan(createIndex);
-    expect(cleanupIndex).toBeGreaterThan(verifyIndex);
+    expect(copyIndex).toBeGreaterThan(createIndex);
+    expect(cleanupIndex).toBeGreaterThan(copyIndex);
+    expect(source).toContain("copied.sha256 !== expectedHash");
     expect(source).toContain('throw new Error("Saved file failed SHA-256 integrity verification")');
   });
 
@@ -46,15 +47,25 @@ describe("Android download finalization", () => {
     expect(documentPreviewHost).not.toContain('dialog.alert("Download complete"');
   });
 
-  it("keeps the SAF parcel descriptor owned for the complete file-handle lifetime", () => {
+  it("keeps the SAF parcel descriptor owned for generic file handles", () => {
     expect(expoFileHandlePatch).toContain("private val resourceOwner: Closeable? = null");
     expect(expoFileHandlePatch).toContain("ParcelFileDescriptor.AutoCloseInputStream(pfd)");
     expect(expoFileHandlePatch).toContain("ParcelFileDescriptor.AutoCloseOutputStream(pfd)");
     expect(expoFileHandlePatch).toContain("resourceOwner?.close() ?: fileChannel.close()");
   });
 
+  it("does not use Expo FileChannel handles to read or copy selected SAF documents", () => {
+    expect(source).toContain('if (file.uri.startsWith("content://"))');
+    expect(source).toContain("fileTransferBridge?.hashContentDocument");
+    expect(source).toContain("fileTransferBridge?.copyContentDocument");
+    expect(nativeModule).toContain("fun hashContentDocument(uriValue: String, promise: Promise)");
+    expect(nativeModule).toContain("fun copyContentDocument(sourceUriValue: String, targetUriValue: String, promise: Promise)");
+    expect(nativeModule).toContain("contentResolver.openInputStream(sourceUri)");
+    expect(nativeModule).toContain('contentResolver.openOutputStream(targetUri, "w")');
+  });
+
   it("grants the selected viewer temporary read access to the saved content URI", () => {
-    expect(source).toContain("fileViewerBridge.openDocument(uri, mimeType ?? null)");
+    expect(source).toContain("fileTransferBridge.openDocument(uri, mimeType ?? null)");
     expect(nativeModule).toContain("fun openDocument(uriValue: String, mimeType: String?, promise: Promise)");
     expect(nativeModule).toContain("Intent.FLAG_GRANT_READ_URI_PERMISSION");
     expect(nativeModule).toContain('require(uri.scheme == "content")');

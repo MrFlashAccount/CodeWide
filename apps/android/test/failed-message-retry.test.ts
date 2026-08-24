@@ -41,8 +41,9 @@ describe("failed message retry", () => {
 
   it("refreshes the authoritative thread after companion delivery acceptance", () => {
     expect(workspace).toContain("hasAcceptedPendingDelivery(");
-    expect(workspace).toContain("workspaceActions.readThread(connectionId, threadId)");
-    expect(workspace).toContain("Could not reconcile an accepted message receipt");
+    expect(workspace).toContain("await workspaceActions.repairThreadProjection(connectionId, threadId)");
+    expect(workspace).toContain("Accepted message receipt repair returned no thread");
+    expect(workspace).toContain("await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread])");
   });
 
   it("keeps delivery state on optimistic user messages and turn metadata under the agent message", () => {

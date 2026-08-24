@@ -5,26 +5,29 @@ import { materializeResumedThread } from "../src/data/thread-read-model";
 describe("companion thread read model", () => {
   it("uses the authoritative companion window without merging stale turns", () => {
     const authoritative = thread("thread", [turn("fresh", 20)]);
-    const cached = thread("thread", [turn("stale", 10)]);
     const result = materializeResumedThread({
       thread: authoritative,
       codewideReadModelVersion: 1,
-    } as never, cached);
+    } as never);
 
     expect(result).toBe(authoritative);
     expect(result.turns.map(({ id }) => id)).toEqual(["fresh"]);
   });
 
-  it("repairs an empty modern shell from its authoritative initial page", () => {
+  it("rejects a contradictory recovery window instead of merging compatibility state", () => {
     const pageTurn = turn("page", 20);
-    const cached = thread("thread", [turn("stale", 10)]);
-    const result = materializeResumedThread({
+    expect(() => materializeResumedThread({
       thread: thread("thread", []),
       initialTurnsPage: { data: [pageTurn], nextCursor: null },
       codewideReadModelVersion: 1,
-    } as never, cached);
+    } as never)).toThrow("omitted turn page");
+  });
 
-    expect(result.turns.map(({ id }) => id)).toEqual(["page"]);
+  it("rejects old companion read models", () => {
+    expect(() => materializeResumedThread({
+      thread: thread("thread", []),
+      codewideReadModelVersion: 0,
+    } as never)).toThrow("Unsupported companion thread read model");
   });
 });
 

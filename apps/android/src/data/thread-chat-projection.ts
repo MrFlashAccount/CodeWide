@@ -1,7 +1,6 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 
-import type { NativeCommandDelivery } from "../native/native-transport";
-import type { ComposerAttachment, QueuedPrompt } from "./use-remote-workspace";
+import type { QueuedPrompt } from "./use-remote-workspace";
 import { measureThreadNavigationWork } from "./thread-navigation-metrics";
 import { mergeThreadPartitions } from "./thread-partitions";
 import {
@@ -11,16 +10,64 @@ import {
   type ThreadDetailDatabase,
 } from "./thread-detail-database";
 import type { ThreadChatWindowView } from "./use-thread-chat-window";
+import type { PendingTimelineEntry } from "./thread-detail-projection";
+import type { StoredThreadSummary } from "./thread-summary-types";
+import { applyThreadSummaryMetadata } from "./thread-metadata-projection";
+import { reconcileThreadLifecyclePresentation, staleTurnLifecycleId } from "./thread-lifecycle";
+import {
+  projectResidentThreadTimeline,
+  type ProjectedThreadChatDelivery,
+  type ProjectedThreadChatTimelineEntry,
+} from "./thread-chat-timeline";
+
+export { applyThreadSummaryMetadata } from "./thread-metadata-projection";
+export type { ProjectedThreadChatDelivery, ProjectedThreadChatTimelineEntry } from "./thread-chat-timeline";
 
 export type ProjectedThreadChatWindow = {
   remoteThread: Thread | null;
   remoteSealedTurns: Thread["turns"];
   remoteLiveTurns: Thread["turns"];
-  pendingDeliveries: Array<NativeCommandDelivery & { attachments: ComposerAttachment[] }>;
+  timeline: ProjectedThreadChatTimelineEntry[];
   queuedPrompts: QueuedPrompt[];
+  /** A terminal thread whose mutable detail head still needs canonical repair. */
+  staleLifecycleTurnId: string | null;
 };
 
-/** Converts one model-owned resident range into the presentation partitions.
+type CachedPendingDelivery = {
+  scope: string;
+  value: ProjectedThreadChatDelivery;
+};
+
+const pendingDeliveryCache = new WeakMap<PendingTimelineEntry, CachedPendingDelivery>();
+
+function projectPendingDelivery(
+  entry: PendingTimelineEntry,
+  connectionId: string,
+  threadId: string | null,
+): ProjectedThreadChatDelivery {
+  const scope = `${connectionId}\u0000${threadId ?? ""}`;
+  const cached = pendingDeliveryCache.get(entry);
+  if (cached?.scope === scope) return cached.value;
+  const value: ProjectedThreadChatDelivery = {
+    connectionId,
+    commandId: entry.commandId,
+    method: entry.method,
+    threadId,
+    targetCommandId: null,
+    text: entry.text,
+    attachments: entry.attachments,
+    ...(entry.workspaceRequestId === undefined ? {} : { workspaceRequestId: entry.workspaceRequestId }),
+    state: entry.state,
+    attempts: entry.attempts,
+    lastError: entry.lastError,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+  pendingDeliveryCache.set(entry, { scope, value });
+  return value;
+}
+
+/** Converts the model-owned resident chat set into the presentation partitions.
  * Callers choose whether this render contributes to navigation diagnostics. */
 export function projectThreadChatWindow(
   database: ThreadDetailDatabase,
@@ -28,6 +75,7 @@ export function projectThreadChatWindow(
   connectionId: string,
   threadId: string | null,
   recordNavigationMeasurements: boolean,
+  summary: StoredThreadSummary | null = null,
 ): ProjectedThreadChatWindow {
   const measure = <Value,>(
     name: string,
@@ -37,23 +85,9 @@ export function projectThreadChatWindow(
     ? measureThreadNavigationWork(connectionId, threadId, name, operation, { values })
     : operation();
   const pendingTimeline = materializePendingTimeline(view.liveRows);
-  const pendingDeliveries: ProjectedThreadChatWindow["pendingDeliveries"] = pendingTimeline
+  const pendingDeliveries: ProjectedThreadChatDelivery[] = pendingTimeline
     .filter(({ presentation }) => presentation === "delivery")
-    .map((entry) => ({
-      connectionId,
-      commandId: entry.commandId,
-      method: entry.method,
-      threadId,
-      targetCommandId: null,
-      text: entry.text,
-      attachments: entry.attachments,
-      ...(entry.workspaceRequestId === undefined ? {} : { workspaceRequestId: entry.workspaceRequestId }),
-      state: entry.state,
-      attempts: entry.attempts,
-      lastError: entry.lastError,
-      createdAt: entry.createdAt,
-      updatedAt: entry.updatedAt,
-    }));
+    .map((entry) => projectPendingDelivery(entry, connectionId, threadId));
   const queuedPrompts: QueuedPrompt[] = pendingTimeline
     .filter(({ presentation, state }) => presentation === "queue" && state !== "delivered")
     .map(({ commandId, text, attachments, createdAt, state, lastError }) => ({
@@ -75,27 +109,50 @@ export function projectThreadChatWindow(
     { rowCount: view.liveRows.length },
   );
   if (liveSnapshot?.connectionId !== connectionId || liveSnapshot.thread.id !== threadId) {
-    return { remoteThread: null, remoteSealedTurns: [], remoteLiveTurns: [], pendingDeliveries, queuedPrompts };
+    return {
+      remoteThread: null,
+      remoteSealedTurns: [],
+      remoteLiveTurns: [],
+      timeline: projectResidentThreadTimeline([], pendingDeliveries, { includesEarliest: true, includesLatest: true }),
+      queuedPrompts,
+      staleLifecycleTurnId: null,
+    };
   }
   const mergedTurns = measure(
     "merge_turn_partitions",
     () => mergeThreadPartitions(sealedTurns, liveSnapshot.thread.turns),
     { sealedTurnCount: sealedTurns.length, liveTurnCount: liveSnapshot.thread.turns.length },
   );
-  const liveTurnIds = new Set(liveSnapshot.thread.turns.map(({ id }) => id));
+  const projectedThread = applyThreadSummaryMetadata({ ...liveSnapshot.thread, turns: mergedTurns }, summary);
+  const staleLifecycle = staleTurnLifecycleId(projectedThread);
+  const consistentThread = reconcileThreadLifecyclePresentation(projectedThread);
+  const residentLiveTurnIds = new Set(liveSnapshot.thread.turns.map(({ id }) => id));
+  const liveTurnIds = new Set(consistentThread.turns.flatMap((turn) => (
+    residentLiveTurnIds.has(turn.id) && turn.status === "inProgress" ? [turn.id] : []
+  )));
   const partitions = measure(
     "split_visible_turn_partitions",
     () => ({
-      sealed: mergedTurns.filter(({ id }) => !liveTurnIds.has(id)),
-      live: mergedTurns.filter(({ id }) => liveTurnIds.has(id)),
+      sealed: consistentThread.turns.filter(({ id }) => !liveTurnIds.has(id)),
+      live: consistentThread.turns.filter(({ id }) => liveTurnIds.has(id)),
     }),
-    { mergedTurnCount: mergedTurns.length },
+    { mergedTurnCount: consistentThread.turns.length },
   );
+  const residentOrdinals = view.turnRows.flatMap((row) => row.kind === "turn" && row.sealed ? [row.ordinal] : []);
+  const residentMinimum = residentOrdinals.length === 0 ? null : Math.min(...residentOrdinals);
+  const residentMaximum = residentOrdinals.length === 0 ? null : Math.max(...residentOrdinals);
+  const timeline = projectResidentThreadTimeline(consistentThread.turns, pendingDeliveries, {
+    includesEarliest: view.snapshot.earliestSealedOrdinal === null
+      || (residentMinimum !== null && residentMinimum <= view.snapshot.earliestSealedOrdinal),
+    includesLatest: view.snapshot.latestSealedOrdinal === null
+      || (residentMaximum !== null && residentMaximum >= view.snapshot.latestSealedOrdinal),
+  });
   return {
-    remoteThread: { ...liveSnapshot.thread, turns: mergedTurns },
+    remoteThread: consistentThread,
     remoteSealedTurns: partitions.sealed,
     remoteLiveTurns: partitions.live,
-    pendingDeliveries,
+    timeline,
     queuedPrompts,
+    staleLifecycleTurnId: staleLifecycle,
   };
 }

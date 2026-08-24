@@ -26,6 +26,13 @@ internal data class CommittedFramePage(
 )
 private data class JournalState(val cursor: Long?, val frameCount: Long, val payloadBytes: Long)
 private data class JournalTotals(val frameCount: Long, val payloadBytes: Long)
+internal data class NativeFrameStorageStats(
+  val frameCount: Long,
+  val payloadBytes: Long,
+  val mainFileBytes: Long,
+  val walFileBytes: Long,
+  val shmFileBytes: Long,
+)
 internal data class NativeProjectionCheckpoint(
   val snapshotCursor: Long?,
   val snapshotJson: String?,
@@ -180,6 +187,19 @@ internal class NativeFrameStore(context: Context) {
 
   @Synchronized
   fun syncCursor(connectionId: String): Long? = nativeCursor(connectionId)
+
+  @Synchronized
+  fun storageStats(): NativeFrameStorageStats {
+    val totals = journalTotals()
+    val main = File(database.path)
+    return NativeFrameStorageStats(
+      frameCount = totals.frameCount,
+      payloadBytes = totals.payloadBytes,
+      mainFileBytes = main.length(),
+      walFileBytes = File(main.path + "-wal").length(),
+      shmFileBytes = File(main.path + "-shm").length(),
+    )
+  }
 
   @Synchronized
   fun storeSnapshot(connectionId: String, cursor: Long, snapshotJson: String) {

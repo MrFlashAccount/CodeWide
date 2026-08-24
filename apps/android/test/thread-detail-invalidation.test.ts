@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { invalidationCanBeCleared, latestThreadInvalidations } from "../src/data/thread-detail-invalidation";
+import type { ThreadProjectionPatchV1 } from "@codewide/sync-client";
+
+import { invalidationCanBeCleared, latestThreadInvalidations, shouldPersistThreadInvalidation } from "../src/data/thread-detail-invalidation";
 
 describe("thread detail invalidation", () => {
   it("retains the newest cursor for every unloaded thread in a projection batch", () => {
@@ -15,5 +17,16 @@ describe("thread detail invalidation", () => {
   it("does not clear an event that arrived after an authoritative refresh started", () => {
     expect(invalidationCanBeCleared(20, 20)).toBe(true);
     expect(invalidationCanBeCleared(21, 20)).toBe(false);
+  });
+
+  it("keeps explicit/cold invalidations but not locally projected replay events", () => {
+    const projected = { threadId: "a", operation: { kind: "threadStatusChanged", status: { type: "idle" } } } as ThreadProjectionPatchV1;
+    const canonical = { threadId: "a", operation: { kind: "threadInvalidated", summary: {} } } as ThreadProjectionPatchV1;
+
+    expect(shouldPersistThreadInvalidation(projected, true, false)).toBe(false);
+    expect(shouldPersistThreadInvalidation(projected, false, true)).toBe(false);
+    expect(shouldPersistThreadInvalidation(projected, false, false)).toBe(true);
+    expect(shouldPersistThreadInvalidation(canonical, true, false)).toBe(true);
+    expect(shouldPersistThreadInvalidation(null, true, false)).toBe(true);
   });
 });

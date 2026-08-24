@@ -485,7 +485,14 @@ internal class NativeProtocolEngine(
       JournalAppendStatus.COMMITTED -> {
         result.acknowledgedCursor?.let(::acknowledge)
         result.frames.lastOrNull()?.cursor?.let {
-          emitJournalAdvanced(it, recovery = false, eventCount = result.frames.size, bytes = batchBytes, commitMs = commitMs)
+          emitJournalAdvanced(
+            it,
+            recovery = false,
+            eventCount = result.frames.size,
+            bytes = batchBytes,
+            commitMs = commitMs,
+            storage = frameStore.storageStats(),
+          )
         }
         if (result.frames.isNotEmpty() && batch.any { it.pendingRequestPayload != null }) {
           CodeWideModule.emitEngineEvent(connectionId, "pendingRequests", frameStore.pendingRequestsJson(connectionId), null)
@@ -500,6 +507,7 @@ internal class NativeProtocolEngine(
     eventCount: Int = 0,
     bytes: Int = 0,
     commitMs: Double = 0.0,
+    storage: NativeFrameStorageStats? = null,
   ) {
     if (cursor == null) return
     CodeWideModule.emitEngineEvent(
@@ -510,6 +518,11 @@ internal class NativeProtocolEngine(
         .put("eventCount", eventCount)
         .put("bytes", bytes)
         .put("commitMs", commitMs)
+        .put("journalFrameCount", storage?.frameCount ?: 0)
+        .put("journalPayloadBytes", storage?.payloadBytes ?: 0)
+        .put("mainFileBytes", storage?.mainFileBytes ?: 0)
+        .put("walFileBytes", storage?.walFileBytes ?: 0)
+        .put("shmFileBytes", storage?.shmFileBytes ?: 0)
         .toString(),
       null,
       cursor,

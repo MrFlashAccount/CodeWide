@@ -125,6 +125,11 @@ function completedLineBoundary(raw: string): number {
 
 function completedWordBoundary(raw: string): number {
   if (/\s$/u.test(raw)) return raw.length;
+  // Sentence punctuation makes the final word a stable semantic unit, so a
+  // batching caller need not wait for a later whitespace delta. Stream
+  // completion remains the authoritative final flush for unfinished words and
+  // Markdown syntax.
+  if (/[.!?…]["')\]}»”’]*$/u.test(raw)) return raw.length;
   const match = /\s+\S*$/u.exec(raw);
   return match === null ? 0 : match.index + match[0].search(/\S/u);
 }

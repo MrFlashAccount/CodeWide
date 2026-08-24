@@ -1,5 +1,5 @@
 import type { Thread, ThreadResumeResponse, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
-import { preserveProjectedTurnMetadata, seedThreadExecutionSettings } from "@codewide/sync-client";
+import { preserveProjectedTurnMetadata } from "@codewide/sync-client";
 
 export const COMPANION_THREAD_READ_MODEL_VERSION = 1;
 
@@ -8,41 +8,25 @@ export type CompanionThreadResumeResponse = ThreadResumeResponse & {
 };
 
 /**
- * Accepts the companion-owned chronological thread window without touching a
- * stale client copy. The compatibility branch is intentionally collocated and
- * can be deleted as soon as every supported companion emits read-model v1.
+ * Accepts the companion-owned chronological recovery window without touching
+ * a stale client copy. Older read-model contracts are deliberately rejected:
+ * normal navigation is journal-owned and recovery has one current protocol.
  */
 export function materializeResumedThread(
   response: CompanionThreadResumeResponse,
-  cached: Thread | null | undefined,
 ): Thread {
-  if (response.codewideReadModelVersion === COMPANION_THREAD_READ_MODEL_VERSION) {
-    const pageTurns = response.initialTurnsPage?.data ?? [];
-    const materializedIds = new Set(response.thread.turns.map(({ id }) => id));
-    // A companion read-model response is meant to be atomic, but older or
-    // recovering companions could return a populated page beside an empty
-    // thread shell. Never persist that contradiction as a successful empty
-    // conversation: materialize the bounded page without merging stale cache.
-    if (pageTurns.some(({ id }) => !materializedIds.has(id))) {
-      return materializeLegacyThreadWindow(response.thread, pageTurns, null);
-    }
-    return response.thread;
+  if (response.codewideReadModelVersion !== COMPANION_THREAD_READ_MODEL_VERSION) {
+    throw new Error(`Unsupported companion thread read model: ${String(response.codewideReadModelVersion)}`);
   }
-  const resumed = seedThreadExecutionSettings(response.thread, {
-    model: response.model,
-    effort: response.reasoningEffort,
-    permissions: response.activePermissionProfile?.id ?? null,
-    approvalPolicy: typeof response.approvalPolicy === "string" ? response.approvalPolicy : "granular",
-    sandboxPolicy: response.sandbox.type,
-  });
-  return materializeLegacyThreadWindow(
-    resumed,
-    response.initialTurnsPage?.data ?? [],
-    cached,
-  );
+  const materializedIds = new Set(response.thread.turns.map(({ id }) => id));
+  const missingPageTurn = response.initialTurnsPage?.data.find(({ id }) => !materializedIds.has(id));
+  if (missingPageTurn !== undefined) {
+    throw new Error(`Companion recovery window omitted turn ${missingPageTurn.id}`);
+  }
+  return response.thread;
 }
 
-export function materializeLegacyThreadWindow(
+export function materializeReadOnlyThreadWindow(
   shell: Thread,
   incomingTurns: Turn[],
   cached: Thread | null | undefined,

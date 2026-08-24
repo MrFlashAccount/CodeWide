@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   createThreadChatModel,
@@ -13,9 +13,6 @@ const request: ThreadChatWindowRequest = {
   connectionId: "connection",
   threadId: "thread",
   anchorTurnId: null,
-  residentHistoryEpoch: null,
-  residentMaxOrdinal: null,
-  residentTurnLimit: 30,
 };
 
 function row(id: string, ordinal: number, overrides: Partial<ThreadDetailRow> = {}): ThreadDetailRow {
@@ -41,7 +38,6 @@ function row(id: string, ordinal: number, overrides: Partial<ThreadDetailRow> = 
 
 function loaded(
   rows: readonly ThreadDetailRow[],
-  requestedMaxOrdinal: number | null = null,
   loadedRequest: ThreadChatWindowRequest = request,
 ): LoadedThreadChatWindow {
   return {
@@ -50,8 +46,7 @@ function loaded(
     historyEpoch: 0,
     latestSealedOrdinal: 2,
     earliestSealedOrdinal: 0,
-    requestedMaxOrdinal,
-    residentTurnLimit: loadedRequest.residentTurnLimit,
+    residentTurnLimit: 24,
     turnRowIds: rows.filter(({ kind }) => kind === "turn").map(({ id }) => id),
     detailRowIds: [],
     liveRowIds: [],
@@ -79,63 +74,52 @@ describe("Legend thread chat model", () => {
     expect(resource.window$.peek().turnRowIds).toEqual(["turn-1"]);
   });
 
-  it("does not suspend a neighbouring range requested in the committed window's first draw", async () => {
+  it("publishes a neighbouring range without creating another resource", async () => {
     const model = createThreadChatModel();
-    const olderRequest = { ...request, residentMaxOrdinal: 1 };
-    let neighbouringReady: ReturnType<typeof model.resource>["ready$"] | null = null;
     const initial = model.resource(request, async () => {
       const generation = model.startWindow(request);
       model.commitWindow(request, generation, loaded([row("turn-2", 2)]));
-      // LegendList can synchronously report its first draw before this loader
-      // promise reaches its `.then`. The committed snapshot must already make
-      // the next range stale-while-revalidate rather than a new Suspense load.
-      neighbouringReady = model.resource(olderRequest, async () => undefined).ready$;
     });
-
     await initial.ready$.peek();
+    const before = model.window$(request.connectionId, request.threadId).peek();
+    expect(model.commitRange(request.connectionId, request.threadId, {
+      historyEpoch: before.historyEpoch,
+      layoutRevision: before.layoutRevision,
+    }, loaded([row("turn-1", 1)]))).toBe(true);
 
-    expect(neighbouringReady).toBe(initial.ready$);
-    expect(model.window$(request.connectionId, request.threadId).peek().turnRowIds).toEqual(["turn-2"]);
+    expect(model.resource(request, async () => undefined).ready$).toBe(initial.ready$);
+    expect(model.window$(request.connectionId, request.threadId).peek().turnRowIds).toEqual(["turn-1"]);
   });
 
-  it("keeps the last complete range ready while a different range loads", () => {
+  it("replaces window membership atomically and keeps the window ready", () => {
     const model = createThreadChatModel();
     const rows = [row("turn-1", 1), row("turn-2", 2)];
     const firstGeneration = model.startWindow(request);
     expect(model.commitWindow(request, firstGeneration, loaded(rows))).toBe(true);
-
-    const olderRequest = { ...request, residentMaxOrdinal: 1 };
-    model.startWindow(olderRequest);
-    const refreshing = model.window$(request.connectionId, request.threadId).peek();
-
-    expect(refreshing.status).toBe("loading-history");
-    expect(refreshing.turnRowIds).toEqual(["turn-1", "turn-2"]);
-    expect(model.readRows(refreshing.turnRowIds)).toEqual(rows);
+    const before = model.window$(request.connectionId, request.threadId).peek();
+    expect(model.commitRange(request.connectionId, request.threadId, before, loaded([row("turn-0", 0), row("turn-1", 1)]))).toBe(true);
+    const pulled = model.window$(request.connectionId, request.threadId).peek();
+    expect(pulled.status).toBe("ready");
+    expect(pulled.turnRowIds).toEqual(["turn-0", "turn-1"]);
   });
 
-  it("adopts the resolved anchor boundary without loading the same SQLite range twice", async () => {
+  it("keeps the initial semantic anchor in one stable resource key", async () => {
     const model = createThreadChatModel();
-    const anchorRequest = { ...request, anchorTurnId: "turn-1", residentHistoryEpoch: null, residentMaxOrdinal: undefined };
+    const anchorRequest = { ...request, anchorTurnId: "turn-1" };
     let loads = 0;
     const initial = model.resource(anchorRequest, async () => {
       loads += 1;
       const generation = model.startWindow(anchorRequest);
-      model.commitWindow(anchorRequest, generation, loaded([row("turn-1", 1)], 6, anchorRequest));
+      model.commitWindow(anchorRequest, generation, loaded([row("turn-1", 1)], anchorRequest));
     });
     await initial.ready$.peek();
 
-    const resolvedRequest = { ...anchorRequest, residentHistoryEpoch: 0, residentMaxOrdinal: 6 };
-    const resolved = model.resource(resolvedRequest, async () => {
-      loads += 1;
-      const generation = model.startWindow(resolvedRequest);
-      model.commitWindow(resolvedRequest, generation, loaded([row("turn-1", 1)], 6, resolvedRequest));
-    });
+    const resolved = model.resource(anchorRequest, async () => { loads += 1; });
 
     expect(resolved.ready$).toBe(initial.ready$);
     expect(loads).toBe(1);
     expect(model.window$(request.connectionId, request.threadId).peek()).toMatchObject({
       requestKey: threadChatRequestKey(anchorRequest),
-      requestedMaxOrdinal: 6,
       status: "ready",
     });
   });
@@ -179,7 +163,7 @@ describe("Legend thread chat model", () => {
     expect(nextSecond).toBe(previousSecond);
   });
 
-  it("keeps the latest initial range promise authoritative when the request changes", async () => {
+  it("keeps the latest initial window promise authoritative when the request changes", async () => {
     const model = createThreadChatModel();
     let resolveFirst!: () => void;
     let resolveLatest!: () => void;
@@ -209,44 +193,13 @@ describe("Legend thread chat model", () => {
     expect(model.window$(request.connectionId, request.threadId).peek().turnRowIds).toEqual(["fresh"]);
   });
 
-  it("retries a failed background range and atomically installs the replacement", async () => {
+  it("rejects an obsolete range commit after a newer range wins", () => {
     const model = createThreadChatModel();
-    await model.resource(request, async () => {
-      const generation = model.startWindow(request);
-      model.commitWindow(request, generation, loaded([row("turn-2", 2)]));
-    }).ready$.peek();
-    const olderRequest = { ...request, residentMaxOrdinal: 1 };
-    let attempts = 0;
-    model.resource(olderRequest, async () => {
-      attempts += 1;
-      const generation = model.startWindow(olderRequest);
-      if (attempts === 1) {
-        model.failWindow(olderRequest, generation, new Error("disk busy"));
-        throw new Error("disk busy");
-      }
-      model.commitWindow(olderRequest, generation, {
-        ...loaded([row("turn-1", 1)], 1),
-        requestKey: threadChatRequestKey(olderRequest),
-      });
-    });
-
-    await vi.waitFor(() => expect(model.window$(request.connectionId, request.threadId).peek().error).toBe("disk busy"));
-    expect(model.window$(request.connectionId, request.threadId).peek().turnRowIds).toEqual(["turn-2"]);
-    await vi.waitFor(() => expect(attempts).toBe(2), { timeout: 1_000 });
-    await vi.waitFor(() => expect(model.window$(request.connectionId, request.threadId).peek().turnRowIds).toEqual(["turn-1"]));
-  });
-
-  it("rejects an obsolete range result after a newer request wins", () => {
-    const model = createThreadChatModel();
-    const firstGeneration = model.startWindow(request);
-    const newerRequest = { ...request, residentMaxOrdinal: 10 };
-    const newerGeneration = model.startWindow(newerRequest);
-
-    expect(model.commitWindow(request, firstGeneration, loaded([row("stale", 0)]))).toBe(false);
-    expect(model.commitWindow(newerRequest, newerGeneration, {
-      ...loaded([row("fresh", 10)], 10),
-      requestKey: threadChatRequestKey(newerRequest),
-    })).toBe(true);
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, loaded([row("initial", 2)]));
+    const expected = model.window$(request.connectionId, request.threadId).peek();
+    expect(model.commitRange(request.connectionId, request.threadId, expected, loaded([row("fresh", 1)]))).toBe(true);
+    expect(model.commitRange(request.connectionId, request.threadId, expected, loaded([row("stale", 0)]))).toBe(false);
     expect(model.window$(request.connectionId, request.threadId).peek().turnRowIds).toEqual(["fresh"]);
   });
 
@@ -309,15 +262,14 @@ describe("Legend thread chat model", () => {
     expect(structuralUpdate.turnRowIds).toEqual([sealed.id]);
   });
 
-  it("keeps the last complete range ready when a refresh fails", () => {
+  it("keeps the last complete window ready when a refresh fails", () => {
     const model = createThreadChatModel();
     const rows = [row("turn-1", 1), row("turn-2", 2)];
     const initialGeneration = model.startWindow(request);
     model.commitWindow(request, initialGeneration, loaded(rows));
 
-    const olderRequest = { ...request, residentMaxOrdinal: 1 };
-    const generation = model.startWindow(olderRequest);
-    model.failWindow(olderRequest, generation, new Error("transient read failure"));
+    const generation = model.startWindow(request);
+    model.failWindow(request, generation, new Error("transient read failure"));
     const snapshot = model.window$(request.connectionId, request.threadId).peek();
 
     expect(snapshot.status).toBe("background-retrying");
@@ -325,7 +277,7 @@ describe("Legend thread chat model", () => {
     expect(snapshot.turnRowIds).toEqual(["turn-1", "turn-2"]);
   });
 
-  it("recovers an initially failed local range when authoritative rows arrive", () => {
+  it("recovers an initially failed local window when authoritative rows arrive", () => {
     const model = createThreadChatModel();
     const generation = model.startWindow(request);
     model.failWindow(request, generation, new Error("transient read failure"));

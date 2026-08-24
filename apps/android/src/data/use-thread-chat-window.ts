@@ -19,9 +19,6 @@ function useThreadChatWindowResource(
   const connectionId = input?.connectionId ?? "";
   const threadId = input?.threadId ?? "";
   const anchorTurnId = input?.anchorTurnId ?? null;
-  const residentHistoryEpoch = input?.residentHistoryEpoch ?? null;
-  const residentMaxOrdinal = input?.residentMaxOrdinal;
-  const residentTurnLimit = input?.residentTurnLimit ?? 0;
   useEffect(() => {
     if (database === null || !enabled) return;
     return database.retainWindow(connectionId, threadId);
@@ -29,14 +26,11 @@ function useThreadChatWindowResource(
   useEffect(() => {
     if (database === null || !enabled) return;
     database.adoptPreloadedWindow(connectionId, threadId);
-  }, [anchorTurnId, connectionId, database, enabled, residentHistoryEpoch, residentMaxOrdinal, residentTurnLimit, threadId]);
+  }, [anchorTurnId, connectionId, database, enabled, threadId]);
   const resource = database === null || !enabled ? null : database.windowResource({
       connectionId,
       threadId,
       anchorTurnId,
-      residentHistoryEpoch,
-      residentMaxOrdinal,
-      residentTurnLimit,
     });
   useSelector(() => resource === null ? true : resource.ready$.get(), { suspense: true });
   return resource;

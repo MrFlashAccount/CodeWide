@@ -8,6 +8,7 @@ import {
   setTelemetryEnabled,
   type TelemetryBatch,
 } from "../src/data/telemetry";
+import { recordThreadHistoryTelemetry } from "../src/data/thread-history-telemetry";
 
 describe("telemetry batching", () => {
   afterEach(() => {
@@ -69,5 +70,27 @@ describe("telemetry batching", () => {
     await flushTelemetry();
     await flushTelemetry();
     expect(batches.map((batch) => batch.events.length)).toEqual([64, 6]);
+  });
+
+  it("adds stable connection and thread dimensions to history diagnostics", async () => {
+    const batches: TelemetryBatch[] = [];
+    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    setTelemetryEnabled(true);
+
+    recordThreadHistoryTelemetry("connection-1", "thread-1", "chat.history.load_started", {
+      turnId: "turn-1",
+      values: { historyEpoch: 4 },
+      tags: { direction: "older" },
+    });
+    await flushTelemetry();
+
+    expect(batches[0]?.events[0]).toMatchObject({
+      name: "chat.history.load_started",
+      connectionId: "connection-1",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      values: { historyEpoch: 4 },
+      tags: { direction: "older" },
+    });
   });
 });

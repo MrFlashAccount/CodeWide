@@ -43,7 +43,7 @@ import {
 import type { HostQueuedPrompt } from "./queue-event";
 import type { NativeCommandDelivery } from "../native/native-transport";
 import type { ThreadEventProjection } from "./thread-projection-store";
-import { invalidationCanBeCleared, latestThreadInvalidations } from "./thread-detail-invalidation";
+import { invalidationCanBeCleared, latestThreadInvalidations, shouldPersistThreadInvalidation } from "./thread-detail-invalidation";
 import { parseQueuedInput } from "./queued-input";
 import { SerialTaskQueue } from "./serial-task-queue";
 import {
@@ -56,8 +56,21 @@ import {
   type ThreadChatWindowSnapshot,
 } from "./thread-chat-model";
 import { setThreadDetailResidentRows } from "./operational-metrics";
-import { createThreadDetailSqlite, type ThreadDetailSqliteControls } from "./thread-detail-sqlite.native";
+import {
+  activeThreadNavigationIdFor,
+  recordThreadNavigationMeasure,
+  recordThreadNavigationVisualEvent,
+} from "./thread-navigation-metrics";
+import {
+  createThreadDetailSqlite,
+  type ThreadDetailSqliteControls,
+  type ThreadDetailSqliteDiagnostics,
+} from "./thread-detail-sqlite.native";
+import { isStableThreadCursorTurn } from "./thread-cursor-sync";
 import { ThreadWindowIntentController } from "./thread-window-intent";
+import { THREAD_HISTORY_PAGE_SIZE, THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
+import { threadLoadHasResidentSnapshot } from "./thread-load-status";
+import { recordThreadHistoryTelemetry, telemetryErrorKind } from "./thread-history-telemetry";
 
 const THREAD_DETAIL_COLLECTION_ID = "thread-details-v2";
 const THREAD_INVALIDATION_COLLECTION_ID = "thread-detail-invalidations-v1";
@@ -67,6 +80,7 @@ const DURABLE_LIVE_BOUNDARIES = new Set([
   "thread/status/changed",
   "thread/deleted",
 ]);
+const OPTIMISTIC_RECONCILIATION_STALL_MS = 30_000;
 
 export { materializePendingTimeline, materializeThreadDetails, materializeThreadTurns } from "./thread-detail-projection";
 export type { PendingTimelineEntry, ThreadDetailRow, ThreadDetailSnapshot } from "./thread-detail-projection";
@@ -80,6 +94,8 @@ export type ThreadDetailDatabase = {
   retainWindow(connectionId: string, threadId: string): () => void;
   adoptPreloadedWindow(connectionId: string, threadId: string): void;
   loadWindow(request: ThreadChatWindowRequest): Promise<void>;
+  pullRange(connectionId: string, threadId: string, direction: "older" | "newer" | "latest"): Promise<boolean>;
+  trimRange(connectionId: string, threadId: string, direction: "older" | "newer"): Promise<boolean>;
   readWindowRows(snapshot: ThreadChatWindowSnapshot): {
     turnRows: ThreadDetailRow[];
     detailRows: ThreadDetailRow[];
@@ -87,9 +103,12 @@ export type ThreadDetailDatabase = {
   };
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
-  captureRefreshCursor(connectionId: string, threadId: string): number;
-  replaceThread(connectionId: string, thread: Thread, cleanThroughCursor?: number | null): Promise<void>;
-  prependTurns(connectionId: string, threadId: string, expectedHistoryEpoch: number, turns: Turn[]): Promise<ThreadHistoryPrependResult>;
+  captureRefreshCursor(connectionId: string, threadId: string): number | null;
+  historyCursor(connectionId: string, threadId: string): string | null | undefined;
+  latestSealedTurnId(connectionId: string, threadId: string): Promise<string | null>;
+  importThreadSnapshot(connectionId: string, thread: Thread, reason: ThreadSnapshotImportReason, cleanThroughCursor?: number | null, historyCursor?: string | null): Promise<void>;
+  appendTurns(connectionId: string, threadId: string, turns: Turn[], cleanThroughCursor?: number | null, historyCursor?: string | null): Promise<ThreadHistoryAppendResult>;
+  prependTurns(connectionId: string, threadId: string, expectedHistoryEpoch: number, turns: Turn[], nextCursor: string | null): Promise<ThreadHistoryPrependResult>;
   replaceTurnItems(connectionId: string, threadId: string, turnId: string, items: Turn["items"]): Promise<void>;
   createPending(input: PendingTimelineInput): ThreadDetailRow;
   stagePendingMutation(mutation: PendingTimelineMutation): { rollback(): void; complete(): void };
@@ -113,6 +132,13 @@ export type ThreadHistoryPrependResult = {
   extendedMinimum: boolean;
 };
 
+export type ThreadHistoryAppendResult = {
+  accepted: boolean;
+  historyEpoch: number;
+};
+
+export type ThreadSnapshotImportReason = "initial" | "fork" | "recovery";
+
 export type PendingTimelineInput = Omit<PendingTimelineEntry, "order"> & { order?: number } & {
   connectionId: string;
   threadId: string;
@@ -130,7 +156,7 @@ type SyncControls = ThreadDetailSqliteControls;
 type OrdinalBounds = { min: number; max: number; dirty: boolean };
 
 /**
- * Incremental index over the rows the active Legend chat ranges hydrate. History can
+ * Incremental index over the rows the active Legend chat windows hydrate. History can
  * grow to thousands of turns, so a live delta must never rebuild or scan the
  * whole collection just to find the mutable head.
  */
@@ -195,6 +221,11 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
   historyEpoch(connectionId: string, threadId: string): number {
     const meta = super.get(threadMetaKey(connectionId, threadId));
     return meta?.kind === "thread" ? meta.historyEpoch : 0;
+  }
+
+  historyCursor(connectionId: string, threadId: string): string | null | undefined {
+    const meta = super.get(threadMetaKey(connectionId, threadId));
+    return meta?.kind === "thread" ? meta.historyCursor : undefined;
   }
 
   threadMetaRows(connectionId: string): ThreadDetailRow[] {
@@ -337,7 +368,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   });
   // A new thread can receive its first turn before React switches from the
   // synthetic New Chat scope to the real thread query. Keep only a bounded
-  // set of those empty shells so their live events can restart the range
+  // set of those empty shells so their live events can restart the window
   // controller instead of being reduced to an invalidation that appears only
   // after reopening the conversation.
   const startedThreadShells = new Map<string, Thread>();
@@ -348,6 +379,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   let closePromise: Promise<void> | null = null;
   const writes = new SerialTaskQueue();
   const windowIntents = new ThreadWindowIntentController();
+  const rangePulls = new Map<string, Promise<boolean>>();
+  const reportedStalledOptimisticFingerprintByThread = new Map<string, string>();
+  let storageDiagnosticsPromise: Promise<ThreadDetailSqliteDiagnostics> | null = null;
+  let storageDiagnosticsReported = false;
 
   const detailStorage = createThreadDetailSqlite((changes) => {
     const touched = new Map<string, { connectionId: string; threadId: string }>();
@@ -364,6 +399,24 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     }
   });
   const unregisterDetailFlusher = registerUiCacheCollectionFlusher(THREAD_DETAIL_COLLECTION_ID, detailStorage.flush);
+  const reportStorageDiagnostics = (connectionId: string, threadId: string): void => {
+    if (storageDiagnosticsReported) return;
+    storageDiagnosticsPromise ??= detailStorage.diagnostics();
+    void storageDiagnosticsPromise.then((diagnostics) => {
+      if (storageDiagnosticsReported) return;
+      storageDiagnosticsReported = true;
+      recordThreadHistoryTelemetry(connectionId, threadId, "cache.ui_sqlite_storage", {
+        values: diagnostics,
+        tags: {
+          rotation: diagnostics.historyFamiliesEvicted > 0 ? "evicted" : "within_limit",
+          startupCleanup: diagnostics.staleDeliveryRowsRemoved > 0 ? "removed" : "clean",
+        },
+      });
+    }).catch((cause: unknown) => {
+      storageDiagnosticsPromise = null;
+      console.warn("UI cache SQLite diagnostics failed", cause);
+    });
+  };
   const invalidationModel = createPersistentCollectionModel<ThreadInvalidationRow, string>({
     id: THREAD_INVALIDATION_COLLECTION_ID,
     tableName: "codewide_thread_invalidations",
@@ -397,7 +450,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     threadId: string,
     incomingTurnIds: readonly string[],
   ): Promise<ThreadDetailRow[]> => {
-    // Authoritative projection cannot rely on the current resident range: it
+    // Authoritative projection cannot rely on the current in-memory window: it
     // may still be loading or may not contain the incoming turn family. Read
     // only the durable facts required to
     // establish the current epoch and anchor this bounded server page.
@@ -422,7 +475,12 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     if (disposed) return false;
     const controls = ensureControls();
     controls.begin({ immediate: true });
-    let changed = false;
+    let persistentChanged = false;
+    const volatileChanges: Array<
+      { type: "insert" | "update"; value: ThreadDetailRow }
+      | { type: "delete"; key: string }
+    > = [];
+    const touchedVolatileScopes = new Map<string, { connectionId: string; threadId: string }>();
     for (const key of mutation.deletes) {
       const previous = source.get(key);
       // An authoritative turn owns the stable client-id row forever. A late
@@ -431,11 +489,25 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         stagedPendingOverlays.delete(key);
         continue;
       }
-      if (previous?.kind === "pending") source.delete(key);
-      if (previous?.kind === "pending" || stagedPendingOverlays.has(key)) {
-        controls.write({ type: "delete", key });
-        changed = true;
+      if (previous?.kind === "pending") {
+        source.delete(key);
+        volatileChanges.push({ type: "delete", key });
+        touchedVolatileScopes.set(threadScope(previous.connectionId, previous.remoteThreadId), {
+          connectionId: previous.connectionId,
+          threadId: previous.remoteThreadId,
+        });
       }
+      if (previous?.kind === "pending" || stagedPendingOverlays.has(key)) {
+        // Direct delivery is reconstructed from Kotlin's durable outbox. The
+        // delete is still persisted so installations which used the former
+        // dual-owner model purge any legacy SQLite projection.
+        controls.write({ type: "delete", key });
+        persistentChanged = true;
+      }
+      // A removed optimistic row must not be resurrected by the next SQLite
+      // window install. The overlay only protects the command while its native
+      // acceptance transaction is genuinely in flight.
+      stagedPendingOverlays.delete(key);
     }
     for (const row of mutation.upserts) {
       if (row.kind !== "pending" || row.pending === null || row.pending === undefined) continue;
@@ -444,14 +516,30 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       const next = previous?.kind === "pending" && previous.pending !== null && previous.pending !== undefined
         ? { ...row, pending: mergePendingTimelineEntry(previous.pending, row.pending) }
         : row;
-      if (writeOwnedRow(controls, next.id, next)) changed = true;
+      if (next.pending?.presentation === "delivery") {
+        if (previous === undefined || !sameThreadDetailRow(previous, next)) {
+          source.set(next.id, next);
+          volatileChanges.push({ type: previous === undefined ? "insert" : "update", value: next });
+          touchedVolatileScopes.set(threadScope(next.connectionId, next.remoteThreadId), {
+            connectionId: next.connectionId,
+            threadId: next.remoteThreadId,
+          });
+        }
+        continue;
+      }
+      if (writeOwnedRow(controls, next.id, next)) persistentChanged = true;
       else if (stagedPendingOverlays.has(next.id)) {
         controls.write({ type: "update", value: next });
-        changed = true;
+        persistentChanged = true;
       }
     }
-    if (!changed) await controls.commit();
-    else await controls.commit({ durable });
+    await controls.commit({ durable: durable && persistentChanged });
+    if (volatileChanges.length > 0) {
+      chat.publishChanges(volatileChanges);
+      for (const { connectionId, threadId } of touchedVolatileScopes.values()) {
+        chat.refreshThread(connectionId, threadId, source.rowsForThread(connectionId, threadId));
+      }
+    }
     return true;
   });
 
@@ -459,12 +547,23 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     await persistPendingMutation({ upserts: [row], deletes: [] }, durable)
   );
 
-  const applyCommandDelivery = async (delivery: NativeCommandDelivery): Promise<void> => {
+  const applyCommandDelivery = async (
+    delivery: NativeCommandDelivery,
+    allowInsert = false,
+  ): Promise<void> => {
     if (disposed) return;
     const direct = delivery.method === "turn/start" || delivery.method === "turn/steer";
     if (direct && delivery.threadId !== null) {
       const existing = source.pendingRow(delivery.connectionId, delivery.commandId);
-      if (existing === undefined && !source.has(threadMetaKey(delivery.connectionId, delivery.threadId))) return;
+      // A delta event may only advance an optimistic row that already exists.
+      // On reconnect Kotlin can briefly replay old uncertain commands through
+      // `sending` before the host deduplicates them. Materializing those deltas
+      // as new rows makes dozens of historical bubbles flash into the resident
+      // window. Only a full native-ledger reconciliation may reconstruct a
+      // missing row after process death.
+      if (existing === undefined && (delivery.state === "delivered"
+        || !allowInsert
+        || !source.has(threadMetaKey(delivery.connectionId, delivery.threadId)))) return;
       const entry: PendingTimelineEntry = {
         commandId: delivery.commandId,
         method: delivery.method === "turn/steer" ? "turn/steer" : "turn/start",
@@ -525,13 +624,14 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const publishThread = async (
     connectionId: string,
     incoming: Thread,
-    mode: "authoritative" | "live" | "prepend",
+    mode: "authoritative" | "live" | "append",
     openedAt = Date.now(),
     preserveConcurrentHead = false,
+    suppliedHistoryCursor?: string | null,
   ): Promise<void> => {
     if (disposed) throw new Error("Thread detail database is closed");
     const controls = ensureControls();
-    if (mode === "authoritative") {
+    if (mode === "authoritative" || mode === "append") {
       for (const row of await loadDurableAuthoritativeRows(
         connectionId,
         incoming.id,
@@ -544,6 +644,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     const projectedHistoryEpoch = projectAuthoritativeHistoryEpoch(existingRows, incoming.turns.map((turn) => turn.id));
     const historyEpoch = mode === "authoritative" ? projectedHistoryEpoch : currentHistoryEpoch;
     const authoritativeDisconnected = historyEpoch !== currentHistoryEpoch;
+    const previousMeta = existingRows.find((row) => row.kind === "thread");
+    const historyCursor = authoritativeDisconnected
+      ? suppliedHistoryCursor
+      : previousMeta?.historyCursor === undefined ? suppliedHistoryCursor : previousMeta.historyCursor;
     const currentSnapshot = materializeThreadDetail(currentRows, connectionId, incoming.id, sessionId);
     const current = currentSnapshot?.thread;
     const authoritative = mode === "authoritative" && currentSnapshot?.fresh === true
@@ -552,7 +656,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     const thread = reconcileAuthoritativeThread(authoritative, current, preserveConcurrentHead);
     const ordinalSourceRows = authoritativeDisconnected ? [] : currentRows;
     const authoritativeOrdinals = projectAuthoritativeTurnOrdinals(ordinalSourceRows, thread.turns.map((turn) => turn.id));
-    const nextRows = rowsForThread(connectionId, thread, sessionId, openedAt, authoritativeOrdinals, historyEpoch);
+    const nextRows = rowsForThread(connectionId, thread, sessionId, openedAt, authoritativeOrdinals, historyEpoch, historyCursor);
     const prefix = threadRowPrefix(connectionId, thread.id);
     controls.begin({ immediate: true });
     let mutationCount = 0;
@@ -609,6 +713,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       previousMeta.sessionId,
       previousMeta.lastOpenedAt,
       historyEpoch,
+      previousMeta.historyCursor,
     )) ? 1 : 0;
     for (const rawTurn of thread.turns) {
       const turn = compactCompletedTurnForStorage(rawTurn);
@@ -641,16 +746,49 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
 
   const loadWindow = async (request: ThreadChatWindowRequest, navigationToken?: number): Promise<void> => {
     if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
+    const navigationId = activeThreadNavigationIdFor(request.connectionId, request.threadId);
+    const requestedAt = performance.now();
+    recordThreadNavigationVisualEvent(request.connectionId, request.threadId, "chat_window_load_requested", {
+      values: { residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT },
+      tags: {
+        source: navigationToken === undefined ? "render" : "press_preload",
+        anchor: request.anchorTurnId === null ? "tail" : "saved",
+      },
+    }, navigationId ?? undefined);
     const generation = chat.startWindow(request);
     try {
       await writes.run(async () => {
+        const laneEnteredAt = performance.now();
+        recordThreadNavigationMeasure(
+          request.connectionId,
+          request.threadId,
+          "chat_window_write_lane_wait",
+          laneEnteredAt - requestedAt,
+        );
         // Superseded press intents that have not reached SQLite are skipped
         // instead of making the selected destination wait behind useless work.
         if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
+        const sqliteStartedAt = performance.now();
         const loaded = await detailStorage.loadResolvedWindow({
-          ...request,
-          restoreNewerBuffer: Math.floor(request.residentTurnLimit / 2),
+          connectionId: request.connectionId,
+          threadId: request.threadId,
+          anchorTurnId: request.anchorTurnId,
+          turnLimit: THREAD_RESIDENT_TURN_LIMIT,
+          newerBuffer: THREAD_HISTORY_PAGE_SIZE,
         });
+        recordThreadNavigationMeasure(
+          request.connectionId,
+          request.threadId,
+          "chat_window_sqlite",
+          performance.now() - sqliteStartedAt,
+          {
+            values: {
+              turnRows: loaded.turnRows.length,
+              detailRows: loaded.detailRows.length,
+              liveRows: loaded.liveRows.length,
+            },
+          },
+        );
         // The installed SQLite API cannot interrupt a statement already in
         // flight. Drop its projection as soon as it returns, before it can
         // replace rows or extend the queue's useful critical section.
@@ -665,30 +803,40 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         // before deriving membership so the atomic install cannot hide or
         // resurrect them.
         const rows = mergePendingTimelineOverlays(
-          persistedRows,
+          composeInitialRangeRows(
+            source.rowsForThread(request.connectionId, request.threadId),
+            persistedRows,
+            loaded.historyEpoch,
+          ),
           [...stagedPendingOverlays.values()],
           request.connectionId,
           request.threadId,
         );
-        const liveRowIds = rows.flatMap((row) => !row.sealed
-          && (row.kind === "pending" || row.historyEpoch === loaded.historyEpoch)
-          ? [row.id]
-          : []);
+        const membership = rangeMembership(rows, loaded.historyEpoch);
         const committed = chat.commitWindow(request, generation, {
           scope: threadChatScope(request.connectionId, request.threadId),
           requestKey: threadChatRequestKey(request),
           historyEpoch: loaded.historyEpoch,
           latestSealedOrdinal: loaded.latestSealedOrdinal,
           earliestSealedOrdinal: loaded.earliestSealedOrdinal,
-          requestedMaxOrdinal: loaded.requestedMaxOrdinal,
-          residentTurnLimit: request.residentTurnLimit,
-          turnRowIds: loaded.turnRows.map(({ id }) => id),
-          detailRowIds: loaded.detailRows.map(({ id }) => id),
-          liveRowIds,
+          residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+          ...membership,
           rows,
         });
         if (!committed) return;
         source.replaceThreadLoaded(request.connectionId, request.threadId, rows);
+        // Storage inspection is intentionally outside the navigation-critical
+        // SQLite read. It may scan small non-history projections and stat the
+        // database files, but it must never delay the first visible window.
+        reportStorageDiagnostics(request.connectionId, request.threadId);
+        recordThreadNavigationVisualEvent(request.connectionId, request.threadId, "chat_window_model_installed", {
+          values: {
+            totalLoadMs: performance.now() - requestedAt,
+            turnRows: loaded.turnRows.length,
+            detailRows: loaded.detailRows.length,
+            liveRows: loaded.liveRows.length,
+          },
+        }, navigationId ?? undefined);
       });
     } catch (cause) {
       if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
@@ -731,6 +879,184 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     async loadWindow(request) {
       await loadWindow(request);
     },
+    async pullRange(connectionId, threadId, direction) {
+      const scope = threadChatScope(connectionId, threadId);
+      const pullKey = `${scope}\u0000${direction}`;
+      const existing = rangePulls.get(pullKey);
+      if (existing !== undefined) {
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_coalesced", {
+          tags: { direction },
+        });
+        return await existing;
+      }
+      const operationStartedAt = performance.now();
+      recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_started", {
+        tags: { direction },
+      });
+      let noOpReason = "none";
+      let residentTurnCount = 0;
+      const operation = writes.run(async () => {
+        if (disposed) {
+          noOpReason = "disposed";
+          return false;
+        }
+        const snapshot = chat.window$(connectionId, threadId).peek();
+        if (!threadLoadHasResidentSnapshot(snapshot.status)) {
+          noOpReason = "snapshot_not_resident";
+          return false;
+        }
+        const residentTurns = chat.readRows(snapshot.turnRowIds)
+          .filter((row) => row.kind === "turn" && row.sealed && row.historyEpoch === snapshot.historyEpoch);
+        residentTurnCount = residentTurns.length;
+        if (residentTurns.length === 0 && direction !== "latest") {
+          noOpReason = "resident_range_empty";
+          return false;
+        }
+        const residentMinimum = residentTurns.reduce<number | null>(
+          (minimum, row) => minimum === null ? row.ordinal : Math.min(minimum, row.ordinal),
+          null,
+        );
+        const residentMaximum = residentTurns.reduce<number | null>(
+          (maximum, row) => maximum === null ? row.ordinal : Math.max(maximum, row.ordinal),
+          null,
+        );
+        const sqliteStartedAt = performance.now();
+        let latestSealedOrdinal = snapshot.latestSealedOrdinal;
+        let earliestSealedOrdinal = snapshot.earliestSealedOrdinal;
+        let loaded;
+        if (direction === "latest") {
+          loaded = await detailStorage.loadResolvedWindow({
+            connectionId,
+            threadId,
+            anchorTurnId: null,
+            turnLimit: THREAD_RESIDENT_TURN_LIMIT,
+            newerBuffer: THREAD_HISTORY_PAGE_SIZE,
+          });
+          latestSealedOrdinal = loaded.latestSealedOrdinal;
+          earliestSealedOrdinal = loaded.earliestSealedOrdinal;
+        } else {
+          const boundaryOrdinal = direction === "older" ? residentMinimum : residentMaximum;
+          if (boundaryOrdinal === null) {
+            noOpReason = "resident_boundary_missing";
+            return false;
+          }
+          loaded = await detailStorage.loadAdjacentWindow({
+            connectionId,
+            threadId,
+            historyEpoch: snapshot.historyEpoch,
+            boundaryOrdinal,
+            direction,
+            turnLimit: THREAD_HISTORY_PAGE_SIZE,
+          });
+          if (loaded.turnRows.length === 0) {
+            noOpReason = `${direction}_boundary`;
+            return false;
+          }
+        }
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_sqlite_loaded", {
+          values: {
+            durationMs: performance.now() - sqliteStartedAt,
+            turnRows: loaded.turnRows.length,
+            detailRows: loaded.detailRows.length,
+            liveRows: loaded.liveRows.length,
+          },
+          tags: { direction },
+        });
+        const persistedRows = [...loaded.turnRows, ...loaded.detailRows, ...loaded.liveRows];
+        const expandedRows = composeExpandedRangeRows(
+          source.rowsForThread(connectionId, threadId),
+          persistedRows,
+          snapshot.historyEpoch,
+        );
+        const rows = mergePendingTimelineOverlays(
+          direction === "latest"
+            ? trimExpandedRangeRows(expandedRows, snapshot.historyEpoch, "newer", THREAD_RESIDENT_TURN_LIMIT)
+            : expandedRows,
+          [...stagedPendingOverlays.values()],
+          connectionId,
+          threadId,
+        );
+        const membership = rangeMembership(rows, snapshot.historyEpoch);
+        const committed = chat.commitRange(connectionId, threadId, {
+          historyEpoch: snapshot.historyEpoch,
+          layoutRevision: snapshot.layoutRevision,
+        }, {
+          scope,
+          requestKey: snapshot.requestKey,
+          historyEpoch: snapshot.historyEpoch,
+          latestSealedOrdinal,
+          earliestSealedOrdinal,
+          residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+          ...membership,
+          rows,
+        });
+        if (!committed) {
+          noOpReason = "stale_commit";
+          return false;
+        }
+        source.replaceThreadLoaded(connectionId, threadId, rows);
+        return true;
+      });
+      rangePulls.set(pullKey, operation);
+      try {
+        const pulled = await operation;
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_finished", {
+          values: {
+            durationMs: performance.now() - operationStartedAt,
+            residentTurnCount,
+          },
+          tags: { direction, outcome: pulled ? "pulled" : "ignored", reason: pulled ? "none" : noOpReason },
+        });
+        return pulled;
+      } catch (cause) {
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_pull_failed", {
+          values: { durationMs: performance.now() - operationStartedAt },
+          tags: { direction, errorKind: telemetryErrorKind(cause) },
+        });
+        throw cause;
+      } finally {
+        if (rangePulls.get(pullKey) === operation) rangePulls.delete(pullKey);
+      }
+    },
+    async trimRange(connectionId, threadId, direction) {
+      return await writes.run(async () => {
+        if (disposed) return false;
+        const snapshot = chat.window$(connectionId, threadId).peek();
+        if (!threadLoadHasResidentSnapshot(snapshot.status)) return false;
+        const residentRows = source.rowsForThread(connectionId, threadId);
+        const rows = trimExpandedRangeRows(
+          residentRows,
+          snapshot.historyEpoch,
+          direction,
+          THREAD_RESIDENT_TURN_LIMIT,
+        );
+        if (rows.length === residentRows.length) return false;
+        const membership = rangeMembership(rows, snapshot.historyEpoch);
+        const committed = chat.commitRange(connectionId, threadId, {
+          historyEpoch: snapshot.historyEpoch,
+          layoutRevision: snapshot.layoutRevision,
+        }, {
+          scope: threadChatScope(connectionId, threadId),
+          requestKey: snapshot.requestKey,
+          historyEpoch: snapshot.historyEpoch,
+          latestSealedOrdinal: snapshot.latestSealedOrdinal,
+          earliestSealedOrdinal: snapshot.earliestSealedOrdinal,
+          residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+          ...membership,
+          rows,
+        });
+        if (!committed) return false;
+        source.replaceThreadLoaded(connectionId, threadId, rows);
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.range_trimmed", {
+          values: {
+            beforeTurnCount: snapshot.turnRowIds.length,
+            afterTurnCount: membership.turnRowIds.length,
+          },
+          tags: { direction },
+        });
+        return true;
+      });
+    },
     readWindowRows(snapshot) {
       return {
         turnRows: chat.readRows(snapshot.turnRowIds),
@@ -738,9 +1064,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         liveRows: chat.readRows(snapshot.liveRowIds),
       };
     },
-    async applySnapshot(connectionId, snapshots) {
+    async applySnapshot(connectionId, snapshots, cursor) {
       await writes.run(async () => {
         if (disposed) return;
+        // A snapshot is the replay-expiry boundary: it can advance summaries
+        // without containing immutable turn bodies. Mark every snapshot thread
+        // dirty at this cursor so its next open performs a bounded keyset
+        // catch-up from the last locally sealed turn. Normal replay batches
+        // clear this marker after their detail projection checkpoints.
+        await persistSnapshotInvalidations(invalidations, connectionId, snapshots, cursor);
         const controls = ensureControls();
         const byId = new Map(snapshots.map((snapshot) => [snapshot.thread.id, snapshot]));
         controls.begin({ immediate: true });
@@ -751,7 +1083,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           // Snapshot list updates only bounded thread metadata. Turn metadata is
           // stored in independent rows and must not force a history scan here.
           const metadata = preserveProjectedTurnMetadata(snapshot.thread, row.thread);
-          const next = threadRow(connectionId, metadata, row.sessionId, row.lastOpenedAt, row.historyEpoch);
+          const next = threadRow(connectionId, metadata, row.sessionId, row.lastOpenedAt, row.historyEpoch, row.historyCursor);
           if (writeOwnedRow(controls, next.id, next)) mutationCount += 1;
         }
         if (mutationCount === 0) await controls.commit();
@@ -770,7 +1102,21 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           return { checkpoint: Promise.resolve(), threads: new Map() };
         }
         const durable = events.some((event) => DURABLE_LIVE_BOUNDARIES.has(String(event.payload.method ?? "")));
-        const checkpoints: Promise<void>[] = [persistInvalidations(invalidations, connectionId, events)];
+        const invalidatingEvents = events.filter((event) => {
+          const threadId = threadIdFromEvent(event.payload);
+          if (threadId === null) return false;
+          const patch = threadProjectionPatchFromEvent(event.payload) ?? legacyThreadProjectionPatch(event.payload);
+          // Locally projected semantic events are already protected by the
+          // native replay ACK: a failed detail checkpoint rejects the batch.
+          // Only cold/unsupported events and explicit canonical invalidations
+          // need a durable per-thread catch-up marker.
+          return shouldPersistThreadInvalidation(
+            patch,
+            source.has(threadMetaKey(connectionId, threadId)),
+            startedThreadIds.has(threadId),
+          );
+        });
+        const checkpoints: Promise<void>[] = [persistInvalidations(invalidations, connectionId, invalidatingEvents)];
         const projectedThreads = new Map<string, { before: Thread; after: Thread }>();
         const hasLoadedThread = events.some((event) => {
           const threadId = threadIdFromEvent(event.payload);
@@ -828,9 +1174,20 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       });
     },
     captureRefreshCursor(connectionId, threadId) {
-      return invalidations.get(invalidationKey(connectionId, threadId))?.cursor ?? 0;
+      return invalidations.get(invalidationKey(connectionId, threadId))?.cursor ?? null;
     },
-    async replaceThread(connectionId, thread, cleanThroughCursor = null) {
+    historyCursor(connectionId, threadId) {
+      return source.historyCursor(connectionId, threadId);
+    },
+    async latestSealedTurnId(connectionId, threadId) {
+      const meta = await detailStorage.loadThreadMeta(connectionId, threadId);
+      if (meta?.kind !== "thread") return null;
+      const latest = await detailStorage.loadBoundary(connectionId, threadId, meta.historyEpoch, "desc");
+      return latest?.kind === "turn" && latest.turn !== null && isStableThreadCursorTurn(latest.turn)
+        ? latest.remoteTurnId
+        : null;
+    },
+    async importThreadSnapshot(connectionId, thread, _reason, cleanThroughCursor = null, historyCursor) {
       if (thread.turns.length === 0) {
         const key = threadScope(connectionId, thread.id);
         startedThreadShells.delete(key);
@@ -844,26 +1201,47 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       await writes.run(async () => {
         const latestCursor = invalidations.get(invalidationKey(connectionId, thread.id))?.cursor ?? 0;
         const preserveConcurrentHead = cleanThroughCursor !== null && latestCursor > cleanThroughCursor;
-        await publishThread(connectionId, thread, "authoritative", Date.now(), preserveConcurrentHead);
+        await publishThread(connectionId, thread, "authoritative", Date.now(), preserveConcurrentHead, historyCursor);
         if (cleanThroughCursor !== null) {
           await clearInvalidationThrough(invalidations, connectionId, thread.id, cleanThroughCursor);
         }
       });
     },
-    async prependTurns(connectionId, threadId, expectedHistoryEpoch, turns) {
+    async appendTurns(connectionId, threadId, turns, cleanThroughCursor = null, historyCursor) {
       return await writes.run(async () => {
-        // The source owns every row in the resident range. Rebuilding it from
-        // every durable row here made successive history pages O(n²): page 20
-        // rescanned all 19 preceding pages before inserting twelve rows.
+        const currentRows = source.rowsForThread(connectionId, threadId);
+        const current = materializeThreadDetail(currentRows, connectionId, threadId, sessionId);
+        if (current === null) return { accepted: false, historyEpoch: source.historyEpoch(connectionId, threadId) };
+        if (turns.length > 0) {
+          // Only the supplied canonical suffix participates. Existing sealed
+          // rows are never replaced as a collection; overlapping live/final
+          // turns are reconciled by stable turn id and all new rows append
+          // after the durable maximum ordinal.
+          await publishThread(connectionId, { ...current.thread, turns }, "append", Date.now(), false, historyCursor);
+        }
+        if (cleanThroughCursor !== null) {
+          await clearInvalidationThrough(invalidations, connectionId, threadId, cleanThroughCursor);
+        }
+        return { accepted: true, historyEpoch: source.historyEpoch(connectionId, threadId) };
+      });
+    },
+    async prependTurns(connectionId, threadId, expectedHistoryEpoch, turns, nextCursor) {
+      const startedAt = performance.now();
+      recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.prepend_started", {
+        values: { expectedHistoryEpoch, turnCount: turns.length },
+        tags: { nextCursor: nextCursor === null ? "exhausted" : "available" },
+      });
+      try {
+        const result = await writes.run(async () => {
         const historyEpoch = source.historyEpoch(connectionId, threadId);
         if (historyEpoch !== expectedHistoryEpoch) return { accepted: false, historyEpoch, extendedMinimum: false };
-        if (turns.length === 0) return { accepted: true, historyEpoch, extendedMinimum: false };
         if (disposed) throw new Error("Thread detail database is closed");
+        const before = chat.window$(connectionId, threadId).peek();
+        const beforeTurnRowIds = before.turnRowIds;
         for (const row of await loadDurablePrependRows(connectionId, threadId, historyEpoch, turns.map((turn) => turn.id))) {
           source.set(row.id, row);
         }
         const controls = ensureControls();
-        const previousMinimum = source.ordinalBounds(connectionId, threadId, historyEpoch)?.min ?? null;
         const prependedOrdinals = projectPrependedTurnOrdinals(
           source.rowsForThread(connectionId, threadId),
           historyEpoch,
@@ -871,6 +1249,11 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         );
         let mutationCount = 0;
         controls.begin({ immediate: true });
+        const metaKey = threadMetaKey(connectionId, threadId);
+        const meta = source.get(metaKey);
+        if (meta?.kind === "thread" && meta.historyCursor !== nextCursor) {
+          if (writeOwnedRow(controls, metaKey, { ...meta, historyCursor: nextCursor })) mutationCount += 1;
+        }
         for (const turn of turns) {
           const previousKey = source.turnRowKey(connectionId, threadId, turn.id);
           const key = turnStorageKey(connectionId, threadId, turn);
@@ -904,13 +1287,69 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         }
         if (mutationCount === 0) await controls.commit();
         else await controls.commit({ durable: true });
-        const nextMinimum = source.ordinalBounds(connectionId, threadId, historyEpoch)?.min ?? null;
+        // Persistence and presentation meet here. The remote page is already
+        // in SQLite; publish one atomic Legend range without trimming the
+        // opposite edge while the list is still moving.
+        const current = chat.window$(connectionId, threadId).peek();
+        const rows = composeExpandedRangeRows(
+          source.rowsForThread(connectionId, threadId),
+          [],
+          historyEpoch,
+        );
+        const membership = rangeMembership(rows, historyEpoch);
+        const changedRange = !sameStringSequence(beforeTurnRowIds, membership.turnRowIds);
+        let publishedRange = false;
+        if (changedRange) {
+          const minimum = rows.reduce<number | null>((value, row) => (
+            row.kind !== "turn" || !row.sealed || row.historyEpoch !== historyEpoch
+              ? value
+              : value === null ? row.ordinal : Math.min(value, row.ordinal)
+          ), null);
+          const committed = chat.commitRange(connectionId, threadId, {
+            historyEpoch,
+            layoutRevision: current.layoutRevision,
+          }, {
+            scope: threadChatScope(connectionId, threadId),
+            requestKey: current.requestKey,
+            historyEpoch,
+            latestSealedOrdinal: current.latestSealedOrdinal,
+            earliestSealedOrdinal: minimumNullable(current.earliestSealedOrdinal, minimum),
+            residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+            ...membership,
+            rows,
+          });
+          if (committed) {
+            source.replaceThreadLoaded(connectionId, threadId, rows);
+            publishedRange = true;
+          }
+        }
         return {
           accepted: true,
           historyEpoch,
-          extendedMinimum: nextMinimum !== null && (previousMinimum === null || nextMinimum < previousMinimum),
+          extendedMinimum: publishedRange,
         };
-      });
+        });
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.prepend_finished", {
+          values: {
+            durationMs: performance.now() - startedAt,
+            expectedHistoryEpoch,
+            actualHistoryEpoch: result.historyEpoch,
+            turnCount: turns.length,
+          },
+          tags: {
+            accepted: result.accepted ? "true" : "false",
+            extendedMinimum: result.extendedMinimum ? "true" : "false",
+            nextCursor: nextCursor === null ? "exhausted" : "available",
+          },
+        });
+        return result;
+      } catch (cause) {
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.prepend_failed", {
+          values: { durationMs: performance.now() - startedAt, expectedHistoryEpoch, turnCount: turns.length },
+          tags: { errorKind: telemetryErrorKind(cause) },
+        });
+        throw cause;
+      }
     },
     async replaceTurnItems(connectionId, threadId, turnId, items) {
       await writes.run(async () => {
@@ -1023,25 +1462,89 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         delivery.connectionId === connectionId
           && delivery.threadId === threadId
           && (delivery.method === "turn/start" || delivery.method === "turn/steer")
+          && delivery.state !== "delivered"
           ? [delivery.commandId]
           : []
       )));
+      // A delivered native row is a bounded receipt, not a deletion signal.
+      // It keeps an existing optimistic bubble in `sent` until the canonical
+      // server turn takes over the same stable client-id key. Missing delivered
+      // rows are never reconstructed, so historical receipts cannot flash into
+      // a cold resident window.
+      const retainedCommandIds = new Set(deliveries.flatMap((delivery) => (
+        delivery.connectionId === connectionId
+          && delivery.threadId === threadId
+          && (delivery.method === "turn/start" || delivery.method === "turn/steer")
+          ? [delivery.commandId]
+          : []
+      )));
+      // The synchronous optimistic insert happens immediately before the
+      // native durable enqueue. A concurrent authoritative refresh can inspect
+      // the ledger during that tiny gap; keep only those genuinely staged
+      // command ids alive until enqueue either accepts or rolls back.
+      for (const overlay of stagedPendingOverlays.values()) {
+        const pending = overlay.row?.kind === "pending" ? overlay.row.pending : null;
+        if (overlay.connectionId === connectionId
+          && overlay.threadId === threadId
+          && pending?.presentation === "delivery") {
+          activeCommandIds.add(pending.commandId);
+          retainedCommandIds.add(pending.commandId);
+        }
+      }
       for (const delivery of deliveries) {
         if (delivery.connectionId !== connectionId) continue;
         if (delivery.threadId !== threadId && source.pendingRow(connectionId, delivery.targetCommandId ?? "") === undefined) continue;
-        await applyCommandDelivery(delivery);
+        await applyCommandDelivery(delivery, true);
       }
-      const cleanup = planPendingDeliveryProjectionCleanup(
-        source.rowsForThread(connectionId, threadId),
-        activeCommandIds,
+      const projectedRows = source.rowsForThread(connectionId, threadId);
+      const reconciliation = pendingDeliveryReconciliationDiagnostics(
+        projectedRows,
+        retainedCommandIds,
       );
+      const cleanup = planPendingDeliveryProjectionCleanup(projectedRows, retainedCommandIds);
       if (cleanup.deletes.length > 0) await persistPendingMutation(cleanup, true);
+      if (reconciliation.pendingDeliveryCount > 0 || cleanup.deletes.length > 0) {
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.optimistic.reconciliation", {
+          values: {
+            activeCommandCount: activeCommandIds.size,
+            pendingDeliveryCount: reconciliation.pendingDeliveryCount,
+            inactiveDeliveryCount: reconciliation.inactiveDeliveryCount,
+            cleanedDeliveryCount: cleanup.deletes.length,
+            stalledDeliveryCount: reconciliation.stalledCommandIds.length,
+            oldestInactiveAgeMs: reconciliation.oldestInactiveAgeMs,
+          },
+          tags: {
+            outcome: reconciliation.stalledCommandIds.length > 0
+              ? "stalled"
+              : reconciliation.pendingDeliveryCount > 0 ? "pending" : "settled",
+          },
+        });
+      }
+      const scope = threadScope(connectionId, threadId);
+      const stalledFingerprint = reconciliation.stalledCommandIds.slice().sort().join("\u0000");
+      if (stalledFingerprint === "") {
+        reportedStalledOptimisticFingerprintByThread.delete(scope);
+      } else if (reportedStalledOptimisticFingerprintByThread.get(scope) !== stalledFingerprint) {
+        reportedStalledOptimisticFingerprintByThread.set(scope, stalledFingerprint);
+        recordThreadHistoryTelemetry(connectionId, threadId, "chat.optimistic.reconciliation_stalled", {
+          values: {
+            stalledDeliveryCount: reconciliation.stalledCommandIds.length,
+            oldestInactiveAgeMs: reconciliation.oldestInactiveAgeMs,
+            activeCommandCount: activeCommandIds.size,
+          },
+          tags: { authoritativeMatch: "missing" },
+        });
+      }
     },
     async replaceQueued(connectionId, threadId, commands, preserveCommandIds = new Set()) {
       const incoming = new Map(commands
         .filter((command) => command.remoteThreadId === threadId)
-        .map((command) => {
+        .flatMap((command) => {
           const existing = source.pendingRow(connectionId, command.commandId)?.pending;
+          // The companion queue snapshot also carries direct delivery receipts.
+          // Those receipts may advance an optimistic row created by this app,
+          // but must never reconstruct historical direct messages as queue rows.
+          if (command.presentation === "delivery" && existing?.presentation !== "delivery") return [];
           const queuedInput = parseQueuedInput(command.params);
           const entry: PendingTimelineEntry = {
             commandId: command.commandId,
@@ -1057,7 +1560,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             updatedAt: Date.now(),
             order: command.order,
           };
-          return [command.commandId, pendingRow(connectionId, threadId, entry)] as const;
+          return [[command.commandId, pendingRow(connectionId, threadId, entry)] as const];
         }));
       await writes.run(async () => {
         if (disposed) return;
@@ -1123,6 +1626,8 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         } finally {
           disposed = true;
           unregisterDetailFlusher();
+          rangePulls.clear();
+          reportedStalledOptimisticFingerprintByThread.clear();
           stagedPendingOverlays.clear();
           chat.close();
           invalidationModel.close();
@@ -1142,6 +1647,26 @@ async function persistInvalidations(
   const latest = latestThreadInvalidations(events);
   const checkpoints: Promise<void>[] = [];
   for (const [threadId, cursor] of latest) {
+    const id = invalidationKey(connectionId, threadId);
+    const current = collection.get(id);
+    if (current !== undefined && current.cursor >= cursor) continue;
+    const transaction = current === undefined
+      ? collection.insert({ id, connectionId, threadId, cursor })
+      : collection.update(id, (draft) => { draft.cursor = cursor; });
+    checkpoints.push(transaction.isPersisted.promise.then(() => undefined));
+  }
+  await Promise.all(checkpoints);
+}
+
+async function persistSnapshotInvalidations(
+  collection: Collection<ThreadInvalidationRow, string>,
+  connectionId: string,
+  snapshots: readonly SyncSnapshotThread[],
+  cursor: number,
+): Promise<void> {
+  const checkpoints: Promise<void>[] = [];
+  for (const snapshot of snapshots) {
+    const threadId = snapshot.thread.id;
     const id = invalidationKey(connectionId, threadId);
     const current = collection.get(id);
     if (current !== undefined && current.cursor >= cursor) continue;
@@ -1177,9 +1702,10 @@ function rowsForThread(
   lastOpenedAt: number,
   turnOrdinals?: ReadonlyMap<string, number>,
   historyEpoch = 0,
+  historyCursor?: string | null,
 ): Map<string, ThreadDetailRow> {
   const result = new Map<string, ThreadDetailRow>();
-  const meta = threadRow(connectionId, thread, sessionId, lastOpenedAt, historyEpoch);
+  const meta = threadRow(connectionId, thread, sessionId, lastOpenedAt, historyEpoch, historyCursor);
   result.set(meta.id, meta);
   thread.turns.forEach((turn, index) => {
     const ordinal = turnOrdinals?.get(turn.id) ?? index;
@@ -1224,9 +1750,17 @@ function baseRow(
   };
 }
 
-function threadRow(connectionId: string, thread: Thread, sessionId: string | null, lastOpenedAt: number, historyEpoch: number): ThreadDetailRow {
+function threadRow(
+  connectionId: string,
+  thread: Thread,
+  sessionId: string | null,
+  lastOpenedAt: number,
+  historyEpoch: number,
+  historyCursor?: string | null,
+): ThreadDetailRow {
   return {
     ...baseRow(threadMetaKey(connectionId, thread.id), "thread", connectionId, thread.id, null, historyEpoch, -1, sessionId, lastOpenedAt),
+    ...(historyCursor === undefined ? {} : { historyCursor }),
     thread: stripThreadTurns(thread),
   };
 }
@@ -1270,6 +1804,99 @@ function pendingRow(connectionId: string, threadId: string, entry: PendingTimeli
   };
 }
 
+function composeInitialRangeRows(
+  residentRows: readonly ThreadDetailRow[],
+  loadedRows: readonly ThreadDetailRow[],
+  historyEpoch: number,
+): ThreadDetailRow[] {
+  const rows = new Map<string, ThreadDetailRow>();
+  for (const row of loadedRows) {
+    if (row.kind === "pending" || row.kind === "thread" || row.historyEpoch === historyEpoch) rows.set(row.id, row);
+  }
+  // Pending delivery and mutable stream rows can change while the SQLite read
+  // is in flight. They overlay the cold range; old sealed rows do not.
+  for (const row of residentRows) {
+    if (row.kind === "pending" || row.kind === "thread" || (!row.sealed && row.historyEpoch === historyEpoch)) rows.set(row.id, row);
+  }
+  return [...rows.values()];
+}
+
+/** Adds one twelve-turn page without evicting while the list is moving. SQLite
+ * remains the durable owner; the expanded in-memory range is trimmed after the
+ * gesture ends. */
+function composeExpandedRangeRows(
+  residentRows: readonly ThreadDetailRow[],
+  loadedRows: readonly ThreadDetailRow[],
+  historyEpoch: number,
+): ThreadDetailRow[] {
+  const combined = new Map<string, ThreadDetailRow>();
+  for (const row of residentRows) combined.set(row.id, row);
+  for (const row of loadedRows) combined.set(row.id, row);
+  return [...combined.values()].filter((row) => row.kind === "pending" || row.kind === "thread" || row.historyEpoch === historyEpoch);
+}
+
+/** Drops only the page farthest from the completed gesture direction. */
+function trimExpandedRangeRows(
+  residentRows: readonly ThreadDetailRow[],
+  historyEpoch: number,
+  direction: "older" | "newer",
+  residentTurnLimit: number,
+): ThreadDetailRow[] {
+  const combined = new Map<string, ThreadDetailRow>();
+  for (const row of residentRows) combined.set(row.id, row);
+  const turns = [...combined.values()]
+    .filter((row) => row.kind === "turn" && row.sealed && row.historyEpoch === historyEpoch)
+    .sort((left, right) => left.ordinal - right.ordinal || left.id.localeCompare(right.id));
+  const selectedTurns = direction === "older"
+    ? turns.slice(0, residentTurnLimit)
+    : turns.slice(-residentTurnLimit);
+  const selectedTurnIds = new Set(selectedTurns.map(({ id }) => id));
+  const selectedOrdinals = new Set(selectedTurns.map(({ ordinal }) => ordinal));
+  return [...combined.values()].filter((row) => {
+    if (row.kind === "thread" || row.kind === "pending" || !row.sealed) {
+      return row.kind === "pending" || row.kind === "thread" || row.historyEpoch === historyEpoch;
+    }
+    if (row.historyEpoch !== historyEpoch) return false;
+    if (row.kind === "turn") return selectedTurnIds.has(row.id);
+    return (row.kind === "turnMeta" || row.kind === "activity") && selectedOrdinals.has(row.ordinal);
+  });
+}
+
+function rangeMembership(
+  rows: readonly ThreadDetailRow[],
+  historyEpoch: number,
+): Pick<ThreadChatWindowSnapshot, "turnRowIds" | "detailRowIds" | "liveRowIds"> {
+  const compareRows = (left: ThreadDetailRow, right: ThreadDetailRow): number => (
+    right.ordinal - left.ordinal || right.id.localeCompare(left.id)
+  );
+  return {
+    turnRowIds: rows
+      .filter((row) => row.kind === "turn" && row.sealed && row.historyEpoch === historyEpoch)
+      .sort(compareRows)
+      .map(({ id }) => id),
+    detailRowIds: rows
+      .filter((row) => row.sealed
+        && row.historyEpoch === historyEpoch
+        && (row.kind === "turnMeta" || row.kind === "activity"))
+      .sort(compareRows)
+      .map(({ id }) => id),
+    liveRowIds: rows
+      .filter((row) => !row.sealed && (row.kind === "pending" || row.historyEpoch === historyEpoch))
+      .sort(compareRows)
+      .map(({ id }) => id),
+  };
+}
+
+function sameStringSequence(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function minimumNullable(left: number | null, right: number | null): number | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return Math.min(left, right);
+}
+
 function stripThreadTurns(thread: Thread): Thread {
   return { ...thread, turns: [] };
 }
@@ -1295,6 +1922,7 @@ function sameThreadDetailRow(previous: ThreadDetailRow, next: ThreadDetailRow): 
     previous.kind !== next.kind
     || previous.id !== next.id
     || previous.historyEpoch !== next.historyEpoch
+    || previous.historyCursor !== next.historyCursor
     || previous.ordinal !== next.ordinal
     || previous.sessionId !== next.sessionId
     || previous.lastOpenedAt !== next.lastOpenedAt
@@ -1370,6 +1998,35 @@ function threadEpochScope(connectionId: string, threadId: string, historyEpoch: 
 
 function pendingCommandScope(connectionId: string, commandId: string): string {
   return `${connectionId}\u0000${commandId}`;
+}
+
+function pendingDeliveryReconciliationDiagnostics(
+  rows: readonly ThreadDetailRow[],
+  activeCommandIds: ReadonlySet<string>,
+  now = Date.now(),
+): {
+  pendingDeliveryCount: number;
+  inactiveDeliveryCount: number;
+  oldestInactiveAgeMs: number;
+  stalledCommandIds: string[];
+} {
+  let pendingDeliveryCount = 0;
+  let inactiveDeliveryCount = 0;
+  let oldestInactiveAgeMs = 0;
+  const stalledCommandIds: string[] = [];
+  for (const row of rows) {
+    const pending = row.kind === "pending" && row.pending?.presentation === "delivery"
+      ? row.pending
+      : null;
+    if (pending === null) continue;
+    pendingDeliveryCount += 1;
+    if (activeCommandIds.has(pending.commandId)) continue;
+    inactiveDeliveryCount += 1;
+    const ageMs = Math.max(0, now - Math.max(pending.createdAt, pending.updatedAt));
+    oldestInactiveAgeMs = Math.max(oldestInactiveAgeMs, ageMs);
+    if (ageMs >= OPTIMISTIC_RECONCILIATION_STALL_MS) stalledCommandIds.push(pending.commandId);
+  }
+  return { pendingDeliveryCount, inactiveDeliveryCount, oldestInactiveAgeMs, stalledCommandIds };
 }
 
 function samePendingTimelineEntry(left: PendingTimelineEntry, right: PendingTimelineEntry): boolean {

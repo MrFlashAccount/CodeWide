@@ -11,6 +11,12 @@ export type ThreadDetailRow = {
   remoteTurnId: string | null;
   /** Identifies one contiguous cursor chain for this thread. */
   historyEpoch: number;
+  /**
+   * Opaque continuation for the oldest durable turn in this epoch. Present on
+   * the thread row only. Missing means an older app cached the history before
+   * cursor persistence existed; null means the server proved it complete.
+   */
+  historyCursor?: string | null;
   ordinal: number;
   sessionId: string | null;
   lastOpenedAt: number;
@@ -346,17 +352,19 @@ export function materializePendingTimeline(rows: Iterable<ThreadDetailRow>): Pen
 }
 
 /**
- * Kotlin owns the durable direct-delivery ledger. A pending row that is no
- * longer present in that ledger is only a stale JS projection, usually left
- * behind after the canonical turn acknowledged the receipt. Keeping it in the
- * timeline creates an orphan user bubble and delays history pagination because
- * the virtual list mistakes the orphan for real conversation content.
+ * Kotlin owns the durable direct-delivery ledger. A direct-delivery projection
+ * which is no longer present in that ledger is stale: delivered receipts are
+ * retired only after the authoritative user item was observed, while unresolved
+ * commands remain in `activeCommandIds`. The resident chat range must not keep
+ * an independent optimistic lifetime or wait for the matching turn to scroll
+ * into view.
  */
 export function planPendingDeliveryProjectionCleanup(
   rows: Iterable<ThreadDetailRow>,
   activeCommandIds: ReadonlySet<string>,
 ): PendingTimelineMutation {
-  const deletes = [...rows].flatMap((row) => (
+  const values = [...rows];
+  const deletes = values.flatMap((row) => (
     row.kind === "pending"
       && row.pending?.presentation === "delivery"
       && !activeCommandIds.has(row.pending.commandId)
@@ -417,13 +425,19 @@ export function reconcileAuthoritativeThread(
  */
 export function compactCompletedTurnForStorage(turn: Turn): Turn {
   if (turn.status === "inProgress" || turn.itemsView !== "full") return turn;
-  let finalAgentIndex = -1;
-  for (let index = turn.items.length - 1; index >= 0; index -= 1) {
-    if (turn.items[index]?.type === "agentMessage") {
-      finalAgentIndex = index;
-      break;
-    }
+  let latestAgentIndex = -1;
+  let explicitFinalAgentIndex = -1;
+  for (let index = 0; index < turn.items.length; index += 1) {
+    const item = turn.items[index];
+    if (item?.type !== "agentMessage" || item.text.trim() === "") continue;
+    latestAgentIndex = index;
+    if (item.phase === "final_answer") explicitFinalAgentIndex = index;
   }
+  // App Server may finish an interrupted/churned turn with an empty terminal
+  // agent placeholder after text that was already streamed. That placeholder
+  // is lifecycle evidence, not the chat boundary: compacting around it would
+  // discard the visible answer and produce "Completed without final response".
+  const finalAgentIndex = explicitFinalAgentIndex >= 0 ? explicitFinalAgentIndex : latestAgentIndex;
   const retained = turn.items.filter((item, index) => item.type === "userMessage" || index === finalAgentIndex);
   const kinds = turn.items.flatMap((item, index) => item.type === "userMessage" || index === finalAgentIndex ? [] : [item.type]);
   if (kinds.length === 0) return turn;

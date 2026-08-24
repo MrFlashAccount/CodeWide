@@ -3,6 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 
 const sqlite = vi.hoisted(() => {
   const insertedRows: unknown[][] = [];
+  const pendingRows: Array<{ __key: string; __payload: string }> = [];
+  const deletedKeys: string[] = [];
+  const bootstrapIds = new Set<string>();
+  let bulkPendingDeletes = 0;
   const legacyRow = {
     id: "turn:server:thread:turn-1",
     kind: "turn",
@@ -22,29 +26,134 @@ const sqlite = vi.hoisted(() => {
     if (sql.includes('SELECT value FROM "c_thread_details"')) {
       return { rows: [{ value: JSON.stringify(legacyRow) }] };
     }
+    if (sql.includes('SELECT COUNT(*) AS "row_count"') && sql.includes('"kind" = \'pending\'')) {
+      return { rows: [{ row_count: pendingRows.length }] };
+    }
     if (sql.includes('SELECT COUNT(*) AS "row_count"')) return { rows: [{ row_count: 0 }] };
-    if (sql.includes('SELECT 1 AS "present"')) return { rows: [] };
+    if (sql.includes('SELECT 1 AS "present"')) {
+      return { rows: bootstrapIds.has(String(params[1])) ? [{ present: 1 }] : [] };
+    }
+    if (sql.includes('SELECT "__key", "__payload"') && sql.includes('"kind" = \'pending\'')) return { rows: pendingRows };
+    if (sql === 'DELETE FROM "codewide_thread_details" WHERE "kind" = \'pending\'') {
+      bulkPendingDeletes += 1;
+      pendingRows.length = 0;
+    } else if (sql.includes('DELETE FROM "codewide_thread_details"')) deletedKeys.push(String(params[0]));
     if (sql.includes('INSERT INTO "codewide_thread_details"')) insertedRows.push([...params]);
+    if (sql.includes('INSERT INTO "__tanstack_db_sqlite_bootstrap"')) bootstrapIds.add(String(params[1]));
     return { rows: [] };
   });
   const database = {
     execute,
     transaction: vi.fn(async <T>(operation: (executor: { execute: typeof execute }) => Promise<T>) => await operation({ execute })),
   };
-  return { database, execute, insertedRows };
+  return {
+    database,
+    execute,
+    insertedRows,
+    pendingRows,
+    deletedKeys,
+    bootstrapIds,
+    get bulkPendingDeletes() { return bulkPendingDeletes; },
+    resetBulkPendingDeletes() { bulkPendingDeletes = 0; },
+  };
 });
 
 vi.mock("../src/data/ui-cache-persistence.native", () => ({
   getUiCacheSqliteDatabase: () => sqlite.database,
+  getUiCacheFileDiagnostics: async () => ({ mainFileBytes: 0, walFileBytes: 0, shmFileBytes: 0 }),
 }));
 
-import { createThreadDetailSqlite } from "../src/data/thread-detail-sqlite.native";
+import {
+  createThreadDetailSqlite,
+  prepareHistoryCacheAccounting,
+  rotateHistoryCache,
+} from "../src/data/thread-detail-sqlite.native";
 
 describe("thread detail SQLite bootstrap", () => {
   beforeEach(() => {
     sqlite.execute.mockClear();
     sqlite.database.transaction.mockClear();
     sqlite.insertedRows.length = 0;
+    sqlite.pendingRows.length = 0;
+    sqlite.deletedKeys.length = 0;
+    sqlite.bootstrapIds.clear();
+    sqlite.resetBulkPendingDeletes();
+  });
+
+  it("purges every legacy optimistic projection exactly once", async () => {
+    sqlite.pendingRows.push(
+      {
+        __key: "string:delivery",
+        __payload: JSON.stringify({ kind: "pending", pending: { presentation: "delivery" } }),
+      },
+      {
+        __key: "string:queue",
+        __payload: JSON.stringify({ kind: "pending", pending: { presentation: "queue" } }),
+      },
+    );
+    const storage = createThreadDetailSqlite(() => undefined);
+    await storage.prepare();
+
+    expect(sqlite.bulkPendingDeletes).toBe(1);
+    expect(sqlite.pendingRows).toEqual([]);
+    expect(sqlite.bootstrapIds).toContain("purge-persisted-pending:v1");
+    await storage.close();
+
+    sqlite.pendingRows.push({
+      __key: "string:queue-after-migration",
+      __payload: JSON.stringify({ kind: "pending", pending: { presentation: "queue" } }),
+    });
+    const restarted = createThreadDetailSqlite(() => undefined);
+    await restarted.prepare();
+    expect(sqlite.bulkPendingDeletes).toBe(1);
+    expect(sqlite.pendingRows).toHaveLength(1);
+    await restarted.close();
+  });
+
+  it("never persists a direct-delivery projection after startup", async () => {
+    const storage = createThreadDetailSqlite(() => undefined);
+    await storage.prepare();
+    sqlite.insertedRows.length = 0;
+    sqlite.deletedKeys.length = 0;
+
+    storage.begin();
+    storage.write({
+      type: "insert",
+      value: {
+        id: "delivery",
+        kind: "pending",
+        connectionId: "server",
+        remoteThreadId: "thread",
+        remoteTurnId: null,
+        historyEpoch: 0,
+        ordinal: 1,
+        sessionId: null,
+        lastOpenedAt: 0,
+        sealed: false,
+        thread: null,
+        turn: null,
+        turnMetadata: null,
+        activityItems: null,
+        pending: {
+          commandId: "command",
+          method: "turn/start",
+          presentation: "delivery",
+          text: "hello",
+          attachments: [],
+          state: "accepted",
+          attempts: 1,
+          lastError: null,
+          createdAt: 1,
+          updatedAt: 2,
+          order: 1,
+        },
+      },
+    });
+    await storage.commit({ durable: true });
+
+    expect(sqlite.insertedRows).toEqual([]);
+    expect(sqlite.deletedKeys).toEqual(["string:delivery"]);
+    await storage.close();
   });
 
   it("imports the former TanStack collection before marking the direct model ready", async () => {
@@ -65,6 +174,96 @@ describe("thread detail SQLite bootstrap", () => {
     await storage.close();
   });
 
+  it("rotates oldest sealed turn families before newer ones", async () => {
+    const nativeDatabase = new DatabaseSync(":memory:");
+    nativeDatabase.exec(`CREATE TABLE "codewide_thread_details" (
+      "__key" TEXT PRIMARY KEY NOT NULL,
+      "__payload" TEXT NOT NULL,
+      "connection_id" TEXT NOT NULL,
+      "thread_id" TEXT NOT NULL,
+      "turn_id" TEXT,
+      "history_epoch" INTEGER NOT NULL,
+      "kind" TEXT NOT NULL,
+      "ordinal" REAL NOT NULL,
+      "sealed" INTEGER NOT NULL
+    )`);
+    const insert = nativeDatabase.prepare(`INSERT INTO "codewide_thread_details"
+      ("__key", "__payload", "connection_id", "thread_id", "turn_id", "history_epoch", "kind", "ordinal", "sealed")
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (let ordinal = 1; ordinal <= 8; ordinal += 1) {
+      const payload = JSON.stringify({ id: `turn-${ordinal}`, body: "x".repeat(160) });
+      insert.run(`turn-${ordinal}`, payload, "server", "thread", `turn-${ordinal}`, 1, "turn", ordinal, 1);
+      insert.run(`activity-${ordinal}`, payload, "server", "thread", `turn-${ordinal}`, 1, "activity", ordinal, 1);
+    }
+    nativeDatabase.exec(`CREATE TABLE "codewide_thread_detail_cache_meta" (
+      "singleton" INTEGER PRIMARY KEY NOT NULL,
+      "history_bytes" INTEGER NOT NULL
+    )`);
+    nativeDatabase.exec(`INSERT INTO "codewide_thread_detail_cache_meta" ("singleton", "history_bytes")
+      SELECT 1, SUM(LENGTH(CAST("__payload" AS BLOB))) FROM "codewide_thread_details"`);
+    const executor = {
+      execute: async (sql: string, params: readonly unknown[] = []) => ({
+        rows: nativeDatabase.prepare(sql).all(...params as []),
+      }),
+    };
+
+    const result = await rotateHistoryCache(executor, {
+      softLimitBytes: 900,
+      hardLimitBytes: 1_200,
+    });
+
+    const remaining = nativeDatabase.prepare(
+      `SELECT "ordinal" FROM "codewide_thread_details" WHERE "kind" = 'turn' ORDER BY "ordinal"`,
+    ).all().map(({ ordinal }) => ordinal);
+    expect(result.historyFamiliesEvicted).toBeGreaterThan(0);
+    expect(remaining).toContain(8);
+    expect(remaining).toContain(7);
+    expect(remaining).not.toContain(1);
+    expect(nativeDatabase.prepare(
+      `SELECT COUNT(*) AS "count" FROM "codewide_thread_details" WHERE "ordinal" = 1`,
+    ).get()).toMatchObject({ count: 0 });
+    nativeDatabase.close();
+  });
+
+  it("maintains the history byte budget transactionally", async () => {
+    const nativeDatabase = new DatabaseSync(":memory:");
+    nativeDatabase.exec(`CREATE TABLE "codewide_thread_details" (
+      "__key" TEXT PRIMARY KEY NOT NULL,
+      "__payload" TEXT NOT NULL,
+      "connection_id" TEXT NOT NULL,
+      "thread_id" TEXT NOT NULL,
+      "turn_id" TEXT,
+      "history_epoch" INTEGER NOT NULL,
+      "kind" TEXT NOT NULL,
+      "ordinal" REAL NOT NULL,
+      "sealed" INTEGER NOT NULL
+    )`);
+    const executor = {
+      execute: async (sql: string, params: readonly unknown[] = []) => ({
+        rows: nativeDatabase.prepare(sql).all(...params as []),
+      }),
+    };
+    await prepareHistoryCacheAccounting(executor);
+    const insert = nativeDatabase.prepare(`INSERT INTO "codewide_thread_details"
+      ("__key", "__payload", "connection_id", "thread_id", "turn_id", "history_epoch", "kind", "ordinal", "sealed")
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    insert.run("turn", "ёж", "server", "thread", "turn", 1, "turn", 1, 1);
+    insert.run("pending", "ignored", "server", "thread", null, 1, "pending", 2, 0);
+    expect(nativeDatabase.prepare(
+      `SELECT "history_bytes" FROM "codewide_thread_detail_cache_meta"`,
+    ).get()).toMatchObject({ history_bytes: Buffer.byteLength("ёж") });
+
+    nativeDatabase.prepare(`UPDATE "codewide_thread_details" SET "__payload" = ? WHERE "__key" = 'turn'`).run("longer");
+    expect(nativeDatabase.prepare(
+      `SELECT "history_bytes" FROM "codewide_thread_detail_cache_meta"`,
+    ).get()).toMatchObject({ history_bytes: Buffer.byteLength("longer") });
+    nativeDatabase.prepare(`DELETE FROM "codewide_thread_details" WHERE "__key" = 'turn'`).run();
+    expect(nativeDatabase.prepare(
+      `SELECT "history_bytes" FROM "codewide_thread_detail_cache_meta"`,
+    ).get()).toMatchObject({ history_bytes: 0 });
+    nativeDatabase.close();
+  });
+
   it("resolves an anchored resident window with one SQLite statement", async () => {
     const storage = createThreadDetailSqlite(() => undefined);
     await storage.prepare();
@@ -81,7 +280,7 @@ describe("thread detail SQLite bootstrap", () => {
       sealed: true,
     };
     sqlite.execute.mockResolvedValueOnce({ rows: [
-      { bucket: "meta", __payload: null, history_epoch: 2, latest_ordinal: 12, earliest_ordinal: 1, requested_max_ordinal: 10 },
+      { bucket: "meta", __payload: null, history_epoch: 2, latest_ordinal: 12, earliest_ordinal: 1 },
       { bucket: "turn", __payload: JSON.stringify(turn), result_ordinal: 7 },
     ] });
 
@@ -89,22 +288,19 @@ describe("thread detail SQLite bootstrap", () => {
       connectionId: "server",
       threadId: "thread",
       anchorTurnId: "turn-4",
-      residentHistoryEpoch: null,
-      residentMaxOrdinal: undefined,
-      residentTurnLimit: 12,
-      restoreNewerBuffer: 6,
+      turnLimit: 12,
+      newerBuffer: 6,
     });
 
     expect(sqlite.execute).toHaveBeenCalledTimes(1);
     expect(sqlite.execute).toHaveBeenCalledWith(
       expect.stringContaining('WITH\n      "args"'),
-      ["server", "thread", "turn-4", null, null, 0, 12, 6],
+      ["server", "thread", "turn-4", 12, 6],
     );
     expect(loaded).toMatchObject({
       historyEpoch: 2,
       latestSealedOrdinal: 12,
       earliestSealedOrdinal: 1,
-      requestedMaxOrdinal: 10,
       turnRows: [expect.objectContaining({ id: "turn:server:thread:turn-7", ordinal: 7 })],
       detailRows: [],
       liveRows: [],
@@ -142,18 +338,28 @@ describe("thread detail SQLite bootstrap", () => {
       );
     }
     insert.run("activity-4", JSON.stringify({ id: "activity-4", kind: "activity", ordinal: 4 }), "server", "thread", "turn-4", 2, "activity", 4, 1);
-    insert.run("pending", JSON.stringify({ id: "pending", kind: "pending", ordinal: 13 }), "server", "thread", null, 2, "pending", 13, 0);
+    insert.run("queued", JSON.stringify({
+      id: "queued",
+      kind: "pending",
+      ordinal: 13,
+      pending: { presentation: "queue" },
+    }), "server", "thread", null, 2, "pending", 13, 0);
+    insert.run("delivery", JSON.stringify({
+      id: "delivery",
+      kind: "pending",
+      ordinal: 14,
+      pending: { presentation: "delivery" },
+    }), "server", "thread", null, 2, "pending", 14, 0);
 
     const actualRows = nativeDatabase.prepare(statement).all(...params) as Array<Record<string, unknown>>;
     expect(actualRows.find(({ bucket }) => bucket === "meta")).toMatchObject({
       history_epoch: 2,
       latest_ordinal: 12,
       earliest_ordinal: 1,
-      requested_max_ordinal: 10,
     });
     expect(actualRows.filter(({ bucket }) => bucket === "turn")).toHaveLength(10);
     expect(actualRows.filter(({ bucket }) => bucket === "detail")).toHaveLength(1);
-    expect(actualRows.filter(({ bucket }) => bucket === "live")).toHaveLength(1);
+    expect(actualRows.filter(({ bucket }) => bucket === "live")).toHaveLength(2);
     nativeDatabase.close();
     await storage.close();
   });

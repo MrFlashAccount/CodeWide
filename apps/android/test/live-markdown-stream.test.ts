@@ -14,6 +14,21 @@ describe("live Markdown semantic projection", () => {
     });
   });
 
+  it("reveals a completed sentence without waiting for the stream stop event", () => {
+    expect(projectLiveMarkdownTail("This fix will ship.")).toEqual({
+      visible: "This fix will ship.",
+      pending: "",
+    });
+    expect(projectLiveMarkdownTail("Is it ready?”")).toEqual({
+      visible: "Is it ready?”",
+      pending: "",
+    });
+    expect(projectLiveMarkdownTail("Still stream")).toEqual({
+      visible: "Still ",
+      pending: "stream",
+    });
+  });
+
   it("holds unresolved inline Markdown instead of flashing its source", () => {
     expect(projectLiveMarkdownTail("Hello [long link tex")).toEqual({
       visible: "Hello ",
@@ -22,6 +37,10 @@ describe("live Markdown semantic projection", () => {
     expect(projectLiveMarkdownTail("Hello [long link text](https://example.com)")).toEqual({
       visible: "Hello [long link text](https://example.com)",
       pending: "",
+    });
+    expect(projectLiveMarkdownTail("Hello [unfinished link.")).toEqual({
+      visible: "Hello ",
+      pending: "[unfinished link.",
     });
   });
 

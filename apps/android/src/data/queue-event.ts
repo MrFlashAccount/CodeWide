@@ -1,3 +1,5 @@
+import type { NativeCommandDelivery } from "../native/native-transport";
+
 export type HostQueuedPrompt = {
   commandId: string;
   remoteThreadId: string;
@@ -51,6 +53,21 @@ export function hasAcceptedPendingDelivery(
     command.presentation === "delivery"
       && command.state === "delivered"
       && isPending(command.commandId)
+  ));
+}
+
+export function hasUnresolvedDeliveredCommand(
+  deliveries: readonly NativeCommandDelivery[],
+  connectionId: string,
+  threadId: string,
+  isPending: (commandId: string) => boolean,
+): boolean {
+  return deliveries.some((delivery) => (
+    delivery.connectionId === connectionId
+    && delivery.threadId === threadId
+    && (delivery.method === "turn/start" || delivery.method === "turn/steer")
+    && delivery.state === "delivered"
+    && isPending(delivery.commandId)
   ));
 }
 

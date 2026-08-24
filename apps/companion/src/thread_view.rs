@@ -71,6 +71,15 @@ impl ThreadViewService {
         if let Some(recency_at) = expected_recency_at {
             requested_page.insert("expectedRecencyAt".into(), Value::from(recency_at));
         }
+        if let Some(status) = result
+            .pointer("/thread/status/type")
+            .and_then(Value::as_str)
+        {
+            requested_page.insert(
+                "expectedThreadActive".into(),
+                Value::Bool(status == "active"),
+            );
+        }
         let page = self.read_page(Value::Object(requested_page)).await?;
         materialize_resume_result(&mut result, &page)?;
         Ok(result)
@@ -98,11 +107,21 @@ impl ThreadViewService {
             .request(json!({
                 "id": "thread-view-page",
                 "method": "thread/turns/list",
-                "params": params,
+                "params": upstream_turns_page_params(params),
             }))
             .await?;
         rpc_result(&response)
     }
+}
+
+fn upstream_turns_page_params(mut params: Value) -> Value {
+    if let Some(params) = params.as_object_mut() {
+        // Internal consistency witnesses are understood by the companion's
+        // rollout reader, not by the public App Server protocol.
+        params.remove("expectedRecencyAt");
+        params.remove("expectedThreadActive");
+    }
+    params
 }
 
 fn upstream_resume_params(params: &Map<String, Value>) -> Map<String, Value> {
@@ -211,7 +230,10 @@ fn merge_thread_metadata(thread: &mut Map<String, Value>, execution_settings: Va
 
 #[cfg(test)]
 mod tests {
-    use super::{READ_MODEL_VERSION, materialize_resume_result, upstream_resume_params};
+    use super::{
+        READ_MODEL_VERSION, materialize_resume_result, upstream_resume_params,
+        upstream_turns_page_params,
+    };
     use serde_json::json;
 
     #[test]
@@ -229,6 +251,22 @@ mod tests {
         assert_eq!(upstream.get("threadId"), Some(&json!("thread")));
         assert_eq!(upstream.get("excludeTurns"), Some(&json!(true)));
         assert!(!upstream.contains_key("initialTurnsPage"));
+    }
+
+    #[test]
+    fn strips_companion_consistency_witnesses_from_upstream_page_request() {
+        let params = upstream_turns_page_params(json!({
+            "threadId": "thread",
+            "cursor": null,
+            "limit": 12,
+            "expectedRecencyAt": 10,
+            "expectedThreadActive": false
+        }));
+
+        assert_eq!(params["threadId"], "thread");
+        assert_eq!(params["limit"], 12);
+        assert!(params.get("expectedRecencyAt").is_none());
+        assert!(params.get("expectedThreadActive").is_none());
     }
 
     #[test]

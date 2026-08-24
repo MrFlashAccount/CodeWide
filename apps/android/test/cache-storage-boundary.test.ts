@@ -19,11 +19,21 @@ describe("Android cache storage boundary", () => {
   const nativeModule = source("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
 
   it("puts server-reconstructable SQLite stores under cacheDir", () => {
-    expect(uiCache).toContain('location: `${cacheDirectory}codex-remote/sqlite`');
+    expect(uiCache).toContain('return `${cacheDirectory}codex-remote/sqlite`');
+    expect(uiCache).toContain('location: uiCacheDirectory()');
     expect(uiCache.match(/location: "default"/gu)).toHaveLength(1);
     expect(frameStore).toContain("context.cacheDir");
     expect(frameStore).toContain('"codex-remote/transport/codex-remote-frames.db"');
     expect(frameStore).not.toContain('context.getDatabasePath("codex-remote-frames.db")');
+  });
+
+  it("rotates sealed UI history by insertion age within a one-to-two GiB envelope", () => {
+    const details = source("../src/data/thread-detail-sqlite.native.ts");
+    expect(details).toContain("HISTORY_CACHE_SOFT_LIMIT_BYTES = 1 * 1024 * 1024 * 1024");
+    expect(details).toContain("HISTORY_CACHE_HARD_LIMIT_BYTES = 2 * 1024 * 1024 * 1024");
+    expect(details).toContain('ORDER BY "first_rowid" ASC');
+    expect(details).not.toContain("lastOpenedAt ASC");
+    expect(details).not.toContain("last_accessed");
   });
 
   it("keeps server identity and the unfinished outbox durable", () => {

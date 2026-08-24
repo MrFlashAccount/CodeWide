@@ -25,6 +25,7 @@ export type TimingMetric =
   | "thread_navigation_positioned_ms"
   | "thread_navigation_visible_commit_ms"
   | "thread_navigation_total_ms"
+  | "thread_cursor_sync_ms"
   | "thread_resume_ms"
   | "timeline_first_draw_ms"
   | "thread_cached_visible_ms"
@@ -64,6 +65,7 @@ export type CounterMetric =
   | "sqlite_transactions_coalesced"
   | "stream_repair_mismatches"
   | "stream_repairs"
+  | "thread_cursor_recovery_fallbacks"
   | "thread_row_commits"
   | "voice_failures";
 

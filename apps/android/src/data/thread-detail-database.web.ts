@@ -9,6 +9,8 @@ import type { ThreadChatModel, ThreadChatWindowRequest, ThreadChatWindowResource
 export { materializePendingTimeline, materializeThreadDetails, materializeThreadTurns } from "./thread-detail-projection";
 export type { PendingTimelineEntry, ThreadDetailRow, ThreadDetailSnapshot } from "./thread-detail-projection";
 export type ThreadHistoryPrependResult = { accepted: boolean; historyEpoch: number; extendedMinimum: boolean };
+export type ThreadHistoryAppendResult = { accepted: boolean; historyEpoch: number };
+export type ThreadSnapshotImportReason = "initial" | "fork" | "recovery";
 export type ThreadDetailDatabase = {
   readonly sessionId: string;
   readonly chat: ThreadChatModel;
@@ -18,6 +20,7 @@ export type ThreadDetailDatabase = {
   retainWindow(connectionId: string, threadId: string): () => void;
   adoptPreloadedWindow(connectionId: string, threadId: string): void;
   loadWindow(request: ThreadChatWindowRequest): Promise<void>;
+  pullRange(connectionId: string, threadId: string, direction: "older" | "newer" | "latest"): Promise<boolean>;
   readWindowRows(snapshot: ThreadChatWindowSnapshot): {
     turnRows: ThreadDetailRow[];
     detailRows: ThreadDetailRow[];
@@ -26,8 +29,11 @@ export type ThreadDetailDatabase = {
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
   captureRefreshCursor(connectionId: string, threadId: string): number | null;
-  replaceThread(connectionId: string, thread: Thread, cleanThroughCursor?: number | null): Promise<void>;
-  prependTurns(connectionId: string, threadId: string, expectedHistoryEpoch: number, turns: Turn[]): Promise<ThreadHistoryPrependResult>;
+  historyCursor(connectionId: string, threadId: string): string | null | undefined;
+  latestSealedTurnId(connectionId: string, threadId: string): Promise<string | null>;
+  importThreadSnapshot(connectionId: string, thread: Thread, reason: ThreadSnapshotImportReason, cleanThroughCursor?: number | null, historyCursor?: string | null): Promise<void>;
+  appendTurns(connectionId: string, threadId: string, turns: Turn[], cleanThroughCursor?: number | null, historyCursor?: string | null): Promise<ThreadHistoryAppendResult>;
+  prependTurns(connectionId: string, threadId: string, expectedHistoryEpoch: number, turns: Turn[], nextCursor: string | null): Promise<ThreadHistoryPrependResult>;
   replaceTurnItems(connectionId: string, threadId: string, turnId: string, items: Turn["items"]): Promise<void>;
   createPending(input: Omit<PendingTimelineEntry, "order"> & { order?: number; connectionId: string; threadId: string }): ThreadDetailRow;
   stagePendingMutation(mutation: PendingTimelineMutation): { rollback(): void; complete(): void };

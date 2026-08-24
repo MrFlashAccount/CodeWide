@@ -31,7 +31,7 @@ const EXTERNAL_THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
 type ClientSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
-async fn resume_uses_upstream_page_when_an_external_thread_rollout_is_stale()
+async fn resume_uses_upstream_page_when_the_rollout_head_is_still_active()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let sessions = directory.path().join("sessions/2026/08/17");
@@ -43,7 +43,6 @@ async fn resume_uses_upstream_page_when_an_external_thread_rollout_is_stale()
     for line in [
         r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"old-turn","started_at":10}}"#,
         r#"{"type":"event_msg","payload":{"type":"user_message","message":"old question"}}"#,
-        r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"old-turn","last_agent_message":"old answer","completed_at":11}}"#,
     ] {
         writeln!(rollout, "{line}")?;
     }
@@ -911,7 +910,8 @@ async fn run_external_thread_app_server(
                 "thread": {
                     "id": EXTERNAL_THREAD_ID,
                     "name": "External thread",
-                    "recencyAt": 20,
+                    "recencyAt": 10,
+                    "status": {"type": "idle"},
                     "turns": []
                 },
                 "model": "gpt-test",
@@ -923,8 +923,8 @@ async fn run_external_thread_app_server(
                 "data": [{
                     "id": "new-turn",
                     "status": "completed",
-                    "startedAt": 20,
-                    "completedAt": 21,
+                    "startedAt": 10,
+                    "completedAt": 11,
                     "itemsView": "summary",
                     "items": [
                         {"type": "userMessage", "id": "user-new", "content": [{"type": "text", "text": "new question"}]},

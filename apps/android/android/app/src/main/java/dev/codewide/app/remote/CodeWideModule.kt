@@ -33,6 +33,7 @@ import java.io.IOException
 import java.net.URI
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.TimeUnit
@@ -106,6 +107,60 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("OPEN_DOCUMENT_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun hashContentDocument(uriValue: String, promise: Promise) {
+    thread(name = "CodeWideDocumentHash", isDaemon = true) {
+      try {
+        val uri = requireContentUri(uriValue)
+        val digest = MessageDigest.getInstance("SHA-256")
+        var bytes = 0L
+        context.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
+          val buffer = ByteArray(DOCUMENT_IO_BUFFER_BYTES)
+          while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (count == 0) continue
+            digest.update(buffer, 0, count)
+            bytes += count
+          }
+        } ?: throw IOException("Unable to open the selected file for reading")
+        promise.resolve(documentDigestResult(bytes, digest.digest()))
+      } catch (error: Throwable) {
+        promise.reject("CONTENT_DOCUMENT_HASH_FAILED", error.message ?: "Could not read the selected file", error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun copyContentDocument(sourceUriValue: String, targetUriValue: String, promise: Promise) {
+    thread(name = "CodeWideDocumentCopy", isDaemon = true) {
+      try {
+        val sourceUri = requireContentUri(sourceUriValue)
+        val targetUri = requireContentUri(targetUriValue)
+        require(sourceUri != targetUri) { "Source and destination files must be different" }
+        val digest = MessageDigest.getInstance("SHA-256")
+        var bytes = 0L
+        context.contentResolver.openInputStream(sourceUri)?.buffered()?.use { input ->
+          context.contentResolver.openOutputStream(targetUri, "w")?.buffered()?.use { output ->
+            val buffer = ByteArray(DOCUMENT_IO_BUFFER_BYTES)
+            while (true) {
+              val count = input.read(buffer)
+              if (count < 0) break
+              if (count == 0) continue
+              output.write(buffer, 0, count)
+              digest.update(buffer, 0, count)
+              bytes += count
+            }
+            output.flush()
+          } ?: throw IOException("Unable to open the selected file for writing")
+        } ?: throw IOException("Unable to open the downloaded file for reading")
+        promise.resolve(documentDigestResult(bytes, digest.digest()))
+      } catch (error: Throwable) {
+        promise.reject("CONTENT_DOCUMENT_COPY_FAILED", error.message ?: "Could not save the downloaded file", error)
+      }
     }
   }
 
@@ -1075,6 +1130,15 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
+  private fun requireContentUri(value: String): Uri = Uri.parse(value).also { uri ->
+    require(uri.scheme == "content") { "Only Storage Access Framework content URIs are supported" }
+  }
+
+  private fun documentDigestResult(bytes: Long, digest: ByteArray) = Arguments.createMap().apply {
+    putDouble("bytes", bytes.toDouble())
+    putString("sha256", digest.joinToString("") { byte -> "%02x".format(Locale.ROOT, byte.toInt() and 0xff) })
+  }
+
   companion object {
     const val ENGINE_EVENT = "CodeWideEngineEvent"
     const val VOICE_EVENT = "CodeWideVoiceEvent"
@@ -1104,6 +1168,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     private const val NATIVE_BRIDGE_CONTRACT_VERSION = 2
     private const val MAX_COMMITTED_FRAME_PAGE = 128
     private const val MAX_COMMITTED_FRAME_BYTES = 512 * 1024
+    private const val DOCUMENT_IO_BUFFER_BYTES = 256 * 1024
     private val contexts = CopyOnWriteArraySet<ReactApplicationContext>()
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val pairingHttpClient = OkHttpClient.Builder()

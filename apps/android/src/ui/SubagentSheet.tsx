@@ -2,10 +2,10 @@ import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import { Suspense, useState, useTransition, type ReactNode } from "react";
 
 import { materializeThreadDetails, type ThreadDetailDatabase } from "../data/thread-detail-database";
+import { applyThreadSummaryMetadata } from "../data/thread-chat-projection";
 import { projectSubagentConversation, subagentsForThread } from "../data/subagent-projection";
 import type { StoredThreadSummary } from "../data/thread-summary-types";
 import type { ThreadWindow } from "../data/use-remote-workspace";
-import { THREAD_RESIDENT_TURN_LIMIT } from "../data/thread-pagination";
 import { useThreadChatWindow } from "../data/use-thread-chat-window";
 import { useEvent } from "../react/useEvent";
 import { useAsyncResource } from "../rendering/async-resource-store";
@@ -130,9 +130,6 @@ function SubagentConversationDetail({
     connectionId,
     threadId,
     anchorTurnId: null,
-    residentHistoryEpoch: null,
-    residentMaxOrdinal: undefined,
-    residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
   });
   const detailRows = detailWindow === null
     ? []
@@ -146,7 +143,7 @@ function SubagentConversationDetail({
     threadId,
     async () => await onReadThread(connectionId, threadId),
   );
-  const thread = materializedThread ?? remoteThreadResource.value?.thread ?? null;
+  const thread = applyThreadSummaryMetadata(materializedThread ?? remoteThreadResource.value?.thread ?? null, summary);
   const conversation = thread === null ? null : projectSubagentConversation(thread, parentThread);
   if (conversation === null) {
     return (

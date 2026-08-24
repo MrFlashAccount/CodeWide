@@ -10,20 +10,51 @@ const detailSqlite = readFileSync(new URL("../src/data/thread-detail-sqlite.nati
 const chatModel = readFileSync(new URL("../src/data/thread-chat-model.ts", import.meta.url), "utf8");
 const chatWindowHook = readFileSync(new URL("../src/data/use-thread-chat-window.ts", import.meta.url), "utf8");
 const historyController = readFileSync(new URL("../src/data/use-thread-history-controller.ts", import.meta.url), "utf8");
+const remoteWorkspace = readFileSync(new URL("../src/data/use-remote-workspace.ts", import.meta.url), "utf8");
 
 describe("thread history pagination contract", () => {
-  it("fills SQLite in the background before recentering a semantic resident range", () => {
-    const loadOlder = historyController.slice(
-      historyController.indexOf("const loadOlderRange = useEvent"),
-      historyController.indexOf("const move = useEvent"),
-    );
+  it("pulls one SQLite range only when the list crosses an edge", () => {
+    expect(historyController).toContain("const loadedLocally = await context.pullRange(direction)");
+    expect(historyController).toContain("if (loadedLocally || direction !== \"older\" || state.nextCursor === null)");
+    expect(historyController).toContain("const page = await context.loadOlderTurns(");
+    expect(historyController).not.toContain("while (");
+    expect(historyController).not.toContain("for (");
+    expect(detailDatabase).toContain("async pullRange(connectionId, threadId, direction)");
+    expect(detailDatabase).toContain('direction === "older"');
+    expect(detailDatabase).toContain("chat.commitRange(");
+    expect(chatModel).toContain("commitRange(connectionId, threadId, expected, loaded)");
+    expect(chatModel).toContain("pruneUnreferencedRows()");
+    expect(detailDatabase).not.toContain("shiftWindow");
+    expect(chatModel).not.toContain("requestedMaxOrdinal");
+    expect(historyController).not.toContain("prefetch");
+    expect(screen).not.toContain("historyViewport.prefetch()");
+    expect(historyController).not.toContain("mutationRef");
+    expect(detailDatabase).not.toContain('"chat.history.range_blocked_with_optimistic"');
+    expect(detailDatabase).toContain('"chat.optimistic.reconciliation_stalled"');
+    expect(historyController).toContain("inFlightRef.current[direction]");
+    expect(detailDatabase).toContain('const pullKey = `${scope}\\u0000${direction}`');
+  });
 
-    expect(historyController).toContain("residentRangeForVisibleAnchor(");
-    expect(loadOlder).toContain("hasFullLocalOlderPage(");
-    expect(loadOlder).toContain("residentTurnLimit: nextRange.turnLimit");
-    expect(loadOlder).toContain("residentMaxOrdinal: nextRange.maxOrdinal");
-    expect(historyController).toContain("prefetchKeyRef");
-    expect(loadOlder).toContain("mutation !== mutationRef.current");
+  it("leaves scroll position to MVCP while paging and follows only the authoritative tail", () => {
+    expect(historyController).not.toContain("maintainAtEnd");
+    expect(screen).not.toContain("maintainAtEnd=");
+    expect(historyController).toContain("containsLatest: options.isLatestRange");
+    expect(screen).toContain("followTail={historyViewport.containsLatest && !awayFromLatest && !threadSearchActive}");
+    expect(screen).toContain("const away = !historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;");
+    expect(timelineListSource).toContain("maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}");
+    expect(timelineListSource).toContain("dataChange: true");
+    expect(timelineListSource).toContain("itemLayout: true");
+    expect(timelineListSource).toContain("maintainVisibleContentPosition={{ data: true, size: true }}");
+  });
+
+  it("does not advance a backend cursor before its page is durable", () => {
+    expect(remoteWorkspace).toContain("const persisted = await threadDetails.prependTurns(");
+    expect(remoteWorkspace).toContain('if (!persisted.accepted) throw new Error("Backend history page was not persisted")');
+    expect(remoteWorkspace).not.toContain("threadDetails?.prependTurns(");
+    expect(historyController).toContain('if (!page.acceptedHistory) throw new Error("Backend history page was not persisted")');
+    expect(historyController.indexOf("if (!page.acceptedHistory)")).toBeLessThan(
+      historyController.indexOf("context.putState({ ...current, nextCursor: page.nextCursor"),
+    );
   });
 
   it("keeps SQLite residency bounded and derives one atomic ready surface", () => {
@@ -35,7 +66,7 @@ describe("thread history pagination contract", () => {
     expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
     expect(screen).toContain("function MainConversationDetail(");
     expect(screen).toContain("const projection = projectThreadChatWindow(chatDatabase, chatWindow");
-    expect(chatModel).toContain('previous.requestKey === requestKey ? "background-updating" : "loading-history"');
+    expect(chatModel).toContain("commitRange(");
     expect(screen).toContain("!threadLoadBlocksPresentation(chatSnapshot.status)");
     expect(screen).not.toContain("activeConversationNavigationReady");
     expect(screen).not.toContain("AtomicConversationSurface");
@@ -72,14 +103,17 @@ describe("thread history pagination contract", () => {
     expect(commit).toContain("if (options.durable === true) void flushPending()");
   });
 
-  it("preserves optimistic pending rows across an in-flight range installation", () => {
+  it("preserves optimistic pending rows across an in-flight window installation", () => {
     const loader = detailDatabase.slice(
       detailDatabase.indexOf("const loadWindow = async"),
       detailDatabase.indexOf("const database: ThreadDetailDatabase"),
     );
 
+    expect(loader).toContain("composeInitialRangeRows(");
     expect(loader).toContain("mergePendingTimelineOverlays(");
-    expect(loader).toContain("const liveRowIds = rows.flatMap");
+    expect(loader).toContain("const membership = rangeMembership(rows, loaded.historyEpoch)");
+    expect(loader).not.toContain("mergeResidentThreadRows(");
+    expect(loader.indexOf("composeInitialRangeRows(")).toBeLessThan(loader.indexOf("const membership = rangeMembership"));
     expect(loader.indexOf("mergePendingTimelineOverlays(")).toBeLessThan(loader.indexOf("source.replaceThreadLoaded"));
     expect(loader.indexOf("if (!committed) return")).toBeLessThan(loader.indexOf("source.replaceThreadLoaded"));
   });
@@ -116,12 +150,15 @@ describe("thread history pagination contract", () => {
 
   it("binds pagination state and cancellation to the active history epoch", () => {
     expect(screen).toContain("historyResourceRaw?.historyEpoch === historyEpoch");
-    expect(historyController).toContain("[options.historyEpoch, options.resourceId]");
     expect(screen).toContain("thread-hydration:${historyResourceId}:${threadOpenGeneration}:${historyEpoch}");
     expect(historyController).toContain("state.historyEpoch !== context.historyEpoch");
-    expect(historyController).toContain("cursor,");
+    expect(historyController).toContain("state.nextCursor ?? null,");
     expect(historyController).toContain("state.historyEpoch,");
     expect(detailDatabase).toContain("historyEpoch !== expectedHistoryEpoch");
+    expect(screen).toContain("nextCursor: chatDatabase.historyCursor(connectionId, threadId)");
+    expect(detailDatabase).toContain("historyCursor(connectionId, threadId)");
+    expect(detailDatabase).toContain("meta.historyCursor !== nextCursor");
+    expect(historyController).toContain("state.nextCursor === null");
   });
 
   it("proves cursor-page novelty against durable SQLite instead of the partial hot source", () => {
@@ -137,9 +174,10 @@ describe("thread history pagination contract", () => {
     expect(loader).toContain("detailStorage.loadPrependFacts");
     expect(detailSqlite).toContain("loadTurnFamilies(query, connectionId, threadId, turnIds)");
     expect(detailSqlite).toContain('ORDER BY "ordinal" ${direction === "asc" ? "ASC" : "DESC"}');
-    expect(prepend.indexOf("loadDurablePrependRows")).toBeLessThan(prepend.indexOf("previousMinimum"));
+    expect(prepend.indexOf("loadDurablePrependRows")).toBeLessThan(prepend.indexOf("projectPrependedTurnOrdinals"));
     expect(prepend).toContain("source.set(row.id, row)");
     expect(prepend).toContain("activityKey(connectionId, threadId, turn.id)");
+    expect(prepend.indexOf("controls.commit({ durable: true })")).toBeLessThan(prepend.indexOf("composeExpandedRangeRows("));
   });
 
   it("anchors authoritative pages in durable SQLite before projecting their epoch", () => {
@@ -160,29 +198,57 @@ describe("thread history pagination contract", () => {
     expect(publish.indexOf("await loadDurableAuthoritativeRows")).toBeLessThan(publish.indexOf("projectAuthoritativeHistoryEpoch"));
   });
 
-  it("recenters by stable visible turn rather than physical list edges", () => {
+  it("keeps three pages resident and trims the far edge only after the gesture", () => {
     const timelineList = screen.slice(
       screen.indexOf("<ThreadTimelineList"),
       screen.indexOf("</ThreadTimelineList>"),
     );
 
-    expect(timelineList).not.toContain("onStartReached=");
-    expect(timelineList).not.toContain("onEndReached=");
+    expect(timelineList).toContain("onStartReached={loadOlderAtTimelineStart}");
+    expect(timelineList).toContain("onEndReached={loadNewerAtTimelineEnd}");
     expect(timelineList).toContain("showsVerticalScrollIndicator={false}");
-    expect(historyController).toContain("residentRangeForVisibleAnchor(");
-    expect(historyController).toContain("state.residentMaxOrdinal ?? null) !== context.presentedResidentMaxOrdinal");
-    expect(screen).toContain("requestResidentRangeMove(turnId, direction, historyViewport.move)");
-    expect(screen).toContain("pending.move");
+    expect(historyController).toContain("loadRange(context, direction)");
+    expect(detailDatabase).toContain("turnLimit: THREAD_HISTORY_PAGE_SIZE");
+    expect(detailDatabase).toContain("composeExpandedRangeRows(");
+    expect(detailDatabase).toContain("trimExpandedRangeRows(");
+    expect(detailDatabase).toContain('"chat.history.range_trimmed"');
+    expect(detailDatabase).not.toContain("targetMaxOrdinal");
+    expect(detailDatabase).not.toContain("requestedMaxOrdinal");
+    expect(screen).not.toContain("requestResidentRangeMove");
+    expect(screen).not.toContain("pendingResidentRangeMoveRef");
     expect(screen).not.toContain("olderPageEdgeArmedRef");
     expect(screen).not.toContain("shouldRearmOlderPage");
-    expect(historyController).toContain("context.putState(revealResidentLiveTail(state))");
-    expect(screen).toContain('scrollDirectionRef.current = nativeEvent.contentOffset.y < previousOffsetY ? "older" : "newer"');
+    expect(historyController).not.toContain("freeze");
+    expect(screen).not.toContain("timelineInteractionStartedRef");
+    expect(screen).not.toContain("scrollDirectionRef");
+    expect(screen).toContain('const paginationEdgeLockRef = useRef<"older" | "newer" | null>(null)');
+    expect(screen).toContain('paginationEdgeLockRef.current = null;');
+    expect(screen).toContain('paginationEdgeLockRef.current === "newer"');
+    expect(screen).toContain('paginationEdgeLockRef.current === "older"');
+    expect(screen).toContain('"ignored_opposite_edge"');
+    expect(screen).toContain("schedulePaginationWindowTrim();");
+    expect(screen).toContain("onMomentumScrollBegin={cancelScheduledPaginationTrim}");
+    expect(screen).toContain("trimPaginationWindow();");
+    expect(historyController).toContain("trimAfterGesture");
+    expect(timelineListSource).toContain("maintainVisibleContentPosition={{ data: true, size: true }}");
+    expect(timelineListSource).toContain("maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}");
+    expect(screen).not.toContain("reconcileTimelineEndPosition");
+  });
+
+  it("projects delivery state as ordinary chronological timeline rows", () => {
+    expect(screen).toContain("timelineEntries={projection.timeline}");
+    expect(screen).toContain("if (modelTimeline !== null) return modelTimeline");
+    expect(screen).not.toContain("mergeChronologicalTimeline");
+    expect(screen).not.toContain("pendingDeliveries={");
+    expect(screen).not.toContain("MAX_OPTIMISTIC_MESSAGES");
+    expect(screen).not.toContain("useTimelineOverlayScrollGuard");
+    expect(chatModel).not.toContain("optimistic-timeline");
   });
 
   it("keeps transport cursors behind the history viewport interface", () => {
     const viewportInterface = historyController.slice(
       historyController.indexOf("export type ThreadHistoryViewport"),
-      historyController.indexOf("type OrdinalBounds"),
+      historyController.indexOf("type ThreadHistoryControllerOptions"),
     );
     const conversationPane = screen.slice(
       screen.indexOf("function ConversationPane"),

@@ -22,6 +22,14 @@ export type { TimelineInitialPosition } from "./timeline-initial-position";
 // resolving initialScrollAtEnd. This is only a first-render hint; measured row
 // sizes take over immediately.
 const TIMELINE_ESTIMATED_ITEM_SIZE = 480;
+const TIMELINE_TAIL_FOLLOW_THRESHOLD = 0.02;
+const TIMELINE_TAIL_FOLLOW_CONFIG = {
+  animated: false,
+  on: {
+    dataChange: true,
+    itemLayout: true,
+  },
+} as const;
 
 export interface ThreadTimelineListRef {
   getItemViewportOffset(itemKey: string): number | null;
@@ -33,17 +41,25 @@ export interface ThreadTimelineListRef {
 
 export type ThreadTimelineListProps<ItemT> = Omit<
   LegendListProps<ItemT>,
-  "contentInsetEndAdjustment" | "initialScrollAtEnd" | "initialScrollIndex" | "maintainVisibleContentPosition"
+  | "alignItemsAtEnd"
+  | "contentInsetEndAdjustment"
+  | "dataKey"
+  | "drawDistance"
+  | "estimatedItemSize"
+  | "initialScrollAtEnd"
+  | "initialScrollIndex"
+  | "maintainScrollAtEnd"
+  | "maintainScrollAtEndThreshold"
+  | "maintainVisibleContentPosition"
+  | "recycleItems"
 > & {
   renderRevision: string;
   measurementRevision: string;
   initialPosition?: TimelineInitialPosition;
   keyboardLiftBehavior?: "always" | "whenAtEnd" | "persistent" | "never";
   keyboardOffset?: number;
-  maintainScrollAtEndEnabled?: boolean;
-  maintainVisibleContentPositionEnabled?: boolean;
   contentInsetEndAdjustment?: SharedValue<number>;
-  freeze?: SharedValue<boolean>;
+  followTail?: boolean;
 };
 
 function ThreadTimelineListInner<ItemT>(
@@ -53,10 +69,8 @@ function ThreadTimelineListInner<ItemT>(
     initialPosition = { kind: "tail" },
     keyboardLiftBehavior = "whenAtEnd",
     keyboardOffset = 0,
-    maintainScrollAtEndEnabled = true,
-    maintainVisibleContentPositionEnabled = true,
     contentInsetEndAdjustment,
-    freeze,
+    followTail = false,
     itemsAreEqual,
     ...props
   }: ThreadTimelineListProps<ItemT>,
@@ -97,7 +111,6 @@ function ThreadTimelineListInner<ItemT>(
 
   const KeyboardAwareTimelineList = KeyboardAwareLegendList as unknown as (props: LegendListProps<ItemT> & {
     contentInsetEndAdjustment?: SharedValue<number>;
-    freeze?: SharedValue<boolean>;
     keyboardLiftBehavior: "always" | "whenAtEnd" | "persistent" | "never";
     keyboardOffset: number;
     ref: ForwardedRef<LegendListRef>;
@@ -109,22 +122,13 @@ function ThreadTimelineListInner<ItemT>(
       keyboardLiftBehavior={keyboardLiftBehavior}
       keyboardOffset={keyboardOffset}
       {...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment })}
-      {...(freeze === undefined ? {} : { freeze })}
       {...props}
       {...legendInitialPositionProps(initialPosition)}
       dataKey={renderRevision}
       alignItemsAtEnd
-      maintainScrollAtEnd={maintainScrollAtEndEnabled ? {
-        animated: false,
-        on: {
-          dataChange: true,
-          itemLayout: true,
-          footerLayout: false,
-          layout: true,
-        },
-      } : false}
-      maintainScrollAtEndThreshold={0.02}
-      maintainVisibleContentPosition={maintainVisibleContentPositionEnabled ? { data: true, size: true } : false}
+      maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}
+      maintainScrollAtEndThreshold={TIMELINE_TAIL_FOLLOW_THRESHOLD}
+      maintainVisibleContentPosition={{ data: true, size: true }}
       itemsAreEqual={itemsAreEqual ?? referenceEqual}
       recycleItems={false}
       estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}

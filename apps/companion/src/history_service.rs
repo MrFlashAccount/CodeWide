@@ -107,6 +107,14 @@ pub enum HistoryServiceError {
         expected: i64,
         observed: Option<i64>,
     },
+    #[error(
+        "canonical rollout lifecycle is stale for thread {thread_id}: expected active={expected_active}, newest turn active={observed_active:?}"
+    )]
+    StaleLifecycle {
+        thread_id: String,
+        expected_active: bool,
+        observed_active: Option<bool>,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -532,6 +540,7 @@ fn turns_page(
         data.push(projected);
     }
     validate_expected_recency(params, cursor.as_ref(), thread_id, &data)?;
+    validate_expected_lifecycle(params, cursor.as_ref(), thread_id, &data)?;
     let next_cursor = if has_more {
         selected.last().map(|turn| {
             encode_cursor(&Cursor {
@@ -580,6 +589,59 @@ fn validate_expected_recency(
         thread_id: thread_id.to_owned(),
         expected,
         observed,
+    })
+}
+
+/// The rollout index and App Server metadata advance independently while the
+/// phone is suspended. `thread/resume` supplies the authoritative lifecycle so
+/// an indexed mutable head cannot be mistaken for a completed conversation (or
+/// vice versa). A mismatch makes the caller use the bounded App Server page.
+fn validate_expected_lifecycle(
+    params: &Value,
+    cursor: Option<&Cursor>,
+    thread_id: &str,
+    data: &[Value],
+) -> Result<(), HistoryServiceError> {
+    if cursor.is_some() {
+        return Ok(());
+    }
+    let Some(expected_active) = params.get("expectedThreadActive").and_then(Value::as_bool) else {
+        return Ok(());
+    };
+    let observed_active = data
+        .first()
+        .and_then(|turn| turn.get("status"))
+        .and_then(Value::as_str)
+        .map(|status| status == "inProgress");
+    let missing_final = params.get("itemsView").and_then(Value::as_str) == Some("summary")
+        && !expected_active
+        && data.first().is_some_and(|turn| {
+            turn.get("status").and_then(Value::as_str) == Some("completed")
+                && !turn
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| {
+                        items.iter().any(|item| {
+                            item.get("type").and_then(Value::as_str) == Some("agentMessage")
+                                && item
+                                    .get("text")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|text| !text.trim().is_empty())
+                        })
+                    })
+        });
+    if observed_active == Some(expected_active) && !missing_final {
+        return Ok(());
+    }
+    // An idle thread may legitimately contain no turns (for example, a shell
+    // created before its first prompt). An active thread cannot.
+    if observed_active.is_none() && !expected_active && data.is_empty() {
+        return Ok(());
+    }
+    Err(HistoryServiceError::StaleLifecycle {
+        thread_id: thread_id.to_owned(),
+        expected_active,
+        observed_active,
     })
 }
 
@@ -858,6 +920,71 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn initial_page_rejects_a_mutable_head_after_thread_became_idle()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(path)?;
+        for line in [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":10}}"#,
+            r#"{"type":"event_msg","payload":{"type":"user_message","message":"question","client_id":"android-1"}}"#,
+        ] {
+            writeln!(rollout, "{line}")?;
+        }
+        rollout.sync_all()?;
+
+        let service = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+        let stale = service
+            .try_turns_page(
+                "thread/turns/list",
+                &json!({
+                    "threadId": THREAD_ID,
+                    "cursor": null,
+                    "limit": 6,
+                    "sortDirection": "desc",
+                    "itemsView": "summary",
+                    "expectedThreadActive": false
+                }),
+            )
+            .await
+            .ok_or("history page was not handled")?;
+        assert!(matches!(
+            stale,
+            Err(HistoryServiceError::StaleLifecycle {
+                expected_active: false,
+                observed_active: Some(true),
+                ..
+            })
+        ));
+
+        writeln!(
+            rollout,
+            r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"turn-1","last_agent_message":"answer","completed_at":11}}}}"#,
+        )?;
+        rollout.sync_all()?;
+        let complete = service
+            .try_turns_page(
+                "thread/turns/list",
+                &json!({
+                    "threadId": THREAD_ID,
+                    "cursor": null,
+                    "limit": 6,
+                    "sortDirection": "desc",
+                    "itemsView": "summary",
+                    "expectedThreadActive": false
+                }),
+            )
+            .await
+            .ok_or("history page was not handled")??;
+        assert_eq!(complete["data"][0]["status"], "completed");
+        assert_eq!(complete["data"][0]["items"][1]["text"], "answer");
+        assert_eq!(complete["data"][0]["items"][0]["clientId"], "android-1");
         Ok(())
     }
 }

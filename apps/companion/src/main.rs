@@ -841,8 +841,9 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         })
         .unwrap_or_else(|| PathBuf::from("."));
     tokio::fs::create_dir_all(&state_directory).await?;
-    let telemetry = Arc::new(TelemetryStore::open(
+    let telemetry = Arc::new(TelemetryStore::open_with_jsonl(
         state_directory.join("telemetry.redb"),
+        state_directory.join("telemetry-jsonl"),
     )?);
     let account_pool = if options.enable_mutations {
         Some(

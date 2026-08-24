@@ -47,7 +47,7 @@ import { projectThreadHotStates } from "./thread-hot-state";
 import { createThreadUiStateDatabase, type ThreadUiStateDatabase } from "./thread-ui-state-database";
 import { incrementMetric, recordTiming } from "./operational-metrics";
 import { configureTelemetryAppVersion, configureTelemetryTransport, recordTelemetryEvent, type TelemetryBatch } from "./telemetry";
-import { hasAcceptedPendingDelivery, parseHostQueueSnapshot } from "./queue-event";
+import { hasAcceptedPendingDelivery, hasUnresolvedDeliveredCommand, parseHostQueueSnapshot } from "./queue-event";
 import { parseAddedRemoteProject, parseRemoteDirectory, parseRemoteProjects, type RemoteDirectoryEntry, type RemoteProject } from "./remote-projects";
 import { parseCreatedWorkspace, parseWorkspaceSupport, startThreadInCreatedWorkspace, type CreatedWorkspace, type WorkspaceSupport } from "./workspace-creation";
 import { queuedInputPayload } from "./queued-input";
@@ -58,8 +58,9 @@ import { LegacyRemoteStore } from "./legacy-remote-store";
 import { createThreadSummaryDatabase, type ThreadSummaryDatabase } from "./thread-summary-database";
 import { createThreadProjectionStore } from "./thread-projection-store";
 import { streamRepairThreadIds, terminalProjectionMatches, terminalProjectionProofs } from "./stream-recovery";
-import { materializeLegacyThreadWindow, materializeResumedThread, type CompanionThreadResumeResponse } from "./thread-read-model";
+import { materializeReadOnlyThreadWindow, materializeResumedThread, type CompanionThreadResumeResponse } from "./thread-read-model";
 import { shouldRefreshInvalidatedThread } from "./thread-detail-invalidation";
+import { collectThreadCursorDelta, latestSealedTurnId, planThreadOpenSync, threadOpenNeedsCursorCatchUp } from "./thread-cursor-sync";
 import { projectThreadResourcePatch } from "./thread-resource-projection";
 import { loadSubagentDescendants, subagentActivityRootThreadId } from "./subagent-loader";
 import type { StoredThreadSummary } from "./thread-summary-types";
@@ -174,7 +175,7 @@ export type ComposerAttachment = RemoteFileAttachment;
 export type TurnControls = TurnControlsValue;
 export type TunnelPreview = TunnelValue;
 export type { TransferAccess } from "./private-transfer";
-export type ThreadWindow = { thread: Thread; nextCursor: string | null };
+export type ThreadWindow = { thread: Thread; nextCursor: string | null | undefined };
 export type ThreadTurnPage = { turns: Turn[]; nextCursor: string | null; acceptedHistory: boolean; extendedHistory: boolean };
 export type ThreadChangeDiffValue = {
   threadId: string;
@@ -217,7 +218,7 @@ type WorkspaceProjectionKey =
   | "pendingRequests"
   | "threadDetails";
 type WorkspaceActions = Omit<RemoteWorkspace, WorkspaceProjectionKey> & {
-  readThreadAuthoritatively(connectionId: string, threadId: string): Promise<ThreadWindow | null>;
+  repairThreadProjection(connectionId: string, threadId: string): Promise<ThreadWindow | null>;
 };
 const CONNECTION_PROFILE_MIGRATION_KEY = "codex-remote-connection-profiles-v1-migrated";
 const CONNECTION_PROFILE_STORAGE_MIGRATION_KEY = "codex-remote-connection-profiles-cache-split-v1-migrated";
@@ -643,7 +644,7 @@ function createWorkspaceActions(): WorkspaceActions {
         approvalPolicy: typeof response.approvalPolicy === "string" ? response.approvalPolicy : "granular",
         sandboxPolicy: response.sandbox.type,
       });
-      await workspaceRuntime.snapshot.threadDetails?.replaceThread(connectionId, started);
+      await workspaceRuntime.snapshot.threadDetails?.importThreadSnapshot(connectionId, started, "initial");
       await workspaceRuntime.snapshot.threadSummaries?.insertStartedThread(connectionId, started);
       // Catalogs are scoped by server + cwd, not by turn. Warm them as soon as
       // the shell exists instead of waiting for thread/resume after a message.
@@ -1042,11 +1043,12 @@ function createWorkspaceActions(): WorkspaceActions {
         // or below this cursor can be cleared by its response; newer events stay
         // dirty and force another refresh instead of being lost in a race.
         const refreshCursor = details?.captureRefreshCursor(connectionId, threadId) ?? null;
+        const syncPlan = planThreadOpenSync(cached !== null, refreshCursor, requireAuthoritative);
         const session = workspaceRuntime.supervisor?.session(connectionId);
         if (session === undefined) {
           await reconcileActiveThreadCommands(details, connectionId, threadId);
           if (requireAuthoritative) throw new Error("Authoritative thread repair requires an active connection");
-          return cached === null ? null : { thread: residentThreadWindow(cached), nextCursor: null };
+          return cached === null ? null : { thread: residentThreadWindow(cached), nextCursor: details?.historyCursor(connectionId, threadId) };
         }
         // The global state-DB snapshot may omit older spawned descendants.
         // Refresh them independently so opening the chat is never blocked by
@@ -1054,8 +1056,56 @@ function createWorkspaceActions(): WorkspaceActions {
         void refreshSubagents(connectionId, threadId).catch((cause: unknown) => {
           console.warn("CodeWide subagent refresh failed:", cause instanceof Error ? cause.message : "unknown error");
         });
-        const persistHydratedThread = async (hydrated: Thread): Promise<void> => {
-          await details?.replaceThread(connectionId, hydrated, refreshCursor);
+        let unresolvedDeliveredReceipt = false;
+        if (cached !== null && syncPlan === "local") {
+          // The ordered replay journal has already advanced this durable
+          // projection. Opening a known chat is therefore a local SQLite read,
+          // not an implicit thread/resume round-trip. A delivered native
+          // receipt without its canonical user item is the one exception: the
+          // app may have slept through queue/changed, so perform a bounded
+          // cursor catch-up instead of leaving `Sent` terminal forever.
+          unresolvedDeliveredReceipt = await reconcileActiveThreadCommands(details, connectionId, threadId);
+          if (!unresolvedDeliveredReceipt) {
+            void loadTurnControls(connectionId, cached.cwd).catch(() => undefined);
+            return { thread: residentThreadWindow(cached), nextCursor: details?.historyCursor(connectionId, threadId) };
+          }
+        }
+        if (cached !== null && threadOpenNeedsCursorCatchUp(syncPlan, unresolvedDeliveredReceipt)) {
+          const cursorStartedAt = performance.now();
+          const localCursorTurnId = requireAuthoritative
+            ? null
+            : await details?.latestSealedTurnId(connectionId, threadId) ?? latestSealedTurnId(cached.turns);
+          const delta = await collectThreadCursorDelta(
+            localCursorTurnId,
+            async (cursor) => await rpcAfterAttach<ThreadTurnsListResponse>(session, "thread/turns/list", {
+              threadId,
+              cursor,
+              limit: THREAD_HISTORY_PAGE_SIZE,
+              sortDirection: "desc",
+              itemsView: "summary",
+            }),
+          );
+          recordTiming("thread_cursor_sync_ms", performance.now() - cursorStartedAt);
+          if (delta.anchorFound && details !== null) {
+            const appended = await details.appendTurns(connectionId, threadId, delta.turns, refreshCursor, delta.historyCursor);
+            if (appended.accepted) {
+              await reconcileActiveThreadCommands(details, connectionId, threadId);
+              const projected = details.getThread(connectionId, threadId) ?? cached;
+              const persistedHistoryCursor = details.historyCursor(connectionId, threadId);
+              void loadTurnControls(connectionId, projected.cwd).catch(() => undefined);
+              return {
+                thread: residentThreadWindow(projected),
+                nextCursor: persistedHistoryCursor === undefined ? delta.historyCursor : persistedHistoryCursor,
+              };
+            }
+          }
+          // A missing cursor means the canonical history was replaced or the
+          // local cache belongs to a disconnected epoch. Only this explicit
+          // recovery boundary may replace a resident thread snapshot.
+          incrementMetric("thread_cursor_recovery_fallbacks");
+        }
+        const persistHydratedThread = async (hydrated: Thread, historyCursor: string | null): Promise<void> => {
+          await details?.importThreadSnapshot(connectionId, hydrated, "recovery", refreshCursor, historyCursor);
           await reconcileActiveThreadCommands(details, connectionId, threadId);
           const previous = await summaries?.get(connectionId, threadId);
           await summaries?.mergeSnapshots(connectionId, [{
@@ -1087,9 +1137,8 @@ function createWorkspaceActions(): WorkspaceActions {
           }
           const hydrated = materializeResumedThread(
             page === response.initialTurnsPage ? response : { ...response, initialTurnsPage: page },
-            cached,
           );
-          await persistHydratedThread(hydrated);
+          await persistHydratedThread(hydrated, page?.nextCursor ?? null);
           void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
           return { thread: hydrated, nextCursor: page?.nextCursor ?? null };
         } catch (cause) {
@@ -1109,14 +1158,14 @@ function createWorkspaceActions(): WorkspaceActions {
               sortDirection: "desc",
               itemsView: "summary",
             });
-            const hydrated = materializeLegacyThreadWindow(read.thread, [...page.data].reverse(), cached);
-            await persistHydratedThread(hydrated);
+            const hydrated = materializeReadOnlyThreadWindow(read.thread, [...page.data].reverse(), cached);
+            await persistHydratedThread(hydrated, page.nextCursor);
             void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
             return { thread: hydrated, nextCursor: page.nextCursor };
           } catch (fallbackCause) {
             console.warn("CodeWide read-only thread fallback failed:", fallbackCause instanceof Error ? fallbackCause.message : "unknown error");
             if (!requireAuthoritative && cached !== null && cached.turns.length > 0) {
-              return { thread: residentThreadWindow(cached), nextCursor: null };
+              return { thread: residentThreadWindow(cached), nextCursor: details?.historyCursor(connectionId, threadId) };
             }
             throw fallbackCause;
           }
@@ -1130,12 +1179,12 @@ function createWorkspaceActions(): WorkspaceActions {
       }
     };
 
-    const readThreadAuthoritatively = async (
+    const repairThreadProjection = async (
       connectionId: string,
       threadId: string,
     ): Promise<ThreadWindow | null> => await readThread(connectionId, threadId, undefined, true);
   
-    const loadOlderTurns = async (connectionId: string, threadId: string, cursor: string, expectedHistoryEpoch: number): Promise<ThreadTurnPage> => {
+    const loadOlderTurns = async (connectionId: string, threadId: string, cursor: string | null, expectedHistoryEpoch: number): Promise<ThreadTurnPage> => {
       const session = workspaceRuntime.supervisor?.session(connectionId);
       if (session === undefined) throw new Error("Connection is not enabled");
       const startedAt = performance.now();
@@ -1150,12 +1199,21 @@ function createWorkspaceActions(): WorkspaceActions {
       });
       recordTiming("history_page_rpc_ms", performance.now() - startedAt);
       const turns = [...page.data].reverse();
-      const persisted = await workspaceRuntime.snapshot.threadDetails?.prependTurns(connectionId, threadId, expectedHistoryEpoch, turns);
+      const threadDetails = workspaceRuntime.snapshot.threadDetails;
+      if (threadDetails === null) throw new Error("Thread history database is not available");
+      const persisted = await threadDetails.prependTurns(
+        connectionId,
+        threadId,
+        expectedHistoryEpoch,
+        turns,
+        page.nextCursor,
+      );
+      if (!persisted.accepted) throw new Error("Backend history page was not persisted");
       return {
         turns,
         nextCursor: page.nextCursor,
-        acceptedHistory: persisted?.accepted ?? false,
-        extendedHistory: persisted?.extendedMinimum ?? false,
+        acceptedHistory: true,
+        extendedHistory: persisted.extendedMinimum,
       };
     };
 
@@ -1177,7 +1235,10 @@ function createWorkspaceActions(): WorkspaceActions {
       const now = Date.now();
       if (now - (workspaceRuntime.lifecycleRepairAttempt.get(repairKey) ?? 0) < 5_000) return;
       workspaceRuntime.lifecycleRepairAttempt.set(repairKey, now);
-      await readThread(connectionId, threadId, cachedThread);
+      // This path exists precisely because the local lifecycle is internally
+      // inconsistent. A regular read may return the local cache and therefore
+      // cannot repair it; force the canonical cursor-tail read.
+      await readThread(connectionId, threadId, cachedThread, true);
     };
   
     const loadTurnItems = async (connectionId: string, threadId: string, turnId: string): Promise<Turn["items"]> => {
@@ -1283,7 +1344,7 @@ function createWorkspaceActions(): WorkspaceActions {
               pending: pending.pending === null || pending.pending === undefined
                 ? null
                 : { ...pending.pending, state: presentation === "queue" ? "queued" : "accepted", updatedAt: Date.now() },
-            });
+            }, { durable: true });
             if (!projected) console.warn("Accepted command will be reconciled from the native outbox when the thread becomes active");
           },
         );
@@ -1447,7 +1508,7 @@ function createWorkspaceActions(): WorkspaceActions {
       const session = workspaceRuntime.supervisor?.session(connectionId);
       if (session === undefined) throw new Error("Connection is not enabled");
       const response = await rpcAfterAttach<ThreadForkResponse>(session, "thread/fork", buildThreadForkParams(threadId, options));
-      await workspaceRuntime.snapshot.threadDetails?.replaceThread(connectionId, response.thread);
+      await workspaceRuntime.snapshot.threadDetails?.importThreadSnapshot(connectionId, response.thread, "fork");
       return response.thread.id;
     };
   
@@ -1703,7 +1764,7 @@ function createWorkspaceActions(): WorkspaceActions {
     listBackgroundTerminals,
     terminateBackgroundTerminal,
     readThread,
-    readThreadAuthoritatively,
+    repairThreadProjection,
     readSubagentThread,
     refreshSubagents,
     loadThreadResources,
@@ -1998,7 +2059,7 @@ async function startWorkspaceRuntime(): Promise<void> {
           const projectedThreads = new Map([...projected.threads].map(([threadId, thread]) => [threadId, thread.after]));
           const repairThreadIds = streamRepairThreadIds(events, projected.threads);
           for (const threadId of repairThreadIds) {
-            const repaired = await workspaceActions.readThreadAuthoritatively(connectionId, threadId);
+            const repaired = await workspaceActions.repairThreadProjection(connectionId, threadId);
             if (repaired === null) throw new Error(`Authoritative stream repair returned no thread for ${threadId}`);
             for (const proof of terminalProofs.filter((candidate) => candidate.threadId === threadId)) {
               if (!terminalProjectionMatches(repaired.thread, proof)) {
@@ -2090,9 +2151,12 @@ async function startWorkspaceRuntime(): Promise<void> {
             // Companion delivery means App Server accepted turn/start. Refresh
             // the bounded authoritative window so its user item replaces the
             // local receipt even when the live item event raced or was missed.
-            void workspaceActions.readThread(connectionId, threadId).catch((cause: unknown) => {
-              console.warn("Could not reconcile an accepted message receipt", cause);
-            });
+            // This is part of the durable projection boundary: awaiting it
+            // prevents the native journal from acknowledging queue/changed
+            // before the canonical user turn has reached SQLite.
+            const repaired = await workspaceActions.repairThreadProjection(connectionId, threadId);
+            if (repaired === null) throw new Error(`Accepted message receipt repair returned no thread for ${threadId}`);
+            await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread]);
           }
           for (const rootThreadId of subagentRoots) {
             void workspaceActions.refreshSubagents(connectionId, rootThreadId).catch((cause: unknown) => {
@@ -2463,14 +2527,22 @@ async function reconcileActiveThreadCommands(
   details: ThreadDetailDatabase | null,
   connectionId: string,
   threadId: string,
-): Promise<void> {
-  if (details === null) return;
+): Promise<boolean> {
+  if (details === null) return false;
   try {
-    await details.reconcileNativeCommands(connectionId, threadId, await listNativeCommands());
+    const deliveries = await listNativeCommands();
+    await details.reconcileNativeCommands(connectionId, threadId, deliveries);
+    return hasUnresolvedDeliveredCommand(
+      deliveries,
+      connectionId,
+      threadId,
+      (commandId) => details.hasPendingDelivery(connectionId, threadId, commandId),
+    );
   } catch (cause) {
     // The native ledger is authoritative and remains available for the next
     // active-thread refresh. A read-model repair must not make history fail.
     console.warn("Could not reconcile the active thread from the native outbox", cause);
+    return false;
   }
 }
 

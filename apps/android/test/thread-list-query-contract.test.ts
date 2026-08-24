@@ -28,4 +28,11 @@ describe("thread list query contract", () => {
   it("does not order SQLite subsets by text columns", () => {
     expect(database).not.toContain("ORDER BY thread_id");
   });
+
+  it("commits the initial desktop conversation by stable id before Recent can reorder", () => {
+    expect(screen).toContain("threadSelection.id === null && serverThreads[0] !== undefined");
+    expect(screen).toContain("const defaultThreadId = threadSelectionKey(serverThreads[0])");
+    expect(screen).toContain("? selectedThread\n    : null;");
+    expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
+  });
 });

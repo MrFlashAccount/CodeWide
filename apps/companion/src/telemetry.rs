@@ -1,7 +1,12 @@
 use std::{
     collections::BTreeMap,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -16,6 +21,9 @@ const MAX_BATCH_EVENTS: usize = 128;
 const MAX_EVENTS: u64 = 200_000;
 const RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const MAX_QUERY_LIMIT: usize = 5_000;
+const JSONL_SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
+const JSONL_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
+const JSONL_ACTIVE_FILE: &str = "events.jsonl";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -120,6 +128,13 @@ pub struct TelemetryStore {
     database: Database,
     enabled: AtomicBool,
     settings_path: Option<PathBuf>,
+    jsonl: Option<Mutex<TelemetryJsonlSink>>,
+}
+
+struct TelemetryJsonlSink {
+    directory: PathBuf,
+    segment_bytes: u64,
+    max_files: usize,
 }
 
 impl TelemetryStore {
@@ -154,7 +169,26 @@ impl TelemetryStore {
             database,
             enabled: AtomicBool::new(true),
             settings_path: None,
+            jsonl: None,
         })
+    }
+
+    /// Opens telemetry and mirrors accepted events to bounded rotated JSONL files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database or JSONL directory cannot be opened.
+    pub fn open_with_jsonl(
+        database_path: impl AsRef<Path>,
+        jsonl_directory: impl AsRef<Path>,
+    ) -> Result<Self, TelemetryError> {
+        let mut store = Self::open(database_path)?;
+        store.jsonl = Some(Mutex::new(TelemetryJsonlSink::open(
+            jsonl_directory,
+            JSONL_SEGMENT_BYTES,
+            JSONL_TOTAL_BYTES,
+        )?));
+        Ok(store)
     }
 
     /// Opens telemetry with a persistent, disabled-by-default collection setting.
@@ -220,6 +254,7 @@ impl TelemetryStore {
         let write = self.database.begin_write()?;
         let mut accepted = 0;
         let mut duplicates = 0;
+        let mut accepted_events = Vec::new();
         {
             let mut meta = write.open_table(META)?;
             let mut events = write.open_table(EVENTS)?;
@@ -244,9 +279,24 @@ impl TelemetryStore {
                 let encoded = serde_json::to_vec(&stored)?;
                 events.insert(key.as_slice(), encoded.as_slice())?;
                 event_ids.insert(dedupe_id.as_str(), key.as_slice())?;
+                accepted_events.push(stored);
                 accepted += 1;
             }
             meta.insert("next_sequence", sequence)?;
+
+            // Write the diagnostic journal before committing the dedupe index.
+            // A retry after a failed DB commit may duplicate a JSONL line, but
+            // eventId makes that explicit and prevents silently losing the
+            // file record after a successful database commit.
+            if !accepted_events.is_empty()
+                && let Some(sink) = &self.jsonl
+            {
+                sink.lock()
+                    .map_err(|_| {
+                        TelemetryError::Invalid("telemetry JSONL lock is poisoned".into())
+                    })?
+                    .append(&accepted_events)?;
+            }
 
             let cutoff = received_at.saturating_sub(RETENTION_MS);
             let excess = events.len()?.saturating_sub(MAX_EVENTS);
@@ -313,6 +363,149 @@ impl TelemetryStore {
         }
         Ok(TelemetryPage { events: output })
     }
+}
+
+impl TelemetryJsonlSink {
+    fn open(
+        directory: impl AsRef<Path>,
+        segment_bytes: u64,
+        total_bytes: u64,
+    ) -> Result<Self, TelemetryError> {
+        if segment_bytes == 0 || total_bytes < segment_bytes {
+            return Err(TelemetryError::Invalid(
+                "telemetry JSONL limits must retain at least one segment".into(),
+            ));
+        }
+        let directory = directory.as_ref().to_path_buf();
+        fs::create_dir_all(&directory)?;
+        set_private_directory_permissions(&directory)?;
+        let max_files = usize::try_from(total_bytes / segment_bytes)
+            .unwrap_or(usize::MAX)
+            .max(1);
+        let sink = Self {
+            directory,
+            segment_bytes,
+            max_files,
+        };
+        sink.remove_excess_archives()?;
+        Ok(sink)
+    }
+
+    fn append(&mut self, events: &[StoredTelemetryEvent]) -> Result<(), TelemetryError> {
+        let mut encoded = Vec::new();
+        for event in events {
+            serde_json::to_writer(&mut encoded, event)?;
+            encoded.push(b'\n');
+        }
+        if encoded.is_empty() {
+            return Ok(());
+        }
+        if u64::try_from(encoded.len()).unwrap_or(u64::MAX) > self.segment_bytes {
+            return Err(TelemetryError::Invalid(
+                "telemetry JSONL batch exceeds the segment limit".into(),
+            ));
+        }
+        let active = self.directory.join(JSONL_ACTIVE_FILE);
+        let active_bytes = fs::metadata(&active).map_or(0, |metadata| metadata.len());
+        if active_bytes > 0
+            && active_bytes.saturating_add(u64::try_from(encoded.len()).unwrap_or(u64::MAX))
+                > self.segment_bytes
+        {
+            self.rotate()?;
+        }
+        let mut file = private_append_file(&active)?;
+        file.write_all(&encoded)?;
+        file.flush()?;
+        Ok(())
+    }
+
+    fn rotate(&self) -> Result<(), TelemetryError> {
+        if self.max_files <= 1 {
+            remove_if_exists(&self.directory.join(JSONL_ACTIVE_FILE))?;
+            return Ok(());
+        }
+        remove_if_exists(&self.archive_path(self.max_files - 1))?;
+        for index in (1..self.max_files - 1).rev() {
+            let source = self.archive_path(index);
+            if source.exists() {
+                fs::rename(source, self.archive_path(index + 1))?;
+            }
+        }
+        let active = self.directory.join(JSONL_ACTIVE_FILE);
+        if active.exists() {
+            fs::rename(active, self.archive_path(1))?;
+        }
+        Ok(())
+    }
+
+    fn remove_excess_archives(&self) -> Result<(), TelemetryError> {
+        for entry in fs::read_dir(&self.directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(index) = archive_index(name) else {
+                continue;
+            };
+            if index >= self.max_files {
+                remove_if_exists(&entry.path())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn archive_path(&self, index: usize) -> PathBuf {
+        self.directory.join(format!("events.{index}.jsonl"))
+    }
+}
+
+fn archive_index(name: &str) -> Option<usize> {
+    name.strip_prefix("events.")?
+        .strip_suffix(".jsonl")?
+        .parse()
+        .ok()
+}
+
+fn remove_if_exists(path: &Path) -> Result<(), std::io::Error> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn private_append_file(path: &Path) -> Result<std::fs::File, std::io::Error> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path)?;
+    set_private_file_permissions(path)?;
+    Ok(file)
+}
+
+#[cfg(unix)]
+fn set_private_directory_permissions(path: &Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn set_private_directory_permissions(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> Result<(), std::io::Error> {
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -592,5 +785,53 @@ mod tests {
         let mut invalid = event("event-1", "request-1");
         invalid.values.insert("invalid metric name".into(), 1.0);
         assert!(validate_event(&invalid).is_err());
+    }
+
+    #[test]
+    fn mirrors_events_to_bounded_rotated_jsonl() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempdir()?;
+        let jsonl_directory = directory.path().join("jsonl");
+        let mut store = TelemetryStore::open(directory.path().join("telemetry.redb"))?;
+        store.jsonl = Some(Mutex::new(TelemetryJsonlSink::open(
+            &jsonl_directory,
+            600,
+            1_200,
+        )?));
+
+        for index in 0..8 {
+            store.ingest(
+                "device-1",
+                batch(vec![event(
+                    format!("event-{index}").as_str(),
+                    format!("request-{index}").as_str(),
+                )]),
+            )?;
+        }
+
+        let files = fs::read_dir(&jsonl_directory)?.collect::<Result<Vec<_>, _>>()?;
+        assert!(files.len() <= 2);
+        let total_bytes = files.iter().try_fold(0_u64, |total, entry| {
+            Ok::<_, std::io::Error>(total + entry.metadata()?.len())
+        })?;
+        assert!(total_bytes <= 1_200);
+        let duplicate = store.ingest("device-1", batch(vec![event("event-7", "request-7")]))?;
+        assert_eq!(duplicate.accepted, 0);
+        let bytes_after_duplicate = fs::read_dir(&jsonl_directory)?
+            .try_fold(0_u64, |total, entry| {
+                Ok::<_, std::io::Error>(total + entry?.metadata()?.len())
+            })?;
+        assert_eq!(bytes_after_duplicate, total_bytes);
+        let journal = files.iter().try_fold(String::new(), |mut output, entry| {
+            output.push_str(&fs::read_to_string(entry.path())?);
+            Ok::<_, std::io::Error>(output)
+        })?;
+        assert!(
+            journal
+                .lines()
+                .all(|line| { serde_json::from_str::<StoredTelemetryEvent>(line).is_ok() })
+        );
+        assert!(journal.contains("event-7"));
+        assert!(!journal.contains("event-0"));
+        Ok(())
     }
 }

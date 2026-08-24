@@ -3,6 +3,7 @@ package dev.codewide.app.remote
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -17,6 +18,18 @@ internal data class NativeCommand(
   val createdAt: Long,
   val updatedAt: Long,
   val nextAttemptAt: Long,
+)
+
+internal data class NativeCommandStorageStats(
+  val rowCount: Long,
+  val payloadBytes: Long,
+  val pendingRows: Long,
+  val pendingBytes: Long,
+  val deliveredRows: Long,
+  val failedRows: Long,
+  val mainFileBytes: Long,
+  val walFileBytes: Long,
+  val shmFileBytes: Long,
 )
 
 /**
@@ -282,7 +295,53 @@ internal class NativeCommandStore(context: Context) {
   }
 
   @Synchronized
-  fun stateJson(command: NativeCommand, state: String = command.state): String = projectionJson(command, state)
+  fun stateJson(command: NativeCommand, state: String = command.state): String {
+    val storage = storageStats()
+    return JSONObject(projectionJson(command, state))
+      .put("storage", JSONObject()
+        .put("rowCount", storage.rowCount)
+        .put("payloadBytes", storage.payloadBytes)
+        .put("pendingRows", storage.pendingRows)
+        .put("pendingBytes", storage.pendingBytes)
+        .put("deliveredRows", storage.deliveredRows)
+        .put("failedRows", storage.failedRows)
+        .put("mainFileBytes", storage.mainFileBytes)
+        .put("walFileBytes", storage.walFileBytes)
+        .put("shmFileBytes", storage.shmFileBytes))
+      .toString()
+  }
+
+  @Synchronized
+  fun storageStats(): NativeCommandStorageStats {
+    val logical = database.rawQuery(
+      """
+      SELECT
+        COUNT(*),
+        COALESCE(SUM(payload_bytes), 0),
+        COALESCE(SUM(CASE WHEN state IN ('queued', 'sending', 'uncertain') THEN 1 ELSE 0 END), 0),
+        COALESCE(SUM(CASE WHEN state IN ('queued', 'sending', 'uncertain') THEN payload_bytes ELSE 0 END), 0),
+        COALESCE(SUM(CASE WHEN state = 'delivered' THEN 1 ELSE 0 END), 0),
+        COALESCE(SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END), 0)
+      FROM native_commands
+      """.trimIndent(),
+      null,
+    ).use { rows ->
+      rows.moveToFirst()
+      LongArray(6) { index -> rows.getLong(index) }
+    }
+    val main = File(database.path)
+    return NativeCommandStorageStats(
+      rowCount = logical[0],
+      payloadBytes = logical[1],
+      pendingRows = logical[2],
+      pendingBytes = logical[3],
+      deliveredRows = logical[4],
+      failedRows = logical[5],
+      mainFileBytes = main.length(),
+      walFileBytes = File(main.path + "-wal").length(),
+      shmFileBytes = File(main.path + "-shm").length(),
+    )
+  }
 
   private fun read(connectionId: String, commandId: String): NativeCommand? = database.rawQuery(
     """

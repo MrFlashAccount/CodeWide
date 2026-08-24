@@ -19,7 +19,7 @@ describe("stream recovery", () => {
       delta: "lost prefix",
     })];
 
-    expect(streamRepairThreadIds(events, new Map([["thread", { before: value }]]))).toEqual(["thread"]);
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after: value }]]))).toEqual(["thread"]);
   });
 
   it("does not repair an ordinary contiguous delta batch", () => {
@@ -36,10 +36,12 @@ describe("stream recovery", () => {
       delta: " world",
     })];
 
-    expect(streamRepairThreadIds(events, new Map([["thread", { before: value }]]))).toEqual([]);
+    const after = structuredClone(value);
+    (after.turns[0]!.items[0] as Extract<Thread["turns"][number]["items"][number], { type: "agentMessage" }>).text = "hello world";
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after }]]))).toEqual([]);
   });
 
-  it("always reconciles a terminal turn before projection ACK", () => {
+  it("finalizes an already-loaded turn from the ordered journal without a server read", () => {
     const value = thread();
     const completed = { ...value.turns[0]!, status: "completed", completedAt: 2 };
     const events = [syncEvent("turn/completed", { turn: completed }, {
@@ -47,7 +49,35 @@ describe("stream recovery", () => {
       turn: completed,
     })];
 
-    expect(streamRepairThreadIds(events, new Map([["thread", { before: value }]]))).toEqual(["thread"]);
+    const after = structuredClone(value);
+    after.turns[0] = completed;
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after }]]))).toEqual([]);
+  });
+
+  it("repairs a cold sparse terminal event that cannot reconstruct its turn", () => {
+    const value = thread();
+    value.turns = [];
+    const completed = { ...thread().turns[0]!, items: [], status: "completed" as const, completedAt: 2 };
+    const events = [syncEvent("turn/completed", { turn: completed }, {
+      kind: "turnCompleted",
+      turn: completed,
+    })];
+
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after: value }]]))).toEqual(["thread"]);
+  });
+
+  it("repairs a completed turn before ACK when its final text is missing", () => {
+    const value = thread();
+    value.turns[0]!.items = [];
+    const completed = { ...value.turns[0]!, status: "completed" as const, completedAt: 2 };
+    const events = [syncEvent("turn/completed", { turn: completed }, {
+      kind: "turnCompleted",
+      turn: completed,
+    })];
+    const after = structuredClone(value);
+    after.turns[0] = completed;
+
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after }]]))).toEqual(["thread"]);
   });
 
   it("verifies the authoritative terminal text against the companion hash", () => {

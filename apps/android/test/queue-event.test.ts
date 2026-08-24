@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hasAcceptedPendingDelivery, parseHostQueueSnapshot } from "../src/data/queue-event";
+import { hasAcceptedPendingDelivery, hasUnresolvedDeliveredCommand, parseHostQueueSnapshot } from "../src/data/queue-event";
 
 describe("companion queue events", () => {
   it("accepts an authoritative delivered receipt", () => {
@@ -64,5 +64,24 @@ describe("companion queue events", () => {
     expect(commands).not.toBeNull();
     expect(hasAcceptedPendingDelivery(commands!, (commandId) => commandId === "current")).toBe(true);
     expect(hasAcceptedPendingDelivery(commands!, () => false)).toBe(false);
+  });
+
+  it("forces catch-up only for a terminal native receipt without canonical replacement", () => {
+    const delivery = {
+      connectionId: "server",
+      threadId: "thread-1",
+      commandId: "direct-1",
+      method: "turn/start",
+      state: "delivered",
+    } as never;
+
+    expect(hasUnresolvedDeliveredCommand(
+      [delivery],
+      "server",
+      "thread-1",
+      (commandId) => commandId === "direct-1",
+    )).toBe(true);
+    expect(hasUnresolvedDeliveredCommand([delivery], "server", "thread-1", () => false)).toBe(false);
+    expect(hasUnresolvedDeliveredCommand([delivery], "server", "another-thread", () => true)).toBe(false);
   });
 });

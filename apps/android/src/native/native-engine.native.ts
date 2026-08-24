@@ -187,7 +187,17 @@ export class NativeEngineSession implements RpcClient {
         if (typeof projectionCursor !== "number" || !Number.isSafeInteger(projectionCursor)) {
           throw new Error("Native journal cursor is missing or invalid");
         }
-        const signal = parseJson<{ recovery?: boolean; eventCount?: number; bytes?: number; commitMs?: number }>(event.data, "native journal signal");
+        const signal = parseJson<{
+          recovery?: boolean;
+          eventCount?: number;
+          bytes?: number;
+          commitMs?: number;
+          journalFrameCount?: number;
+          journalPayloadBytes?: number;
+          mainFileBytes?: number;
+          walFileBytes?: number;
+          shmFileBytes?: number;
+        }>(event.data, "native journal signal");
         if (operationalDiagnosticsEnabled() && signal.recovery !== true) {
           if (typeof signal.commitMs === "number") recordDiagnosticTiming("native_journal_commit_ms", signal.commitMs);
           incrementDiagnosticMetric("native_journal_commits");
@@ -202,6 +212,11 @@ export class NativeEngineSession implements RpcClient {
               commitMs: signal.commitMs,
               eventCount: Number.isSafeInteger(signal.eventCount) ? signal.eventCount! : 0,
               bytes: Number.isSafeInteger(signal.bytes) ? signal.bytes! : 0,
+              journalFrameCount: Number.isSafeInteger(signal.journalFrameCount) ? signal.journalFrameCount! : 0,
+              journalPayloadBytes: Number.isSafeInteger(signal.journalPayloadBytes) ? signal.journalPayloadBytes! : 0,
+              mainFileBytes: Number.isSafeInteger(signal.mainFileBytes) ? signal.mainFileBytes! : 0,
+              walFileBytes: Number.isSafeInteger(signal.walFileBytes) ? signal.walFileBytes! : 0,
+              shmFileBytes: Number.isSafeInteger(signal.shmFileBytes) ? signal.shmFileBytes! : 0,
             },
           });
         }
@@ -489,7 +504,9 @@ export class NativeEngineSupervisor {
       : new NativeEventEmitter(NativeModules.CodeWideNative).addListener("CodeWideEngineEvent", (event: NativeEngineEvent) => {
         if ((event.contractVersion === 1 || event.contractVersion === 2) && event.type === "outbox") {
           try {
-            this.#onOutboxChange?.(parseNativeCommandDelivery(JSON.parse(event.data)));
+            const payload: unknown = JSON.parse(event.data);
+            recordNativeOutboxStorage(event.connectionId, payload);
+            this.#onOutboxChange?.(parseNativeCommandDelivery(payload));
           } catch {
             // Malformed native projections are never repaired with an
             // unbounded cross-server rescan.
@@ -532,6 +549,33 @@ export class NativeEngineSupervisor {
     this.#fingerprints.clear();
     this.#subscription?.remove();
   }
+}
+
+function recordNativeOutboxStorage(connectionId: string, value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  const projection = value as Record<string, unknown>;
+  const storage = projection.storage;
+  if (storage === null || typeof storage !== "object") return;
+  const fields = storage as Record<string, unknown>;
+  const numeric = [
+    "rowCount",
+    "payloadBytes",
+    "pendingRows",
+    "pendingBytes",
+    "deliveredRows",
+    "failedRows",
+    "mainFileBytes",
+    "walFileBytes",
+    "shmFileBytes",
+  ] as const;
+  if (!numeric.every((field) => typeof fields[field] === "number" && Number.isSafeInteger(fields[field]))) return;
+  const threadId = typeof projection.threadId === "string" ? projection.threadId : undefined;
+  recordTelemetryEvent(connectionId, {
+    name: "outbox.native_sqlite_storage",
+    ...(threadId === undefined ? {} : { sessionId: threadId, threadId }),
+    values: Object.fromEntries(numeric.map((field) => [field, fields[field] as number])),
+    tags: { state: typeof projection.state === "string" ? projection.state : "unknown" },
+  });
 }
 
 function fingerprint(connection: RemoteConnection): string {

@@ -3,19 +3,13 @@ import { createCollection, type Collection } from "@tanstack/react-db";
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import { createTurnControlsCollection } from "./turn-controls-collection";
+import { createThreadHistoryModel, type ThreadHistoryModel, type ThreadHistoryRow } from "./thread-history-model";
 import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
-import type { ThreadHistoryState } from "./thread-pagination";
 import { createThreadResourcesModel, type ThreadResourcesModel } from "./thread-resources-model";
 
 export type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
 
-export type ThreadHistoryRow = ThreadHistoryState & {
-  id: string;
-  connectionId: string;
-  threadId: string;
-  generation: number;
-  updatedAt: number;
-};
+export type { ThreadHistoryRow } from "./thread-history-model";
 
 export type BackgroundTerminalValue = {
   itemId: string;
@@ -131,7 +125,7 @@ export type ThreadResourcesRow = {
 };
 
 export type WorkspaceResourceDatabase = {
-  threadHistories: LocalCollection<ThreadHistoryRow>;
+  threadHistories: ThreadHistoryModel;
   turnControls: LocalCollection<TurnControlsRow>;
   backgroundTerminals: LocalCollection<BackgroundTerminalsRow>;
   threadGoals: LocalCollection<ThreadGoalRow>;
@@ -150,10 +144,7 @@ export type WorkspaceResourceDatabase = {
 };
 
 export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
-  const threadHistories = createCollection(localOnlyCollectionOptions<ThreadHistoryRow, string>({
-    id: "workspace-thread-histories-v1",
-    getKey: (row) => row.id,
-  }));
+  const threadHistories = createThreadHistoryModel();
   const turnControls = createTurnControlsCollection();
   const backgroundTerminals = createCollection(localOnlyCollectionOptions<BackgroundTerminalsRow, string>({
     id: "workspace-background-terminals-v1",
@@ -186,8 +177,7 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
     fileTransfers,
     threadResources,
     putThreadHistory(row) {
-      put(threadHistories, { ...row, updatedAt: Date.now() });
-      trimOldest(threadHistories, 72);
+      threadHistories.put(row);
     },
     putTurnControls(row) {
       put(turnControls, { ...row, updatedAt: Date.now() });
