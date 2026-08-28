@@ -77,7 +77,7 @@ git diff --check -- \
   scripts/release-companion
 cargo fmt --all -- --check
 CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+CARGO_INCREMENTAL=0 cargo test --workspace --all-features
 
 printf '%s\n' 'release-companion: building optimized binaries'
 ./scripts/build-companion.sh
