@@ -82,6 +82,38 @@ describe("renderer registry", () => {
     expect(block.body).toBe("Inspecting history\nPlanning pagination repair…");
   });
 
+  it("renders context compaction as a running lifecycle state until completion", () => {
+    const running = toRenderBlock({
+      key: "server/thread/turn/compaction",
+      connectionId: connectionId("server"),
+      threadId: "thread",
+      turnId: "turn",
+      itemId: "compaction",
+      type: "contextCompaction",
+      payload: { type: "contextCompaction", id: "compaction", codewideLifecyclePhase: "started" },
+      unknown: false,
+    });
+    expect(running).toEqual(expect.objectContaining({
+      title: "Compacting context",
+      status: "inProgress",
+    }));
+
+    const completed = toRenderBlock({
+      key: "server/thread/turn/compaction-completed",
+      connectionId: connectionId("server"),
+      threadId: "thread",
+      turnId: "turn",
+      itemId: "compaction",
+      type: "contextCompaction",
+      payload: { type: "contextCompaction", id: "compaction", codewideLifecyclePhase: "completed" },
+      unknown: false,
+    });
+    expect(completed).toEqual(expect.objectContaining({
+      title: "Context compacted",
+      status: "completed",
+    }));
+  });
+
   it("projects a synthetic 20,000-item thread without dropping blocks", () => {
     const synthetic: Thread = {
       id: "synthetic-20k", extra: null, sessionId: "synthetic-20k", forkedFromId: null, parentThreadId: null,

@@ -437,7 +437,6 @@ function MarkdownTable({ table, path }: { table: Table; path: string }) {
                     width={cellWidth}
                     header={rowIndex === 0}
                     align={table.align?.[cellIndex] ?? null}
-                    reviewBlockPath={`${path}/cell-${rowIndex}-${cellIndex}`}
                   />
                 ))}
               </View>
@@ -452,8 +451,8 @@ function MarkdownTable({ table, path }: { table: Table; path: string }) {
   );
 }
 
-function TableCellView({ cell, width, header, align, reviewBlockPath }: { cell: TableCell; width: number; header: boolean; align: "left" | "right" | "center" | null; reviewBlockPath: string }) {
-  return <Text selectable reviewBlockPath={reviewBlockPath} style={[styles.tableCell, header && styles.tableCellHeader, { width, textAlign: align ?? "left" }]}>{inline(cell.children)}</Text>;
+function TableCellView({ cell, width, header, align }: { cell: TableCell; width: number; header: boolean; align: "left" | "right" | "center" | null }) {
+  return <Text style={[styles.tableCell, header && styles.tableCellHeader, { width, textAlign: align ?? "left" }]}>{inline(cell.children)}</Text>;
 }
 
 function inline(nodes: PhrasingContent[]): ReactNode[] {

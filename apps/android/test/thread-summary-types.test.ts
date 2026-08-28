@@ -26,10 +26,10 @@ function summary(): StoredThreadSummary {
 }
 
 describe("thread summary normalization", () => {
-  it("repairs a persisted pre-status summary before it reaches Legend", () => {
-    const legacy = { ...summary(), status: undefined } as unknown as StoredThreadSummary;
+  it("does not invent lifecycle for a malformed summary", () => {
+    const malformed = { ...summary(), status: undefined } as unknown as StoredThreadSummary;
 
-    expect(normalizeStoredThreadSummary(legacy).status).toEqual({ type: "notLoaded" });
+    expect(normalizeStoredThreadSummary(malformed).status).toEqual({ type: "notLoaded" });
   });
 
   it("normalizes malformed active status flags", () => {

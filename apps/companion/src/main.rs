@@ -19,14 +19,18 @@ use codewide_companion::{
     files::FileService,
     history::digest_turn,
     history_service::HistoryService,
+    identity::{CompanionIdentity, rotate as rotate_identity},
     media::MediaProxyService,
     pairing_qr,
     resources::ResourceService,
-    rollout::{TurnRefReport, index_rollout, rollout_file_id, scan_tail_turns},
+    rollout::{
+        TurnRefReport, index_rollout_fully, read_rollout_metadata, rollout_file_id, scan_tail_turns,
+    },
     server,
     state_migration::{StateMigrationPaths, migrate_legacy_installation},
     store::{IndexStore, TurnRef},
     sync::SyncHub,
+    sync_v2::{ProductionServices, SyncV2Mode, SyncV2Runtime, UpstreamSemanticSource},
     telemetry::TelemetryStore,
     terminal,
     tunnels::LocalhostTunnelService,
@@ -78,8 +82,26 @@ enum Command {
         device_registry: PathBuf,
         #[arg(long)]
         data_dir: Option<PathBuf>,
+        #[arg(long)]
+        identity_dir: Option<PathBuf>,
+        /// Deprecated compatibility flag. The public carrier is always HTTP;
+        /// private application traffic is protected by the inner TLS listener.
+        #[arg(long, default_value_t = false, hide = true)]
+        insecure_http: bool,
         #[arg(long, default_value_t = false)]
         enable_mutations: bool,
+        #[arg(long, value_enum, default_value_t = SyncV2Mode::Canary)]
+        sync_v2_mode: SyncV2Mode,
+    },
+    Identity {
+        #[arg(long)]
+        identity_dir: Option<PathBuf>,
+    },
+    RotateIdentity {
+        #[arg(long)]
+        identity_dir: Option<PathBuf>,
+        #[arg(long, default_value_t = false)]
+        confirm_device_repair: bool,
     },
     Index {
         #[arg(long)]
@@ -318,7 +340,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             codex_home,
             device_registry,
             data_dir,
+            identity_dir,
+            insecure_http,
             enable_mutations,
+            sync_v2_mode,
         } => {
             serve(ServeOptions {
                 listen,
@@ -329,13 +354,36 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 codex_home,
                 device_registry,
                 data_dir,
+                identity_dir,
+                insecure_http,
                 enable_mutations,
+                sync_v2_mode,
             })
             .await?;
         }
+        Command::Identity { identity_dir } => {
+            let identity = CompanionIdentity::load_or_create(
+                &identity_dir.unwrap_or_else(default_identity_directory),
+            )?;
+            println!("{}", serde_json::to_string(identity.public())?);
+        }
+        Command::RotateIdentity {
+            identity_dir,
+            confirm_device_repair,
+        } => {
+            if !confirm_device_repair {
+                return Err(
+                    "identity rotation requires --confirm-device-repair; every device must scan a fresh pairing QR"
+                        .into(),
+                );
+            }
+            let identity =
+                rotate_identity(&identity_dir.unwrap_or_else(default_identity_directory))?;
+            println!("{}", serde_json::to_string(identity.public())?);
+        }
         Command::Index { state, rollout } => {
             let store = IndexStore::open(state)?;
-            let report = index_rollout(&store, &rollout)?;
+            let report = index_rollout_fully(&store, &rollout)?;
             println!("{}", serde_json::to_string(&report)?);
         }
         Command::Tail {
@@ -622,7 +670,7 @@ fn print_pairing(
     let display_name =
         std::env::var("CODEWIDE_SERVER_NAME").unwrap_or_else(|_| "CodeWide host".to_owned());
     let emoji = std::env::var("CODEWIDE_SERVER_EMOJI").unwrap_or_else(|_| "🖥️".to_owned());
-    let pin = std::env::var("CODEWIDE_TLS_PIN_SHA256").ok();
+    let (pin, identity_expires_at) = pairing_transport_identity(&pairing, &endpoint)?;
     let mut link = url::Url::parse("codewide://pair")?;
     {
         let mut query = link.query_pairs_mut();
@@ -633,8 +681,9 @@ fn print_pairing(
             .append_pair("x", &expires_at.to_string())
             .append_pair("n", &display_name)
             .append_pair("i", &emoji);
-        if let Some(pin) = &pin {
-            query.append_pair("p", pin);
+        query.append_pair("p", &pin);
+        if let Some(expires_at) = identity_expires_at {
+            query.append_pair("y", &expires_at.to_string());
         }
     }
     let mut payload = serde_json::json!({
@@ -646,11 +695,18 @@ fn print_pairing(
         "displayName": display_name,
         "emoji": emoji,
     });
-    if let Some(pin) = pin {
+    payload
+        .as_object_mut()
+        .ok_or("invalid pairing payload")?
+        .insert("tlsPinSha256".into(), serde_json::Value::String(pin));
+    if let Some(expires_at) = identity_expires_at {
         payload
             .as_object_mut()
             .ok_or("invalid pairing payload")?
-            .insert("tlsPinSha256".into(), serde_json::Value::String(pin));
+            .insert(
+                "identityExpiresAt".into(),
+                serde_json::Value::from(expires_at),
+            );
     }
     let mut output = pairing
         .as_object()
@@ -674,6 +730,30 @@ fn print_pairing(
         print_pairing_qr(link.as_str(), qr_mode, qr_output)?;
     }
     Ok(())
+}
+
+fn valid_tls_pin(pin: &str) -> bool {
+    pin.strip_prefix("sha256/")
+        .and_then(|value| general_purpose::STANDARD.decode(value).ok())
+        .is_some_and(|digest| digest.len() == 32)
+}
+
+fn pairing_transport_identity(
+    pairing: &serde_json::Value,
+    _endpoint: &url::Url,
+) -> Result<(String, Option<u64>), Box<dyn std::error::Error>> {
+    let pin = pairing
+        .get("tlsPinSha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("running companion returned no TLS identity pin")?
+        .to_owned();
+    let expires_at = pairing
+        .get("identityExpiresAt")
+        .and_then(serde_json::Value::as_u64);
+    if !valid_tls_pin(&pin) {
+        return Err("running companion returned an invalid TLS identity pin".into());
+    }
+    Ok((pin, expires_at))
 }
 
 fn print_pairing_qr(
@@ -815,11 +895,17 @@ struct ServeOptions {
     codex_home: Option<PathBuf>,
     device_registry: PathBuf,
     data_dir: Option<PathBuf>,
+    identity_dir: Option<PathBuf>,
+    insecure_http: bool,
     enable_mutations: bool,
+    sync_v2_mode: SyncV2Mode,
 }
 
 #[allow(clippy::too_many_lines)]
 async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> {
+    // Kept as a parsed no-op so existing service units keep starting while the
+    // obsolete outer-TLS rollout flag is removed from deployments.
+    let _ = options.insecure_http;
     terminal::preflight().map_err(|error| format!("terminal preflight failed: {error}"))?;
     info!("Terminal PTY preflight passed");
     let legacy_content_directory = options
@@ -828,6 +914,12 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .map(|directory| directory.join("content-cache"));
     let token = read_administrator_token(&options.token_file).await?;
     let app_server_socket = options.app_server_socket.clone();
+    let v2_upstream = (options.sync_v2_mode == SyncV2Mode::Canary).then(|| {
+        UpstreamHandle::spawn_with_message_limit(
+            options.app_server_socket.clone(),
+            codewide_companion::sync_v2::V2_UPSTREAM_MAX_MESSAGE_BYTES,
+        )
+    });
     let upstream = UpstreamHandle::spawn(options.app_server_socket);
     let store = Arc::new(IndexStore::open(options.state_path.clone())?);
     let codex_home = options.codex_home.unwrap_or_else(default_codex_home);
@@ -857,18 +949,65 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     } else {
         None
     };
-    let catalog_home = codex_home.clone();
-    let catalog = tokio::task::spawn_blocking(move || SessionCatalog::scan(&catalog_home)).await?;
-    info!(
-        threads = catalog.len(),
-        "Canonical rollout catalog is ready"
-    );
-    let catalog = Arc::new(catalog);
-    let history = HistoryService::new(catalog.clone());
+    let catalog = Arc::new(SessionCatalog::empty(&codex_home));
+    let warmup_catalog = catalog.clone();
+    let metadata_store = store.clone();
+    tokio::spawn(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let catalog_threads = warmup_catalog.refresh()?;
+            let mut metadata = Vec::new();
+            let mut failures = 0_usize;
+            for path in warmup_catalog.rollout_paths() {
+                match read_rollout_metadata(&path) {
+                    Ok(Some(value)) => metadata.push(value),
+                    Ok(None) => {}
+                    Err(_) => failures += 1,
+                }
+            }
+            let indexed = metadata.len();
+            if metadata_store.put_thread_metadata_batch(&metadata).is_err() {
+                failures = failures.saturating_add(indexed);
+                return Ok::<_, codewide_companion::catalog::CatalogError>((
+                    catalog_threads,
+                    0,
+                    failures,
+                ));
+            }
+            Ok((catalog_threads, indexed, failures))
+        })
+        .await;
+        match result {
+            Ok(Ok((catalog_threads, indexed_metadata, metadata_failures))) => {
+                info!(
+                    threads = catalog_threads,
+                    "Canonical rollout catalog background warmup is ready"
+                );
+                info!(
+                    threads = indexed_metadata,
+                    "Canonical thread metadata background warmup is ready"
+                );
+                if metadata_failures > 0 {
+                    tracing::warn!(
+                        failures = metadata_failures,
+                        "some canonical thread metadata headers could not be indexed"
+                    );
+                }
+            }
+            Ok(Err(error)) => tracing::warn!(
+                reason = %error,
+                "canonical catalog background warmup failed"
+            ),
+            Err(error) => tracing::warn!(
+                reason = %error,
+                "canonical catalog background warmup task failed"
+            ),
+        }
+    });
+    let history = HistoryService::new(catalog.clone(), store.clone());
     let sync = if options.enable_mutations {
-        SyncHub::with_mutations(upstream.clone(), store.clone(), history)
+        SyncHub::with_mutations(upstream.clone(), store.clone(), history.clone())
     } else {
-        SyncHub::new(upstream, store.clone(), history)
+        SyncHub::new(upstream, store.clone(), history.clone())
     };
     let legacy_attachment_root = state_directory.join("attachments");
     let attachment_root = codex_home.join("attachments/codewide");
@@ -918,7 +1057,8 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let resources = Arc::new(
         ResourceService::open(
             state_directory.join("resource-index.redb"),
-            catalog,
+            catalog.clone(),
+            store.clone(),
             files.clone(),
         )?
         .with_vcs(vcs.clone()),
@@ -934,12 +1074,45 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .with_content_projector(projector)
         .with_dictation(dictation)
         .with_files(files.clone())
-        .with_resources(resources)
-        .with_projects(projects)
-        .with_workspaces(workspaces);
-    if let Some(account_pool) = account_pool {
-        sync = sync.with_account_pool(&account_pool);
+        .with_resources(resources.clone())
+        .with_projects(projects.clone())
+        .with_workspaces(workspaces.clone());
+    if let Some(account_pool) = &account_pool {
+        sync = sync.with_account_pool(account_pool);
     }
+    let identity = CompanionIdentity::load_or_create(
+        &options
+            .identity_dir
+            .clone()
+            .unwrap_or_else(|| state_directory.join("identity")),
+    )?;
+    let sync_v2_tls_pin = identity.public().tls_pin_sha256.clone();
+    let sync_v2 = v2_upstream
+        .map(|upstream| {
+            let source = UpstreamSemanticSource::new(
+                upstream,
+                store.clone(),
+                history,
+                catalog.clone(),
+                ProductionServices {
+                    projects: Some(projects),
+                    workspaces: Some(workspaces),
+                    resources: Some(resources),
+                    accounts: account_pool,
+                },
+            );
+            SyncV2Runtime::new(
+                source,
+                state_directory.join("sync-v2-operations.redb"),
+                sync_v2_tls_pin,
+            )
+        })
+        .transpose()?;
+    let inner_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+    inner_listener.set_nonblocking(true)?;
+    let inner_tls_target = inner_listener.local_addr()?;
+    let mut excluded_ports = HashSet::from([options.listen.port()]);
+    excluded_ports.insert(inner_tls_target.port());
     let services = server::CompanionServices {
         build_shelf: configured_build_shelf()?,
         files: Some(files),
@@ -947,26 +1120,62 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         media: Some(media),
         tunnels: Some(tunnels),
         telemetry: Some(telemetry),
+        catalog: Some(catalog),
         app_server_socket_path: Some(app_server_socket),
-        excluded_ports: HashSet::from([options.listen.port()]),
+        excluded_ports,
+        transport_identity: Some(identity.public().clone()),
+        inner_tls_target: Some(inner_tls_target),
+        inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
+        sync_v2,
+        sync_v2_mode: options.sync_v2_mode,
     };
     let token: Arc<str> = Arc::from(token);
     let registry = Arc::new(DeviceRegistry::open(token, options.device_registry, None).await?);
     let routers = server::split_routers_with_registry_and_services(store, registry, sync, services);
-    let public_listener = TcpListener::bind(options.listen).await?;
     let control = local_control::bind(&options.control_endpoint).await?;
     info!(
         public = %options.listen,
         control = %options.control_endpoint.display(),
         mutations = options.enable_mutations,
+        carrier_tls = false,
+        inner_tls = true,
         "Companion is listening"
     );
-    let public_server =
-        axum::serve(public_listener, routers.public).with_graceful_shutdown(shutdown_signal());
     let control_server =
         axum::serve(control.listener, routers.control).with_graceful_shutdown(shutdown_signal());
-    tokio::try_join!(public_server, control_server)?;
+    let public_server = serve_public(options.listen, routers.public);
+    let inner_server = serve_inner(inner_listener, routers.inner, identity);
+    tokio::try_join!(public_server, inner_server, control_server)?;
     Ok(())
+}
+
+async fn serve_inner(
+    listener: std::net::TcpListener,
+    router: axum::Router,
+    identity: CompanionIdentity,
+) -> Result<(), std::io::Error> {
+    let tls = axum_server::tls_rustls::RustlsConfig::from_der(
+        vec![identity.certificate_der().to_vec()],
+        identity.private_key_der().to_vec(),
+    )
+    .await?;
+    let handle = axum_server::Handle::new();
+    let shutdown_handle = handle.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+    });
+    axum_server::from_tcp_rustls(listener, tls)?
+        .handle(handle)
+        .serve(router.into_make_service())
+        .await
+}
+
+async fn serve_public(listen: SocketAddr, router: axum::Router) -> Result<(), std::io::Error> {
+    let listener = TcpListener::bind(listen).await?;
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
 }
 
 fn migrate_legacy_attachments(
@@ -1080,6 +1289,20 @@ fn default_vcs_registry() -> PathBuf {
             PathBuf::from,
         )
         .join("codewide/companion/vcs-plugins.json")
+}
+
+fn default_identity_directory() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME")
+        .map_or_else(
+            || {
+                std::env::var_os("HOME").map_or_else(
+                    || PathBuf::from(".local/state"),
+                    |home| PathBuf::from(home).join(".local/state"),
+                )
+            },
+            PathBuf::from,
+        )
+        .join("codewide/companion/identity")
 }
 
 fn default_control_endpoint() -> PathBuf {

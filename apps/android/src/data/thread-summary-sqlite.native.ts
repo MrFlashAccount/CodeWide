@@ -1,6 +1,5 @@
 import type { SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 
-import { readLegacyPersistedRows } from "./legacy-persistence-migration.native";
 import { threadSummaryKey } from "./thread-summary-projection";
 import type { ThreadSummaryViewRequest, LoadedThreadSummaryView } from "./thread-summary-model";
 import { normalizeStoredThreadSummary, type StoredThreadSummary } from "./thread-summary-types";
@@ -8,10 +7,8 @@ import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 
 const TABLE = "codewide_thread_summaries";
 const META_TABLE = "__tanstack_db_sqlite_meta";
-const BOOTSTRAP_TABLE = "__tanstack_db_sqlite_bootstrap";
 const RUNTIME_ID = "thread-summaries-v2";
-const LEGACY_BOOTSTRAP_ID = "tanstack-persistence:thread-summaries-v2:v1";
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const CHECKPOINT_DELAY_MS = 250;
 const CHECKPOINT_ATTEMPTS = 3;
 
@@ -209,9 +206,6 @@ export function createThreadSummarySqlite(): ThreadSummarySqlite {
 async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabase>): Promise<void> {
   await database.transaction(async (executor) => {
     await executor.execute(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (runtime_id TEXT PRIMARY KEY NOT NULL, schema_version INTEGER NOT NULL)`);
-    await executor.execute(`CREATE TABLE IF NOT EXISTS ${BOOTSTRAP_TABLE} (runtime_id TEXT NOT NULL, bootstrap_id TEXT NOT NULL, PRIMARY KEY (runtime_id, bootstrap_id))`);
-    const version = extractRows(await executor.execute(`SELECT schema_version FROM ${META_TABLE} WHERE runtime_id = ?`, [RUNTIME_ID]))[0]?.schema_version;
-    if (typeof version === "number" && version !== SCHEMA_VERSION) await executor.execute(`DROP TABLE IF EXISTS ${TABLE}`);
     await executor.execute(
       `CREATE TABLE IF NOT EXISTS ${TABLE} (`
       + `__key TEXT PRIMARY KEY NOT NULL, __payload TEXT NOT NULL, connection_id TEXT NOT NULL, thread_id TEXT NOT NULL, `
@@ -223,19 +217,9 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
     await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_root_connection ON ${TABLE} (connection_id, parent_thread_id, delete_command_id, archived, pinned, recency_at)`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_root_global ON ${TABLE} (parent_thread_id, delete_command_id, archived, pinned, recency_at)`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_subagents ON ${TABLE} (connection_id, parent_thread_id, delete_command_id, recency_at)`);
-    const bootstrapped = extractRows(await executor.execute(
-      `SELECT 1 AS present FROM ${BOOTSTRAP_TABLE} WHERE runtime_id = ? AND bootstrap_id = ?`,
-      [RUNTIME_ID, LEGACY_BOOTSTRAP_ID],
-    )).length > 0;
-    if (!bootstrapped) {
-      const count = extractRows(await executor.execute(`SELECT COUNT(*) AS row_count FROM ${TABLE}`))[0]?.row_count;
-      if (count === 0) {
-        for (const legacy of await readLegacyPersistedRows<StoredThreadSummary>(executor, RUNTIME_ID)) {
-          await persistChange(executor, { type: "insert", value: normalizeStoredThreadSummary(legacy) });
-        }
-      }
-      await executor.execute(`INSERT INTO ${BOOTSTRAP_TABLE} (runtime_id, bootstrap_id) VALUES (?, ?)`, [RUNTIME_ID, LEGACY_BOOTSTRAP_ID]);
-    }
+    // v4 and v5 have the same physical schema. The version marks projection
+    // semantics, not disposable user-visible contents, so upgrading must keep
+    // the locally available thread catalog until the repaired snapshot lands.
     await executor.execute(
       `INSERT INTO ${META_TABLE} (runtime_id, schema_version) VALUES (?, ?) ON CONFLICT(runtime_id) DO UPDATE SET schema_version = excluded.schema_version`,
       [RUNTIME_ID, SCHEMA_VERSION],

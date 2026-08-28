@@ -10,6 +10,8 @@ export type AccountPoolProfile = {
   exhaustedUntil: number | null;
   exhaustedIndefinitely: boolean;
   rateLimits: GetAccountRateLimitsResponse | null;
+  rateLimitsUpdatedAt: number | null;
+  rateLimitsError: string | null;
   lastUsedAt: number | null;
 };
 

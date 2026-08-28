@@ -95,7 +95,7 @@
     if (panzoom !== null) panzoom.setOptions({ disablePan: annotationEnabled });
   };
 
-  window.diagramAddReviewPoint = function (x, y) {
+  function addReviewPoint(x, y, index, pending) {
     const svg = canvas.querySelector('svg');
     if (!svg) return;
     const box = svg.viewBox && svg.viewBox.baseVal;
@@ -112,10 +112,32 @@
     circle.setAttribute('cx', String(box.x + Math.max(0, Math.min(1, x)) * box.width));
     circle.setAttribute('cy', String(box.y + Math.max(0, Math.min(1, y)) * box.height));
     circle.setAttribute('r', String(radius));
-    circle.setAttribute('fill', '#58c7ff');
+    circle.setAttribute('fill', pending ? '#ffffff' : '#b794f6');
     circle.setAttribute('stroke', '#0b0b0b');
     circle.setAttribute('stroke-width', String(Math.max(1.5, radius * .22)));
     layer.appendChild(circle);
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', circle.getAttribute('cx'));
+    label.setAttribute('y', circle.getAttribute('cy'));
+    label.setAttribute('fill', '#0b0b0b');
+    label.setAttribute('font-size', String(radius * 1.1));
+    label.setAttribute('font-family', 'sans-serif');
+    label.setAttribute('font-weight', '800');
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('dominant-baseline', 'central');
+    label.textContent = String(index);
+    layer.appendChild(label);
+  }
+
+  window.diagramSetReviewPoints = function (points) {
+    const svg = canvas.querySelector('svg');
+    if (!svg) return;
+    svg.querySelector('[data-codewide-review-points]')?.remove();
+    if (!Array.isArray(points)) return;
+    points.forEach(function (point, index) {
+      if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') return;
+      addReviewPoint(point.x, point.y, index + 1, point.pending === true);
+    });
   };
 
   function reviewPointAt(clientX, clientY) {

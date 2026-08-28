@@ -14,6 +14,7 @@ export function getUserPreferencesDatabase(): UserPreferencesDatabase {
   let writeQueue: Promise<void> = Promise.resolve();
   database = {
     collection,
+    ready: Promise.resolve(),
     update(id, apply) {
       const operation = writeQueue.then(async () => {
         const current = collection.get(id);

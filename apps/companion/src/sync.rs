@@ -1,11 +1,14 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::extract::ws::{Message, WebSocket};
-use futures_util::SinkExt;
+use futures_util::{
+    SinkExt, StreamExt,
+    stream::{SplitSink, SplitStream},
+};
 use rand::Rng;
 use serde_json::{Map, Value, json};
 use tracing::{debug, info, warn};
@@ -20,7 +23,10 @@ use crate::{
     projects::ProjectService,
     remote_inputs::{RemoteInputError, prepare_remote_file_inputs},
     resources::ResourceService,
-    store::{IndexStore, OutboxCommand, OutboxPresentation, OutboxState},
+    store::{
+        IndexStore, IndexedThreadMetadata, OutboxCommand, OutboxPresentation, OutboxState,
+        ReplayPage,
+    },
     thread_view::ThreadViewService,
     upstream::{ConnectionStatus, UpstreamError, UpstreamHandle},
     workspaces::{WorkspacePhase, WorkspaceService},
@@ -41,11 +47,11 @@ const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const OUTBOX_RETRY_BASE_MS: u64 = 1_000;
 const OUTBOX_RETRY_MAX_MS: u64 = 30_000;
 const OUTBOX_ACCOUNT_SWITCH_WAIT_MS: u64 = 1_000;
-const OUTBOX_RECONCILE_PAGE_SIZE: u64 = 32;
-const OUTBOX_RECONCILE_MAX_PAGES: usize = 128;
+const OUTBOX_RECONCILE_PAGE_SIZE: u64 = 100;
 const ROLLOUT_UPSTREAM_SUPPRESSION: Duration = Duration::from_secs(2);
 const ROLLOUT_RECONCILIATION_POLL: Duration = Duration::from_millis(50);
 const MAX_RECENT_UPSTREAM_THREADS: usize = 4_096;
+const MAX_CONCURRENT_SESSION_RPCS: usize = 32;
 const USER_SERVER_REQUEST_METHODS: [&str; 5] = [
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",
@@ -90,6 +96,7 @@ enum DurableSignal {
 struct InitialSession {
     ready: bool,
     snapshot_cursor: Option<u64>,
+    snapshot_started_at: Option<Instant>,
     delivered_cursor: u64,
 }
 
@@ -99,20 +106,100 @@ enum AuthorizationChangeOutcome {
     Close,
 }
 
-enum OutboxReconcileError {
-    Retry(String),
-    Fatal(String),
-}
-
 enum OutboxDeliveryError {
     Deferred(String),
     Uncertain(String),
+}
+
+enum TurnStartDispatchError {
+    AccountPool(AccountPoolError),
+    Upstream(UpstreamError),
+}
+
+impl TurnStartDispatchError {
+    fn message(&self) -> String {
+        match self {
+            Self::AccountPool(error) => error.to_string(),
+            Self::Upstream(error) => error.to_string(),
+        }
+    }
+
+    fn into_outbox(self) -> OutboxDeliveryError {
+        match self {
+            Self::AccountPool(AccountPoolError::Deferred(reason)) => {
+                OutboxDeliveryError::Deferred(reason)
+            }
+            Self::AccountPool(error) => OutboxDeliveryError::Uncertain(error.to_string()),
+            Self::Upstream(error @ (UpstreamError::Reconnecting | UpstreamError::Backpressure)) => {
+                OutboxDeliveryError::Deferred(error.to_string())
+            }
+            Self::Upstream(error) => OutboxDeliveryError::Uncertain(error.to_string()),
+        }
+    }
 }
 
 enum LiveReplayError {
     Journal,
     SnapshotRequired,
     Socket,
+}
+
+fn log_replay_selection(phase: &'static str, requested_cursor: Option<u64>, replay: &ReplayPage) {
+    info!(
+        phase,
+        requested_cursor = ?requested_cursor,
+        head_cursor = replay.head_cursor,
+        oldest_cursor = ?replay.oldest_cursor,
+        retained_entries = replay.retained_entries,
+        retained_bytes = replay.retained_bytes,
+        replay_entries = replay.entries.len(),
+        snapshot_required = replay.snapshot_required,
+        "sync client replay selected"
+    );
+}
+
+/// Cloneable, single-writer half of a sync WebSocket.
+///
+/// The receive loop must never await an RPC or a replay write: either can be
+/// delayed by App Server work or network backpressure. Splitting the socket
+/// lets the reader continue dispatching independent requests while this small
+/// mutex preserves WebSocket frame integrity.
+#[derive(Clone)]
+struct SessionSocket {
+    sink: Arc<tokio::sync::Mutex<SplitSink<WebSocket, Message>>>,
+}
+
+impl SessionSocket {
+    fn new(sink: SplitSink<WebSocket, Message>) -> Self {
+        Self {
+            sink: Arc::new(tokio::sync::Mutex::new(sink)),
+        }
+    }
+
+    async fn send(&self, message: Message) -> Result<(), axum::Error> {
+        self.sink.lock().await.send(message).await
+    }
+}
+
+#[derive(Clone, Default)]
+struct ThreadMutationLanes {
+    lanes: Arc<std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+impl ThreadMutationLanes {
+    fn for_request(&self, request: Option<&Value>) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        let thread_id = rpc_thread_mutation_id(request?)?;
+        let mut lanes = match self.lanes.lock() {
+            Ok(lanes) => lanes,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Some(
+            lanes
+                .entry(thread_id.to_owned())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone(),
+        )
+    }
 }
 
 #[derive(Default)]
@@ -240,6 +327,54 @@ impl RecentTurnStarts {
     }
 }
 
+fn spawn_live_replay_task(
+    socket: SessionSocket,
+    store: Arc<IndexStore>,
+    mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
+    mut delivered_cursor: u64,
+    task_failed: tokio::sync::mpsc::UnboundedSender<()>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let replay_result = match events.recv().await {
+                Ok(DurableSignal::Committed(head)) => {
+                    if head <= delivered_cursor {
+                        continue;
+                    }
+                    let result =
+                        send_live_replay_after(&socket, store.clone(), delivered_cursor).await;
+                    if matches!(result, Err(LiveReplayError::SnapshotRequired)) {
+                        warn!(
+                            delivered_cursor,
+                            head, "sync client fell behind durable replay window"
+                        );
+                    }
+                    result
+                }
+                Ok(DurableSignal::Failed) => Err(LiveReplayError::Journal),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    debug!(skipped, "sync client coalesced live wake-up signals");
+                    send_live_replay_after(&socket, store.clone(), delivered_cursor).await
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            match replay_result {
+                Ok(cursor) => delivered_cursor = cursor,
+                Err(LiveReplayError::Socket) => {
+                    let _ = task_failed.send(());
+                    break;
+                }
+                Err(LiveReplayError::Journal | LiveReplayError::SnapshotRequired) => {
+                    let _ = send_json(&socket, &json!({ "type": "status", "status": "degraded" }))
+                        .await;
+                    let _ = task_failed.send(());
+                    break;
+                }
+            }
+        }
+    })
+}
+
 impl SyncHub {
     #[must_use]
     pub fn new(upstream: UpstreamHandle, store: Arc<IndexStore>, history: HistoryService) -> Self {
@@ -297,6 +432,7 @@ impl SyncHub {
                     history.clone(),
                     local_events.clone(),
                     recent_upstream_threads,
+                    resources.clone(),
                 ));
             }
             Err(error) => warn!(%error, "canonical rollout monitor is unavailable"),
@@ -319,6 +455,7 @@ impl SyncHub {
             tokio::spawn(run_outbox_pump(
                 upstream.clone(),
                 store.clone(),
+                history.clone(),
                 outbox_wakeup.clone(),
                 local_events.clone(),
                 files.clone(),
@@ -486,7 +623,7 @@ impl SyncHub {
 
     pub async fn serve(
         self,
-        mut socket: WebSocket,
+        socket: WebSocket,
         authorization: AuthorizationContext,
         authorization_changes: Option<tokio::sync::broadcast::Receiver<AuthorizationChange>>,
     ) {
@@ -494,11 +631,14 @@ impl SyncHub {
         // replay selection and the live loop remain buffered and are safely
         // de-duplicated by the cursor-aware client projection.
         let events = self.events.subscribe();
-        let Some(session) = self.accept_hello(&mut socket).await else {
+        let (sink, mut incoming) = socket.split();
+        let socket = SessionSocket::new(sink);
+        let Some(session) = self.accept_hello(&socket, &mut incoming).await else {
             return;
         };
         self.run_session(
             socket,
+            incoming,
             session,
             events,
             authorization,
@@ -507,9 +647,13 @@ impl SyncHub {
         .await;
     }
 
-    async fn accept_hello(&self, socket: &mut WebSocket) -> Option<InitialSession> {
-        let Some(Ok(Message::Text(raw))) = socket.recv().await else {
-            let _ = socket.close().await;
+    async fn accept_hello(
+        &self,
+        socket: &SessionSocket,
+        incoming: &mut SplitStream<WebSocket>,
+    ) -> Option<InitialSession> {
+        let Some(Ok(Message::Text(raw))) = incoming.next().await else {
+            close_with(socket, 1000, "hello_not_received").await;
             return None;
         };
         let Ok(hello) = serde_json::from_str::<Value>(&raw) else {
@@ -531,6 +675,7 @@ impl SyncHub {
         };
         let head = replay.head_cursor;
         let snapshot_required = replay.snapshot_required;
+        log_replay_selection("initial", cursor, &replay);
         let pending_requests = self
             .server_requests
             .lock()
@@ -590,11 +735,13 @@ impl SyncHub {
             {
                 return None;
             }
+            info!(cursor = head, "sync client caught up");
         }
 
         Some(InitialSession {
             ready,
             snapshot_cursor: snapshot_required.then_some(head),
+            snapshot_started_at: snapshot_required.then(Instant::now),
             delivered_cursor: head,
         })
     }
@@ -602,48 +749,74 @@ impl SyncHub {
     #[allow(clippy::too_many_lines)]
     async fn run_session(
         &self,
-        mut socket: WebSocket,
+        socket: SessionSocket,
+        mut incoming: SplitStream<WebSocket>,
         session: InitialSession,
-        mut events: tokio::sync::broadcast::Receiver<DurableSignal>,
+        events: tokio::sync::broadcast::Receiver<DurableSignal>,
         authorization: AuthorizationContext,
         mut authorization_changes: Option<tokio::sync::broadcast::Receiver<AuthorizationChange>>,
     ) {
-        let mut ready = session.ready;
         let mut snapshot_cursor = session.snapshot_cursor;
-        let mut delivered_cursor = session.delivered_cursor;
+        let mut snapshot_started_at = session.snapshot_started_at;
         let mut upstream_status = self.upstream.subscribe_status();
+        let rpc_permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SESSION_RPCS));
+        let thread_mutation_lanes = ThreadMutationLanes::default();
+        let (task_failed_tx, mut task_failed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut session_tasks = tokio::task::JoinSet::new();
+        let mut replay_events = Some(events);
+        let mut replay_task = None;
+        if session.ready {
+            let Some(events) = replay_events.take() else {
+                close_with(&socket, 1011, "replay_receiver_missing").await;
+                return;
+            };
+            replay_task = Some(spawn_live_replay_task(
+                socket.clone(),
+                self.store.clone(),
+                events,
+                session.delivered_cursor,
+                task_failed_tx.clone(),
+            ));
+        }
         loop {
             tokio::select! {
-                message = socket.recv() => {
+                message = incoming.next() => {
                     let Some(Ok(message)) = message else { break; };
                     match message {
                         Message::Text(raw) => {
                             let Ok(message) = serde_json::from_str::<Value>(&raw) else {
-                                close_with(&mut socket, 1007, "invalid_json_object").await;
+                                close_with(&socket, 1007, "invalid_json_object").await;
                                 break;
                             };
                             match message.get("type").and_then(Value::as_str) {
                                 Some("ping") => {
                                     let mut pong = Map::from_iter([("type".into(), Value::String("pong".into()))]);
                                     if let Some(nonce) = message.get("nonce") { pong.insert("nonce".into(), nonce.clone()); }
-                                    if send_json(&mut socket, &Value::Object(pong)).await.is_err() { break; }
+                                    if send_json(&socket, &Value::Object(pong)).await.is_err() { break; }
                                 }
                                 Some("snapshotApplied") => {
                                     let Some(applied_cursor) = message.get("cursor").and_then(Value::as_u64) else {
-                                        close_with(&mut socket, 1008, "invalid_snapshot_cursor").await;
+                                        close_with(&socket, 1008, "invalid_snapshot_cursor").await;
                                         break;
                                     };
                                     if snapshot_cursor != Some(applied_cursor) {
-                                        close_with(&mut socket, 1008, "unexpected_snapshot_cursor").await;
+                                        close_with(&socket, 1008, "unexpected_snapshot_cursor").await;
                                         break;
                                     }
+                                    info!(
+                                        cursor = applied_cursor,
+                                        duration_ms = snapshot_started_at
+                                            .map_or(0, |started| started.elapsed().as_millis()),
+                                        "sync client snapshot applied"
+                                    );
                                     let store = self.store.clone();
                                     let Ok(Ok(replay)) = tokio::task::spawn_blocking(move || store.replay_after(Some(applied_cursor))).await else {
-                                        close_with(&mut socket, 1011, "replay_journal_failed").await;
+                                        close_with(&socket, 1011, "replay_journal_failed").await;
                                         break;
                                     };
                                     let head = replay.head_cursor;
                                     let snapshot_required = replay.snapshot_required;
+                                    log_replay_selection("post_snapshot", Some(applied_cursor), &replay);
                                     let pending_requests = self
                                         .server_requests
                                         .lock()
@@ -653,7 +826,7 @@ impl SyncHub {
                                         .cloned()
                                         .collect::<Vec<_>>();
                                     if send_json(
-                                        &mut socket,
+                                        &socket,
                                         &json!({
                                             "type": "hello",
                                             "protocolVersion": 1,
@@ -668,17 +841,17 @@ impl SyncHub {
                                         break;
                                     }
                                     if snapshot_required {
-                                        ready = false;
                                         snapshot_cursor = Some(head);
+                                        snapshot_started_at = Some(Instant::now());
                                         continue;
                                     }
                                     for (cursor, payload) in replay.entries {
                                         let Ok(payload) = serde_json::from_slice::<Value>(&payload) else {
-                                            close_with(&mut socket, 1011, "replay_journal_failed").await;
+                                            close_with(&socket, 1011, "replay_journal_failed").await;
                                             return;
                                         };
                                         if send_json(
-                                            &mut socket,
+                                            &socket,
                                             &json!({ "type": "event", "cursor": cursor, "payload": payload }),
                                         )
                                         .await
@@ -687,35 +860,85 @@ impl SyncHub {
                                             return;
                                         }
                                     }
-                                    if send_json(&mut socket, &json!({ "type": "caughtUp", "cursor": head })).await.is_err() { break; }
+                                    if send_json(&socket, &json!({ "type": "caughtUp", "cursor": head })).await.is_err() { break; }
+                                    info!(cursor = head, "sync client caught up");
                                     snapshot_cursor = None;
-                                    delivered_cursor = head;
-                                    ready = true;
+                                    snapshot_started_at = None;
+                                    if replay_task.is_none()
+                                        && let Some(events) = replay_events.take()
+                                    {
+                                        replay_task = Some(spawn_live_replay_task(
+                                            socket.clone(),
+                                            self.store.clone(),
+                                            events,
+                                            head,
+                                            task_failed_tx.clone(),
+                                        ));
+                                    }
                                 }
                                 Some("ack") => {}
                                 Some("rpc") => {
-                                    if self.handle_rpc(&mut socket, message.get("request").cloned(), &authorization).await.is_err() { break; }
+                                    let request = message.get("request").cloned();
+                                    let mutation_lane = thread_mutation_lanes.for_request(request.as_ref());
+                                    let Ok(permit) = rpc_permits.clone().try_acquire_owned() else {
+                                        let id = request
+                                            .as_ref()
+                                            .and_then(|request| request.get("id"))
+                                            .cloned()
+                                            .unwrap_or(Value::Null);
+                                        if send_rpc_error(&socket, id, -32004, "Too many concurrent sync RPCs").await.is_err() { break; }
+                                        continue;
+                                    };
+                                    let hub = self.clone();
+                                    let task_socket = socket.clone();
+                                    let task_authorization = authorization.clone();
+                                    let task_failed = task_failed_tx.clone();
+                                    session_tasks.spawn(async move {
+                                        let _permit = permit;
+                                        let result = if let Some(mutation_lane) = mutation_lane {
+                                            let _guard = mutation_lane.lock().await;
+                                            hub.handle_rpc(&task_socket, request, &task_authorization).await
+                                        } else {
+                                            hub.handle_rpc(&task_socket, request, &task_authorization).await
+                                        };
+                                        if result.is_err() {
+                                            let _ = task_failed.send(());
+                                        }
+                                    });
                                 }
                                 Some("serverResponse") => {
                                     if !authorization_has_scope(&authorization, "approvals.respond") {
-                                        close_with(&mut socket, 1008, "scope_required").await;
+                                        close_with(&socket, 1008, "scope_required").await;
                                         break;
                                     }
-                                    if self.handle_server_response(&mut socket, message.get("response").cloned()).await.is_err() { break; }
+                                    let Ok(permit) = rpc_permits.clone().try_acquire_owned() else {
+                                        close_with(&socket, 1013, "too_many_concurrent_requests").await;
+                                        break;
+                                    };
+                                    let hub = self.clone();
+                                    let task_socket = socket.clone();
+                                    let response = message.get("response").cloned();
+                                    let task_failed = task_failed_tx.clone();
+                                    session_tasks.spawn(async move {
+                                        let _permit = permit;
+                                        if hub.handle_server_response(&task_socket, response).await.is_err() {
+                                            let _ = task_failed.send(());
+                                        }
+                                    });
                                 }
                                 Some("hello") => {
-                                    close_with(&mut socket, 1008, "duplicate_hello").await;
+                                    close_with(&socket, 1008, "duplicate_hello").await;
                                     break;
                                 }
                                 _ => {
-                                    close_with(&mut socket, 1008, "unknown_sync_message").await;
+                                    close_with(&socket, 1008, "unknown_sync_message").await;
                                     break;
                                 }
                             }
                         }
                         Message::Close(_) => break,
                         Message::Binary(_) => {
-                            close_with(&mut socket, 1003, "text_frames_only").await;
+                            close_with(&socket, 1003, "text_frames_only").await;
                             break;
                         }
                         Message::Ping(payload) => {
@@ -724,59 +947,35 @@ impl SyncHub {
                         Message::Pong(_) => {}
                     }
                 }
-                event = events.recv(), if ready => {
-                    match event {
-                        Ok(DurableSignal::Committed(head)) => {
-                            if head <= delivered_cursor { continue; }
-                            match send_live_replay_after(&mut socket, self.store.clone(), delivered_cursor).await {
-                                Ok(cursor) => delivered_cursor = cursor,
-                                Err(LiveReplayError::SnapshotRequired) => {
-                                    warn!(delivered_cursor, head, "sync client fell behind durable replay window");
-                                    let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
-                                    break;
-                                }
-                                Err(LiveReplayError::Journal) => {
-                                    let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
-                                    break;
-                                }
-                                Err(LiveReplayError::Socket) => break,
-                            }
-                        }
-                        Ok(DurableSignal::Failed) => {
-                            let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
-                            break;
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                            debug!(skipped, "sync client coalesced live wake-up signals");
-                            if let Ok(cursor) = send_live_replay_after(&mut socket, self.store.clone(), delivered_cursor).await {
-                                delivered_cursor = cursor;
-                            } else {
-                                let _ = send_json(&mut socket, &json!({ "type": "status", "status": "degraded" })).await;
-                                break;
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
                 changed = upstream_status.changed() => {
                     if changed.is_err() { break; }
                     let status = if *upstream_status.borrow() == ConnectionStatus::Live { "live" } else { "reconnecting" };
-                    if send_json(&mut socket, &json!({ "type": "status", "status": status })).await.is_err() { break; }
+                    if send_json(&socket, &json!({ "type": "status", "status": status })).await.is_err() { break; }
                 }
                 change = receive_authorization_change(&mut authorization_changes), if authorization_changes.is_some() => {
-                    match handle_authorization_change(&mut socket, &authorization, change).await {
+                    match handle_authorization_change(&socket, &authorization, change).await {
                         AuthorizationChangeOutcome::Close => break,
                         AuthorizationChangeOutcome::Disable => authorization_changes = None,
                         AuthorizationChangeOutcome::Continue => {}
                     }
                 }
+                Some(result) = session_tasks.join_next(), if !session_tasks.is_empty() => {
+                    if let Err(error) = result {
+                        warn!(%error, "sync RPC task failed");
+                    }
+                }
+                Some(()) = task_failed_rx.recv() => break,
             }
         }
+        if let Some(replay_task) = replay_task {
+            replay_task.abort();
+        }
+        session_tasks.abort_all();
     }
 
     async fn handle_server_response(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         response: Option<Value>,
     ) -> Result<(), ()> {
         let Some(response) = response else {
@@ -853,7 +1052,7 @@ impl SyncHub {
     #[allow(clippy::too_many_lines)]
     async fn handle_rpc(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         request: Option<Value>,
         authorization: &AuthorizationContext,
     ) -> Result<(), ()> {
@@ -943,10 +1142,15 @@ impl SyncHub {
                 object.insert("params".into(), prepared);
             }
         }
-        if method == "turn/start"
-            && let Some(account_pool) = self.account_pool()
-        {
-            return match account_pool.send_turn_start(request.take()).await {
+        if method == "turn/start" {
+            let account_pool = self.account_pool();
+            return match dispatch_turn_start_with_resume(
+                &self.upstream,
+                account_pool.as_ref(),
+                request.take(),
+            )
+            .await
+            {
                 Ok(response) => {
                     forward_rpc_response(
                         socket,
@@ -962,7 +1166,7 @@ impl SyncHub {
                     )
                     .await
                 }
-                Err(error) => send_rpc_error(socket, id, -32040, &error.to_string()).await,
+                Err(error) => send_rpc_error(socket, id, -32040, &error.message()).await,
             };
         }
         forward_rpc(
@@ -983,12 +1187,21 @@ impl SyncHub {
 
     async fn try_handle_local_service_rpc(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         id: &Value,
         method: &str,
         params: &Value,
         authorization: &AuthorizationContext,
     ) -> Result<bool, ()> {
+        if method == "companion/threadSubagents/read" {
+            match self.history.subagent_descendants(params) {
+                Ok(result) => send_local_rpc_result(socket, id, result).await?,
+                Err(error) => {
+                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
+                }
+            }
+            return Ok(true);
+        }
         if DictationService::handles(method) {
             let Some(dictation) = self.dictation() else {
                 send_rpc_error(
@@ -1076,7 +1289,7 @@ impl SyncHub {
 
     async fn handle_workspace_rpc(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         id: &Value,
         method: &str,
         params: &Value,
@@ -1112,11 +1325,35 @@ impl SyncHub {
 
     async fn try_handle_thread_read_rpc(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         id: &Value,
         method: &str,
         params: &Value,
     ) -> Result<bool, ()> {
+        if method == "companion/thread/observe" {
+            match self.thread_view.observe(params).await {
+                Ok(result) => {
+                    self.send_projected_rpc_result(socket, id, method, result)
+                        .await?;
+                }
+                Err(error) => {
+                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
+                }
+            }
+            return Ok(true);
+        }
+        if method == "companion/threadWindow/read" {
+            match self.thread_view.read_window(params).await {
+                Ok(result) => {
+                    self.send_projected_rpc_result(socket, id, method, result)
+                        .await?;
+                }
+                Err(error) => {
+                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
+                }
+            }
+            return Ok(true);
+        }
         if method == "thread/resume" && params.get("initialTurnsPage").is_some() {
             match self.thread_view.resume(params).await {
                 Ok(result) => {
@@ -1144,7 +1381,7 @@ impl SyncHub {
 
     async fn send_projected_rpc_result(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         id: &Value,
         method: &str,
         result: Value,
@@ -1166,7 +1403,7 @@ impl SyncHub {
 
     async fn handle_queue_rpc(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         id: Value,
         method: &str,
         params: &Value,
@@ -1219,7 +1456,7 @@ impl SyncHub {
 
     async fn handle_queued_steer(
         &self,
-        socket: &mut WebSocket,
+        socket: &SessionSocket,
         id: Value,
         params: &Value,
     ) -> Result<(), ()> {
@@ -1307,7 +1544,7 @@ impl SyncHub {
 }
 
 async fn send_live_replay_after(
-    socket: &mut WebSocket,
+    socket: &SessionSocket,
     store: Arc<IndexStore>,
     cursor: u64,
 ) -> Result<u64, LiveReplayError> {
@@ -1363,12 +1600,14 @@ async fn forward_rollout_changes(
     history: HistoryService,
     ingest: tokio::sync::mpsc::Sender<Value>,
     recent_upstream_threads: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
+    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
 ) {
     forward_rollout_changes_with_suppression(
         &mut changes,
         history,
         ingest,
         recent_upstream_threads,
+        resources,
         ROLLOUT_UPSTREAM_SUPPRESSION,
     )
     .await;
@@ -1379,6 +1618,7 @@ async fn forward_rollout_changes_with_suppression(
     history: HistoryService,
     ingest: tokio::sync::mpsc::Sender<Value>,
     recent_upstream_threads: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
+    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
     suppression: Duration,
 ) {
     let mut pending = HashMap::<String, crate::rollout_monitor::RolloutChange>::new();
@@ -1393,6 +1633,14 @@ async fn forward_rollout_changes_with_suppression(
             change = changes.recv(), if changes_open => {
                 match change {
                     Some(change) => {
+                        history.observe_rollout_change(&change);
+                        let resource_service = match resources.read() {
+                            Ok(slot) => slot.clone(),
+                            Err(poisoned) => poisoned.into_inner().clone(),
+                        };
+                        if let Some(resource_service) = resource_service {
+                            resource_service.schedule_prewarm(&change.thread_id);
+                        }
                         // Coalesce every filesystem echo for one thread, but
                         // never discard the trailing write. That final write is
                         // the canonical repair boundary for a live projection.
@@ -1484,7 +1732,7 @@ fn recently_seen_upstream_for(
 }
 
 async fn send_local_rpc_result(
-    socket: &mut WebSocket,
+    socket: &SessionSocket,
     id: &Value,
     result: Value,
 ) -> Result<(), ()> {
@@ -1548,6 +1796,11 @@ async fn ingest_events(
             let _ = events.send(DurableSignal::Failed);
             break;
         }
+        for payload in &payloads {
+            if let Err(error) = observe_subagent_metadata(&store, payload) {
+                warn!(%error, "live subagent metadata index update failed");
+            }
+        }
         let resource_service = match resources.read() {
             Ok(slot) => slot.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
@@ -1610,6 +1863,78 @@ async fn ingest_events(
             let _ = events.send(DurableSignal::Committed(cursor));
         }
     }
+}
+
+fn observe_subagent_metadata(
+    store: &IndexStore,
+    payload: &Value,
+) -> Result<(), crate::store::StoreError> {
+    if payload.get("method").and_then(Value::as_str) != Some("item/completed") {
+        return Ok(());
+    }
+    let Some(params) = payload.get("params") else {
+        return Ok(());
+    };
+    let Some(item) = params.get("item") else {
+        return Ok(());
+    };
+    if item.get("type").and_then(Value::as_str) != Some("subAgentActivity") {
+        return Ok(());
+    }
+    let Some(thread_id) = item
+        .get("agentThreadId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    if store.thread_metadata(thread_id)?.is_some() {
+        return Ok(());
+    }
+    let Some(parent_thread_id) = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let parent_metadata = store.thread_metadata(parent_thread_id)?;
+    let agent_path = item.get("agentPath").and_then(Value::as_str);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        });
+    store.put_thread_metadata(&IndexedThreadMetadata {
+        id: thread_id.to_owned(),
+        parent_thread_id: Some(parent_thread_id.to_owned()),
+        cwd: parent_metadata
+            .as_ref()
+            .map_or_else(|| "/".into(), |metadata| metadata.cwd.clone()),
+        created_at: now,
+        updated_at: now,
+        model_provider: parent_metadata.as_ref().map_or_else(
+            || "openai".into(),
+            |metadata| metadata.model_provider.clone(),
+        ),
+        cli_version: parent_metadata
+            .as_ref()
+            .map_or_else(String::new, |metadata| metadata.cli_version.clone()),
+        source: json!({
+            "subagent": {
+                "thread_spawn": {
+                    "parent_thread_id": parent_thread_id,
+                    "depth": 1,
+                    "agent_path": agent_path,
+                    "agent_nickname": null,
+                    "agent_role": null
+                }
+            }
+        }),
+        agent_nickname: None,
+        agent_role: None,
+        archived: false,
+    })
 }
 
 fn coalesce_stream_text_deltas(payloads: Vec<Value>) -> Vec<Value> {
@@ -1855,7 +2180,7 @@ struct RpcResultObservers {
 #[allow(clippy::too_many_arguments)]
 async fn forward_rpc(
     upstream: &UpstreamHandle,
-    socket: &mut WebSocket,
+    socket: &SessionSocket,
     request: Value,
     id: Value,
     method: &str,
@@ -1880,7 +2205,7 @@ async fn forward_rpc(
 }
 
 async fn forward_rpc_response(
-    socket: &mut WebSocket,
+    socket: &SessionSocket,
     mut response: Value,
     id: Value,
     method: &str,
@@ -1937,7 +2262,10 @@ fn queue_rpc(
         "companion/queue/put" => queue_put(store, object),
         "companion/queue/list" => {
             let thread_id = object.get("threadId").and_then(Value::as_str);
-            Ok(json!({"data": store.outbox_list(thread_id)?}))
+            // Delivered queue rows are durable handoff receipts. The client
+            // projects them as accepted chat deliveries (not queued prompts)
+            // until the canonical user item with the same command id arrives.
+            Ok(json!({"data": store.outbox_list(thread_id)? }))
         }
         "companion/queue/edit" => {
             let command_id = required_string(object.get("commandId"), "commandId")?;
@@ -2103,9 +2431,11 @@ fn required_string<'a>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_outbox_pump(
     upstream: UpstreamHandle,
     store: Arc<IndexStore>,
+    history: HistoryService,
     wakeup: Arc<tokio::sync::Notify>,
     local_events: tokio::sync::mpsc::Sender<Value>,
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
@@ -2153,6 +2483,7 @@ async fn run_outbox_pump(
                         reconcile_outbox_command(
                             &upstream,
                             &store,
+                            &history,
                             &local_events,
                             &files,
                             &account_pool,
@@ -2178,10 +2509,11 @@ async fn run_outbox_pump(
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn reconcile_outbox_command(
     upstream: &UpstreamHandle,
     store: &Arc<IndexStore>,
+    history: &HistoryService,
     local_events: &tokio::sync::mpsc::Sender<Value>,
     files: &Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     account_pool: &Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
@@ -2312,48 +2644,78 @@ async fn reconcile_outbox_command(
             }
         }
     }
-    let turns = match read_outbox_turns(upstream, &command).await {
-        Ok(turns) => turns,
-        Err(OutboxReconcileError::Retry(error)) => {
-            defer_outbox(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                command.state,
-                &error,
-                retry_delay_ms(command.attempts),
-            )
-            .await;
-            return;
+    if command.state == OutboxState::Uncertain {
+        match local_history_contains_client_message(history, &command).await {
+            Ok(true) => {
+                set_outbox_state(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Delivered,
+                    None,
+                )
+                .await;
+            }
+            Ok(false) | Err(_) => {
+                // A lost App Server response is genuinely ambiguous because
+                // clientUserMessageId is projection metadata, not an
+                // idempotency key. Never resend blindly. The canonical rollout
+                // monitor advances the local tail index; once the accepted
+                // message appears there, the command is acknowledged without
+                // touching App Server history or risking a duplicate prompt.
+                wait_outbox(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Uncertain,
+                    command.last_error.as_deref(),
+                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
+                )
+                .await;
+            }
         }
-        Err(OutboxReconcileError::Fatal(error)) => {
-            set_outbox_state(
-                store,
-                local_events,
-                &command.remote_thread_id,
-                &command.command_id,
-                OutboxState::Failed,
-                Some(&error),
-            )
-            .await;
-            return;
-        }
-    };
-    if turns_contain_client_message(&turns, &command.command_id) {
-        set_outbox_state(
-            store,
-            local_events,
-            &command.remote_thread_id,
-            &command.command_id,
-            OutboxState::Delivered,
-            None,
-        )
-        .await;
         return;
     }
-    if turns.iter().any(turn_is_active) {
-        return;
+    if command.presentation == OutboxPresentation::Queue {
+        match history.thread_active(&command.remote_thread_id).await {
+            Ok(true) => {
+                // Explicit queue means "the next turn", never an implicit
+                // steer into the current one. App Server accepts turn/start
+                // while another client owns the active turn, so the durable
+                // Companion lane must hold the head until the indexed
+                // lifecycle becomes idle.
+                wait_outbox(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    None,
+                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
+                )
+                .await;
+                return;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                // Unknown lifecycle cannot safely be interpreted as idle: a
+                // false negative would consume a queued prompt as a steer.
+                debug!(command_id = %command.command_id, %error, "queued turn is waiting for canonical lifecycle");
+                wait_outbox(
+                    store,
+                    local_events,
+                    &command.remote_thread_id,
+                    &command.command_id,
+                    OutboxState::Queued,
+                    None,
+                    u64::try_from(OUTBOX_POLL_INTERVAL.as_millis()).unwrap_or(500),
+                )
+                .await;
+                return;
+            }
+        }
     }
     deliver_outbox_start(
         upstream,
@@ -2366,82 +2728,27 @@ async fn reconcile_outbox_command(
     .await;
 }
 
-async fn read_outbox_turns(
-    upstream: &UpstreamHandle,
+async fn local_history_contains_client_message(
+    history: &HistoryService,
     command: &OutboxCommand,
-) -> Result<Vec<Value>, OutboxReconcileError> {
-    let mut cursor = Value::Null;
-    let mut turns = Vec::new();
-    for page_index in 0..OUTBOX_RECONCILE_MAX_PAGES {
-        let read = json!({
-            "id": "outbox-reconcile",
-            "method": "thread/turns/list",
-            "params": {
-                "threadId": command.remote_thread_id,
-                "cursor": cursor,
-                "limit": OUTBOX_RECONCILE_PAGE_SIZE,
-                "sortDirection": "desc",
-                "itemsView": "summary"
-            }
-        });
-        let response = upstream
-            .request(read)
-            .await
-            .map_err(|error| OutboxReconcileError::Retry(error.to_string()))?;
-        if response.get("error").is_some() {
-            // `thread/start` creates an authoritative empty shell before the
-            // first user turn creates a rollout. App Server deliberately
-            // rejects history reads in that state. For a queued command this
-            // is proof of empty history, not a transient read failure;
-            // retrying the read would deadlock the first message forever.
-            if command.state == OutboxState::Queued
-                && is_unmaterialized_empty_thread_error(&response)
-            {
-                return Ok(Vec::new());
-            }
-            return Err(OutboxReconcileError::Retry(rpc_error_message(&response)));
-        }
-        let result = response.get("result").ok_or_else(|| {
-            OutboxReconcileError::Fatal("thread/turns/list returned no result".into())
-        })?;
-        let page = result
-            .get("data")
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                OutboxReconcileError::Fatal("thread/turns/list returned no turns page".into())
-            })?;
-        turns.extend(page.iter().cloned());
-
-        // A never-attempted command cannot already exist upstream. Its first
-        // page is enough to enforce the active-turn gate without scanning a
-        // long thread. An uncertain command must prove absence across the
-        // complete history before another turn/start is allowed.
-        if command.state == OutboxState::Queued
-            || turns_contain_client_message(&turns, &command.command_id)
-        {
-            return Ok(turns);
-        }
-        let next_cursor = result.get("nextCursor").cloned().unwrap_or(Value::Null);
-        if next_cursor.is_null() {
-            return Ok(turns);
-        }
-        cursor = next_cursor;
-        if page_index + 1 == OUTBOX_RECONCILE_MAX_PAGES {
-            return Err(OutboxReconcileError::Retry(
-                "turn reconciliation exceeded its safe scan bound".into(),
-            ));
-        }
-    }
-    unreachable!("reconciliation loop returns at its configured bound")
-}
-
-fn is_unmaterialized_empty_thread_error(response: &Value) -> bool {
-    let message = response
-        .get("error")
-        .and_then(|error| error.get("message"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    message.contains("not materialized yet") && message.contains("before first user message")
+) -> Result<bool, String> {
+    let params = json!({
+        "threadId": command.remote_thread_id,
+        "cursor": null,
+        "limit": OUTBOX_RECONCILE_PAGE_SIZE,
+        "sortDirection": "desc",
+        "itemsView": "summary"
+    });
+    let page = history
+        .try_turns_page("thread/turns/list", &params)
+        .await
+        .ok_or_else(|| "local summary history is unavailable".to_string())?
+        .map_err(|error| error.to_string())?;
+    let turns = page
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "local summary history returned no turns page".to_string())?;
+    Ok(turns_contain_client_message(turns, &command.command_id))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2495,20 +2802,9 @@ async fn deliver_outbox_start(
         "method": command.method,
         "params": prepared_params
     });
-    let delivered = if let Some(account_pool) = account_pool {
-        account_pool.send_turn_start(start).await.map_err(|error| {
-            if let AccountPoolError::Deferred(reason) = error {
-                OutboxDeliveryError::Deferred(reason)
-            } else {
-                OutboxDeliveryError::Uncertain(error.to_string())
-            }
-        })
-    } else {
-        upstream
-            .request(start)
-            .await
-            .map_err(|error| OutboxDeliveryError::Uncertain(error.to_string()))
-    };
+    let delivered = dispatch_turn_start_with_resume(upstream, account_pool.as_ref(), start)
+        .await
+        .map_err(TurnStartDispatchError::into_outbox);
     match delivered {
         Ok(response) if response.get("error").is_some() => {
             set_outbox_state(
@@ -2543,7 +2839,7 @@ async fn deliver_outbox_start(
                 OUTBOX_ACCOUNT_SWITCH_WAIT_MS,
             )
             .await;
-            debug!(command_id = %command.command_id, %reason, "turn/start waited for an account switch before upstream delivery");
+            debug!(command_id = %command.command_id, %reason, "turn/start waited for upstream delivery");
         }
         Err(OutboxDeliveryError::Uncertain(error)) => {
             warn!(command_id = %command.command_id, %error, "turn/start delivery is uncertain");
@@ -2559,6 +2855,71 @@ async fn deliver_outbox_start(
             .await;
         }
     }
+}
+
+async fn dispatch_turn_start_with_resume(
+    upstream: &UpstreamHandle,
+    account_pool: Option<&Arc<AccountPoolService>>,
+    request: Value,
+) -> Result<Value, TurnStartDispatchError> {
+    let response = dispatch_turn_start_once(upstream, account_pool, request.clone()).await?;
+    let Some(thread_id) = request.pointer("/params/threadId").and_then(Value::as_str) else {
+        return Ok(response);
+    };
+    if !is_thread_not_found_response(&response, thread_id) {
+        return Ok(response);
+    }
+
+    // `thread not found` is a conclusive pre-acceptance rejection. A Companion
+    // reconnect can replace the App Server runtime while indexed history keeps
+    // the chat readable, so mutation ownership must rehydrate that runtime
+    // before the one safe retry. No turn history is returned to the phone.
+    let resumed = match account_pool {
+        Some(account_pool) => account_pool
+            .resume_thread_for_turn(thread_id)
+            .await
+            .map_err(TurnStartDispatchError::AccountPool)?,
+        None => upstream
+            .request(json!({
+                "id": "turn-start-resume",
+                "method": "thread/resume",
+                "params": {
+                    "threadId": thread_id,
+                    "excludeTurns": true
+                }
+            }))
+            .await
+            .map_err(TurnStartDispatchError::Upstream)?,
+    };
+    if resumed.get("error").is_some() {
+        return Ok(resumed);
+    }
+    dispatch_turn_start_once(upstream, account_pool, request).await
+}
+
+async fn dispatch_turn_start_once(
+    upstream: &UpstreamHandle,
+    account_pool: Option<&Arc<AccountPoolService>>,
+    request: Value,
+) -> Result<Value, TurnStartDispatchError> {
+    match account_pool {
+        Some(account_pool) => account_pool
+            .send_turn_start(request)
+            .await
+            .map_err(TurnStartDispatchError::AccountPool),
+        None => upstream
+            .request(request)
+            .await
+            .map_err(TurnStartDispatchError::Upstream),
+    }
+}
+
+fn is_thread_not_found_response(response: &Value, thread_id: &str) -> bool {
+    response
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .and_then(|message| message.strip_prefix("thread not found: "))
+        == Some(thread_id)
 }
 
 fn retry_delay_ms(attempts: u32) -> u64 {
@@ -2725,16 +3086,6 @@ fn turn_with_client_message<'a>(turns: &'a [Value], client_id: &str) -> Option<&
     })
 }
 
-fn turn_is_active(turn: &Value) -> bool {
-    turn.get("status").and_then(Value::as_str) == Some("inProgress")
-        || turn
-            .get("status")
-            .and_then(Value::as_object)
-            .and_then(|status| status.get("type"))
-            .and_then(Value::as_str)
-            .is_some_and(|status| matches!(status, "active" | "inProgress"))
-}
-
 fn rpc_error_message(response: &Value) -> String {
     response
         .get("error")
@@ -2750,6 +3101,9 @@ fn is_read_only_method(method: &str) -> bool {
     matches!(
         method,
         "account/rateLimits/read"
+            | "companion/thread/observe"
+            | "companion/threadWindow/read"
+            | "companion/threadSubagents/read"
             | "config/read"
             | "fs/readDirectory"
             | "app/installed"
@@ -2808,7 +3162,9 @@ fn required_scope_for_rpc(method: &str) -> Option<&'static str> {
     }
     if matches!(
         method,
-        "companion/threadResources/read"
+        "companion/threadWindow/read"
+            | "companion/threadSubagents/read"
+            | "companion/threadResources/read"
             | "companion/threadChanges/read"
             | "companion/threadAttachments/read"
             | "companion/threadChange/read"
@@ -2859,6 +3215,47 @@ fn authorization_has_scope(authorization: &AuthorizationContext, scope: &str) ->
         }
         AuthorizationContext::Device { .. } => false,
     }
+}
+
+fn rpc_requires_ordered_lane(method: &str) -> bool {
+    // Observer attachment does not mutate persisted thread data, so it keeps
+    // the read scope. It still has to precede a turn/start for the same thread:
+    // otherwise the first live deltas can be emitted before Companion has
+    // subscribed to that thread.
+    method == "companion/thread/observe"
+        || (!is_read_only_method(method)
+            && !matches!(
+                method,
+                "companion/accountPool/list"
+                    | "companion/project/list"
+                    | "companion/queue/list"
+                    | "companion/threadAttachments/read"
+                    | "companion/threadChange/read"
+                    | "companion/threadChanges/read"
+                    | "companion/threadResources/read"
+                    | "companion/threadSubagents/read"
+                    | "companion/threadWindow/read"
+                    | "companion/workspace/inspect"
+                    | "companion/workspace/read"
+            ))
+}
+
+fn rpc_thread_mutation_id(request: &Value) -> Option<&str> {
+    let method = request.get("method").and_then(Value::as_str)?;
+    if !rpc_requires_ordered_lane(method) {
+        return None;
+    }
+    let params = request.get("params")?;
+    params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .or_else(|| params.get("remoteThreadId").and_then(Value::as_str))
+        .or_else(|| {
+            params
+                .get("command")
+                .and_then(|command| command.get("remoteThreadId"))
+                .and_then(Value::as_str)
+        })
 }
 
 fn is_thread_write_method(method: &str) -> bool {
@@ -2927,7 +3324,7 @@ fn is_mutating_method(method: &str) -> bool {
 }
 
 async fn send_rpc_error(
-    socket: &mut WebSocket,
+    socket: &SessionSocket,
     id: Value,
     code: i64,
     message: &str,
@@ -2940,7 +3337,7 @@ async fn send_rpc_error(
     .map_err(|_| ())
 }
 
-async fn send_json(socket: &mut WebSocket, value: &Value) -> Result<(), axum::Error> {
+async fn send_json(socket: &SessionSocket, value: &Value) -> Result<(), axum::Error> {
     socket.send(Message::Text(value.to_string().into())).await
 }
 
@@ -2954,7 +3351,7 @@ async fn receive_authorization_change(
 }
 
 async fn handle_authorization_change(
-    socket: &mut WebSocket,
+    socket: &SessionSocket,
     authorization: &AuthorizationContext,
     change: Result<AuthorizationChange, tokio::sync::broadcast::error::RecvError>,
 ) -> AuthorizationChangeOutcome {
@@ -2974,7 +3371,7 @@ async fn handle_authorization_change(
     }
 }
 
-async fn close_with(socket: &mut WebSocket, code: u16, reason: &str) {
+async fn close_with(socket: &SessionSocket, code: u16, reason: &str) {
     let _ = socket
         .send(Message::Close(Some(axum::extract::ws::CloseFrame {
             code,
@@ -2992,11 +3389,97 @@ mod tests {
     #[test]
     fn read_only_mode_refuses_mutations() {
         assert!(is_read_only_method("thread/list"));
+        assert!(is_read_only_method("companion/threadSubagents/read"));
         assert!(is_read_only_method("fs/readDirectory"));
         assert!(is_read_only_method("config/read"));
         assert_eq!(contract_scope_for_rpc("config/read"), Some("threads.read"));
+        assert_eq!(
+            contract_scope_for_rpc("companion/threadSubagents/read"),
+            Some("threads.read")
+        );
         assert!(!is_read_only_method("turn/start"));
         assert!(!is_read_only_method("thread/delete"));
+    }
+
+    #[test]
+    fn completed_subagent_activity_updates_the_parent_index_immediately()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = IndexStore::open(directory.path().join("index.redb"))?;
+        store.put_thread_metadata(&IndexedThreadMetadata {
+            id: "root".into(),
+            parent_thread_id: None,
+            cwd: "/repo".into(),
+            created_at: 1,
+            updated_at: 1,
+            model_provider: "openai_no_ws".into(),
+            cli_version: "0.147.0".into(),
+            source: Value::String("cli".into()),
+            agent_nickname: None,
+            agent_role: None,
+            archived: false,
+        })?;
+
+        observe_subagent_metadata(
+            &store,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "threadId": "root",
+                    "item": {
+                        "type": "subAgentActivity",
+                        "agentThreadId": "child",
+                        "agentPath": "/root/worker"
+                    }
+                }
+            }),
+        )?;
+
+        let descendants = store.thread_descendants("root")?;
+        assert_eq!(descendants.len(), 1);
+        assert_eq!(descendants[0].id, "child");
+        assert_eq!(descendants[0].cwd, "/repo");
+        assert_eq!(descendants[0].model_provider, "openai_no_ws");
+        Ok(())
+    }
+
+    #[test]
+    fn mutations_are_ordered_only_within_their_thread() {
+        assert_eq!(
+            rpc_thread_mutation_id(&json!({
+                "method": "companion/thread/observe",
+                "params": {"threadId": "thread-a"}
+            })),
+            Some("thread-a")
+        );
+        assert_eq!(
+            rpc_thread_mutation_id(&json!({
+                "method": "turn/start",
+                "params": {"threadId": "thread-a"}
+            })),
+            Some("thread-a")
+        );
+        assert_eq!(
+            rpc_thread_mutation_id(&json!({
+                "method": "companion/queue/put",
+                "params": {"command": {"remoteThreadId": "thread-b"}}
+            })),
+            Some("thread-b")
+        );
+        assert_eq!(
+            rpc_thread_mutation_id(&json!({
+                "method": "thread/list",
+                "params": {"threadId": "thread-a"}
+            })),
+            None
+        );
+        assert_eq!(
+            rpc_thread_mutation_id(&json!({
+                "method": "companion/dictation/appendBatch",
+                "params": {"sessionId": "dictation-a"}
+            })),
+            None
+        );
     }
 
     #[test]
@@ -3016,6 +3499,46 @@ mod tests {
             Some("accepted")
         );
         assert!(turn_with_client_message(&turns, "another-id").is_none());
+    }
+
+    #[test]
+    fn queue_list_keeps_delivered_explicit_queue_handoff_receipts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = IndexStore::open(directory.path().join("index.redb"))?;
+        let params = |command_id: &str| {
+            json!({
+                "threadId": "thread",
+                "clientUserMessageId": command_id,
+                "input": [{"type": "text", "text": command_id}]
+            })
+        };
+        store.outbox_put_turn_start_with_presentation(
+            "queued-receipt",
+            "thread",
+            params("queued-receipt"),
+            Some(1),
+            OutboxPresentation::Queue,
+        )?;
+        store.outbox_set_state("queued-receipt", OutboxState::Delivered, None)?;
+        store.outbox_put_turn_start_with_presentation(
+            "direct-receipt",
+            "thread",
+            params("direct-receipt"),
+            Some(2),
+            OutboxPresentation::Delivery,
+        )?;
+        store.outbox_set_state("direct-receipt", OutboxState::Delivered, None)?;
+
+        let listed = queue_rpc(
+            &store,
+            "companion/queue/list",
+            &json!({"threadId": "thread"}),
+        )?;
+        assert_eq!(listed["data"].as_array().map(Vec::len), Some(2));
+        assert_eq!(listed["data"][0]["commandId"], "queued-receipt");
+        assert_eq!(listed["data"][1]["commandId"], "direct-receipt");
+        Ok(())
     }
 
     #[test]
@@ -3151,9 +3674,11 @@ mod tests {
         }
         rollout.sync_all()?;
 
-        let history = HistoryService::new(Arc::new(crate::catalog::SessionCatalog::scan(
-            directory.path(),
-        )));
+        let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+        let history = HistoryService::new(
+            Arc::new(crate::catalog::SessionCatalog::scan(directory.path())),
+            store,
+        );
         let recent = Arc::new(std::sync::Mutex::new(HashMap::new()));
         remember_upstream_thread(&recent, thread_id);
         let (change_tx, mut change_rx) = tokio::sync::mpsc::channel(4);
@@ -3174,6 +3699,7 @@ mod tests {
                 history,
                 ingest_tx,
                 recent,
+                Arc::new(std::sync::RwLock::new(None)),
                 Duration::from_millis(30),
             )
             .await;
@@ -3196,21 +3722,5 @@ mod tests {
             "coalesced rollout writes must not emit duplicate reconciliation events"
         );
         Ok(())
-    }
-
-    #[test]
-    fn recognizes_only_the_empty_new_thread_history_error() {
-        assert!(is_unmaterialized_empty_thread_error(&json!({
-            "error": {
-                "code": -32600,
-                "message": "thread new is not materialized yet; thread/turns/list is unavailable before first user message"
-            }
-        })));
-        assert!(!is_unmaterialized_empty_thread_error(&json!({
-            "error": {"code": -32600, "message": "thread rollout was not found"}
-        })));
-        assert!(!is_unmaterialized_empty_thread_error(&json!({
-            "result": {"data": []}
-        })));
     }
 }

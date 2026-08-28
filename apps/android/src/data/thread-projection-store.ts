@@ -25,6 +25,11 @@ type ThreadProjectionAdapters = {
     applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;
   };
   details: ThreadProjectionStore;
+  reconcileBeforeSummary?(
+    connectionId: string,
+    events: SyncEvent[],
+    projected: ThreadEventProjection,
+  ): Promise<ThreadEventProjection>;
 };
 
 /**
@@ -56,6 +61,12 @@ export function createThreadProjectionStore(adapters: ThreadProjectionAdapters):
       let projected: ThreadEventProjection;
       try {
         projected = await adapters.details.applyEvents(connectionId, events);
+        // `applyEvents` updates the resident Legend projection synchronously,
+        // while its durable SQLite checkpoint may complete later. A terminal
+        // summary must not become visible before that checkpoint or lifecycle
+        // and final TURN content can describe two different journal positions.
+        await projected.checkpoint;
+        projected = await adapters.reconcileBeforeSummary?.(connectionId, events, projected) ?? projected;
       } finally {
         if (measureDiagnostics) recordDiagnosticTiming("thread_detail_projection_ms", performance.now() - detailStartedAt);
       }

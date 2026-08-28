@@ -1,9 +1,14 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import type { NativeCommandDelivery } from "../native/native-transport";
+import { projectCodexVisibleTurn } from "./codex-contextual-user-message";
+import type { PendingDeliveryState } from "./thread-delivery-state";
 import type { ComposerAttachment } from "./use-remote-workspace";
 
-export type ProjectedThreadChatDelivery = NativeCommandDelivery & { attachments: ComposerAttachment[] };
+export type ProjectedThreadChatDelivery = Omit<NativeCommandDelivery, "state"> & {
+  attachments: ComposerAttachment[];
+  state: PendingDeliveryState;
+};
 
 /** One ordered chat row. Delivery state decorates a user row until the server
  * replaces the same client-id row with its authoritative turn. */
@@ -48,12 +53,18 @@ export function projectResidentThreadTimeline(
   deliveries: readonly ProjectedThreadChatDelivery[],
   range: { includesEarliest: boolean; includesLatest: boolean },
 ): ProjectedThreadChatTimelineEntry[] {
-  const authoritativeClientIds = new Set(turns.flatMap((turn) => turn.items.flatMap((item) => (
+  const visibleTurns = turns.flatMap((turn) => {
+    const projected = projectCodexVisibleTurn(turn);
+    return projected !== turn && projected.items.length === 0 && turn.status !== "inProgress"
+      ? []
+      : [projected];
+  });
+  const authoritativeClientIds = new Set(visibleTurns.flatMap((turn) => turn.items.flatMap((item) => (
     item.type === "userMessage" && typeof item.clientId === "string" && item.clientId.length > 0
       ? [item.clientId]
       : []
   ))));
-  const turnTimestamps = turns.flatMap((turn) => {
+  const turnTimestamps = visibleTurns.flatMap((turn) => {
     const value = protocolTimestampMs(turn.startedAt);
     return value === null ? [] : [value];
   });
@@ -66,7 +77,7 @@ export function projectResidentThreadTimeline(
       && (range.includesLatest || delivery.createdAt <= newestTurnAt);
   });
   const ordered = [
-    ...turns.map((turn, index) => ({
+    ...visibleTurns.map((turn, index) => ({
       entry: turnTimelineEntry(turn) as ProjectedThreadChatTimelineEntry,
       timestampMs: protocolTimestampMs(turn.startedAt),
       sourceOrder: index,
@@ -75,7 +86,7 @@ export function projectResidentThreadTimeline(
     ...visibleDeliveries.map((delivery, index) => ({
       entry: deliveryTimelineEntry(delivery) as ProjectedThreadChatTimelineEntry,
       timestampMs: delivery.createdAt,
-      sourceOrder: turns.length + index,
+      sourceOrder: visibleTurns.length + index,
       tieBreaker: delivery.commandId,
     })),
   ];

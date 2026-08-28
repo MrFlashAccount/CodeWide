@@ -6,6 +6,7 @@ import {
   projectThreadSummaryEvent,
   projectThreadSummarySnapshot,
   retainThreadSummaryMissingFromSnapshot,
+  threadSummaryDescendantKeys,
   threadSummaryKey,
 } from "../src/data/thread-summary-projection";
 
@@ -47,6 +48,20 @@ function thread(turns: unknown[] = []): Thread {
 }
 
 describe("thread summary projection", () => {
+  it("scopes subagent catalog replacement to one recursive descendant tree", () => {
+    const rows = [
+      { ...summary(), remoteThreadId: "root" },
+      { ...summary(), remoteThreadId: "child", parentThreadId: "root" },
+      { ...summary(), remoteThreadId: "grandchild", parentThreadId: "child" },
+      { ...summary(), remoteThreadId: "other-child", parentThreadId: "other-root" },
+    ];
+
+    expect([...threadSummaryDescendantKeys(rows, "root")]).toEqual([
+      threadSummaryKey("server", "child"),
+      threadSummaryKey("server", "grandchild"),
+    ]);
+  });
+
   it("applies a companion rollout invalidation without knowing the raw App Server event", () => {
     const current = summary("Stale answer");
     const mutation = projectThreadSummaryEvent("server", {
@@ -174,10 +189,10 @@ describe("thread summary projection", () => {
 
   it("updates the preview for item deltas without reordering Recent or marking streaming text unread", () => {
     const current = summary();
-    const mutation = projectThreadSummaryEvent("server", {
-      method: "item/completed",
-      params: { threadId: "thread", item: { type: "agentMessage", text: "Stream complete" } },
-    }, (threadId) => threadId === "thread" ? current : undefined, 42, 7);
+    const mutation = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "itemUpsert",
+      summary: { activity: true, previewText: "Stream complete" },
+    }), (threadId) => threadId === "thread" ? current : undefined, 42, 7);
 
     expect(mutation).toEqual({
       key: threadSummaryKey("server", "thread"),
@@ -202,79 +217,66 @@ describe("thread summary projection", () => {
       },
     }, () => current, 42, 7)).toBeNull();
 
-    expect(projectThreadSummaryEvent("server", {
-      method: "item/reasoning/summaryTextDelta",
-      params: { threadId: "thread", turnId: "turn", itemId: "reasoning", delta: "next" },
-    }, () => current, 42, 8)).toBeNull();
+    expect(projectThreadSummaryEvent("server", semanticEvent({
+      kind: "reasoningDelta",
+      field: "summary",
+      summary: { activity: true },
+    }), () => current, 42, 8)).toBeNull();
   });
 
   it("keeps the progress preview until a phased final answer completes its turn", () => {
     const current = summary("Still working");
-    const streamingFinal = projectThreadSummaryEvent("server", {
-      method: "item/completed",
-      params: {
-        threadId: "thread",
-        item: { type: "agentMessage", text: "Final answer", phase: "final_answer" },
-      },
-    }, () => current, 42, 7);
+    const streamingFinal = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "itemUpsert",
+      summary: { activity: true },
+    }), () => current, 42, 7);
 
     expect(streamingFinal?.value?.preview).toBe("Still working");
 
-    const completed = projectThreadSummaryEvent("server", {
-      method: "turn/completed",
-      params: {
-        threadId: "thread",
-        turn: { id: "turn", items: [
-          { type: "agentMessage", text: "Final answer", phase: "final_answer" },
-          { type: "agentMessage", text: "Late progress", phase: "commentary" },
-        ] },
+    const completed = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "turnCompleted",
+      summary: {
+        activity: true,
+        conversationMessage: true,
+        finalAgentResponse: true,
+        previewText: "Final answer",
       },
-    }, () => streamingFinal?.value ?? current, 43, 8);
+    }), () => streamingFinal?.value ?? current, 43, 8);
 
     expect(completed?.value?.preview).toBe("Final answer");
   });
 
   it("does not reorder Recent for tool activity", () => {
     const current = summary();
-    const mutation = projectThreadSummaryEvent("server", {
-      method: "item/completed",
-      params: {
-        threadId: "thread",
-        item: { type: "commandExecution", id: "tool", command: "pnpm test", status: "completed" },
-      },
-    }, () => current, 42, 7);
+    const mutation = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "itemUpsert",
+      summary: { activity: true },
+    }), () => current, 42, 7);
 
     expect(mutation?.value).toMatchObject({ updatedAt: 42, recencyAt: 10, unread: 0 });
   });
 
   it("reorders Recent when a user message starts a turn", () => {
     const current = summary();
-    const mutation = projectThreadSummaryEvent("server", {
-      method: "turn/started",
-      params: {
-        threadId: "thread",
-        turn: {
-          id: "turn",
-          items: [{ type: "userMessage", content: [{ type: "text", text: "New prompt" }] }],
-        },
-      },
-    }, () => current, 42, 7);
+    const mutation = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "turnStarted",
+      summary: { activity: true, conversationMessage: true, previewText: "New prompt" },
+    }), () => current, 42, 7);
 
     expect(mutation?.value).toMatchObject({ preview: "New prompt", updatedAt: 42, recencyAt: 42, unread: 0 });
   });
 
   it("marks only the final agent bubble of a completed turn unread", () => {
     const current = summary();
-    const mutation = projectThreadSummaryEvent("server", {
-      method: "turn/completed",
-      params: {
-        threadId: "thread",
-        turn: { id: "turn", items: [
-          { type: "reasoning", summary: ["Planning redesign"] },
-          { type: "agentMessage", text: "Final answer" },
-        ] },
+    const mutation = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "turnCompleted",
+      summary: {
+        activity: true,
+        conversationMessage: true,
+        finalAgentResponse: true,
+        previewText: "Final answer",
       },
-    }, () => current, 42, 8);
+    }), () => current, 42, 8);
 
     expect(mutation?.value).toMatchObject({
       preview: "Final answer",
@@ -288,33 +290,31 @@ describe("thread summary projection", () => {
 
   it("does not write the summary or relight unread state for token usage", () => {
     const current = { ...summary(), latestActivityCursor: 9, lastSeenCursor: 9, unread: 0 };
-    const mutation = projectThreadSummaryEvent("server", {
-      method: "thread/tokenUsage/updated",
-      params: { threadId: "thread" },
-    }, () => current, 42, 10);
+    const mutation = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "tokenUsage",
+      summary: { activity: true },
+    }), () => current, 42, 10);
 
     expect(mutation).toBeNull();
   });
 
   it("deletes only the addressed summary", () => {
-    expect(projectThreadSummaryEvent("server", {
-      method: "thread/deleted",
-      params: { threadId: "thread" },
-    }, () => summary())).toEqual({ key: threadSummaryKey("server", "thread"), value: null });
+    expect(projectThreadSummaryEvent("server", semanticEvent({ kind: "threadDeleted" }), () => summary()))
+      .toEqual({ key: threadSummaryKey("server", "thread"), value: null });
   });
 
   it("keeps a new empty shell until its first activity", () => {
-    const started = projectThreadSummaryEvent("server", {
-      method: "thread/started",
-      params: { thread: thread() },
-    }, () => undefined)?.value;
+    const started = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "threadStarted",
+      thread: thread(),
+    }), () => undefined)?.value;
     expect(started).not.toBeNull();
     expect(retainThreadSummaryMissingFromSnapshot(started as StoredThreadSummary)).toBe(true);
 
-    const active = projectThreadSummaryEvent("server", {
-      method: "turn/started",
-      params: { threadId: "thread", turn: { id: "turn", items: [] } },
-    }, () => started ?? undefined, 42, 1)?.value;
+    const active = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "turnStarted",
+      summary: { activity: true },
+    }), () => started ?? undefined, 42, 1)?.value;
     expect(active).toMatchObject({ provisionalThread: null });
     expect(retainThreadSummaryMissingFromSnapshot(active as StoredThreadSummary)).toBe(false);
   });
@@ -326,3 +326,11 @@ describe("thread summary projection", () => {
     })).toBe(true);
   });
 });
+
+function semanticEvent(operation: Record<string, unknown>): Record<string, unknown> {
+  return {
+    method: "test/semantic-event",
+    params: { threadId: "thread" },
+    codewideThreadPatch: { version: 1, threadId: "thread", operation },
+  };
+}

@@ -19,7 +19,10 @@ async fn remote_media_requires_auth_and_rejects_ssrf_targets()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let directory = tempfile::tempdir()?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
         store.clone(),

@@ -1,7 +1,6 @@
 package dev.codewide.app.remote
 
 import android.util.Base64
-import okhttp3.CertificatePinner
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -195,6 +194,21 @@ internal class NativeTerminalSessionManager(
     sessions.values.filter { it.connectionId == connectionId }.forEach { close(it.id) }
   }
 
+  fun reconnectConnection(connectionId: String) {
+    sessions.values
+      .filter { it.connectionId == connectionId && !it.disposed.get() && !it.finished }
+      .forEach { session ->
+        synchronized(session) {
+          session.generation += 1
+          session.reconnectScheduled = false
+          session.socket?.cancel()
+          session.socket = null
+          session.open = false
+        }
+        beginConnect(session, 0L)
+      }
+  }
+
   fun closeAll() {
     sessions.keys.toList().forEach(::close)
   }
@@ -222,12 +236,7 @@ internal class NativeTerminalSessionManager(
         fail(session, "Saved server credentials are unavailable")
         return@schedule
       }
-      SessionCredentialClient.mint(
-        credentialClient,
-        saved.endpoint,
-        saved.token,
-        saved.tlsPinSha256,
-      ) { result ->
+      SessionCredentialClient.mint(credentialClient, saved) { result ->
         if (session.disposed.get() || session.finished || session.generation != generation) return@mint
         result.fold(
           onSuccess = { credential -> connect(session, saved, credential, generation) },
@@ -244,24 +253,21 @@ internal class NativeTerminalSessionManager(
     generation: Long,
   ) {
     if (session.disposed.get() || session.finished || session.generation != generation) return
-    val endpoint = terminalEndpoint(
+    val endpoint = InnerTlsTransport.url(saved, terminalEndpoint(
       saved.endpoint,
+      session.threadId,
       session.cwd,
       session.cols,
       session.rows,
       session.id,
       session.transcript.length(),
       !session.serverSessionCreated,
-    )
+    ))
     val request = Request.Builder()
       .url(endpoint)
       .header("Authorization", "Bearer ${credential.token}")
       .build()
-    val client = if (saved.tlsPinSha256 == null) socketClient else {
-      socketClient.newBuilder()
-        .certificatePinner(CertificatePinner.Builder().add(request.url.host, saved.tlsPinSha256).build())
-        .build()
-    }
+    val client = InnerTlsTransport.client(socketClient, saved)
     val socket = client.newWebSocket(request, object : WebSocketListener() {
       override fun onOpen(socket: WebSocket, response: Response) {
         if (session.disposed.get() || session.finished || session.generation != generation) {
@@ -327,11 +333,16 @@ internal class NativeTerminalSessionManager(
         val message = when (response?.code) {
           403 -> "Terminal access requires the shell.explicit device scope"
           400 -> "Terminal working directory or size was rejected"
-          404 -> "Remote terminal session no longer exists"
+          404 -> if (session.serverSessionCreated) {
+            "Remote terminal session no longer exists"
+          } else {
+            "Terminal thread is unavailable"
+          }
           409 -> "Terminal output replay is no longer available"
+          422 -> "Terminal session belongs to another thread"
           else -> error.message ?: "Terminal connection failed"
         }
-        if (response?.code in setOf(400, 403, 404, 409)) fail(session, message)
+        if (response?.code in setOf(400, 403, 404, 409, 422)) fail(session, message)
         else scheduleReconnect(session, message)
       }
     })
@@ -432,6 +443,7 @@ internal class NativeTerminalSessionManager(
     private const val TERMINAL_REPLAY_UNAVAILABLE_CODE = 4004
     private val RECONNECT_DELAYS_MILLIS = longArrayOf(250, 500, 1_000, 2_000, 5_000)
     private val SESSION_ID = Regex("terminal-[0-9a-fA-F-]{36}")
+    private val CODEX_THREAD_ID = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
     private fun frame(opcode: Byte, payload: ByteArray): ByteString =
       ByteArray(payload.size + 1).also { frame ->
@@ -441,6 +453,7 @@ internal class NativeTerminalSessionManager(
 
     internal fun terminalEndpoint(
       syncEndpoint: String,
+      threadId: String,
       cwd: String?,
       cols: Int,
       rows: Int,
@@ -462,7 +475,10 @@ internal class NativeTerminalSessionManager(
       val terminal = sync.newBuilder()
         .encodedPath("/v1/terminals")
         .query(null)
-        .apply { if (cwd != null) addQueryParameter("cwd", cwd) }
+        .apply {
+          if (CODEX_THREAD_ID.matches(threadId)) addQueryParameter("threadId", threadId)
+          else if (cwd != null) addQueryParameter("cwd", cwd)
+        }
         .addQueryParameter("cols", cols.toString())
         .addQueryParameter("rows", rows.toString())
         .addQueryParameter("sessionId", sessionId)

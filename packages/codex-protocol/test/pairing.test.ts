@@ -14,6 +14,7 @@ describe("CodeWide pairing QR", () => {
       displayName: "Workstation",
       emoji: "🧪",
       tlsPinSha256: `sha256/${"A".repeat(43)}=`,
+      identityExpiresAt: now + 365 * 24 * 60 * 60_000,
     });
     expect(encoded).toMatch(/^[\x20-\x7e]+$/);
     expect(parsePairingPayload(encoded, now)).toMatchObject({
@@ -31,6 +32,7 @@ describe("CodeWide pairing QR", () => {
       expiresAt: 1_001_000,
       displayName: "Host",
       emoji: "🖥️",
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     } as const;
     expect(() => parsePairingPayload(JSON.stringify({ ...base, expiresAt: 999_999 }), 1_000_000)).toThrow("expired");
     expect(() => parsePairingPayload(JSON.stringify({ ...base, endpoint: "ws://host.example/v1/sync" }), 1_000_000)).toThrow("WSS");
@@ -47,6 +49,7 @@ describe("CodeWide pairing QR", () => {
       expiresAt: now + 60_000,
       displayName: "Home workstation",
       emoji: "🏠",
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     });
     expect(link).toMatch(/^codewide:\/\/pair\?/);
     expect(parsePairingPayload(link, now)).toMatchObject({
@@ -58,7 +61,7 @@ describe("CodeWide pairing QR", () => {
     expect(() => parsePairingPayload(link.replace("codewide://pair", "codewide://thread"), now)).toThrow("Unsupported");
   });
 
-  it("accepts legacy pairing payloads and links during the CodeWide rename", () => {
+  it("accepts the legacy brand alias only when the payload remains securely pinned", () => {
     const now = Date.now();
     const legacy = {
       type: "codex-remote-pairing",
@@ -68,6 +71,7 @@ describe("CodeWide pairing QR", () => {
       expiresAt: now + 60_000,
       displayName: "Legacy host",
       emoji: "🖥️",
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     };
     expect(parsePairingPayload(JSON.stringify(legacy), now)).toMatchObject({
       type: "codewide-pairing",
@@ -78,5 +82,8 @@ describe("CodeWide pairing QR", () => {
       type: "codewide-pairing",
       endpoint: legacy.endpoint,
     });
+
+    const legacyUnpinned = { ...legacy, tlsPinSha256: undefined };
+    expect(() => parsePairingPayload(JSON.stringify(legacyUnpinned), now)).toThrow("certificate pin");
   });
 });

@@ -96,6 +96,18 @@ describe("private asset transport", () => {
     expect(new Headers(request.mock.calls[0]?.[1]?.headers).get("range")).toBe("bytes=0-3");
   });
 
+  it("cache-busts an overwritten scoped draft image", async () => {
+    const request = vi.fn(async () => new Response("file", { status: 200 }));
+    vi.stubGlobal("fetch", request);
+
+    await fetchPrivateAsset(
+      { kind: "scoped", rootId: "attachments", path: "drawing.png", cacheRevision: "42" },
+      async () => ({ baseUrl: "https://companion.example", authorization: "Bearer token" }),
+    );
+
+    expect(String(request.mock.calls[0]?.[0])).toBe("https://companion.example/v1/files/download?rootId=attachments&path=drawing.png&v=42");
+  });
+
   it("refreshes authorization for resumable upload requests", async () => {
     const getAccess = vi.fn(async (forceRefresh = false) => ({
       baseUrl: "https://companion.example",

@@ -2,9 +2,12 @@ import type { GetAccountRateLimitsResponse, RateLimitSnapshot, Thread } from "@c
 import { describe, expect, it } from "vitest";
 
 import {
+  ACCOUNT_RATE_LIMITS_REFRESH_MS,
   currentThreadContextUsage,
   currentThreadUsageProjection,
   mergeAccountRateLimits,
+  mergeAccountPoolRateLimits,
+  accountProfileRateLimitsStale,
   accountRateLimitsStale,
   relativeResetTime,
   selectWeeklyRateLimit,
@@ -54,6 +57,25 @@ describe("account rate limits", () => {
     expect(merged.rateLimits.secondary?.windowDurationMins).toBe(10_080);
   });
 
+  it("merges the rolling update into the active pool profile without refreshing inactive accounts", () => {
+    const pool = {
+      activeProfileId: "primary",
+      profiles: [
+        { id: "primary", email: null, planType: "pro", priority: 0, enabled: true, active: true, exhaustedUntil: null, exhaustedIndefinitely: false, rateLimits: response(), rateLimitsUpdatedAt: 10, rateLimitsError: "stale", lastUsedAt: null },
+        { id: "backup", email: null, planType: "pro", priority: 1, enabled: true, active: false, exhaustedUntil: null, exhaustedIndefinitely: false, rateLimits: response(rateLimit({ primary: { usedPercent: 5, windowDurationMins: 300, resetsAt: 4_000 } })), rateLimitsUpdatedAt: 20, rateLimitsError: null, lastUsedAt: null },
+      ],
+      nextResetAt: null,
+      allExhausted: false,
+    };
+    const merged = mergeAccountPoolRateLimits(pool, {
+      rateLimits: rateLimit({ primary: { usedPercent: 31, windowDurationMins: null, resetsAt: null } }),
+    }, 30);
+    expect(merged?.profiles[0]?.rateLimits?.rateLimits.primary?.usedPercent).toBe(31);
+    expect(merged?.profiles[0]?.rateLimitsUpdatedAt).toBe(30);
+    expect(merged?.profiles[0]?.rateLimitsError).toBeNull();
+    expect(merged?.profiles[1]).toBe(pool.profiles[1]);
+  });
+
   it("uses the last model request for active context, not cumulative thread usage", () => {
     const thread = {
       id: "thread",
@@ -101,8 +123,8 @@ describe("account rate limits", () => {
       accountPool: {
         activeProfileId: "primary",
         profiles: [
-          { id: "primary", email: "one@example.com", planType: "pro", priority: 0, enabled: true, active: true, exhaustedUntil: null, exhaustedIndefinitely: false, rateLimits: response(), lastUsedAt: null },
-          { id: "backup", email: "two@example.com", planType: "prolite", priority: 1, enabled: true, active: false, exhaustedUntil: null, exhaustedIndefinitely: false, rateLimits: null, lastUsedAt: null },
+          { id: "primary", email: "one@example.com", planType: "pro", priority: 0, enabled: true, active: true, exhaustedUntil: null, exhaustedIndefinitely: false, rateLimits: response(), rateLimitsUpdatedAt: 10, rateLimitsError: null, lastUsedAt: null },
+          { id: "backup", email: "two@example.com", planType: "prolite", priority: 1, enabled: true, active: false, exhaustedUntil: null, exhaustedIndefinitely: false, rateLimits: null, rateLimitsUpdatedAt: null, rateLimitsError: null, lastUsedAt: null },
         ],
         nextResetAt: null,
         allExhausted: false,
@@ -110,5 +132,41 @@ describe("account rate limits", () => {
       error: null,
       updatedAt: 9_999,
     }, 10_000)).toBe(true);
+  });
+
+  it("does not present an expired inactive-account snapshot as current", () => {
+    const profile = {
+      id: "backup",
+      email: "two@example.com",
+      planType: "pro",
+      priority: 1,
+      enabled: true,
+      active: false,
+      exhaustedUntil: null,
+      exhaustedIndefinitely: false,
+      rateLimits: response(),
+      rateLimitsUpdatedAt: 1,
+      rateLimitsError: null,
+      lastUsedAt: null,
+    };
+    expect(accountProfileRateLimitsStale(profile, ACCOUNT_RATE_LIMITS_REFRESH_MS + 1_001)).toBe(true);
+  });
+
+  it("retries a profile whose last isolated refresh failed", () => {
+    const profile = {
+      id: "backup",
+      email: "two@example.com",
+      planType: "pro",
+      priority: 1,
+      enabled: true,
+      active: false,
+      exhaustedUntil: null,
+      exhaustedIndefinitely: false,
+      rateLimits: response(),
+      rateLimitsUpdatedAt: 10,
+      rateLimitsError: "refresh failed",
+      lastUsedAt: null,
+    };
+    expect(accountProfileRateLimitsStale(profile, 10_001)).toBe(true);
   });
 });

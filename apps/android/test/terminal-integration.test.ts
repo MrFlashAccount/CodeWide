@@ -25,6 +25,15 @@ describe("native terminal integration", () => {
     expect(screen).toContain("workspace.tabs.length");
   });
 
+  it("uses the exact loaded thread cwd instead of the list-loading fallback", () => {
+    const detail = screen.slice(
+      screen.indexOf("function MainConversationDetail"),
+      screen.indexOf("type NewConversationDetailProps"),
+    );
+    expect(detail).toContain('const conversationCwd = remoteThread?.cwd ?? storedThread?.cwd ?? conversation.cwd ?? "/workspace";');
+    expect(detail).toContain("cwd={conversationCwd}");
+  });
+
   it("keeps the live terminal renderer mounted across responsive layout changes", () => {
     const overlay = readFileSync(new URL("../src/ui/AppFullscreenOverlay.tsx", import.meta.url), "utf8");
     expect(overlay).toContain("dismissOnScopeUnmount: options?.dismissOnScopeUnmount ?? true");
@@ -76,11 +85,28 @@ describe("native terminal integration", () => {
     expect(patch).toContain("private val symbolsPaint = newTextPaint(terminalTypeface)");
   });
 
-  it("patches expo-libghostty to retain the live Android VT renderer", () => {
+  it("retains only logical VT state and recreates Android render resources", () => {
     const patch = readFileSync(new URL("../../../patches/expo-libghostty@0.8.1.patch", import.meta.url), "utf8");
     expect(patch).toContain('Prop("persistentSessionId")');
-    expect(patch).toContain("PersistentTerminalRegistry.acquire(id, candidate)");
+    expect(patch).toContain("PersistentTerminalRegistry.acquire(id)");
+    expect(patch).toContain("internal class GhosttyTerminalSession");
+    expect(patch).toContain("val session: GhosttyTerminalSession");
+    expect(patch).toContain("previousTerminal.destroyRenderer()");
+    expect(patch).toContain("terminal = GhosttyTerminalView(context, nextSession)");
+    expect(patch).toContain("Views, geometry and bitmap caches are always recreated");
+    expect(patch).not.toContain("val terminal: GhosttyTerminalView,");
     expect(patch).toContain('AsyncFunction("releasePersistentSession")');
+  });
+
+  it("releases full-screen bitmap caches without destroying the retained VT session", () => {
+    const patch = readFileSync(new URL("../../../patches/expo-libghostty@0.8.1.patch", import.meta.url), "utf8");
+    expect(patch).toContain("fun destroyRenderer()");
+    expect(patch).toContain("backgroundBitmap?.recycle()");
+    expect(patch).toContain("textBitmap?.recycle()");
+    expect(patch).toContain("snapshotBuf = null");
+    expect(patch).toContain("GhosttyVt.nativeClearSelection(handle)");
+    expect(patch).toContain("selectionMode = false");
+    expect(patch).toContain("session.destroy()");
   });
 
   it("restores the full terminal grid after the Android IME disappears", () => {
@@ -93,7 +119,7 @@ describe("native terminal integration", () => {
 
   it("does not retain a stale keyboard gap across terminal tab switches", () => {
     const patch = readFileSync(new URL("../../../patches/expo-libghostty@0.8.1.patch", import.meta.url), "utf8");
-    expect(patch).toContain("terminal.releaseKeyboard()");
+    expect(patch).toContain("view.releaseKeyboard()");
     expect(patch).toContain("hideSoftInputFromWindow(token, 0)");
     expect(patch).toContain("lastImeAnimationInsets = insets");
     expect(patch).toContain("syncAccessoryBar(insets)");
@@ -110,6 +136,12 @@ describe("native terminal integration", () => {
     expect(patch).toContain("forceGridGeometryOnNextLayout = true");
     expect(patch).toContain("override fun onLayout(changed: Boolean");
     expect(patch).toContain("updateGridGeometry(force = true)");
+  });
+
+  it("keeps ordinary renderer layouts on the upstream resize lifecycle", () => {
+    const patch = readFileSync(new URL("../../../patches/expo-libghostty@0.8.1.patch", import.meta.url), "utf8");
+    expect(patch).toContain("if (!forceGridGeometryOnNextLayout) return");
+    expect(patch).not.toContain("every final child layout must reconcile");
   });
 
   it("reconciles terminal geometry after the fullscreen window reaches final bounds", () => {
@@ -168,7 +200,7 @@ describe("native terminal integration", () => {
     expect(terminal).toContain("writeNativeTerminal(tab.id, data)");
     expect(transport).toContain('addListener("CodeWideTerminalEvent"');
     expect(transport).toContain("readTerminalOutput(sessionId, offset, maxBytes)");
-    expect(nativeManager).toContain("CertificatePinner.Builder()");
+    expect(nativeManager).toContain("InnerTlsTransport.client(socketClient, saved)");
     expect(nativeManager).toContain('Regex("terminal-[0-9a-fA-F-]{36}")');
     expect(nativeManager).toContain('File(cacheDirectory, "terminal-sessions")');
     expect(nativeManager).toContain("MAX_TRANSCRIPT_BYTES = 128L * 1024 * 1024");

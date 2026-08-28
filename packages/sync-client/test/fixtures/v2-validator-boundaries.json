@@ -1,0 +1,14 @@
+[
+  { "name": "timestamp-minimal-utc", "definition": "timestamp", "json": "\"2026-08-28T10:00:00Z\"", "valid": true },
+  { "name": "timestamp-leap-day", "definition": "timestamp", "json": "\"2024-02-29T23:59:59.123456789123Z\"", "valid": true },
+  { "name": "timestamp-invalid-calendar-day", "definition": "timestamp", "json": "\"2026-02-29T10:00:00Z\"", "valid": false },
+  { "name": "timestamp-invalid-month-day", "definition": "timestamp", "json": "\"2026-04-31T10:00:00Z\"", "valid": false },
+  { "name": "timestamp-offset-forbidden", "definition": "timestamp", "json": "\"2026-08-28T13:00:00+03:00\"", "valid": false },
+  { "name": "timestamp-lowercase-z-forbidden", "definition": "timestamp", "json": "\"2026-08-28T10:00:00z\"", "valid": false },
+  { "name": "timestamp-leap-second-forbidden", "definition": "timestamp", "json": "\"2026-08-28T10:00:60Z\"", "valid": false },
+  { "name": "integer-minimum", "definition": "item", "json": "{\"kind\":\"command\",\"id\":\"i\",\"command\":\"c\",\"cwd\":\"/w\",\"status\":\"completed\",\"exitCode\":-9007199254740991,\"outputPreview\":\"\"}", "valid": true },
+  { "name": "integer-maximum", "definition": "item", "json": "{\"kind\":\"command\",\"id\":\"i\",\"command\":\"c\",\"cwd\":\"/w\",\"status\":\"completed\",\"exitCode\":9007199254740991,\"outputPreview\":\"\"}", "valid": true },
+  { "name": "integer-below-minimum", "definition": "item", "json": "{\"kind\":\"command\",\"id\":\"i\",\"command\":\"c\",\"cwd\":\"/w\",\"status\":\"completed\",\"exitCode\":-9007199254740992,\"outputPreview\":\"\"}", "valid": false },
+  { "name": "integer-above-maximum", "definition": "item", "json": "{\"kind\":\"command\",\"id\":\"i\",\"command\":\"c\",\"cwd\":\"/w\",\"status\":\"completed\",\"exitCode\":9007199254740992,\"outputPreview\":\"\"}", "valid": false },
+  { "name": "integer-fraction-forbidden", "definition": "item", "json": "{\"kind\":\"command\",\"id\":\"i\",\"command\":\"c\",\"cwd\":\"/w\",\"status\":\"completed\",\"exitCode\":1.5,\"outputPreview\":\"\"}", "valid": false }
+]

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hasAcceptedPendingDelivery, hasUnresolvedDeliveredCommand, parseHostQueueSnapshot } from "../src/data/queue-event";
+import { hasAppServerAcceptedPendingDelivery, hasUnresolvedDeliveredCommand, parseHostQueueSnapshot } from "../src/data/queue-event";
 
 describe("companion queue events", () => {
   it("accepts an authoritative delivered receipt", () => {
@@ -12,7 +12,7 @@ describe("companion queue events", () => {
       order: 1,
       createdAt: 10,
       lastError: null,
-    }])).toMatchObject([{ commandId: "queued-1", state: "delivered" }]);
+    }])).toMatchObject([{ commandId: "queued-1", state: "delivered", updatedAt: 10 }]);
   });
 
   it("keeps transport delivery separate from the explicit user queue", () => {
@@ -62,8 +62,24 @@ describe("companion queue events", () => {
       },
     ]);
     expect(commands).not.toBeNull();
-    expect(hasAcceptedPendingDelivery(commands!, (commandId) => commandId === "current")).toBe(true);
-    expect(hasAcceptedPendingDelivery(commands!, () => false)).toBe(false);
+    expect(hasAppServerAcceptedPendingDelivery(commands!, (commandId) => commandId === "current")).toBe(true);
+    expect(hasAppServerAcceptedPendingDelivery(commands!, () => false)).toBe(false);
+  });
+
+  it("treats a delivered explicit queue row as an accepted chat handoff", () => {
+    const commands = parseHostQueueSnapshot([{
+      commandId: "queued-handoff",
+      remoteThreadId: "thread-1",
+      params: { threadId: "thread-1", input: [{ type: "text", text: "next" }] },
+      presentation: "queue",
+      state: "delivered",
+      order: 1,
+      createdAt: 10,
+      lastError: null,
+    }]);
+
+    expect(commands).not.toBeNull();
+    expect(hasAppServerAcceptedPendingDelivery(commands!, (commandId) => commandId === "queued-handoff")).toBe(true);
   });
 
   it("forces catch-up only for a terminal native receipt without canonical replacement", () => {

@@ -69,7 +69,10 @@ async fn dictation_stays_local_retries_and_replays_completed_result()
         .await?,
     );
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
         store.clone(),

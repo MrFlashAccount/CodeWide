@@ -1,7 +1,8 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 #[cfg(unix)]
@@ -13,10 +14,16 @@ use serde_json::{Value, json};
 
 use crate::{
     catalog::{CatalogError, SessionCatalog},
-    history::{HistoryError, project_summary_turn_from_file},
-    rollout::{IndexError, scan_tail_turns_from_file},
+    history::{
+        HistoryError, SummaryProjectionState, project_summary_turn_from_file,
+        summary_projection_state_from_file,
+    },
+    rollout::{
+        IndexError, backfill_rollout_prefix, current_indexed_turns_from_file, index_rollout,
+        rollout_file_id, scan_tail_turns_from_file,
+    },
     rollout_monitor::{self, RolloutChange},
-    store::TurnRef,
+    store::{IndexStore, TurnRef},
 };
 
 const CURSOR_PREFIX: &str = "codewide-history-v1:";
@@ -30,9 +37,17 @@ const MAX_THREAD_PREVIEW_CACHE_ENTRIES: usize = 4_096;
 #[derive(Clone)]
 pub struct HistoryService {
     catalog: Arc<SessionCatalog>,
+    store: Arc<IndexStore>,
     summaries: Arc<Mutex<SummaryCache>>,
     previews: Arc<Mutex<PreviewCache>>,
     invalidation_previews: Arc<Mutex<HashMap<String, Option<String>>>>,
+    index_jobs: Arc<Mutex<IndexJobs>>,
+}
+
+#[derive(Default)]
+struct IndexJobs {
+    running: HashSet<String>,
+    dirty: HashSet<String>,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -94,11 +109,15 @@ pub enum HistoryServiceError {
     #[error(transparent)]
     Rollout(#[from] IndexError),
     #[error(transparent)]
+    Store(#[from] crate::store::StoreError),
+    #[error(transparent)]
     History(#[from] HistoryError),
     #[error("History cursor is invalid or expired")]
     InvalidCursor,
     #[error("threadId is required")]
     MissingThreadId,
+    #[error("history worker failed: {0}")]
+    Worker(String),
     #[error(
         "canonical rollout is stale for thread {thread_id}: expected recency {expected}, newest turn started at {observed:?}"
     )]
@@ -130,13 +149,126 @@ struct Cursor {
 
 impl HistoryService {
     #[must_use]
-    pub fn new(catalog: Arc<SessionCatalog>) -> Self {
+    pub fn new(catalog: Arc<SessionCatalog>, store: Arc<IndexStore>) -> Self {
         Self {
             catalog,
+            store,
             summaries: Arc::new(Mutex::new(SummaryCache::default())),
             previews: Arc::new(Mutex::new(PreviewCache::default())),
             invalidation_previews: Arc::new(Mutex::new(HashMap::new())),
+            index_jobs: Arc::new(Mutex::new(IndexJobs::default())),
         }
+    }
+
+    /// Reads only the indexed mutable-head lifecycle. This is the queue
+    /// dispatch oracle: it advances the append-only suffix and never asks App
+    /// Server to materialize a full turn list.
+    ///
+    /// # Errors
+    ///
+    /// A thread without a rollout has not started its first turn yet and is
+    /// therefore idle for queue dispatch. Other index/catalog failures remain
+    /// errors, as treating corruption as idle could consume a queue item as a
+    /// steer into an active turn.
+    pub async fn thread_active(&self, thread_id: &str) -> Result<bool, HistoryServiceError> {
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let summaries = self.summaries.clone();
+        let previews = self.previews.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            match latest_thread_state(&catalog, &store, &summaries, &previews, &thread_id) {
+                Ok(state) => Ok(state.active),
+                Err(HistoryServiceError::Catalog(CatalogError::NotFound(_))) => Ok(false),
+                Err(error) => Err(error),
+            }
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
+    }
+
+    fn schedule_rollout_index(&self, thread_id: String) {
+        let should_spawn = {
+            let mut jobs = self
+                .index_jobs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if jobs.running.contains(&thread_id) {
+                jobs.dirty.insert(thread_id.clone());
+                false
+            } else {
+                jobs.running.insert(thread_id.clone());
+                true
+            }
+        };
+        if !should_spawn {
+            return;
+        }
+
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let jobs = self.index_jobs.clone();
+        tokio::spawn(async move {
+            loop {
+                let indexed_thread_id = thread_id.clone();
+                let catalog = catalog.clone();
+                let store = store.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    let path = catalog
+                        .resolve(&indexed_thread_id)
+                        .map_err(|error| error.to_string())?;
+                    let hot = index_rollout(&store, &path).map_err(|error| error.to_string())?;
+                    if hot.complete || hot.indexed_records > 0 {
+                        Ok::<_, String>(hot)
+                    } else {
+                        backfill_rollout_prefix(&store, &path).map_err(|error| error.to_string())
+                    }
+                })
+                .await;
+                let backfill_pending = matches!(&result, Ok(Ok(report)) if !report.complete);
+                match &result {
+                    Ok(Ok(report)) => tracing::debug!(
+                        thread_id,
+                        indexed_records = report.indexed_records,
+                        coverage_start = report.coverage_start,
+                        complete = report.complete,
+                        elapsed_ms = report.elapsed_ms,
+                        "canonical rollout index advanced"
+                    ),
+                    Ok(Err(error)) => tracing::warn!(
+                        thread_id,
+                        reason = %error,
+                        "canonical rollout indexing failed"
+                    ),
+                    Err(error) => tracing::warn!(
+                        thread_id,
+                        reason = %error,
+                        "canonical rollout indexing task failed"
+                    ),
+                }
+                if backfill_pending {
+                    // Prefix work is intentionally low-priority: publish one
+                    // adjacent turn, yield the blocking lane, then continue.
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    continue;
+                }
+
+                let repeat = {
+                    let mut jobs = jobs
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if jobs.dirty.remove(&thread_id) {
+                        true
+                    } else {
+                        jobs.running.remove(&thread_id);
+                        false
+                    }
+                };
+                if !repeat {
+                    break;
+                }
+            }
+        });
     }
 
     /// Starts the shared canonical-rollout invalidation stream.
@@ -151,19 +283,34 @@ impl HistoryService {
         rollout_monitor::spawn(self.catalog.rollout_roots())
     }
 
+    /// Reads the canonical subagent tree from the shared thread metadata index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the root id is missing or the index cannot be read.
+    pub fn subagent_descendants(&self, params: &Value) -> Result<Value, HistoryServiceError> {
+        let root_thread_id = params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or(HistoryServiceError::MissingThreadId)?;
+        Ok(json!({
+            "threads": self.store.thread_descendants(root_thread_id)?
+        }))
+    }
+
     /// Builds a small semantic invalidation for changes written by a different
     /// App Server process. Detailed turns remain lazy and bounded.
     pub async fn rollout_invalidation_event(&self, change: RolloutChange) -> Value {
         let thread_id = change.thread_id.clone();
         let archived = change.archived;
         let catalog = self.catalog.clone();
+        let store = self.store.clone();
         let summaries = self.summaries.clone();
         let previews = self.previews.clone();
         let invalidation_previews = self.invalidation_previews.clone();
-        let path = change.path;
         tokio::task::spawn_blocking(move || {
-            let _ = catalog.observe_rollout(&thread_id, path);
-            let state = latest_thread_state(&catalog, &summaries, &previews, &thread_id)
+            let state = latest_thread_state(&catalog, &store, &summaries, &previews, &thread_id)
                 .unwrap_or_default();
             let preview = state.preview;
             let conversation_message = match invalidation_previews.lock() {
@@ -222,10 +369,33 @@ impl HistoryService {
                 "params": {
                     "threadId": change.thread_id,
                     "archived": archived,
+                    "turnActive": false,
                     "source": "rollout"
+                },
+                "codewideThreadPatch": {
+                    "version": 1,
+                    "threadId": change.thread_id,
+                    "operation": {
+                        "kind": "threadInvalidated",
+                        "archived": archived,
+                        "turnActive": false
+                    }
                 }
             })
         })
+    }
+
+    /// Advances the local catalog and offset index immediately. UI
+    /// invalidation may still be suppressed for upstream-originated writes,
+    /// but local indexed reads must never wait for that suppression window.
+    pub fn observe_rollout_change(&self, change: &RolloutChange) {
+        if let Err(error) = self
+            .catalog
+            .observe_rollout(&change.thread_id, change.path.clone())
+        {
+            tracing::warn!(thread_id = change.thread_id, %error, "rollout catalog update failed");
+        }
+        self.schedule_rollout_index(change.thread_id.clone());
     }
 
     /// Serves summary/not-loaded descending turn pages from canonical JSONL.
@@ -251,12 +421,16 @@ impl HistoryService {
             return None;
         }
         let not_loaded = view == "notLoaded";
+        if let Some(thread_id) = params.get("threadId").and_then(Value::as_str) {
+            self.schedule_rollout_index(thread_id.to_owned());
+        }
         let params = params.clone();
         let catalog = self.catalog.clone();
+        let store = self.store.clone();
         let summaries = self.summaries.clone();
         Some(
             tokio::task::spawn_blocking(move || {
-                turns_page(&catalog, &summaries, &params, not_loaded)
+                turns_page(&catalog, &store, &summaries, &params, not_loaded)
             })
             .await
             .map_err(|_join_error| HistoryServiceError::InvalidCursor)
@@ -272,10 +446,11 @@ impl HistoryService {
     pub async fn enrich_thread_list(&self, result: Value) -> Value {
         let fallback = result.clone();
         let catalog = self.catalog.clone();
+        let store = self.store.clone();
         let summaries = self.summaries.clone();
         let previews = self.previews.clone();
         match tokio::task::spawn_blocking(move || {
-            enrich_thread_list_result(&catalog, &summaries, &previews, result)
+            enrich_thread_list_result(&catalog, &store, &summaries, &previews, result)
         })
         .await
         {
@@ -290,6 +465,7 @@ impl HistoryService {
 
 fn enrich_thread_list_result(
     catalog: &SessionCatalog,
+    store: &IndexStore,
     summaries: &Mutex<SummaryCache>,
     previews: &Mutex<PreviewCache>,
     mut result: Value,
@@ -301,7 +477,7 @@ fn enrich_thread_list_result(
         let Some(thread_id) = thread.get("id").and_then(Value::as_str) else {
             continue;
         };
-        let preview = match latest_thread_preview(catalog, summaries, previews, thread_id) {
+        let preview = match latest_thread_preview(catalog, store, summaries, previews, thread_id) {
             Ok(preview) => preview.unwrap_or_default(),
             Err(error) => {
                 tracing::debug!(thread_id, %error, "latest thread preview is unavailable");
@@ -317,20 +493,26 @@ fn enrich_thread_list_result(
 
 fn latest_thread_preview(
     catalog: &SessionCatalog,
+    store: &IndexStore,
     summaries: &Mutex<SummaryCache>,
     previews: &Mutex<PreviewCache>,
     thread_id: &str,
 ) -> Result<Option<String>, HistoryServiceError> {
-    Ok(latest_thread_state(catalog, summaries, previews, thread_id)?.preview)
+    Ok(latest_thread_state(catalog, store, summaries, previews, thread_id)?.preview)
 }
 
 fn latest_thread_state(
     catalog: &SessionCatalog,
+    store: &IndexStore,
     summaries: &Mutex<SummaryCache>,
     previews: &Mutex<PreviewCache>,
     thread_id: &str,
 ) -> Result<LatestThreadState, HistoryServiceError> {
     let path = catalog.resolve(thread_id)?;
+    // The persisted projection is append-incremental. Advancing it here costs
+    // only the newly durable JSONL records and makes the following read
+    // independent of the total rollout size.
+    index_rollout(store, &path)?;
     let path_metadata = std::fs::metadata(&path).map_err(IndexError::from)?;
     let path_revision = file_revision(&path_metadata);
     if let PreviewCacheLookup::Hit(preview) = cached_preview(previews, thread_id, path_revision) {
@@ -346,8 +528,26 @@ fn latest_thread_state(
     }
     let file_bytes = metadata.len();
     let (device, inode) = file_identity(&metadata);
-    let scanned = scan_tail_turns_from_file(&rollout, file_bytes, None, 1)?;
-    let Some(turn) = scanned.turns.first() else {
+    let (turn, indexed_exact) = if let Some(indexed) =
+        current_indexed_turns_from_file(store, &path, &rollout, file_bytes, None, 1)?
+    {
+        (indexed.turns.into_iter().next(), true)
+    } else {
+        (
+            scan_tail_turns_from_file(&rollout, file_bytes, None, 1)?
+                .turns
+                .into_iter()
+                .next()
+                .map(|turn| TurnRef {
+                    id: turn.id,
+                    start_offset: turn.start_offset,
+                    end_offset: turn.end_offset,
+                    completed: turn.completed,
+                }),
+            false,
+        )
+    };
+    let Some(turn) = turn else {
         let state = LatestThreadState::default();
         remember_preview(previews, thread_id, revision, state.clone());
         return Ok(state);
@@ -362,15 +562,7 @@ fn latest_thread_state(
     let projected = if let Some(projected) = cached_summary(summaries, &key) {
         projected
     } else {
-        let projected = project_summary_turn_from_file(
-            &rollout,
-            &TurnRef {
-                id: turn.id.clone(),
-                start_offset: turn.start_offset,
-                end_offset: turn.end_offset,
-                completed: turn.completed,
-            },
-        )?;
+        let projected = projected_turn(store, &path, &rollout, &turn, indexed_exact)?;
         remember_summary(summaries, key, &projected);
         projected
     };
@@ -473,6 +665,7 @@ fn normalize_preview(value: &str) -> String {
 
 fn turns_page(
     catalog: &SessionCatalog,
+    store: &IndexStore,
     summaries: &Mutex<SummaryCache>,
     params: &Value,
     not_loaded: bool,
@@ -496,17 +689,43 @@ fn turns_page(
         logical_offset.saturating_add(limit).saturating_add(1)
     };
     let path = catalog.resolve(thread_id)?;
+    index_rollout(store, &path)?;
     let rollout = File::open(&path).map_err(IndexError::from)?;
     let metadata = rollout.metadata().map_err(IndexError::from)?;
     let file_bytes = metadata.len();
     let (device, inode) = file_identity(&metadata);
-    let scanned = scan_tail_turns_from_file(&rollout, file_bytes, source_offset, scan_limit)?;
-    let page_refs: Vec<_> = if source_offset.is_some() {
-        scanned.turns
+    let (discovered, indexed_exact, indexed_has_more) = if let Some(indexed) =
+        current_indexed_turns_from_file(
+            store,
+            &path,
+            &rollout,
+            file_bytes,
+            source_offset,
+            scan_limit,
+        )? {
+        (indexed.turns, true, indexed.has_more)
     } else {
-        scanned.turns.into_iter().skip(logical_offset).collect()
+        (
+            scan_tail_turns_from_file(&rollout, file_bytes, source_offset, scan_limit)?
+                .turns
+                .into_iter()
+                .map(|turn| TurnRef {
+                    id: turn.id,
+                    start_offset: turn.start_offset,
+                    end_offset: turn.end_offset,
+                    completed: turn.completed,
+                })
+                .collect(),
+            false,
+            false,
+        )
     };
-    let has_more = page_refs.len() > limit;
+    let page_refs: Vec<_> = if source_offset.is_some() {
+        discovered
+    } else {
+        discovered.into_iter().skip(logical_offset).collect()
+    };
+    let has_more = indexed_has_more || page_refs.len() > limit;
     let selected = page_refs.into_iter().take(limit).collect::<Vec<_>>();
     let mut data = Vec::with_capacity(selected.len());
     for turn in &selected {
@@ -520,15 +739,7 @@ fn turns_page(
         let mut projected = if let Some(projected) = cached_summary(summaries, &key) {
             projected
         } else {
-            let projected = project_summary_turn_from_file(
-                &rollout,
-                &TurnRef {
-                    id: turn.id.clone(),
-                    start_offset: turn.start_offset,
-                    end_offset: turn.end_offset,
-                    completed: turn.completed,
-                },
-            )?;
+            let projected = projected_turn(store, &path, &rollout, turn, indexed_exact)?;
             remember_summary(summaries, key, &projected);
             projected
         };
@@ -559,6 +770,30 @@ fn turns_page(
         "nextCursor": next_cursor,
         "backwardsCursor": Value::Null
     }))
+}
+
+fn projected_turn(
+    store: &IndexStore,
+    path: &std::path::Path,
+    rollout: &File,
+    turn: &TurnRef,
+    indexed_exact: bool,
+) -> Result<Value, HistoryServiceError> {
+    if !indexed_exact {
+        return project_summary_turn_from_file(rollout, turn).map_err(HistoryServiceError::from);
+    }
+    let file_id = rollout_file_id(path);
+    if let Some(summary) = store
+        .turn_summary_state::<SummaryProjectionState>(&file_id, turn.start_offset)?
+        .filter(SummaryProjectionState::is_current)
+    {
+        return Ok(summary.project());
+    }
+    // Schema v6 offset indexes predate materialized summaries. Enrich only the
+    // requested turn once; never rebuild or rescan the complete session.
+    let summary = summary_projection_state_from_file(rollout, turn)?;
+    store.put_turn_summary_state(&file_id, turn.start_offset, &summary)?;
+    Ok(summary.project())
 }
 
 /// `thread/resume` returns the App Server's authoritative `recencyAt`. A
@@ -741,14 +976,95 @@ fn decode_cursor(
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Write, sync::Arc};
+    use std::{
+        io::Write,
+        path::Path,
+        sync::{Arc, Mutex},
+    };
 
     use serde_json::json;
 
-    use super::{HistoryService, HistoryServiceError};
-    use crate::catalog::SessionCatalog;
+    use super::{HistoryService, HistoryServiceError, SummaryCache, turns_page};
+    use crate::{catalog::SessionCatalog, store::IndexStore};
 
     const THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
+
+    fn history_service(root: &Path) -> Result<HistoryService, Box<dyn std::error::Error>> {
+        Ok(HistoryService::new(
+            Arc::new(SessionCatalog::scan(root)),
+            Arc::new(IndexStore::open(root.join("history-index.redb"))?),
+        ))
+    }
+
+    #[test]
+    fn cold_large_page_returns_the_indexed_tail_with_an_older_cursor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(&path)?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"compacted\",\"payload\":{{\"opaque\":\"{}\"}}}}",
+            "x".repeat(9 * 1024 * 1024)
+        )?;
+        for index in 0..20 {
+            for line in [
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\",\"turn_id\":\"turn-{index}\"}}}}"
+                ),
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"message\":\"answer-{index}\",\"phase\":\"final_answer\"}}}}"
+                ),
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_complete\",\"turn_id\":\"turn-{index}\",\"last_agent_message\":\"answer-{index}\"}}}}"
+                ),
+            ] {
+                writeln!(rollout, "{line}")?;
+            }
+        }
+        rollout.sync_all()?;
+
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+        let first = turns_page(
+            &catalog,
+            &store,
+            &summaries,
+            &json!({
+                "threadId": THREAD_ID,
+                "cursor": null,
+                "limit": 36,
+                "sortDirection": "desc",
+                "itemsView": "summary"
+            }),
+            false,
+        )?;
+
+        assert_eq!(first["data"].as_array().map(Vec::len), Some(1));
+        assert_eq!(first["data"][0]["id"], "turn-19");
+        let cursor = first["nextCursor"]
+            .as_str()
+            .ok_or("partial tail did not expose an older cursor")?;
+        let older = turns_page(
+            &catalog,
+            &store,
+            &summaries,
+            &json!({
+                "threadId": THREAD_ID,
+                "cursor": cursor,
+                "limit": 12,
+                "sortDirection": "desc",
+                "itemsView": "summary"
+            }),
+            false,
+        )?;
+        assert_eq!(older["data"].as_array().map(Vec::len), Some(12));
+        assert_eq!(older["data"][0]["id"], "turn-18");
+        Ok(())
+    }
 
     #[tokio::test]
     async fn thread_list_replaces_first_prompt_with_latest_canonical_message()
@@ -772,7 +1088,7 @@ mod tests {
         }
         rollout.sync_all()?;
 
-        let service = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+        let service = history_service(directory.path())?;
         let result = service
             .enrich_thread_list(json!({
                 "data": [{"id": THREAD_ID, "preview": "First prompt"}],
@@ -802,7 +1118,7 @@ mod tests {
     async fn thread_list_falls_back_without_a_canonical_rollout()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
-        let service = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+        let service = history_service(directory.path())?;
         let source = json!({"data": [{"id": THREAD_ID, "preview": "First prompt"}]});
 
         assert_eq!(service.enrich_thread_list(source.clone()).await, source);
@@ -826,7 +1142,8 @@ mod tests {
         }
         rollout.sync_all()?;
 
-        let service = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+        let service = history_service(directory.path())?;
+        assert!(service.thread_active(THREAD_ID).await?);
         let event = service
             .rollout_invalidation_event(crate::rollout_monitor::RolloutChange {
                 thread_id: THREAD_ID.to_owned(),
@@ -859,6 +1176,7 @@ mod tests {
                 archived: false,
             })
             .await;
+        assert!(!service.thread_active(THREAD_ID).await?);
         assert_eq!(completed["method"], "companion/thread/invalidated");
         assert_eq!(completed["params"]["turnActive"], false);
         Ok(())
@@ -881,7 +1199,7 @@ mod tests {
         }
         rollout.sync_all()?;
 
-        let service = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+        let service = history_service(directory.path())?;
         let fresh = service
             .try_turns_page(
                 "thread/turns/list",
@@ -939,7 +1257,7 @@ mod tests {
         }
         rollout.sync_all()?;
 
-        let service = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+        let service = history_service(directory.path())?;
         let stale = service
             .try_turns_page(
                 "thread/turns/list",

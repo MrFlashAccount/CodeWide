@@ -6,7 +6,8 @@ import type {
   Thread,
 } from "@codewide/codex-protocol/v0.147.0/v2";
 import { projectedTurnMetadata, type TurnUsageProjection } from "@codewide/sync-client";
-import type { AccountPoolSnapshot } from "./account-pool";
+import { cloneProtocolValue } from "./clone-protocol-value";
+import type { AccountPoolProfile, AccountPoolSnapshot } from "./account-pool";
 
 export const ACCOUNT_RATE_LIMITS_REFRESH_MS = 30 * 60 * 1_000;
 
@@ -60,6 +61,26 @@ export function mergeAccountRateLimits(
   };
 }
 
+export function mergeAccountPoolRateLimits(
+  previous: AccountPoolSnapshot | null | undefined,
+  update: AccountRateLimitsUpdatedNotification,
+  updatedAtSeconds = Math.floor(Date.now() / 1_000),
+): AccountPoolSnapshot | null {
+  if (previous === null || previous === undefined || previous.activeProfileId === null) return previous ?? null;
+  let changed = false;
+  const profiles = previous.profiles.map((profile) => {
+    if (profile.id !== previous.activeProfileId) return profile;
+    changed = true;
+    return {
+      ...profile,
+      rateLimits: mergeAccountRateLimits(profile.rateLimits, update),
+      rateLimitsUpdatedAt: updatedAtSeconds,
+      rateLimitsError: null,
+    };
+  });
+  return changed ? { ...previous, profiles } : previous;
+}
+
 export function selectWeeklyRateLimit(response: GetAccountRateLimitsResponse | null): WeeklyRateLimit | null {
   if (response === null) return null;
   const snapshots = [
@@ -102,9 +123,19 @@ export function currentThreadUsageProjection(thread: Thread | null | undefined):
 export function accountRateLimitsStale(row: AccountRateLimitsRow | null | undefined, now = Date.now()): boolean {
   if (row === null || row === undefined || row.snapshot === null) return true;
   if (row.status === "error") return true;
-  if (row.accountPool?.profiles.some((profile) => profile.enabled && profile.rateLimits === null) === true) return true;
+  if (row.accountPool === null || row.accountPool === undefined || row.accountPool.profiles.length === 0) return true;
+  if (row.accountPool.profiles.some((profile) => profile.enabled && accountProfileRateLimitsStale(profile, now))) return true;
   if (now - row.updatedAt >= ACCOUNT_RATE_LIMITS_REFRESH_MS) return true;
   const weekly = selectWeeklyRateLimit(row.snapshot);
+  return weekly?.window.resetsAt !== null && weekly?.window.resetsAt !== undefined
+    ? weekly.window.resetsAt * 1_000 <= now
+    : false;
+}
+
+export function accountProfileRateLimitsStale(profile: AccountPoolProfile, now = Date.now()): boolean {
+  if (profile.rateLimits === null || profile.rateLimitsUpdatedAt === null || profile.rateLimitsError !== null) return true;
+  if (now - profile.rateLimitsUpdatedAt * 1_000 >= ACCOUNT_RATE_LIMITS_REFRESH_MS) return true;
+  const weekly = selectWeeklyRateLimit(profile.rateLimits);
   return weekly?.window.resetsAt !== null && weekly?.window.resetsAt !== undefined
     ? weekly.window.resetsAt * 1_000 <= now
     : false;
@@ -124,7 +155,7 @@ export function relativeResetTime(resetsAt: number | null, now = Date.now()): st
 }
 
 function mergeRateLimitSnapshot(previous: RateLimitSnapshot | null, update: RateLimitSnapshot): RateLimitSnapshot {
-  if (previous === null) return structuredClone(update);
+  if (previous === null) return cloneProtocolValue(update);
   return {
     limitId: update.limitId ?? previous.limitId,
     limitName: update.limitName ?? previous.limitName,
@@ -140,7 +171,7 @@ function mergeRateLimitSnapshot(previous: RateLimitSnapshot | null, update: Rate
 
 function mergeRateLimitWindow(previous: RateLimitWindow | null, update: RateLimitWindow | null): RateLimitWindow | null {
   if (update === null) return previous;
-  if (previous === null) return structuredClone(update);
+  if (previous === null) return cloneProtocolValue(update);
   return {
     usedPercent: update.usedPercent,
     windowDurationMins: update.windowDurationMins ?? previous.windowDurationMins,

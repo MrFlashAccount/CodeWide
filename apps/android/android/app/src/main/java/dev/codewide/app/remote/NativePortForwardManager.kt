@@ -1,7 +1,6 @@
 package dev.codewide.app.remote
 
 import android.content.Context
-import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -248,14 +247,10 @@ internal class NativePortForwardManager(
       require(saved.enabled) { "Server connection is disabled" }
       val credential = credential(saved)
       val request = Request.Builder()
-        .url(portForwardEndpoint(saved.endpoint, profile.remotePort))
+        .url(InnerTlsTransport.url(saved, portForwardEndpoint(saved.endpoint, profile.remotePort)))
         .header("Authorization", "Bearer ${credential.token}")
         .build()
-      val clientForServer = if (saved.tlsPinSha256 == null) baseClient else {
-        baseClient.newBuilder()
-          .certificatePinner(CertificatePinner.Builder().add(request.url.host, saved.tlsPinSha256).build())
-          .build()
-      }
+      val clientForServer = InnerTlsTransport.client(baseClient, saved)
       webSocket = clientForServer.newWebSocket(request, object : WebSocketListener() {
         override fun onOpen(socket: WebSocket, response: Response) {
           runtime.webSockets.add(socket)
@@ -323,7 +318,7 @@ internal class NativePortForwardManager(
       credentialCache[saved.id]?.value?.takeIf { it.expiresAt - CREDENTIAL_EXPIRY_LEAD_MS > System.currentTimeMillis() }?.let { return it }
       val latch = CountDownLatch(1)
       var result: Result<MintedSessionCredential>? = null
-      SessionCredentialClient.mint(baseClient, saved.endpoint, saved.token, saved.tlsPinSha256) {
+      SessionCredentialClient.mint(baseClient, saved) {
         result = it
         latch.countDown()
       }
@@ -337,15 +332,11 @@ internal class NativePortForwardManager(
   private fun discover(saved: StoredNativeSession, allowCredentialRetry: Boolean): String {
     val credential = credential(saved)
     val request = Request.Builder()
-      .url(portDiscoveryEndpoint(saved.endpoint))
+      .url(InnerTlsTransport.url(saved, portDiscoveryEndpoint(saved.endpoint)))
       .header("Authorization", "Bearer ${credential.token}")
       .get()
       .build()
-    val clientForServer = (if (saved.tlsPinSha256 == null) baseClient else {
-      baseClient.newBuilder()
-        .certificatePinner(CertificatePinner.Builder().add(request.url.host, saved.tlsPinSha256).build())
-        .build()
-    }).newBuilder()
+    val clientForServer = InnerTlsTransport.client(baseClient, saved).newBuilder()
       .callTimeout(DISCOVERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
       .readTimeout(DISCOVERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
       .build()

@@ -27,7 +27,7 @@ type NativeEngineEvent = {
 
 type NativeEngineState = {
   state: RemoteConnectionState;
-  rpcAvailable?: boolean;
+  rpcAvailable: boolean;
   error?: string;
 };
 
@@ -40,7 +40,12 @@ type NativeDomainProjection = {
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
 };
 type NativeConnectionStateProjection = {
-  setConnectionState(connectionId: string, state: RemoteConnectionState, diagnostic?: string | null): void | Promise<void>;
+  setConnectionState(
+    connectionId: string,
+    state: RemoteConnectionState,
+    diagnostic?: string | null,
+    rpcAvailable?: boolean,
+  ): void | Promise<void>;
 };
 
 type NativeBridge = {
@@ -109,11 +114,12 @@ export class NativeEngineSession implements RpcClient {
 
   start(): void {
     if (bridge === undefined) {
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native remote engine is unavailable in this build");
+      void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native remote engine is unavailable in this build", false);
       return;
     }
+    void this.#connectionState.setConnectionState(this.connectionId, "connecting", null, false);
     void bridge.attachSocket(this.connectionId).catch((cause: unknown) => {
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Could not start native remote engine"));
+      void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Could not start native remote engine"), false);
     });
   }
 
@@ -128,19 +134,20 @@ export class NativeEngineSession implements RpcClient {
   receive(event: NativeEngineEvent): void {
     if (this.#stopped) return;
     if (event.contractVersion !== 1 && event.contractVersion !== 2) {
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native bridge contract version is unsupported");
+      void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native bridge contract version is unsupported", false);
       return;
     }
     if (event.type === "state") {
       try {
         const state = parseJson<NativeEngineState>(event.data, "native engine state");
+        if (typeof state.rpcAvailable !== "boolean") throw new Error("Native engine state omitted RPC availability");
         const generation = ++this.#stateGeneration;
         if (state.state === "live") {
           // The transport can announce caught-up after it emitted the final
           // projection batch, while that batch is still committing to SQLite.
           // Keep the UI in syncing until the ordered durable projection seam
           // has drained; RPC availability remains a separate transport axis.
-          void Promise.resolve(this.#connectionState.setConnectionState(this.connectionId, "syncing"));
+          void Promise.resolve(this.#connectionState.setConnectionState(this.connectionId, "syncing", undefined, state.rpcAvailable));
           void Promise.resolve(this.#journalDrain).then(() => this.#projectionGate.settled()).then(async () => {
             // The gate enqueues acknowledgement only after applying the batch,
             // so observe its tail after the presentation queue has drained.
@@ -152,17 +159,18 @@ export class NativeEngineSession implements RpcClient {
               || this.#projectionGate.blocked
               || this.#projectionAcknowledger.blocked
             ) return;
-            return this.#connectionState.setConnectionState(this.connectionId, "live", null);
+            return this.#connectionState.setConnectionState(this.connectionId, "live", null, state.rpcAvailable);
           });
         } else {
           void Promise.resolve(this.#connectionState.setConnectionState(
             this.connectionId,
             state.state,
             state.error,
+            state.rpcAvailable,
           ));
         }
       } catch (cause: unknown) {
-        void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Native engine state is invalid"));
+        void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Native engine state is invalid"), false);
       }
       return;
     }

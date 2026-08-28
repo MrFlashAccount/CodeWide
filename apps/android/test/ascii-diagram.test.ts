@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { looksLikeAsciiDiagram, themedAsciiDiagramSvg } from "../src/rendering/ascii-diagram";
+import { looksLikeAsciiDiagram, repairSvgbobUnicodeText, themedAsciiDiagramSvg } from "../src/rendering/ascii-diagram";
 import { renderSvgbob } from "../src/rendering/svgbob-wasm-runtime.web";
 
 const generatedArchitecture = `                 TypeScript source
@@ -47,6 +47,26 @@ describe("ASCII diagram detection", () => {
     expect(svg).toContain("TypeScript");
     expect(svg.match(/<line\b/gu)?.length ?? 0).toBeGreaterThan(5);
     expect(svg.match(/<polygon\b/gu)?.length ?? 0).toBeGreaterThan(2);
+  });
+
+  it("reassembles Svgbob's overlapping Cyrillic text fragments on their original cell grid", async () => {
+    const source = `Пользователь касается строки треда
+              │
+              ▼
+       onPressIn: preload
+              │
+              ▼
+     Прочитать сохранённый anchor`;
+    const broken = await renderSvgbob(source);
+    expect(broken).toContain(">Плзвтл</text>");
+    expect(broken).toContain(">оьоаеь</text>");
+
+    const repaired = repairSvgbobUnicodeText(broken);
+    expect(repaired).toContain(">Пользователь</text>");
+    expect(repaired).toContain(">касается</text>");
+    expect(repaired).toContain(">Прочитать сохранённый</text>");
+    expect(repaired).not.toContain(">Плзвтл</text>");
+    expect(repaired).toMatch(/<text x="2 10 18 26 34 42 50 58 66 74 82 90" y="12">Пользователь<\/text>/u);
   });
 
   it("escapes markup-like labels before the SVG reaches the web image surface", async () => {

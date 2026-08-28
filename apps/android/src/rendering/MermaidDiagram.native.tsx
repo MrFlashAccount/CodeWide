@@ -12,7 +12,13 @@ import { colors, radii, spacing, touchTarget } from "../theme";
 import { useAppFullscreenOverlay } from "../ui/AppFullscreenOverlay";
 import { useFullscreenWindowReady } from "../ui/FullscreenWindowReady";
 import { AppText as Text } from "../ui/Typography";
-import { useContentReview } from "./ContentReviewHost";
+import {
+  ContentReviewComments,
+  ContentReviewComposer,
+  useContentReview,
+  useContentReviewPoints,
+  type ContentReviewPoint,
+} from "./ContentReviewHost";
 import type { ContentReviewTarget } from "./content-review";
 import { NativeCodeBlock } from "./NativeCodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
@@ -164,6 +170,7 @@ function FullscreenDiagram({
   const fullscreenWebView = useRef<WebView>(null);
   const beginReview = useContentReview();
   const [annotating, setAnnotating] = useState(false);
+  const reviewPoints = useContentReviewPoints(reviewTarget?.id ?? "", diagramId ?? "");
   const toggleAnnotating = () => {
     const next = !annotating;
     setAnnotating(next);
@@ -171,13 +178,11 @@ function FullscreenDiagram({
   };
   const reviewPoint = (x: number, y: number) => {
     if (reviewTarget === undefined || diagramId === undefined) return;
-    void beginReview({ kind: "mermaid", target: reviewTarget, diagramId, source, x, y }).then((saved) => {
-      if (saved) inject(fullscreenWebView, `window.diagramAddReviewPoint(${x},${y});true;`);
-    });
+    void beginReview({ kind: "mermaid", target: reviewTarget, diagramId, source, x, y });
   };
   return (
     <View style={[styles.fullscreen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <DiagramSurface engine={engine} enabled={fullscreenReady} mode="fullscreen" source={source} webViewRef={fullscreenWebView} style={styles.fullscreenSurface} annotationEnabled={annotating} onReviewPoint={reviewPoint} />
+      <DiagramSurface engine={engine} enabled={fullscreenReady} mode="fullscreen" source={source} webViewRef={fullscreenWebView} style={styles.fullscreenSurface} annotationEnabled={annotating} reviewPoints={reviewPoints} onReviewPoint={reviewPoint} />
       <View pointerEvents="box-none" style={[styles.fullscreenTopBar, { top: insets.top + spacing.xs }]}>
         <DiagramIconButton accessibilityLabel="Close diagram" icon="close" emphasized onPress={onClose} />
         <View style={styles.fullscreenTitle}>
@@ -185,7 +190,7 @@ function FullscreenDiagram({
           <Text style={styles.fullscreenHint}>{annotating ? "Tap the diagram to add a review point" : "Pinch or drag to inspect"}</Text>
         </View>
         {engine.kind === "mermaid" && reviewTarget !== undefined && diagramId !== undefined && (
-          <DiagramIconButton accessibilityLabel={annotating ? "Stop annotating diagram" : "Annotate diagram"} icon="pin-outline" color={annotating ? colors.accent : colors.textMuted} emphasized onPress={toggleAnnotating} />
+          <DiagramIconButton accessibilityLabel={annotating ? "Stop annotating diagram" : "Annotate diagram"} icon="pin-outline" color={annotating ? "#ffffff" : colors.textMuted} emphasized active={annotating} onPress={toggleAnnotating} />
         )}
         <DiagramIconButton accessibilityLabel={`Copy ${engine.title} source`} icon="copy-outline" emphasized onPress={onCopy} />
       </View>
@@ -194,6 +199,12 @@ function FullscreenDiagram({
         <DiagramIconButton accessibilityLabel="Reset zoom" icon="scan-outline" emphasized onPress={() => inject(fullscreenWebView, "window.diagramReset(-1);true;")} />
         <DiagramIconButton accessibilityLabel="Zoom in" icon="add" emphasized onPress={() => inject(fullscreenWebView, "window.diagramZoom(1.25,-1);true;")} />
       </View>
+      {reviewTarget !== undefined && diagramId !== undefined && (
+        <>
+          <ContentReviewComments targetId={reviewTarget.id} diagramId={diagramId} presentation="overlay" bottomOffset={insets.bottom + 76} />
+          <ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />
+        </>
+      )}
     </View>
   );
 }
@@ -208,6 +219,7 @@ function DiagramSurface({
   onHeight,
   onSettled,
   annotationEnabled = false,
+  reviewPoints = [],
   onReviewPoint,
 }: {
   engine: DiagramEngine;
@@ -219,6 +231,7 @@ function DiagramSurface({
   onHeight?(height: number): void;
   onSettled?(): void;
   annotationEnabled?: boolean;
+  reviewPoints?: readonly ContentReviewPoint[];
   onReviewPoint?(x: number, y: number): void;
 }) {
   const loaded = useRef(false);
@@ -247,6 +260,12 @@ function DiagramSurface({
     if (!loaded.current || mode !== "fullscreen") return;
     inject(webViewRef, `window.diagramSetAnnotationMode(${annotationEnabled ? "true" : "false"});true;`);
   }, [annotationEnabled, mode, webViewRef]);
+
+  const reviewPointsKey = JSON.stringify(reviewPoints);
+  useEffect(() => {
+    if (!loaded.current || mode !== "fullscreen") return;
+    inject(webViewRef, `window.diagramSetReviewPoints(${reviewPointsKey});true;`);
+  }, [mode, reviewPointsKey, webViewRef]);
 
   const fail = (message: string) => {
     if (engine.kind === "ascii") {
@@ -280,6 +299,7 @@ function DiagramSurface({
     if (message.type === "rendered") {
       if (mode === "fullscreen") {
         inject(webViewRef, `window.diagramSetAnnotationMode(${annotationEnabled ? "true" : "false"});true;`);
+        inject(webViewRef, `window.diagramSetReviewPoints(${reviewPointsKey});true;`);
       }
       if (typeof message.height === "number") {
         onHeight?.(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(message.height))));
@@ -374,14 +394,16 @@ function inject(ref: RefObject<WebView | null>, command: string): void {
 function DiagramIconButton({
   accessibilityLabel,
   icon,
-  color = colors.textMuted,
+  color,
   emphasized = false,
+  active = false,
   onPress,
 }: {
   accessibilityLabel: string;
   icon: keyof typeof Ionicons.glyphMap;
   color?: string;
   emphasized?: boolean;
+  active?: boolean;
   onPress(): void;
 }) {
   return (
@@ -390,9 +412,9 @@ function DiagramIconButton({
       accessibilityLabel={accessibilityLabel}
       hitSlop={8}
       onPress={onPress}
-      style={({ pressed }) => [styles.iconButton, emphasized && styles.iconButtonEmphasized, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.iconButton, emphasized && styles.iconButtonEmphasized, active && styles.iconButtonActive, pressed && styles.pressed]}
     >
-      <Ionicons name={icon} size={19} color={emphasized ? colors.text : color} />
+      <Ionicons name={icon} size={19} color={color ?? (emphasized ? colors.text : colors.textMuted)} />
     </Pressable>
   );
 }
@@ -444,6 +466,7 @@ const styles = StyleSheet.create({
   retryText: { color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: "600" },
   iconButton: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, alignItems: "center", justifyContent: "center" },
   iconButtonEmphasized: { backgroundColor: "rgba(35, 39, 44, .88)" },
+  iconButtonActive: { backgroundColor: "rgba(183, 148, 246, .52)", borderWidth: 1, borderColor: "rgba(255,255,255,.82)" },
   pressed: { opacity: 0.62 },
   fallback: { width: "100%", minWidth: 0, maxWidth: "100%", borderRadius: radii.medium, backgroundColor: colors.surfaceRaised, paddingVertical: 4 },
   fullscreen: { flex: 1, backgroundColor: colors.background },

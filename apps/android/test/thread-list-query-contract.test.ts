@@ -25,13 +25,19 @@ describe("thread list query contract", () => {
     expect(database).toContain("parent_thread_id IS NOT NULL");
   });
 
+  it("keeps the cached catalog across projection-only schema upgrades", () => {
+    expect(database).toContain("const SCHEMA_VERSION = 5");
+    expect(database).not.toContain("DROP TABLE IF EXISTS");
+  });
+
   it("does not order SQLite subsets by text columns", () => {
     expect(database).not.toContain("ORDER BY thread_id");
   });
 
   it("commits the initial desktop conversation by stable id before Recent can reorder", () => {
-    expect(screen).toContain("threadSelection.id === null && serverThreads[0] !== undefined");
+    expect(screen).toContain("threadNavigation.current().id === null && serverThreads[0] !== undefined");
     expect(screen).toContain("const defaultThreadId = threadSelectionKey(serverThreads[0])");
+    expect(screen).toContain("threadNavigation.select(defaultThreadId)");
     expect(screen).toContain("? selectedThread\n    : null;");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
   });

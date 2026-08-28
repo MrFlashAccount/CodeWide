@@ -16,16 +16,36 @@ const reviewableText = readFileSync(new URL("../src/rendering/ReviewableText.nat
 const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
 const selectionModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/ContentReviewSelectionModule.kt", import.meta.url), "utf8");
+const mermaidDiagram = readFileSync(new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url), "utf8");
+const mermaidRenderer = readFileSync(new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url), "utf8");
 
 describe("content review", () => {
   it("keeps review input inline with the currently visible content", () => {
     expect(contentReviewHost).toContain("<KeyboardStickyView");
+    expect(contentReviewHost).toContain("paddingBottom: Math.max(spacing.sm, insets.bottom)");
     expect(contentReviewHost).toContain("<InlineContentReviewComposer");
     expect(contentReviewHost).not.toContain("useAppFullscreenOverlay");
     expect(contentReviewHost).not.toContain("resumeTray");
-    expect(documentPreview).toContain("<ContentReviewComposer targetId={markdownReviewTarget.id} />");
+    expect(documentPreview).toContain('<ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />');
     expect(screen).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
-    expect(screen).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} />');
+    expect(screen).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />');
+    expect(mermaidDiagram).toContain('<ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />');
+  });
+
+  it("keeps Mermaid review state and saved comments inside its fullscreen surface", () => {
+    expect(mermaidDiagram).toContain('active={annotating}');
+    expect(mermaidDiagram).toContain('color={annotating ? "#ffffff" : colors.textMuted}');
+    expect(mermaidDiagram).toContain('reviewPoints={reviewPoints}');
+    expect(mermaidDiagram).toContain('<ContentReviewComments targetId={reviewTarget.id} diagramId={diagramId} presentation="overlay"');
+    expect(mermaidRenderer).toContain('window.diagramSetReviewPoints = function (points)');
+    expect(mermaidRenderer).toContain("pending ? '#ffffff' : '#b794f6'");
+  });
+
+  it("exposes saved review comments on completed responses and Markdown documents", () => {
+    expect(contentReviewHost).toContain("export function ContentReviewComments");
+    expect(screen).toContain("<ContentReviewComments targetId={reviewTarget.id} />");
+    expect(screen).toContain('<ContentReviewComments targetId={`markdown-document:${document.request.path}`} />');
+    expect(documentPreview).toContain('<ContentReviewComments targetId={markdownReviewTarget.id} presentation="overlay" />');
   });
 
   it("updates one regular Markdown attachment as comments are saved", () => {
@@ -100,6 +120,20 @@ describe("content review", () => {
     expect(attachment).toContain("Point: **(25.0%, 0.0%)**");
     expect(attachment).toContain("Point: **(75.0%, 100.0%)**");
     expect(attachment.match(/```mermaid/gu)).toHaveLength(1);
+  });
+
+  it("serializes whole-response reviews without duplicating response text", () => {
+    const comments: ContentReviewComment[] = [{
+      id: "response",
+      createdAt: 1,
+      body: "Tighten the conclusion.",
+      anchor: { kind: "response", target },
+    }];
+
+    const attachment = serializeContentReviewAttachment(comments);
+    expect(attachment).toContain("Comment 1 · whole response");
+    expect(attachment).toContain("Scope: **entire response**");
+    expect(attachment).toContain("Tighten the conclusion.");
   });
 
   it("clamps normalized points", () => {

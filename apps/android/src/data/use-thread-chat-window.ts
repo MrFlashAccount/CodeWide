@@ -19,6 +19,7 @@ function useThreadChatWindowResource(
   const connectionId = input?.connectionId ?? "";
   const threadId = input?.threadId ?? "";
   const anchorTurnId = input?.anchorTurnId ?? null;
+  const openGeneration = input?.openGeneration ?? 0;
   useEffect(() => {
     if (database === null || !enabled) return;
     return database.retainWindow(connectionId, threadId);
@@ -31,6 +32,7 @@ function useThreadChatWindowResource(
       connectionId,
       threadId,
       anchorTurnId,
+      openGeneration,
     });
   useSelector(() => resource === null ? true : resource.ready$.get(), { suspense: true });
   return resource;

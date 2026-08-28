@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'">
   <style>
+    @font-face { font-family: CodeWideDiagramMono; src: url('fonts/JetBrainsMonoNerdFontMono-Regular.ttf') format('truetype'); font-style: normal; font-weight: 400; font-display: block; }
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; background: #171b20; color: #eef2f6; overflow: hidden; overscroll-behavior: none; }
@@ -94,12 +95,79 @@
     style.textContent = `
       .svgbob { background: transparent; }
       .svgbob line, .svgbob path, .svgbob circle, .svgbob rect, .svgbob polygon { stroke: #9aa7b4; }
-      .svgbob text { fill: #eef2f6; font-family: monospace; }
+      .svgbob text { fill: #eef2f6; font-family: CodeWideDiagramMono, monospace; font-size: 13.333px; white-space: pre; }
       .svgbob rect.backdrop { fill: transparent; stroke: none; }
       .svgbob .filled { fill: #9aa7b4; }
       .svgbob .bg_filled, .svgbob .nofill { fill: #171b20; }
     `;
     svg.appendChild(style);
+  }
+
+  function utf8Width(character) {
+    const codePoint = character.codePointAt(0) || 0;
+    if (codePoint <= 0x7f) return 1;
+    if (codePoint <= 0x7ff) return 2;
+    if (codePoint <= 0xffff) return 3;
+    return 4;
+  }
+
+  // Svgbob uses UTF-8 byte length while merging CellText. Cyrillic labels are
+  // therefore emitted as overlapping even/odd text fragments. Reassemble only
+  // overlapping non-ASCII fragments; quoted/verbatim and Latin labels are left
+  // exactly as the engine produced them.
+  function repairUnicodeText(svg) {
+    const fragments = [...svg.querySelectorAll('text')]
+      .map(function (element) {
+        const x = Number.parseFloat(element.getAttribute('x') || 'NaN');
+        const y = Number.parseFloat(element.getAttribute('y') || 'NaN');
+        const content = element.textContent || '';
+        return { element, x, y, content };
+      })
+      .filter(function (fragment) { return Number.isFinite(fragment.x) && Number.isFinite(fragment.y) && /[^\u0000-\u007f]/u.test(fragment.content); });
+    const parent = fragments.map(function (_, index) { return index; });
+    function find(index) {
+      if (parent[index] !== index) parent[index] = find(parent[index]);
+      return parent[index];
+    }
+    function unite(left, right) {
+      const leftRoot = find(left);
+      const rightRoot = find(right);
+      if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot;
+    }
+    function endX(fragment) {
+      return fragment.x + [...fragment.content].reduce(function (width, character) { return width + utf8Width(character) * 8; }, 0);
+    }
+    for (let left = 0; left < fragments.length; left += 1) {
+      for (let right = left + 1; right < fragments.length; right += 1) {
+        if (fragments[left].y !== fragments[right].y) continue;
+        if (fragments[left].x < endX(fragments[right]) && fragments[right].x < endX(fragments[left])) unite(left, right);
+      }
+    }
+    const groups = new Map();
+    fragments.forEach(function (fragment, index) {
+      const root = find(index);
+      const group = groups.get(root) || [];
+      group.push(fragment);
+      groups.set(root, group);
+    });
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const cells = new Map();
+      for (const fragment of group) {
+        let x = fragment.x;
+        for (const character of [...fragment.content]) {
+          cells.set(x, character);
+          x += utf8Width(character) * 8;
+        }
+      }
+      const occupied = [...cells.entries()].sort(function (left, right) { return left[0] - right[0]; });
+      const ordered = [];
+      for (let x = occupied[0][0]; x <= occupied[occupied.length - 1][0]; x += 8) ordered.push([x, cells.get(x) || ' ']);
+      const leftmost = group.reduce(function (current, fragment) { return fragment.x < current.x ? fragment : current; });
+      leftmost.element.setAttribute('x', ordered.map(function (entry) { return entry[0]; }).join(' '));
+      leftmost.element.textContent = ordered.map(function (entry) { return entry[1]; }).join('');
+      for (const fragment of group) if (fragment !== leftmost) fragment.element.remove();
+    }
   }
 
   function layoutInline(svg, requestId) {
@@ -151,6 +219,7 @@
       if (parsed.querySelector('parsererror')) throw new Error('Svgbob returned invalid SVG');
       const svg = parsed.documentElement;
       if (svg.localName !== 'svg') throw new Error('Svgbob returned no SVG');
+      repairUnicodeText(svg);
       themeSvg(svg);
       canvas.replaceChildren(document.importNode(svg, true));
       const rendered = canvas.querySelector('svg');

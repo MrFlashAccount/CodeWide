@@ -18,7 +18,39 @@ internal data class StoredNativeSession(
   val token: String,
   val tlsPinSha256: String?,
   val enabled: Boolean = true,
+  val innerTlsPinSha256: String,
+  val deviceId: String? = null,
 )
+
+internal fun mergeNativeSessionCredentials(
+  existing: StoredNativeSession?,
+  id: String,
+  endpoint: String,
+  token: String,
+  tlsPinSha256: String?,
+  enabled: Boolean,
+  deviceId: String? = null,
+): StoredNativeSession {
+  // Relay endpoints and capability tokens may rotate independently. A normal
+  // profile edit preserves the already pinned Companion identity; only an
+  // explicit secure pairing may supply a replacement pin.
+  val innerPin = requireNotNull(tlsPinSha256 ?: existing?.innerTlsPinSha256) {
+    "Secure pairing requires a Companion identity pin"
+  }
+  val pairedDeviceId = deviceId ?: existing?.deviceId
+  if (pairedDeviceId != null) {
+    require(pairedDeviceId.matches(Regex("^device-[a-f0-9]{64}$"))) { "Paired device id is invalid" }
+  }
+  return StoredNativeSession(
+    id = id,
+    endpoint = endpoint,
+    token = token,
+    tlsPinSha256 = tlsPinSha256,
+    enabled = enabled,
+    innerTlsPinSha256 = innerPin,
+    deviceId = pairedDeviceId,
+  )
+}
 
 /**
  * Process-independent session credentials for the foreground connection service.
@@ -69,8 +101,11 @@ internal class NativeSessionCredentialsStore(context: Context) {
           val token = value.getString("token")
           val tlsPinSha256 = value.optString("tlsPinSha256").takeIf { it.isNotBlank() }
           val enabled = value.optBoolean("enabled", true)
-          if (id.isNotBlank() && endpoint.isNotBlank() && token.length in 32..512) {
-            add(StoredNativeSession(id, endpoint, token, tlsPinSha256, enabled))
+          val innerTlsPinSha256 = value.optString("innerTlsPinSha256").takeIf { it.isNotBlank() }
+          val deviceId = value.optString("deviceId").takeIf { it.isNotBlank() }
+          require(deviceId == null || deviceId.matches(Regex("^device-[a-f0-9]{64}$")))
+          if (id.isNotBlank() && endpoint.isNotBlank() && token.length in 32..512 && innerTlsPinSha256 != null) {
+            add(StoredNativeSession(id, endpoint, token, tlsPinSha256, enabled, innerTlsPinSha256, deviceId))
           }
         }
       }
@@ -95,6 +130,8 @@ internal class NativeSessionCredentialsStore(context: Context) {
         put("token", session.token)
         if (session.tlsPinSha256 != null) put("tlsPinSha256", session.tlsPinSha256)
         put("enabled", session.enabled)
+        put("innerTlsPinSha256", session.innerTlsPinSha256)
+        if (session.deviceId != null) put("deviceId", session.deviceId)
       })
     }
     val cipher = Cipher.getInstance(TRANSFORMATION)

@@ -6,6 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View, useWindowDi
 import Svg, { Circle } from "react-native-svg";
 
 import {
+  accountProfileRateLimitsStale,
   accountRateLimitsStale,
   currentThreadContextUsage,
   currentThreadUsageProjection,
@@ -130,6 +131,7 @@ export function UsagePopover({
                 {accountProfiles.map((profile, index) => {
                   const profileWeekly = selectWeeklyRateLimit(profile.rateLimits);
                   const resetAt = profile.exhaustedUntil ?? profileWeekly?.window.resetsAt ?? null;
+                  const profileStale = profile.enabled && accountProfileRateLimitsStale(profile);
                   return (
                     <View key={profile.id} testID={`usage-account-${profile.id}`} style={[styles.accountRow, index > 0 && styles.accountDivider]}>
                       <View style={styles.accountTitleRow}>
@@ -138,13 +140,13 @@ export function UsagePopover({
                           <Text numberOfLines={1} style={styles.accountName}>{accountProfileLabel(profile, index)}</Text>
                           <Text numberOfLines={1} style={styles.meta}>{profile.planType ?? "Plan unavailable"}{profile.active ? " · active" : ""}</Text>
                         </View>
-                        {profileWeekly === null ? (
-                          <Text style={[styles.secondaryValue, styles.unavailable]}>{profile.exhaustedIndefinitely ? "Limit reached" : "Unavailable"}</Text>
+                        {!profile.enabled || profileStale || profileWeekly === null ? (
+                          <Text style={[styles.secondaryValue, styles.unavailable]}>{!profile.enabled ? "Disabled" : profileStale ? "Refresh required" : profile.exhaustedIndefinitely ? "Limit reached" : "Unavailable"}</Text>
                         ) : (
                           <AnimatedNumber value={Math.round(profileWeekly.remainingPercent)} format={integerNumberFormat} suffix="% left" style={styles.accountValue} />
                         )}
                       </View>
-                      {resetAt !== null && (
+                      {profile.enabled && !profileStale && resetAt !== null && (
                         <View style={styles.resetRow}>
                           <Text numberOfLines={1} style={[styles.meta, styles.grow]}>Resets {formatAbsoluteReset(resetAt)}</Text>
                           <Text numberOfLines={1} style={styles.relativeReset}>{relativeResetTime(resetAt)}</Text>

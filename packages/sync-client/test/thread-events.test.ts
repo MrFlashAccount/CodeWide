@@ -181,6 +181,33 @@ describe("thread event projection", () => {
     ]);
   });
 
+  it("preserves item lifecycle phase for live pre-turn rendering", () => {
+    const value = thread();
+    value.turns[0]!.items = [];
+    applyThreadEvent(value, event("item/started", {
+      item: { type: "contextCompaction", id: "compaction" },
+    }));
+
+    expect(value.turns[0]?.items.find((item) => item.id === "compaction")).toEqual(
+      expect.objectContaining({ codewideLifecyclePhase: "started", codewidePreTurn: true }),
+    );
+
+    applyThreadEvent(value, event("item/started", {
+      item: {
+        type: "userMessage",
+        id: "user",
+        clientId: "client",
+        content: [{ type: "text", text: "go", text_elements: [] }],
+      },
+    }));
+    applyThreadEvent(value, event("item/completed", {
+      item: { type: "contextCompaction", id: "compaction" },
+    }));
+    expect(value.turns[0]?.items.find((item) => item.id === "compaction")).toEqual(
+      expect.objectContaining({ codewideLifecyclePhase: "completed", codewidePreTurn: true }),
+    );
+  });
+
   it("does not stack one user prompt when live item ids rotate", () => {
     const value = thread();
     applyThreadEvent(value, event("item/started", {
@@ -354,7 +381,34 @@ describe("thread event projection", () => {
 });
 
 function event(method: string, params: Record<string, unknown>): Record<string, unknown> {
-  return { method, params: { threadId: "thread", turnId: "turn", ...params } };
+  const operation = semanticOperation(method);
+  return {
+    method,
+    params: { threadId: "thread", turnId: "turn", ...params },
+    codewideThreadPatch: { version: 1, threadId: "thread", operation },
+  };
+}
+
+function semanticOperation(method: string): Record<string, unknown> {
+  switch (method) {
+    case "thread/name/updated": return { kind: "threadName" };
+    case "thread/settings/updated": return { kind: "threadSettings" };
+    case "turn/started": return { kind: "turnStarted" };
+    case "turn/completed": return { kind: "turnCompleted" };
+    case "model/rerouted": return { kind: "modelRerouted" };
+    case "item/started": return { kind: "itemUpsert", itemPhase: "started" };
+    case "item/completed": return { kind: "itemUpsert", itemPhase: "completed" };
+    case "item/agentMessage/delta": return { kind: "itemTextDelta", itemType: "agentMessage" };
+    case "item/plan/delta": return { kind: "itemTextDelta", itemType: "plan" };
+    case "item/commandExecution/outputDelta": return { kind: "itemTextDelta", itemType: "commandExecution" };
+    case "item/mcpToolCall/progress": return { kind: "mcpProgress" };
+    case "turn/plan/updated": return { kind: "turnPlan" };
+    case "turn/diff/updated": return { kind: "turnDiff" };
+    case "item/reasoning/summaryPartAdded": return { kind: "reasoningPart", field: "summary" };
+    case "item/reasoning/summaryTextDelta": return { kind: "reasoningDelta", field: "summary" };
+    case "item/reasoning/textDelta": return { kind: "reasoningDelta", field: "content" };
+    default: throw new Error(`Missing semantic test operation for ${method}`);
+  }
 }
 
 function usageEvent(usage: TurnUsageProjection): Record<string, unknown> {

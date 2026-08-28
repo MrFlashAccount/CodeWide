@@ -4,7 +4,6 @@ import java.io.IOException
 import java.net.URI
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.CertificatePinner
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -25,9 +24,21 @@ internal object SessionCredentialClient {
 
   fun mint(
     baseClient: OkHttpClient,
+    saved: StoredNativeSession,
+    callback: (Result<MintedSessionCredential>) -> Unit,
+  ) {
+    mintWithClient(
+      InnerTlsTransport.client(baseClient, saved),
+      InnerTlsTransport.url(saved, saved.endpoint),
+      saved.token,
+      callback,
+    )
+  }
+
+  private fun mintWithClient(
+    client: OkHttpClient,
     endpoint: String,
     capabilityToken: String,
-    tlsPinSha256: String?,
     callback: (Result<MintedSessionCredential>) -> Unit,
   ) {
     try {
@@ -39,11 +50,6 @@ internal object SessionCredentialClient {
         .header("Authorization", "Bearer $capabilityToken")
         .post(JSONObject().put("action", "challenge").toString().toRequestBody(JSON_MEDIA_TYPE))
         .build()
-      val client = if (tlsPinSha256 == null) baseClient else {
-        baseClient.newBuilder()
-          .certificatePinner(CertificatePinner.Builder().add(challengeRequest.url.host, tlsPinSha256).build())
-          .build()
-      }
       client.newCall(challengeRequest).enqueue(object : Callback {
         override fun onFailure(call: Call, error: IOException) = callback(Result.failure(error))
 

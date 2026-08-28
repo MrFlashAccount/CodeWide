@@ -32,9 +32,8 @@ export type StoredThreadSummary = {
   deleteCommandId: string | null;
 };
 
-/** Repairs persisted or wire summaries at the model boundary. Older cache
- * rows can predate `Thread.status`; `notLoaded` is the only honest state until
- * the background authoritative snapshot replaces it. */
+/** Sanitizes persisted or wire summaries at the model boundary. `notLoaded`
+ * is the only honest lifecycle when an input does not contain a valid status. */
 export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredThreadSummary {
   return {
     ...row,

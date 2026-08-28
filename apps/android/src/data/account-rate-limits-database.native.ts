@@ -1,8 +1,9 @@
 import type { AccountRateLimitsUpdatedNotification, GetAccountRateLimitsResponse } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { Collection } from "@tanstack/react-db";
 
-import { mergeAccountRateLimits, type AccountRateLimitsRow } from "./account-rate-limits";
+import { mergeAccountPoolRateLimits, mergeAccountRateLimits, type AccountRateLimitsRow } from "./account-rate-limits";
 import type { AccountPoolSnapshot } from "./account-pool";
+import { cloneProtocolValue } from "./clone-protocol-value";
 import { createPersistentCollectionModel } from "./persistent-collection.native";
 import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 
@@ -57,30 +58,37 @@ export function createAccountRateLimitsDatabase(): AccountRateLimitsDatabase {
     },
     putSnapshot(connectionId, snapshot) {
       const previous = get(connectionId);
-      publish({ id: connectionId, connectionId, status: "ready", snapshot: structuredClone(snapshot), accountPool: previous?.accountPool ?? null, error: null, updatedAt: Date.now() });
+      publish({ id: connectionId, connectionId, status: "ready", snapshot: cloneProtocolValue(snapshot), accountPool: previous?.accountPool ?? null, error: null, updatedAt: Date.now() });
     },
     putAccountPool(connectionId, accountPool) {
       const previous = get(connectionId);
+      const active = accountPool.profiles.find((profile) => profile.id === accountPool.activeProfileId) ?? null;
+      const activeRefresh = active !== null && active.rateLimits !== null && active.rateLimitsUpdatedAt !== null && active.rateLimitsError === null
+        ? { snapshot: active.rateLimits, updatedAt: active.rateLimitsUpdatedAt }
+        : null;
       publish({
         id: connectionId,
         connectionId,
-        status: previous?.status ?? "ready",
-        snapshot: previous?.snapshot ?? null,
-        accountPool: structuredClone(accountPool),
-        error: previous?.error ?? null,
-        updatedAt: previous?.updatedAt ?? Date.now(),
+        status: active?.rateLimitsError !== null && active?.rateLimitsError !== undefined
+          ? "error"
+          : activeRefresh !== null ? "ready" : previous?.status ?? "ready",
+        snapshot: activeRefresh !== null ? cloneProtocolValue(activeRefresh.snapshot) : previous?.snapshot ?? null,
+        accountPool: cloneProtocolValue(accountPool),
+        error: active?.rateLimitsError ?? (activeRefresh !== null ? null : previous?.error ?? null),
+        updatedAt: activeRefresh !== null ? activeRefresh.updatedAt * 1_000 : previous?.updatedAt ?? 0,
       });
     },
     mergeUpdate(connectionId, update) {
       const previous = get(connectionId);
+      const updatedAt = Date.now();
       publish({
         id: connectionId,
         connectionId,
         status: "ready",
         snapshot: mergeAccountRateLimits(previous?.snapshot ?? null, update),
-        accountPool: previous?.accountPool ?? null,
+        accountPool: mergeAccountPoolRateLimits(previous?.accountPool, update, Math.floor(updatedAt / 1_000)),
         error: null,
-        updatedAt: Date.now(),
+        updatedAt,
       });
     },
     markError(connectionId, error) {

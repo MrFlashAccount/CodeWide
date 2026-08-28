@@ -16,17 +16,19 @@ describe("overlay surface ownership", () => {
     );
   });
 
-  it("keeps one HeroUI menu system inside native sheet surfaces", () => {
+  it("lets Expo UI own menu popups inside native sheet surfaces", () => {
     expect(appSheet).toContain('import { PortalHost } from "heroui-native/portal"');
     expect(appSheet).toContain("const portalHostName = `app-sheet-${useId()}`");
     expect(appSheet).toContain("<PortalHost name={portalHostName} />");
     expect(appSheet).not.toContain("measureInWindow");
     expect(appSheet).not.toContain("useWindowDimensions");
-    expect(actionMenu).toContain("const { portalHostName } = useOverlaySurface()");
-    expect(actionMenu).toContain("<Menu.Portal {...(portalHostName === undefined ? {} : { hostName: portalHostName })}>");
-    expect(actionMenu).not.toContain("NativeSheetActionMenu");
-    expect(actionMenu).not.toContain("MenuView");
-    expect(actionMenu).not.toContain("@expo/ui/community/menu");
+    expect(actionMenu).toContain('from "./CodeWideMenu.native"');
+    expect(actionMenu).toContain("expanded={isOpen}");
+    expect(actionMenu).toContain("{triggerElement}");
+    expect(actionMenu).not.toContain("heroui-native/menu");
+    expect(actionMenu).not.toContain("useOverlaySurface");
+    expect(actionMenu).not.toContain("Menu.Portal");
+    expect(actionMenu).not.toContain("requestAnimationFrame");
   });
 
   it("hosts menu portals inside the native fullscreen modal window", () => {

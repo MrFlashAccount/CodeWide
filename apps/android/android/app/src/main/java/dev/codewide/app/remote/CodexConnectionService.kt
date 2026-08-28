@@ -22,7 +22,6 @@ import androidx.core.app.NotificationCompat
 import dev.codewide.app.MainActivity
 import dev.codewide.app.R
 import okhttp3.OkHttpClient
-import okhttp3.CertificatePinner
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -38,6 +37,7 @@ class CodexConnectionService : Service() {
   private lateinit var credentialsStore: NativeSessionCredentialsStore
   private lateinit var portForwardManager: NativePortForwardManager
   private lateinit var terminalSessionManager: NativeTerminalSessionManager
+  private lateinit var companionHttpProxy: NativeCompanionHttpProxy
   private lateinit var connectivityManager: ConnectivityManager
   private val handler = Handler(Looper.getMainLooper())
   private val journalThread = HandlerThread("CodeWideJournal")
@@ -83,13 +83,16 @@ class CodexConnectionService : Service() {
     credentialsStore = NativeSessionCredentialsStore(this)
     portForwardManager = NativePortForwardManager(this, credentialsStore, httpClient)
     terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient, cacheDir)
+    companionHttpProxy = NativeCompanionHttpProxy(credentialsStore)
     connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     activeDefaultNetwork = connectivityManager.activeNetwork
     createNotificationChannel()
     createActivityNotificationChannel()
     startForeground(NOTIFICATION_ID, notification())
     connectivityManager.registerDefaultNetworkCallback(networkCallback)
-    credentialsStore.list().filter { it.enabled }.forEach { saved -> open(saved.id, saved.endpoint, saved.token, saved.tlsPinSha256) }
+    credentialsStore.list().filter { it.enabled }.forEach { saved ->
+      open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256)
+    }
     portForwardManager.restore()
   }
 
@@ -109,6 +112,7 @@ class CodexConnectionService : Service() {
     sessions.clear()
     portForwardManager.close()
     terminalSessionManager.destroy()
+    companionHttpProxy.close()
     runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
     activeDefaultNetwork = null
     httpClient.dispatcher.executorService.shutdown()
@@ -120,7 +124,7 @@ class CodexConnectionService : Service() {
 
   override fun onBind(intent: Intent?): IBinder? = null
 
-  fun open(id: String, endpoint: String, token: String, tlsPinSha256: String?) {
+  fun open(id: String, endpoint: String, token: String, tlsPinSha256: String) {
     val existing = sessions[id]
     if (existing != null && existing.endpoint == endpoint && existing.token == token && existing.tlsPinSha256 == tlsPinSha256) {
       // Attaching a recreated React runtime must not cancel the service-owned
@@ -137,6 +141,8 @@ class CodexConnectionService : Service() {
     portForwardManager.resumeConnection(id)
     updateNotification()
   }
+
+  fun companionHttpOrigin(connectionId: String): String = companionHttpProxy.origin(connectionId)
 
   fun acknowledgeThrough(connectionId: String, projectionCursor: Long) {
     journalHandler.post { frameStore.acknowledgeThrough(connectionId, projectionCursor) }
@@ -219,12 +225,12 @@ class CodexConnectionService : Service() {
       existing != null
       && existing.endpoint == saved.endpoint
       && existing.token == saved.token
-      && existing.tlsPinSha256 == saved.tlsPinSha256
+      && existing.tlsPinSha256 == saved.innerTlsPinSha256
     ) {
       existing.attachRuntime()
       return
     }
-    open(saved.id, saved.endpoint, saved.token, saved.tlsPinSha256)
+    open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256)
   }
 
   fun rpc(connectionId: String, method: String, params: Any?, completion: (Result<Any?>) -> Unit) {
@@ -273,7 +279,7 @@ class CodexConnectionService : Service() {
       session == null
       || session.endpoint != saved.endpoint
       || session.token != saved.token
-      || session.tlsPinSha256 != saved.tlsPinSha256
+      || session.tlsPinSha256 != saved.innerTlsPinSha256
     ) {
       attach(connectionId)
       return
@@ -288,6 +294,7 @@ class CodexConnectionService : Service() {
     commandStore.deleteConnection(connectionId)
     portForwardManager.removeConnection(connectionId)
     terminalSessionManager.closeConnection(connectionId)
+    companionHttpProxy.remove(connectionId)
     updateNotification()
   }
 
@@ -295,6 +302,7 @@ class CodexConnectionService : Service() {
     sessions.remove(connectionId)?.close("connection_disabled")
     portForwardManager.suspendConnection(connectionId)
     terminalSessionManager.closeConnection(connectionId)
+    companionHttpProxy.remove(connectionId)
     updateNotification()
   }
 
@@ -436,7 +444,7 @@ class CodexConnectionService : Service() {
     val id: String,
     val endpoint: String,
     val token: String,
-    val tlsPinSha256: String?
+    val tlsPinSha256: String
   ) {
     private var socket: WebSocket? = null
     private var replacementSocket: WebSocket? = null
@@ -472,11 +480,13 @@ class CodexConnectionService : Service() {
       val generation = ++transportGeneration
       emitTransportStatus("connecting")
       scheduleConnectWatchdog(generation)
-      SessionCredentialClient.mint(credentialHttpClient, endpoint, token, tlsPinSha256) { result ->
+      mintCurrent { result ->
         handler.post {
           if (closed || generation != transportGeneration) return@post
           result.fold(
-            onSuccess = { credential -> openSocket(credential.token, credential.expiresAt, generation) },
+            onSuccess = { credential ->
+              afterCredentialMinted(credential, generation)
+            },
             onFailure = { error ->
               connecting = false
               cancelConnectWatchdog()
@@ -493,19 +503,47 @@ class CodexConnectionService : Service() {
       }
     }
 
+    private fun mintCurrent(callback: (Result<MintedSessionCredential>) -> Unit) {
+      SessionCredentialClient.mint(credentialHttpClient, currentSaved(), callback)
+    }
+
+    private fun afterCredentialMinted(credential: MintedSessionCredential, generation: Long) {
+      openSocket(credential.token, credential.expiresAt, generation)
+    }
+
+    private fun failConnect(error: Throwable) {
+      connecting = false
+      cancelConnectWatchdog()
+      if (error is SessionAuthorizationException) {
+        authBlocked = true
+        emitTransportStatus("authRequired")
+      } else {
+        emitTransportStatus("degraded", transportDiagnostic(error, "Could not establish secure transport"))
+        scheduleReconnect()
+      }
+    }
+
+    private fun currentSaved(): StoredNativeSession {
+      val persisted = credentialsStore.get(id)
+      return StoredNativeSession(
+        id = id,
+        endpoint = endpoint,
+        token = token,
+        tlsPinSha256 = persisted?.tlsPinSha256,
+        enabled = persisted?.enabled ?: true,
+        innerTlsPinSha256 = tlsPinSha256,
+      )
+    }
+
     private fun openSocket(sessionToken: String, expiresAt: Long, generation: Long, replacement: Boolean = false) {
       if (closed || generation != transportGeneration) return
       authBlocked = false
+      val saved = currentSaved()
       val request = Request.Builder()
-        .url(endpoint)
+        .url(InnerTlsTransport.url(saved, endpoint))
         .header("Authorization", "Bearer $sessionToken")
         .build()
-      val sessionClient = if (tlsPinSha256 == null) httpClient else {
-        val hostname = request.url.host
-        httpClient.newBuilder()
-          .certificatePinner(CertificatePinner.Builder().add(hostname, tlsPinSha256).build())
-          .build()
-      }
+      val sessionClient = InnerTlsTransport.client(httpClient, saved)
       val listener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
           val expected = if (replacement) replacementSocket === webSocket else socket === webSocket
@@ -623,7 +661,7 @@ class CodexConnectionService : Service() {
       if (closed || socket == null || credentialRefreshInFlight || replacementSocket != null) return
       credentialRefreshInFlight = true
       val generation = transportGeneration
-      SessionCredentialClient.mint(credentialHttpClient, endpoint, token, tlsPinSha256) { result ->
+      mintCurrent { result ->
         handler.post {
           if (closed || generation != transportGeneration) return@post
           result.fold(
@@ -1092,7 +1130,7 @@ class CodexConnectionService : Service() {
 
     private fun scheduleReconnect() {
       if (closed || reconnectRunnable != null) return
-      val delay = minOf(30_000L, 500L * (1L shl minOf(reconnectAttempt, 6)))
+      val delay = minOf(MAX_RECONNECT_DELAY_MS, 500L * (1L shl minOf(reconnectAttempt, 1)))
       reconnectAttempt += 1
       val runnable = Runnable {
         reconnectRunnable = null
@@ -1140,6 +1178,7 @@ class CodexConnectionService : Service() {
     private const val MIN_CREDENTIAL_REFRESH_DELAY_MS = 1_000L
     private const val CREDENTIAL_REFRESH_RETRY_MS = 5_000L
     private const val CREDENTIAL_HTTP_TIMEOUT_MS = 12_000L
+    private const val MAX_RECONNECT_DELAY_MS = 1_000L
     private const val STALE_CONNECT_WAKE_MS = 8_000L
     private const val CONNECT_WATCHDOG_MS = 20_000L
     private const val RETIRING_SOCKET_GRACE_MS = 10_000L

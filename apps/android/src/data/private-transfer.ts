@@ -6,7 +6,7 @@ export type PrivateAssetSource =
   | { kind: "path"; path: string }
   | { kind: "content"; id: string }
   | { kind: "remote"; url: string }
-  | { kind: "scoped"; rootId: string; path: string };
+  | { kind: "scoped"; rootId: string; path: string; cacheRevision?: string };
 
 export type PrivateAssetTextResult = {
   text: string;
@@ -138,7 +138,7 @@ export function privateAssetCacheKey(source: PrivateAssetSource): string {
   if (source.kind === "direct") return `direct:${source.uri}`;
   if (source.kind === "path") return `path:${source.path}`;
   if (source.kind === "content") return `content:${source.id}`;
-  if (source.kind === "scoped") return `scoped:${source.rootId}:${source.path}`;
+  if (source.kind === "scoped") return `scoped:${source.rootId}:${source.path}:${source.cacheRevision ?? "0"}`;
   return `remote:${source.url}`;
 }
 
@@ -169,7 +169,9 @@ function privateAssetUrl(
     if (!/^[a-f0-9]{64}$/u.test(source.id)) throw new Error("Private asset reference is invalid");
     return companionUrl(access, `/v1/content/${source.id}`).toString();
   }
-  return scopedTransferUrl(access, "/v1/files/download", source.rootId, source.path);
+  const url = new URL(scopedTransferUrl(access, "/v1/files/download", source.rootId, source.path));
+  if (source.cacheRevision !== undefined) url.searchParams.set("v", source.cacheRevision);
+  return url.toString();
 }
 
 async function materializeRemoteAsset(url: string, getAccess: GetTransferAccess): Promise<{ kind: "content"; id: string }> {

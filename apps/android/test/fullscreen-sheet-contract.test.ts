@@ -126,7 +126,7 @@ describe("fullscreen workspace presentation", () => {
     expect(screen).not.toContain('"No prompts"');
   });
 
-  it("uses back navigation for the subagent list and keeps its data live", () => {
+  it("uses back navigation for the subagent list and reads its chat through the shared model", () => {
     const headerStart = subagentWorkspace.indexOf('<View style={styles.masterHeader}>');
     const headerEnd = subagentWorkspace.indexOf("</View>", subagentWorkspace.indexOf("</View>", headerStart) + 1);
     const header = subagentWorkspace.slice(headerStart, headerEnd);
@@ -135,7 +135,9 @@ describe("fullscreen workspace presentation", () => {
     expect(header).not.toContain('name="close"');
     expect(subagentSheet).toContain("subagentsForThread(summaries, parentThreadId)");
     expect(subagentSheet).not.toContain("useLiveQuery");
-    expect(subagentSheet).toContain("useAsyncResource<ThreadWindow | null>");
+    expect(subagentSheet).toContain("useThreadChatWindow(threadDetails");
+    expect(subagentSheet).not.toContain("useAsyncResource");
+    expect(screen).not.toContain("readSubagentThread");
     expect(screen).toContain("void onRefreshSubagents?.(draftThreadId).catch");
     const subagentRendererStart = screen.indexOf("renderThread={({ summary, thread: subagentThread");
     const subagentRendererEnd = screen.indexOf("onClose={close}", subagentRendererStart);
@@ -155,11 +157,12 @@ describe("fullscreen workspace presentation", () => {
     expect(fullscreenOverlay).toContain("<Suspense fallback={<FullscreenOverlaySuspenseFallback />}>");
   });
 
-  it("keeps cached subagent text visible after refresh failures and updates recycled selection", () => {
-    expect(subagentSheet).toContain("materializedThread ?? remoteThreadResource.value?.thread ?? null");
+  it("keeps the model-owned cached subagent text visible and updates recycled selection", () => {
+    expect(subagentSheet).toContain("applyThreadSummaryMetadata(materializedThread, summary)");
+    expect(subagentSheet).toContain("did not materialize from its ready window");
     expect(subagentSheet).toContain("if (conversation === null)");
     expect(subagentSheet).toContain("useState<string | null>(initialThreadId)");
-    expect(subagentSheet).toContain('error={remoteThreadResource.status === "error" ? remoteThreadResource.error : null}');
+    expect(subagentSheet).not.toContain("remoteThreadResource");
     expect(subagentWorkspace).toContain("extraData={selected?.remoteThreadId ?? null}");
   });
 

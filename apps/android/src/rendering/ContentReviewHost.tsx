@@ -9,7 +9,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -68,6 +68,12 @@ type ContentReviewController = {
 };
 
 export type ContentReviewHighlight = { start: number; end: number };
+export type ContentReviewPoint = {
+  id: string;
+  x: number;
+  y: number;
+  pending: boolean;
+};
 
 const EMPTY_CONTENT_REVIEW_COMMENTS: ContentReviewComment[] = [];
 const ContentReviewContext = createContext<ContentReviewController | null>(null);
@@ -206,6 +212,33 @@ export function useContentReviewHighlights(
   return contentReviewTextHighlights(anchors, targetId, blockPath, offset);
 }
 
+export function useContentReviewComments(
+  targetId: string,
+  diagramId?: string,
+): readonly ContentReviewComment[] {
+  const controller = useContext(ContentReviewContext);
+  if (controller === null) return EMPTY_CONTENT_REVIEW_COMMENTS;
+  return controller.comments.filter((comment) => {
+    if (comment.anchor.target.id !== targetId) return false;
+    if (diagramId === undefined) return true;
+    return comment.anchor.kind === "mermaid" && comment.anchor.diagramId === diagramId;
+  });
+}
+
+export function useContentReviewPoints(targetId: string, diagramId: string): readonly ContentReviewPoint[] {
+  const controller = useContext(ContentReviewContext);
+  if (controller === null) return [];
+  const saved = controller.comments.flatMap((comment) => {
+    const anchor = comment.anchor;
+    return anchor.kind === "mermaid" && anchor.target.id === targetId && anchor.diagramId === diagramId
+      ? [{ id: comment.id, x: anchor.x, y: anchor.y, pending: false }]
+      : [];
+  });
+  const activeAnchor = controller.active?.anchor;
+  if (activeAnchor?.kind !== "mermaid" || activeAnchor.target.id !== targetId || activeAnchor.diagramId !== diagramId) return saved;
+  return [...saved, { id: controller.active?.id ?? "pending", x: activeAnchor.x, y: activeAnchor.y, pending: true }];
+}
+
 export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
   const controller = useContext(ContentReviewContext);
   const registerRuntime = controller?.registerRuntime;
@@ -229,16 +262,77 @@ export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
 export function ContentReviewComposer({
   targetId,
   targetPrefix,
+  anchorKind,
+  diagramId,
 }: {
   targetId?: string;
   targetPrefix?: string;
+  anchorKind?: ContentReviewAnchor["kind"];
+  diagramId?: string;
 }) {
   const controller = useContext(ContentReviewContext);
   const active = controller?.active ?? null;
   if (controller === null || active === null) return null;
   if (targetId !== undefined && active.anchor.target.id !== targetId) return null;
   if (targetPrefix !== undefined && !active.anchor.target.id.startsWith(targetPrefix)) return null;
+  if (anchorKind !== undefined && active.anchor.kind !== anchorKind) return null;
+  if (diagramId !== undefined && (active.anchor.kind !== "mermaid" || active.anchor.diagramId !== diagramId)) return null;
   return <InlineContentReviewComposer key={active.id} active={active} controller={controller} />;
+}
+
+export function ContentReviewComments({
+  targetId,
+  diagramId,
+  presentation = "inline",
+  bottomOffset = spacing.sm,
+}: {
+  targetId: string;
+  diagramId?: string;
+  presentation?: "inline" | "overlay";
+  bottomOffset?: number;
+}) {
+  const controller = useContext(ContentReviewContext);
+  const [expanded, setExpanded] = useState(false);
+  const comments = useContentReviewComments(targetId, diagramId);
+  const active = controller?.active?.anchor;
+  const editingThisTarget = active?.target.id === targetId
+    && (diagramId === undefined || active.kind === "mermaid" && active.diagramId === diagramId);
+  if (comments.length === 0 || editingThisTarget) return null;
+  const latest = comments.at(-1);
+  return (
+    <View
+      pointerEvents="box-none"
+      style={presentation === "overlay" ? [styles.commentsOverlay, { bottom: bottomOffset }] : styles.commentsInline}
+    >
+      <View style={styles.commentsCard}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${expanded ? "Hide" : "Show"} ${comments.length} review comments`}
+          onPress={() => setExpanded((current) => !current)}
+          style={({ pressed }) => [styles.commentsSummary, pressed && styles.pressed]}
+        >
+          <Ionicons name="chatbubble-ellipses-outline" size={17} color={REVIEW_PURPLE} />
+          <Text numberOfLines={1} style={styles.commentsSummaryText}>
+            {comments.length} {comments.length === 1 ? "comment" : "comments"}{latest === undefined ? "" : ` · ${latest.body}`}
+          </Text>
+          <Ionicons name={expanded ? "chevron-down" : "chevron-up"} size={17} color={colors.textMuted} />
+        </Pressable>
+        {expanded && (
+          <ScrollView nestedScrollEnabled style={styles.commentsList}>
+            {comments.map((comment, index) => (
+              <View key={comment.id} style={styles.commentRow}>
+                <View style={styles.commentOrdinal}><Text style={styles.commentOrdinalText}>{index + 1}</Text></View>
+                <View style={styles.commentBody}>
+                  <Text numberOfLines={2} style={styles.commentAnchor}>{commentAnchorLabel(comment.anchor)}</Text>
+                  <Text selectable style={styles.commentText}>{comment.body}</Text>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        )}
+      </View>
+    </View>
+  );
 }
 
 function InlineContentReviewComposer({
@@ -308,8 +402,8 @@ function InlineContentReviewComposer({
 
   return (
     <View pointerEvents="box-none" style={styles.inlineLayer}>
-      <KeyboardStickyView offset={{ closed: insets.bottom, opened: insets.bottom }} style={styles.inlineSticky}>
-        <View style={styles.inlineCard}>
+      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={styles.inlineSticky}>
+        <View style={[styles.inlineCard, { paddingBottom: Math.max(spacing.sm, insets.bottom) }]}>
           <View style={styles.anchorRow}>
             <View style={styles.anchorMarker} />
             <AnchorSummary anchor={active.anchor} />
@@ -357,12 +451,21 @@ function AnchorSummary({ anchor }: { anchor: ContentReviewAnchor }) {
   if (anchor.kind === "text") {
     return <Text numberOfLines={2} style={styles.quoteText}>{anchor.quote.trim()}</Text>;
   }
+  if (anchor.kind === "response") {
+    return <Text numberOfLines={2} style={styles.quoteText}>Entire agent response</Text>;
+  }
   return (
     <View style={styles.pointRow}>
       <Ionicons name="pin" size={16} color={REVIEW_PURPLE} />
       <Text style={styles.pointText}>Mermaid · {(anchor.x * 100).toFixed(1)}%, {(anchor.y * 100).toFixed(1)}%</Text>
     </View>
   );
+}
+
+function commentAnchorLabel(anchor: ContentReviewAnchor): string {
+  if (anchor.kind === "text") return `“${anchor.quote.trim()}”`;
+  if (anchor.kind === "response") return "Entire agent response";
+  return `Mermaid · ${(anchor.x * 100).toFixed(1)}%, ${(anchor.y * 100).toFixed(1)}%`;
 }
 
 const REVIEW_PURPLE = "#B794F6";
@@ -384,4 +487,17 @@ const styles = StyleSheet.create({
   saveButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
   error: { color: colors.red, paddingHorizontal: spacing.xs, textAlign: "center" },
   disabled: { opacity: 0.4 },
+  pressed: { opacity: 0.68 },
+  commentsInline: { width: "100%", minWidth: 0, marginTop: spacing.sm },
+  commentsOverlay: { position: "absolute", left: spacing.sm, right: spacing.sm, zIndex: 90, alignItems: "center" },
+  commentsCard: { width: "100%", maxWidth: 760, borderRadius: radii.large, borderWidth: 1, borderColor: "rgba(183, 148, 246, 0.38)", backgroundColor: "rgba(28, 28, 28, 0.97)", overflow: "hidden" },
+  commentsSummary: { minHeight: 46, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm },
+  commentsSummaryText: { minWidth: 0, flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 },
+  commentsList: { maxHeight: 280, borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  commentRow: { minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: spacing.xs, paddingVertical: spacing.xs },
+  commentOrdinal: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
+  commentOrdinalText: { color: "#0b0b0b", fontSize: 11, fontWeight: "800" },
+  commentBody: { minWidth: 0, flex: 1, gap: 2 },
+  commentAnchor: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
+  commentText: { color: colors.text, fontSize: 13, lineHeight: 18 },
 });

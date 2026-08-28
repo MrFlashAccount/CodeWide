@@ -282,6 +282,71 @@ describe("VoiceInputController", () => {
     expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: false, error: null });
   });
 
+  it("discards retryable audio and restores the draft from before recording", async () => {
+    const { database, rows } = resources();
+    const controller = new VoiceInputController(database);
+    let draft = "keep this";
+    let listener: ((event: VoiceTranscriptionEvent) => void) | null = null;
+    const session: VoiceTranscriptionSession = {
+      appendAudio: vi.fn(),
+      cancel: vi.fn(async () => undefined),
+      finish: vi.fn(async () => { throw new RetryableVoiceTranscriptionError("Try again", 1_000); }),
+    };
+    controller.bind({
+      scope: "thread",
+      source: () => draft,
+      selection: () => ({ start: draft.length, end: draft.length }),
+      thread: null,
+      updateDraft: (next) => { draft = next; },
+      send: () => undefined,
+      startRemote: async (nextListener) => {
+        listener = nextListener;
+        return session;
+      },
+    });
+
+    await controller.toggle();
+    emitAudio();
+    listener?.({ type: "delta", text: " temporary transcript" });
+    expect(draft).toContain("temporary transcript");
+    await controller.finish(false);
+    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: true, error: "Try again" });
+
+    await controller.discard("thread");
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(draft).toBe("keep this");
+    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: false, error: null });
+  });
+
+  it("cancels an active recording without accepting its partial transcript", async () => {
+    const { database, rows } = resources();
+    const controller = new VoiceInputController(database);
+    let draft = "original";
+    let listener: ((event: VoiceTranscriptionEvent) => void) | null = null;
+    const session = remoteSession((event) => listener?.(event), []);
+    controller.bind({
+      scope: "thread",
+      source: () => draft,
+      selection: () => ({ start: draft.length, end: draft.length }),
+      thread: null,
+      updateDraft: (next) => { draft = next; },
+      send: () => undefined,
+      startRemote: async (nextListener) => {
+        listener = nextListener;
+        return session;
+      },
+    });
+
+    await controller.toggle();
+    listener?.({ type: "delta", text: " partial" });
+    await controller.discard("thread");
+
+    expect(session.cancel).toHaveBeenCalledOnce();
+    expect(draft).toBe("original");
+    expect(rows.get("thread")).toMatchObject({ phase: "idle", retryAvailable: false, error: null });
+  });
+
   it("does not offer retry when the session has already discarded its audio", async () => {
     const { database, rows } = resources();
     const controller = new VoiceInputController(database);

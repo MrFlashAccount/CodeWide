@@ -46,7 +46,6 @@ const DEFAULT_DEVICE_SCOPES: [&str; 9] = [
     "turns.start",
     "turns.steer",
 ];
-
 /// Returns the frozen V1 scope vocabulary accepted by the companion.
 #[must_use]
 pub const fn contract_device_scopes() -> &'static [&'static str] {
@@ -86,6 +85,7 @@ impl AuthorizationContext {
 pub enum AuthorizationChangeReason {
     DeviceRevoked,
     DeviceScopesChanged,
+    DeviceRepaired,
 }
 
 impl AuthorizationChangeReason {
@@ -94,6 +94,7 @@ impl AuthorizationChangeReason {
         match self {
             Self::DeviceRevoked => "device_revoked",
             Self::DeviceScopesChanged => "device_scopes_changed",
+            Self::DeviceRepaired => "device_repaired",
         }
     }
 }
@@ -230,6 +231,8 @@ pub struct PairingClaimResult {
     pub device_id: String,
     pub capability_token: String,
     pub scopes: Vec<String>,
+    #[serde(skip)]
+    pub replaced_existing: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -458,10 +461,17 @@ impl DeviceRegistry {
             },
         );
         self.persist_locked(&state).await?;
+        if existing.is_some() {
+            let _ = self.authorization_changes.send(AuthorizationChange {
+                device_id: device_id.clone(),
+                reason: AuthorizationChangeReason::DeviceRepaired,
+            });
+        }
         Ok(PairingClaimResult {
             device_id,
             capability_token,
             scopes,
+            replaced_existing: existing.is_some(),
         })
     }
 
@@ -892,7 +902,7 @@ mod tests {
                 .claim(PairingClaim {
                     pairing_token: pairing.pairing_token,
                     device_name: "Replay".into(),
-                    public_key_spki,
+                    public_key_spki: public_key_spki.clone(),
                     proof: String::new(),
                 })
                 .await,
@@ -919,10 +929,34 @@ mod tests {
                 )
                 .await
         );
+        assert!(
+            registry
+                .authorize_session(
+                    Some(&format!("Bearer {}", session.session_token)),
+                    "threads.read"
+                )
+                .await
+        );
+
+        let repair = registry.create_pairing().await?;
+        let repair_proof: Signature = signing.sign(&pairing_claim_message(
+            &repair.pairing_token,
+            "Android Fold",
+            &public_key_spki,
+        ));
+        let repaired = registry
+            .claim(PairingClaim {
+                pairing_token: repair.pairing_token,
+                device_name: "Android Fold".into(),
+                public_key_spki,
+                proof: general_purpose::STANDARD.encode(repair_proof.to_der().as_bytes()),
+            })
+            .await?;
+        let repaired_bearer = format!("Bearer {}", repaired.capability_token);
 
         let reopened = DeviceRegistry::open(admin, path, None).await?;
         assert!(matches!(
-            reopened.authorization_context(Some(&device_bearer)).await,
+            reopened.authorization_context(Some(&repaired_bearer)).await,
             Some(AuthorizationContext::Device { device_id }) if device_id == claimed.device_id
         ));
         Ok(())

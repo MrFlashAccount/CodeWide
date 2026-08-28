@@ -32,9 +32,9 @@ describe("privacy-safe operational metrics", () => {
   });
 
   it("drops invalid values instead of poisoning release percentiles", () => {
-    recordTiming("thread_resume_ms", Number.NaN);
-    recordTiming("thread_resume_ms", -1);
-    expect(operationalMetricsSnapshot().timings.thread_resume_ms).toBeUndefined();
+    recordTiming("thread_window_read_ms", Number.NaN);
+    recordTiming("thread_window_read_ms", -1);
+    expect(operationalMetricsSnapshot().timings.thread_window_read_ms).toBeUndefined();
   });
 
   it("keeps hot-path diagnostics inert until Data for geeks is enabled", () => {

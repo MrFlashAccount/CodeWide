@@ -10,6 +10,8 @@ export type ThreadSummaryDatabase = {
   viewResource(request: ThreadSummaryViewRequest): ThreadSummaryViewResource;
   loadView(request: ThreadSummaryViewRequest): Promise<void>;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
+  replaceCatalog(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
+  replaceSubagentCatalog(connectionId: string, rootThreadId: string, threads: SyncSnapshotThread[]): Promise<void>;
   mergeSnapshots(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;
   insertStartedThread(connectionId: string, thread: import("@codewide/codex-protocol/v0.147.0/v2").Thread): Promise<void>;

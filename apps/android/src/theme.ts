@@ -108,6 +108,7 @@ export const radii = {
   bubble: 22,
   bubbleTail: 7,
   large: 24,
+  menu: 30, // HeroUI --radius-3xl with CodeWide's 10dp base radius.
   composer: 28,
   pill: 999,
 } as const;

@@ -9,6 +9,7 @@ export type HostQueuedPrompt = {
   state: "queued" | "uncertain" | "failed" | "delivered";
   order: number;
   createdAt: number;
+  updatedAt: number;
   lastError: string | null;
 };
 
@@ -25,6 +26,7 @@ export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | nul
       || typeof command.remoteThreadId !== "string"
       || !Number.isSafeInteger(command.order)
       || !Number.isSafeInteger(command.createdAt)
+      || !(command.updatedAt === undefined || Number.isSafeInteger(command.updatedAt))
       || (command.presentation !== undefined && command.presentation !== "delivery" && command.presentation !== "queue")
       || !(command.workspaceRequestId === undefined || command.workspaceRequestId === null || typeof command.workspaceRequestId === "string")
       || (command.state !== "queued" && command.state !== "uncertain" && command.state !== "failed" && command.state !== "delivered")
@@ -39,19 +41,19 @@ export function parseHostQueueSnapshot(value: unknown): HostQueuedPrompt[] | nul
       state: command.state,
       order: command.order as number,
       createdAt: command.createdAt as number,
+      updatedAt: command.updatedAt === undefined ? command.createdAt as number : command.updatedAt as number,
       lastError: command.lastError as string | null,
     });
   }
   return commands;
 }
 
-export function hasAcceptedPendingDelivery(
+export function hasAppServerAcceptedPendingDelivery(
   commands: readonly HostQueuedPrompt[],
   isPending: (commandId: string) => boolean,
 ): boolean {
   return commands.some((command) => (
-    command.presentation === "delivery"
-      && command.state === "delivered"
+    command.state === "delivered"
       && isPending(command.commandId)
   ));
 }

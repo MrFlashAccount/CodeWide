@@ -36,7 +36,8 @@ describe("new chat workspace selector", () => {
     expect(lifecycle).toContain("if (!hasLoadedThread && startedThreadIds.size === 0)");
     expect(lifecycle).toContain("const controls = ensureControls()");
     expect(lifecycle).toContain('await publishThread(connectionId, shell, "live")');
-    expect(lifecycle).toContain('method === "turn/completed" || method === "thread/deleted"');
+    expect(lifecycle).toContain("projectionOperationClosesStartedShell(patch.operation.kind)");
+    expect(lifecycle).not.toContain('method === "turn/completed"');
     expect(lifecycle).toContain("if (thread.turns.length === 0)");
   });
 });

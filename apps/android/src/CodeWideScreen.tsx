@@ -5,9 +5,9 @@ import { Button } from "heroui-native/button";
 import { Dialog } from "heroui-native/dialog";
 import { FieldError } from "heroui-native/field-error";
 import { Label } from "heroui-native/label";
-import { Menu, type MenuTriggerRef } from "heroui-native/menu";
 import { TextField } from "heroui-native/text-field";
 import { LegendList, type LegendListRenderItemProps, useRecyclingState } from "@legendapp/list/react-native";
+import { useSelector } from "@legendapp/state/react";
 import { parsePairingPayload } from "@codewide/codex-protocol/pairing";
 import type { ReviewDelivery, ReviewTarget, Thread, ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { Personality } from "@codewide/codex-protocol/v0.147.0";
@@ -63,7 +63,7 @@ import type { ThreadResourcesModel } from "./data/thread-resources-model";
 import { useRemoteProjectCatalog } from "./data/use-remote-project-catalog";
 import { useDeepLinkListener } from "./data/use-deep-link-listener";
 import { useSecondClock } from "./data/second-clock";
-import type { ThreadChatWindowRequest } from "./data/thread-chat-model";
+import type { ThreadChatModel, ThreadChatWindowRequest } from "./data/thread-chat-model";
 import {
   projectThreadChatWindow,
   type ProjectedThreadChatDelivery,
@@ -92,6 +92,7 @@ import { parseThreadDeepLink } from "./data/deep-link";
 import { AUTO_ATTACH_PASTE_MIN_CHARS, captureClipboardLargePaste, type ClipboardLargePasteCapture } from "./data/composer-paste-attachment";
 import type { LargePasteEvent } from "./native/large-paste";
 import { useEvent } from "./react/useEvent";
+import { useAppLockSettings } from "./ui/AppLockGate";
 import { incrementDiagnosticMetric, liveStreamMetricKey, operationalDiagnosticsEnabled, recordLiveRenderCommit, recordTiming } from "./data/operational-metrics";
 import { activeThreadNavigationIdFor, beginThreadNavigation, finalizeThreadNavigationProfile, isThreadNavigationActiveFor, markThreadNavigationStage, measureThreadNavigationWork, recordThreadNavigationRowCommit, recordThreadNavigationVisualEvent } from "./data/thread-navigation-metrics";
 import { usePerformanceExperiment, usePerformanceExperiments } from "./data/performance-experiments";
@@ -111,11 +112,13 @@ import {
   readInteractiveTerminalWorkspace,
   useInteractiveTerminalWorkspace,
 } from "./data/interactive-terminal-store";
-import { isThreadLifecycleActive } from "./data/thread-lifecycle";
+import { isThreadLifecycleActive, pendingDeliveryMayOwnTurn } from "./data/thread-lifecycle";
 import type { StoredConnection } from "./data/connection-profile-types";
 import type { PendingServerRequest } from "./data/pending-request-types";
 import type { StoredThreadSummary } from "./data/thread-summary-types";
+import { normalizePendingDeliveryState, type VisiblePendingDeliveryState } from "./data/thread-delivery-state";
 import { ThreadListProjection } from "./data/thread-list-projection";
+import { createThreadNavigationModel, type ThreadNavigationModel } from "./data/thread-navigation-model";
 import { SubagentListProjection } from "./data/subagent-projection";
 import type { StoredComposerPreferences, ThreadUiStateRow } from "./data/thread-ui-state-types";
 import { threadHistoryResourceKey, threadResourceKey, tunnelResourceKey, turnControlsResourceKey, type BackgroundTerminalsRow, type FileTransferRow, type ThreadAttachmentResource, type ThreadChangeResource, type ThreadChangeScope, type ThreadGoalRow, type ThreadResourcesRow, type ThreadResourcesValue, type TunnelRow, type TurnControlsRow, type VoiceInputRow, type WorkspaceResourceDatabase } from "./data/workspace-resource-database";
@@ -123,11 +126,14 @@ import { useBackgroundTerminalsRow, useThreadGoalRow, useTunnelRow, useTurnContr
 import type { VoiceInputController } from "./data/voice-input-controller";
 import type { FileTransferController } from "./data/file-transfer-controller";
 import { ATTACHMENT_ROOT_ID, attachmentUploadPath } from "./data/attachment-upload";
+import { isQuickdrawDraftAttachment, quickdrawAttachmentName, quickdrawPngBytes, remoteAttachment } from "./data/quickdraw-attachment";
+import { annotatedImageName } from "./data/quickdraw-image";
+import { loadQuickdrawImageSnapshot } from "./data/quickdraw-image-source";
 import { windowLayoutStore } from "./native/window-layout-store";
-import { createTextUpload, pickUploadFile, type SelectedUpload } from "./native/file-transfer";
+import { createBinaryUpload, createTextUpload, pickUploadFile, type SelectedUpload } from "./native/file-transfer";
 import { RichMarkdown } from "./rendering/RichMarkdown";
 import { RichContentWidthProvider } from "./rendering/RichContentLayout";
-import { ImagePreviewGroup, useImagePreview, useImagePreviewAnnotationHandler, useImagePreviewGroup, useRegisterImagePreviewItem } from "./rendering/ImagePreviewHost";
+import { ImagePreviewGroup, useImagePreview, useImagePreviewAnnotationHandler, useImagePreviewGroup, useRegisterImagePreviewItem, type ImagePreviewItem } from "./rendering/ImagePreviewHost";
 import { loadDocumentPreview, MAX_DOCUMENT_PREVIEW_BYTES, useDocumentDownload, useDocumentPreview, type DocumentPreviewRequest, type DocumentPreviewResult } from "./rendering/DocumentPreviewHost";
 import { isolatedHtmlDocument, remoteDocumentDirectory, remoteFileKind, resolvePreviewableDocumentLink, resolveRemoteDocumentPath, type DocumentPreviewKind } from "./rendering/document-preview";
 import { MarkdownLocalLinkProvider } from "./rendering/MarkdownLinkHandler";
@@ -137,7 +143,7 @@ import { CodeReviewWorkspace } from "./rendering/CodeReviewWorkspace";
 import { changeScopeMenuActions, changeScopeTitle } from "./rendering/change-menu";
 import { codeReviewFilesForDocument } from "./rendering/code-review-files";
 import { serializeCodeReviewAttachment, type CodeReviewComment } from "./rendering/code-review";
-import { ContentReviewComposer, useContentReviewRuntime } from "./rendering/ContentReviewHost";
+import { ContentReviewComments, ContentReviewComposer, useContentReview, useContentReviewRuntime } from "./rendering/ContentReviewHost";
 import type { ContentReviewTarget } from "./rendering/content-review";
 import { collapsedCodePreview, nativeCodeLanguageForPath, stripTerminalControlSequences } from "./rendering/native-code-block";
 import { boundedJsonStringify } from "./rendering/bounded-json";
@@ -165,12 +171,15 @@ import { useReducedMotionPreference } from "./rendering/reduced-motion-store";
 import { AppSheet, AppSheetScrollView } from "./ui/AppSheet";
 import { AppFullscreenOverlayBoundary, useAppFullscreenOverlay, type AppFullscreenOverlayLifecycle } from "./ui/AppFullscreenOverlay";
 import { ActionMenu, type ActionMenuItem } from "./ui/ActionMenu";
+import { MessageActionMenuProvider, useMessageActionMenu } from "./ui/MessageActionMenu";
+import type { MessageActionMenuRequest } from "./ui/MessageActionMenu.types";
 import { useAppDialog } from "./ui/AppDialog";
 import { ModelThinkingMenu, PermissionsMenu } from "./ui/TurnControlMenus";
 import { AppText as Text, AppTextInput as TextInput } from "./ui/Typography";
 import { AppVoiceInputProvider, useAppVoiceInputRuntime, useVoiceInputLevel, type AppVoiceInputRuntime } from "./ui/VoiceInputRuntime";
 import { VoiceAura } from "./ui/VoiceAura";
 import { WaveText } from "./ui/WaveText";
+import { SwipeDiscardAction, swipeDiscardDistanceForWidth } from "./ui/SwipeDiscardAction";
 import { ContextRing, UsagePopover } from "./ui/UsagePopover";
 import { CostBreakdownPopover } from "./ui/CostBreakdownPopover";
 import { LiveTurnPlanPopover } from "./ui/LiveTurnPlanPopover";
@@ -179,6 +188,7 @@ import { formatEstimatedTurnCost } from "./turn-cost";
 import { AnimatedNumber, compactNumberFormat, integerNumberFormat } from "./ui/AnimatedNumber";
 import { formatNumber } from "./ui/number-format";
 import { PerformanceDiagnostics } from "./ui/PerformanceDiagnostics";
+import { DrawingWorkspace, type DrawingCommit } from "./ui/DrawingWorkspace";
 import { RecoverableRenderBoundary, RenderRecoveryProvider } from "./ui/RecoverableRenderBoundary";
 import { renderRecoveryPrompt, type RecoverableRenderFailure } from "./ui/render-recovery-prompt";
 import { SubagentSheet } from "./ui/SubagentSheet";
@@ -293,10 +303,6 @@ function abortableDelay(delayMs: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function monotonicNowMs(): number {
-  return performance.now();
-}
-
 function writePersistentExpansionState(key: string, expanded: boolean): void {
   persistentExpansionStates.delete(key);
   persistentExpansionStates.set(key, expanded);
@@ -308,7 +314,7 @@ function writePersistentExpansionState(key: string, expanded: boolean): void {
 }
 
 type ComposerMenuPage = "model" | "skills" | "permissions" | "queue" | "goal" | "review" | "runtime" | "ports";
-type ComposerAccessoryAction = "files" | "skills" | "goal" | "terminal" | "ports";
+type ComposerAccessoryAction = "files" | "drawing" | "skills" | "goal" | "terminal" | "ports";
 type ChangesDisplayMode = "unified" | "split" | "source";
 type ChangesPreferences = { scope: ThreadChangeScope | null; mode: ChangesDisplayMode; wrapLines: boolean };
 
@@ -516,11 +522,14 @@ function ThreadResourceContextChips({
   );
 }
 
-function pairingParseResult(raw: string): { value: ReturnType<typeof parsePairingPayload>; error: null } | { value: null; error: string } {
+function pairingParseResult(raw: string):
+  | { value: ReturnType<typeof parsePairingPayload>; parsedAt: number; error: null }
+  | { value: null; parsedAt: number; error: string } {
+  const parsedAt = Date.now();
   try {
-    return { value: parsePairingPayload(raw), error: null };
+    return { value: parsePairingPayload(raw, parsedAt), parsedAt, error: null };
   } catch (cause) {
-    return { value: null, error: humanPairingError(cause) };
+    return { value: null, parsedAt, error: humanPairingError(cause) };
   }
 }
 
@@ -545,7 +554,7 @@ type TimelineItem =
       scope: string;
       turn: Thread["turns"][number];
     }
-  | { kind: "optimistic"; scope: string; id: string; text: string; attachments: ComposerAttachment[]; status: "sending" | "uncertain" | "failed" | "delivered"; workspaceRequestId?: string | null; lastError: string | null; createdAt: number }
+  | { kind: "optimistic"; scope: string; id: string; text: string; attachments: ComposerAttachment[]; status: VisiblePendingDeliveryState; workspaceRequestId?: string | null; lastError: string | null; createdAt: number }
   | { kind: "meta"; key: string; status: "completed" | "interrupted" | "failed" | "inProgress"; durationMs: number | null; completedAt: number | null };
 
 function ThreadTimelineNavigationCommit({
@@ -650,8 +659,6 @@ type MainConversationDetailProps = ConversationDestinationBaseProps & {
   connectionId: string;
   threadId: string;
   threadOpenGeneration: number;
-  connectionAvailable: boolean;
-  threadLifecycleActive: boolean;
 };
 
 /**
@@ -664,8 +671,6 @@ function MainConversationDetail({
   connectionId,
   threadId,
   threadOpenGeneration,
-  connectionAvailable,
-  threadLifecycleActive,
   navigationKey,
   ...conversation
 }: MainConversationDetailProps) {
@@ -699,6 +704,7 @@ function MainConversationDetail({
     connectionId,
     threadId,
     anchorTurnId: initialHistoryAnchorTurnId,
+    openGeneration: threadOpenGeneration,
   };
   const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest);
   if (chatWindow === null) throw new Error("Conversation window is unavailable");
@@ -727,7 +733,7 @@ function MainConversationDetail({
   };
   const projection = projectThreadChatWindow(chatDatabase, chatWindow, connectionId, threadId, false, storedThread);
   const remoteThread = projection.remoteThread ?? storedThread?.provisionalThread ?? null;
-  const provisionalThread = storedThread?.provisionalThread ?? null;
+  const conversationCwd = remoteThread?.cwd ?? storedThread?.cwd ?? conversation.cwd ?? "/workspace";
   const historyRestoreReady = !threadLoadBlocksPresentation(chatSnapshot.status);
   const historyState: ThreadHistoryState = historyResource ?? {
     historyEpoch,
@@ -739,91 +745,6 @@ function MainConversationDetail({
     const row = historyModel?.get(historyResourceId) ?? null;
     return row?.historyEpoch === historyEpoch ? row : historyState;
   };
-  const requiresJournalCatchUp = remoteThread === null
-    || chatDatabase.captureRefreshCursor(connectionId, threadId) !== null;
-  const hydrationTaskKey = !connectionAvailable || !historyRestoreReady || !requiresJournalCatchUp
-    ? null
-    : `thread-hydration:${historyResourceId}:${threadOpenGeneration}:${historyEpoch}:${provisionalThread === null ? "materialized" : "provisional"}`;
-  useAsyncResource<ThreadHistoryState>("active-thread-hydration", hydrationTaskKey ?? "inactive", async (_publish, signal) => {
-    if (hydrationTaskKey === null) return historyState;
-    const cachedSnapshotAvailable = remoteThread !== null;
-    const loadingState: ThreadHistoryState = {
-      historyEpoch,
-      status: cachedSnapshotAvailable ? "background-updating" : "initial-loading",
-      nextCursor: historyState.nextCursor,
-      error: null,
-    };
-    const navigationId = activeThreadNavigationIdFor(connectionId, threadId);
-    recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
-      values: {
-        historyEpoch,
-      },
-      tags: { status: loadingState.status, phase: "start" },
-    }, navigationId ?? undefined);
-    putHistoryState(loadingState);
-    const openedAt = monotonicNowMs();
-    if (navigationId !== null) markThreadNavigationStage(connectionId, threadId, "hydration_start", {}, navigationId);
-    const result = await remote.readThread(connectionId, threadId, null).then(
-      (window) => ({ window, cause: null }),
-      (cause: unknown) => ({ window: null, cause }),
-    );
-    if (navigationId !== null) {
-      markThreadNavigationStage(connectionId, threadId, "hydration_result", {
-        values: { rpcMs: monotonicNowMs() - openedAt },
-        tags: { outcome: signal.aborted ? "aborted" : result.cause === null ? "success" : provisionalThread === null ? "error" : "provisional" },
-      }, navigationId);
-    }
-    if (signal.aborted) return loadingState;
-    if (result.cause !== null) {
-      const current = readHistoryState();
-      const state: ThreadHistoryState = provisionalThread !== null
-        ? { ...(current ?? loadingState), status: "ready", error: null }
-        : {
-            ...(current ?? loadingState),
-            status: cachedSnapshotAvailable ? "background-retrying" : "initial-error",
-            error: result.cause instanceof Error ? result.cause.message : "Could not load messages",
-          };
-      recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
-        values: {
-          historyEpoch,
-        },
-        tags: { status: state.status, phase: "error" },
-      }, navigationId ?? undefined);
-      putHistoryState(state);
-      return state;
-    }
-    if (result.window !== null) recordTiming("thread_fresh_visible_ms", monotonicNowMs() - openedAt);
-    const current = readHistoryState();
-    const state: ThreadHistoryState = {
-      ...(current ?? loadingState),
-      status: result.window === null ? cachedSnapshotAvailable ? "background-retrying" : "initial-error" : "ready",
-      nextCursor: current?.nextCursor !== undefined
-        ? current.nextCursor
-        : result.window?.nextCursor,
-      error: result.window === null ? "Could not load messages" : null,
-    };
-    recordThreadNavigationVisualEvent(connectionId, threadId, "hydration_state_write", {
-      values: {
-        historyEpoch,
-      },
-      tags: { status: state.status, phase: "result" },
-    }, navigationId ?? undefined);
-    putHistoryState(state);
-    return state;
-  });
-
-  const staleLifecycleTurnId = !connectionAvailable || threadLifecycleActive
-    ? null
-    : projection.staleLifecycleTurnId;
-  const lifecycleRepairTaskKey = staleLifecycleTurnId === null
-    ? null
-    : `thread-lifecycle-repair:${connectionId}:${threadId}:${staleLifecycleTurnId}`;
-  useAsyncResource<boolean>("active-thread-lifecycle-repair", lifecycleRepairTaskKey ?? "inactive", async () => {
-    if (staleLifecycleTurnId === null) return false;
-    await remote.reconcileThreadLifecycle(connectionId, threadId, staleLifecycleTurnId, remoteThread as Thread);
-    return true;
-  });
-
   const historyViewport = useThreadHistoryController({
     enabled: true,
     connectionId,
@@ -831,11 +752,11 @@ function MainConversationDetail({
     historyEpoch,
     cursorState: historyState,
     readState: readHistoryState,
+    readHistoryCursor: () => chatDatabase.historyCursor(connectionId, threadId),
     isLatestRange,
     putState: putHistoryState,
     pullRange: async (direction) => await chatDatabase.pullRange(connectionId, threadId, direction),
     trimRange: async (direction) => await chatDatabase.trimRange(connectionId, threadId, direction),
-    loadOlderTurns: remote.loadOlderTurns,
   });
 
   return (
@@ -875,6 +796,7 @@ function MainConversationDetail({
       <ConversationPane
         key={navigationKey}
         {...conversation}
+        cwd={conversationCwd}
         remoteThread={remoteThread}
         remoteSealedTurns={projection.remoteSealedTurns}
         remoteLiveTurns={projection.remoteLiveTurns}
@@ -885,6 +807,8 @@ function MainConversationDetail({
         historyViewport={historyViewport}
         historyActivityModel={historyModel}
         historyActivityResourceId={historyResourceId}
+        threadChatModel={chatDatabase.chat}
+        onTimelineFirstDraw={() => chatDatabase.chat.finishPresentation(connectionId, threadId)}
         onLoadTurnItems={async (turnId) => { await remote.loadTurnItems(connectionId, threadId, turnId); }}
         subagentSummaryDatabase={remote.threadSummaryDatabase}
       />
@@ -935,8 +859,6 @@ type ConversationDestinationProps = ConversationDestinationBaseProps & {
         connectionId: string;
         threadId: string;
         threadOpenGeneration: number;
-        connectionAvailable: boolean;
-        threadLifecycleActive: boolean;
       }
     | {
         kind: "new";
@@ -1037,13 +959,7 @@ function projectOptimisticTimelineItem(
     text: delivery.text,
     attachments: delivery.attachments ?? [],
     ...(delivery.workspaceRequestId === undefined ? {} : { workspaceRequestId: delivery.workspaceRequestId }),
-    status: delivery.state === "failed"
-      ? "failed"
-      : delivery.state === "uncertain"
-        ? "uncertain"
-        : delivery.state === "delivered"
-          ? "delivered"
-          : "sending",
+    status: normalizePendingDeliveryState(delivery.state),
     lastError: delivery.lastError,
     createdAt: delivery.createdAt,
   };
@@ -1087,6 +1003,67 @@ class ScrollOffsetMemory {
 
   read(): number { return this.#value; }
   write(value: number): void { this.#value = value; }
+}
+
+class ThreadListItemProjection {
+  #source: readonly StoredThreadSummary[] | null = null;
+  #value: ThreadListItem[] = [];
+
+  project(source: readonly StoredThreadSummary[]): ThreadListItem[] {
+    if (source === this.#source) return this.#value;
+    this.#source = source;
+    this.#value = source.map(storedThreadToListItem);
+    return this.#value;
+  }
+}
+
+class ThreadServerProjection {
+  #value: ThreadListServer[] = [];
+
+  project(connections: readonly StoredConnection[]): ThreadListServer[] {
+    const next = connections.map((server) => ({
+      id: server.id,
+      name: server.displayName,
+      emoji: server.emoji,
+      status: server.enabled ? server.state : "offline" as const,
+    }));
+    if (
+      next.length === this.#value.length
+      && next.every((server, index) => {
+        const current = this.#value[index];
+        return current !== undefined
+          && current.id === server.id
+          && current.name === server.name
+          && current.emoji === server.emoji
+          && current.status === server.status;
+      })
+    ) return this.#value;
+    this.#value = next;
+    return this.#value;
+  }
+}
+
+class ThreadListScopeProjection {
+  #source: readonly ThreadListItem[] | null = null;
+  #serverId = "";
+  #value = { scoped: [] as ThreadListItem[], active: [] as ThreadListItem[], archived: [] as ThreadListItem[] };
+
+  project(source: readonly ThreadListItem[], serverId: string): {
+    scoped: ThreadListItem[];
+    active: ThreadListItem[];
+    archived: ThreadListItem[];
+  } {
+    if (source === this.#source && serverId === this.#serverId) return this.#value;
+    this.#source = source;
+    this.#serverId = serverId;
+    const scoped = serverId === ALL_SERVERS_ID ? [...source] : source.filter((thread) => thread.serverId === serverId);
+    this.#value = {
+      scoped,
+      active: scoped.filter((thread) => !thread.archived),
+      archived: scoped.filter((thread) => thread.archived),
+    };
+    return this.#value;
+  }
 }
 
 function nativePortForwardingManagerProps(
@@ -1218,6 +1195,31 @@ export function CodeWideScreen() {
 }
 
 function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { desktop: boolean; viewportWidth: number; insets: ReturnType<typeof useSafeAreaInsets>; remote: RemoteWorkspace }) {
+  const [threadNavigation] = useState(createThreadNavigationModel);
+  return (
+    <CodeWideWorkspaceContent
+      desktop={desktop}
+      viewportWidth={viewportWidth}
+      insets={insets}
+      remote={remote}
+      threadNavigation={threadNavigation}
+    />
+  );
+}
+
+function CodeWideWorkspaceContent({
+  desktop,
+  viewportWidth,
+  insets,
+  remote,
+  threadNavigation,
+}: {
+  desktop: boolean;
+  viewportWidth: number;
+  insets: ReturnType<typeof useSafeAreaInsets>;
+  remote: RemoteWorkspace;
+  threadNavigation: ThreadNavigationModel;
+}) {
   const [, startThreadTransition] = useTransition();
   const accountRateLimitsQuery = useLiveQuery(
     () => remote.accountRateLimitsDatabase?.collection,
@@ -1227,7 +1229,6 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const dialog = useAppDialog();
   const reduceVoiceMotion = useReducedMotionPreference();
   const [connectionSheetVisible, setConnectionSheetVisible] = useState(false);
-  const [connectionSheetOpenedAt, setConnectionSheetOpenedAt] = useState(Date.now);
   const [pendingPairingCode, setPendingPairingCode] = useState<string | null>(null);
   const [newThreadVisible, setNewThreadVisible] = useState(false);
   const [newChatDraft, setNewChatDraft] = useState<NewChatDraft | null>(null);
@@ -1237,12 +1238,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const [mobileThreadQuery, setMobileThreadQuery] = useState("");
   const [mobileThreadOffset] = useState(() => new ScrollOffsetMemory());
   const [threadListMode, setThreadListMode] = useState<ThreadListMode>("active");
-  const servers: ThreadListServer[] = [...remote.connections.map((server) => ({
-        id: server.id,
-        name: server.displayName,
-        emoji: server.emoji,
-        status: server.enabled ? server.state : "offline",
-      }))];
+  const [threadServerProjection] = useState(() => new ThreadServerProjection());
+  const servers = threadServerProjection.project(remote.connections);
   const settingsConnections: StoredConnection[] = remote.connections;
   const projectCatalog = useRemoteProjectCatalog(remote.native, remote.connections, remote.listProjects);
   const projectsByConnection = projectCatalog.projectsByConnection;
@@ -1255,12 +1252,14 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
       : servers.some((server) => server.id === requestedServerId)
         ? requestedServerId
         : servers[0]?.id ?? "";
-  const [threadSelection, setThreadSelection] = useState(() => ({ id: null as string | null, generation: 0 }));
+  const [threadSelection, setThreadSelection] = useState(() => threadNavigation.current());
   const requestedThreadId = threadSelection.id;
   const requestedThreadTarget = parseThreadSelectionKey(requestedThreadId);
   const threadOpenGeneration = threadSelection.generation;
   const [threadListLimit, setThreadListLimit] = useState(THREAD_LIST_PAGE_SIZE);
   const [threadListProjection] = useState(() => new ThreadListProjection());
+  const [threadListItemProjection] = useState(() => new ThreadListItemProjection());
+  const [threadListScopeProjection] = useState(() => new ThreadListScopeProjection());
   const threadConnectionId = activeServerId === ALL_SERVERS_ID || activeServerId === ""
     ? null
     : activeServerId;
@@ -1282,18 +1281,19 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
     ...archivedThreadSummaryRows,
   ]);
   const projectedThreadSummaries = threadListProjection.project(loadedThreadSummaries, remote.pendingRequests);
-  const threads: ThreadListItem[] = projectedThreadSummaries.map(storedThreadToListItem);
-  const scopedThreads = activeServerId === ALL_SERVERS_ID ? threads : threads.filter((thread) => thread.serverId === activeServerId);
-  const serverThreads = scopedThreads.filter((thread) => !thread.archived);
-  const archivedThreads = scopedThreads.filter((thread) => thread.archived);
-  if (desktop && newChatDraft === null && threadSelection.id === null && serverThreads[0] !== undefined) {
+  const threads = threadListItemProjection.project(projectedThreadSummaries);
+  const threadScope = threadListScopeProjection.project(threads, activeServerId);
+  const scopedThreads = threadScope.scoped;
+  const serverThreads = threadScope.active;
+  const archivedThreads = threadScope.archived;
+  if (desktop && newChatDraft === null && threadNavigation.current().id === null && serverThreads[0] !== undefined) {
     const defaultThreadId = threadSelectionKey(serverThreads[0]);
     // Desktop opens the first available conversation, but selection itself is
     // always an explicit stable id. Updating during render restarts this render
     // before commit, so a later Recent reorder can never select by row index.
-    setThreadSelection((current) => current.id === null
-      ? { id: defaultThreadId, generation: current.generation + 1 }
-      : current);
+    if (threadNavigation.current().id === null) {
+      setThreadSelection(threadNavigation.select(defaultThreadId));
+    }
   }
   const loadMoreThreads = () => {
     const loadedCount = threadListMode === "archived"
@@ -1309,24 +1309,30 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
     nextServerId?: string,
     reloadSelected = false,
   ) => {
+    const requestedThreadId = threadNavigation.current().id;
+    const selectedTarget = parseThreadSelectionKey(value);
+    if (selectedTarget !== null) {
+      void remote.observeThread(selectedTarget.connectionId, selectedTarget.threadId).catch((cause: unknown) => {
+        console.warn("Could not attach thread observer:", cause instanceof Error ? cause.message : "unknown error");
+      });
+    }
     if (value !== requestedThreadId) {
       // A focused search field or composer keeps the Android IME session alive
       // when the visible surface is replaced. End that session at the navigation
       // boundary so the newly selected conversation never inherits keyboard focus.
       KeyboardController.dismiss({ animated: false, keepFocus: false });
+      const target = parseThreadSelectionKey(value);
+      if (target !== null) remote.threadDetails?.chat.beginPresentation(target.connectionId, target.threadId);
     }
     // The selected resource is React-owned navigation state. A missing local
     // Legend resource suspends this transition, keeping the previous chat
     // visible until the destination SQLite window is atomically ready.
     const startedAt = performance.now();
+    const nextSelection = threadNavigation.select(value, reloadSelected);
     startThreadTransition(() => {
       if (nextServerId !== undefined) setActiveServerId(nextServerId);
       if (closeDraft) setNewChatDraft(null);
-      setThreadSelection((current) => current.id === value
-        ? reloadSelected
-          ? { ...current, generation: current.generation + 1 }
-          : current
-        : { id: value, generation: current.generation + 1 });
+      setThreadSelection(nextSelection);
     });
     requestAnimationFrame(() => {
       const elapsed = performance.now() - startedAt;
@@ -1340,7 +1346,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
       if (__DEV__) console.log(`[CodeWide perf] thread_selection_next_frame_ms=${Math.round(elapsed)}`);
     });
   };
-  const selectThread = (value: string) => {
+  const selectThread = useEvent((value: string) => {
     const target = parseThreadSelectionKey(value);
     let navigationId: string | undefined;
     if (target !== null) {
@@ -1350,18 +1356,24 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
     // Keep repeated selection as an explicit diagnostic reload path: it runs
     // through the same navigation, hydration, and profiling stages.
     setActiveThreadId(value, navigationId, true, undefined, true);
-  };
-  const preloadThread = (value: string): (() => void) | undefined => {
+  });
+  const preloadThread = useEvent((value: string): (() => void) | undefined => {
+    const threadSelection = threadNavigation.current();
+    const requestedThreadId = threadSelection.id;
     if (!remote.native || remote.threadDetails === null || remote.threadUiStateDatabase === null || value === requestedThreadId) return;
     const target = parseThreadSelectionKey(value);
     if (target === null) return;
+    void remote.observeThread(target.connectionId, target.threadId, false).catch((cause: unknown) => {
+      console.warn("Could not preload thread observer:", cause instanceof Error ? cause.message : "unknown error");
+    });
     const uiState = remote.threadUiStateDatabase.get(target.connectionId, target.threadId);
     return remote.threadDetails.preloadWindow({
       connectionId: target.connectionId,
       threadId: target.threadId,
       anchorTurnId: uiState?.historyAnchorTurnId ?? null,
+      openGeneration: threadSelection.generation + 1,
     });
-  };
+  });
 
   const normalizedMobileThreadQuery = mobileThreadQuery.trim().toLocaleLowerCase();
   const mobileSearchKey = `${activeServerId}\u0000${normalizedMobileThreadQuery}`;
@@ -1484,7 +1496,6 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   useDeepLinkListener((raw) => {
     if (raw === null) return;
     if (raw.startsWith("codewide://pair") || raw.startsWith("codexremote://pair")) {
-      setConnectionSheetOpenedAt(Date.now());
       setPendingPairingCode(raw);
       setConnectionSheetVisible(true);
       return;
@@ -1521,7 +1532,6 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   };
 
   const openConnectionSheet = () => {
-    setConnectionSheetOpenedAt(Date.now());
     setConnectionSheetVisible(true);
   };
 
@@ -1570,6 +1580,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
   const openNewChat = async (requestedServerId: string, cwd: string | null): Promise<void> => {
     if (requestedServerId === "") return;
     newChatCounterRef.current += 1;
+    const nextSelection = threadNavigation.select(null, true);
     startThreadTransition(() => {
       setNewChatDraft({
         id: `new-chat-${Date.now()}-${newChatCounterRef.current}`,
@@ -1578,7 +1589,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
         workspaceMode: "current",
       });
       setActiveServerId(requestedServerId);
-      setThreadSelection((current) => ({ id: null, generation: current.generation + 1 }));
+      setThreadSelection(nextSelection);
       setNewThreadVisible(false);
     });
   };
@@ -1656,12 +1667,12 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
 
   const archiveListThread = async (thread: ThreadListItem): Promise<void> => {
     await remote.archiveThread(thread.serverId, thread.id);
-    if (activeThreadId === threadSelectionKey(thread)) setActiveThreadId(null);
+    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
   };
 
   const unarchiveListThread = async (thread: ThreadListItem): Promise<void> => {
     await remote.unarchiveThread(thread.serverId, thread.id);
-    if (activeThreadId === threadSelectionKey(thread)) setActiveThreadId(null);
+    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
   };
 
   const markListThreadRead = async (thread: ThreadListItem): Promise<void> => {
@@ -1684,8 +1695,6 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           connectionId: activeConnectionId,
           threadId: activeRemoteThreadId,
           threadOpenGeneration,
-          connectionAvailable: activeConnectionAvailable,
-          threadLifecycleActive: activeThreadLifecycleActive,
         }
       : null;
   const conversationActions = newChatDraft !== null
@@ -1878,7 +1887,6 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             fileTransferController={remote.fileTransferController}
             subagentSummaryDatabase={remote.threadSummaryDatabase}
             subagentThreadDetails={remote.threadDetails}
-            onReadSubagentThread={remote.readSubagentThread}
             onRefreshSubagents={async (rootThreadId: string) => await remote.refreshSubagents(activeConnectionId, rootThreadId)}
             loadDraft={remote.loadDraft}
             saveDraft={remote.saveDraft}
@@ -1931,9 +1939,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           </Suspense>
           </RecoverableRenderBoundary>
         )}
-        <ConnectionSheet
+        {connectionSheetVisible && <ConnectionSheet
           visible={connectionSheetVisible}
-          openedAt={connectionSheetOpenedAt}
           localReady={remote.ready && remote.error === null}
           localError={remote.error}
           onRetryStartup={remote.retryStartup}
@@ -1943,8 +1950,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           }}
           onSave={saveConnection}
           initialCode={pendingPairingCode}
-        />
-        <ConnectionSettings
+        />}
+        {settingsVisible && <ConnectionSettings
           visible={settingsVisible}
           connections={settingsConnections}
           onClose={() => setSettingsVisible(false)}
@@ -1962,13 +1969,13 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
             onUpdateAccountProfile: remote.updateAccountProfile,
             onRemoveAccountProfile: remote.removeAccountProfile,
           })}
-        />
-        <NewThreadServerSheet
+        />}
+        {newThreadVisible && <NewThreadServerSheet
           visible={newThreadVisible}
           servers={servers}
           onClose={() => setNewThreadVisible(false)}
           onSelect={async (serverId) => await openNewChat(serverId, defaultProjectCwd(serverId))}
-        />
+        />}
       </View>
       </VoiceAura>
       </AppVoiceInputProvider>
@@ -2001,7 +2008,7 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           threads={serverThreads}
           archivedThreads={archivedThreads}
           mode={threadListMode}
-          activeThreadId={activeThread === null ? null : threadSelectionKey(activeThread)}
+          navigation={threadNavigation}
           onModeChange={setThreadListMode}
           onLoadMore={loadMoreThreads}
           onSelect={selectThread}
@@ -2055,7 +2062,6 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           fileTransferController={remote.fileTransferController}
           subagentSummaryDatabase={remote.threadSummaryDatabase}
           subagentThreadDetails={remote.threadDetails}
-          onReadSubagentThread={remote.readSubagentThread}
           onRefreshSubagents={async (rootThreadId: string) => await remote.refreshSubagents(activeConnectionId, rootThreadId)}
           loadDraft={remote.loadDraft}
           saveDraft={remote.saveDraft}
@@ -2108,9 +2114,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
         </Suspense>
         </RecoverableRenderBoundary>
       </View>
-      <ConnectionSheet
+      {connectionSheetVisible && <ConnectionSheet
         visible={connectionSheetVisible}
-        openedAt={connectionSheetOpenedAt}
         localReady={remote.ready && remote.error === null}
         localError={remote.error}
         onRetryStartup={remote.retryStartup}
@@ -2120,8 +2125,8 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
         }}
         onSave={saveConnection}
         initialCode={pendingPairingCode}
-      />
-      <ConnectionSettings
+      />}
+      {settingsVisible && <ConnectionSettings
         visible={settingsVisible}
         connections={settingsConnections}
         onClose={() => setSettingsVisible(false)}
@@ -2139,13 +2144,13 @@ function CodeWideWorkspaceScreen({ desktop, viewportWidth, insets, remote }: { d
           onUpdateAccountProfile: remote.updateAccountProfile,
           onRemoveAccountProfile: remote.removeAccountProfile,
         })}
-      />
-      <NewThreadServerSheet
+      />}
+      {newThreadVisible && <NewThreadServerSheet
         visible={newThreadVisible}
         servers={servers}
         onClose={() => setNewThreadVisible(false)}
         onSelect={async (serverId) => await openNewChat(serverId, defaultProjectCwd(serverId))}
-      />
+      />}
     </View>
     </VoiceAura>
     </AppVoiceInputProvider>
@@ -2349,7 +2354,7 @@ function ThreadSidebar({
   threads,
   archivedThreads,
   mode,
-  activeThreadId,
+  navigation,
   onModeChange,
   onLoadMore,
   onSelect,
@@ -2367,7 +2372,7 @@ function ThreadSidebar({
   threads: ThreadListItem[];
   archivedThreads: ThreadListItem[];
   mode: ThreadListMode;
-  activeThreadId: string | null;
+  navigation: ThreadNavigationModel;
   onModeChange(mode: ThreadListMode): void;
   onLoadMore(): void;
   onSelect(id: string): void;
@@ -2452,7 +2457,7 @@ function ThreadSidebar({
       {hideThreadLists ? <ThreadListExperimentSuspended /> : <LegendList
         data={rows}
         dataKey={`desktop-threads:${windowLayout.measurementRevision}`}
-        extraData={`${activeThreadId ?? ""}:${windowLayout.measurementRevision}`}
+        extraData={windowLayout.measurementRevision}
         estimatedItemSize={64}
         drawDistance={320}
         recycleItems
@@ -2467,9 +2472,9 @@ function ThreadSidebar({
           item.kind === "header" ? (
             <Text style={styles.sectionHeader}>{item.title}</Text>
           ) : (
-            <ThreadRow
+            <SelectableThreadRow
+              navigation={navigation}
               thread={item.thread}
-              selected={threadSelectionKey(item.thread) === activeThreadId}
               onPressIn={() => onPreload(threadSelectionKey(item.thread))}
               onPress={() => onSelect(threadSelectionKey(item.thread))}
               onTogglePin={() => onTogglePin(item.thread)}
@@ -2482,6 +2487,18 @@ function ThreadSidebar({
       />}
     </View>
   );
+}
+
+function SelectableThreadRow({
+  navigation,
+  thread,
+  ...row
+}: Omit<Parameters<typeof ThreadRow>[0], "selected"> & {
+  navigation: ThreadNavigationModel;
+}) {
+  const selectionKey = threadSelectionKey(thread);
+  const selected = useSelector(() => navigation.selection$.id.get() === selectionKey);
+  return <ThreadRow {...row} thread={thread} selected={selected} />;
 }
 
 function ThreadListMenu({
@@ -2520,8 +2537,6 @@ function ThreadListMenu({
 }
 
 function ThreadFilterMenu({ selected, onSelect }: { selected: ThreadListFilter; onSelect(filter: ThreadListFilter): void }) {
-  const [triggerHandle, setTriggerHandle] = useState<MenuTriggerRef | null>(null);
-  const [isOpen, setIsOpen] = useState(false);
   const options: Array<{ id: ThreadListFilter; label: string }> = [
     { id: "all", label: "All threads" },
     { id: "running", label: "Running" },
@@ -2530,47 +2545,29 @@ function ThreadFilterMenu({ selected, onSelect }: { selected: ThreadListFilter; 
     { id: "pinned", label: "Pinned" },
   ];
   return (
-    <Menu presentation="popover" isOpen={isOpen} onOpenChange={setIsOpen}>
-      <Menu.Trigger asChild ref={setTriggerHandle}>
-        <Pressable
-          accessibilityLabel="Thread filters"
-          accessibilityRole="button"
-          accessibilityState={{ selected: selected !== "all" }}
-          hitSlop={2}
-          onPress={() => triggerHandle?.open()}
-          style={({ pressed }) => [styles.threadFilterButton, pressed && styles.pressed]}
-        >
-          <Ionicons name="filter-outline" size={20} color={colors.text} />
-          {selected !== "all" && <View testID="thread-filter-active-dot" style={styles.threadFilterActiveDot} />}
-        </Pressable>
-      </Menu.Trigger>
-      <Menu.Portal>
-        <Menu.Overlay className="bg-backdrop" />
-        <Menu.Content
-          presentation="popover"
-          placement="bottom"
-          align="end"
-          width={220}
-          offset={8}
-          className="border border-border"
-        >
-          {options.map((option) => (
-            <Menu.Item
-              key={option.id}
-              id={option.id}
-              isSelected={selected === option.id}
-              onPress={() => {
-                onSelect(option.id);
-                setIsOpen(false);
-              }}
-            >
-              <Menu.ItemTitle>{option.label}</Menu.ItemTitle>
-              {selected === option.id && <Menu.ItemIndicator />}
-            </Menu.Item>
-          ))}
-        </Menu.Content>
-      </Menu.Portal>
-    </Menu>
+    <ActionMenu
+      accessibilityLabel="Thread filters"
+      actions={options.map((option) => ({
+        id: option.id,
+        label: option.label,
+        selected: selected === option.id,
+      }))}
+      placement="bottom"
+      align="end"
+      menuWidth={220}
+      onSelect={(id) => onSelect(id as ThreadListFilter)}
+    >
+      <Pressable
+        accessibilityLabel="Thread filters"
+        accessibilityRole="button"
+        accessibilityState={{ selected: selected !== "all" }}
+        hitSlop={2}
+        style={({ pressed }) => [styles.threadFilterButton, pressed && styles.pressed]}
+      >
+        <Ionicons name="filter-outline" size={20} color={colors.text} />
+        {selected !== "all" && <View testID="thread-filter-active-dot" style={styles.threadFilterActiveDot} />}
+      </Pressable>
+    </ActionMenu>
   );
 }
 
@@ -2775,7 +2772,7 @@ function ThreadRow({
           {rowMenu}
         </Swipeable>
       )}
-      {Platform.OS === "web" && (
+      {Platform.OS === "web" && webContextVisible && (
         <AppSheet isOpen={webContextVisible} onOpenChange={setWebContextVisible} contentProps={{ index: 0, enableDynamicSizing: true }}>
           <Text style={styles.sheetTitle}>Thread</Text>
           <MenuAction icon="copy-outline" title="Copy session ID" subtitle="" onPress={() => { setWebContextVisible(false); void copySessionId(thread.id).catch((cause) => dialog.alert("Copy failed", cause instanceof Error ? cause.message : "Could not copy session ID")); }} />
@@ -3005,7 +3002,7 @@ function MobileThreads({
             />
         )}
       />}
-      <MobileServerSheet
+      {serverPickerVisible && <MobileServerSheet
         visible={serverPickerVisible}
         servers={servers}
         activeServerId={activeServerId}
@@ -3013,7 +3010,7 @@ function MobileThreads({
         onAddServer={() => { setServerPickerVisible(false); onAddServer(); }}
         onSettings={() => { setServerPickerVisible(false); onSettings(); }}
         onClose={() => setServerPickerVisible(false)}
-      />
+      />}
     </View>
   );
 }
@@ -3290,6 +3287,31 @@ function ConversationHistorySubtitle({
   );
 }
 
+function ConversationBackendRefreshIndicator({
+  model,
+  connectionId,
+  threadId,
+}: {
+  model: ThreadChatModel | null;
+  connectionId: string | null;
+  threadId: string | null;
+}) {
+  const refreshing = useSelector(() => {
+    if (model === null || connectionId === null || threadId === null) return false;
+    return model.window$(connectionId, threadId).backendRefreshing.get();
+  });
+  if (!refreshing) return null;
+  return (
+    <ActivityIndicator
+      testID="conversation-backend-refresh-indicator"
+      accessibilityLabel="Updating conversation from server"
+      size="small"
+      color={colors.amber}
+      style={styles.conversationBackendRefreshIndicator}
+    />
+  );
+}
+
 function ThreadHistoryLoadingIndicator({
   model,
   resourceId,
@@ -3353,6 +3375,8 @@ function ConversationPane({
   historyViewport = COMPLETE_STATIC_THREAD_HISTORY,
   historyActivityModel = null,
   historyActivityResourceId = null,
+  threadChatModel = null,
+  onTimelineFirstDraw,
   onLoadTurnItems,
   queuedPrompts = [],
   composerState = null,
@@ -3376,7 +3400,6 @@ function ConversationPane({
   fileTransferController = null,
   subagentSummaryDatabase = null,
   subagentThreadDetails = null,
-  onReadSubagentThread,
   onRefreshSubagents,
   onOpenSubagentThread,
   onSend,
@@ -3448,6 +3471,8 @@ function ConversationPane({
   historyViewport?: ThreadHistoryViewport;
   historyActivityModel?: ThreadHistoryModel | null;
   historyActivityResourceId?: string | null;
+  threadChatModel?: ThreadChatModel | null;
+  onTimelineFirstDraw?(): void;
   onLoadTurnItems?(turnId: string): Promise<void>;
   queuedPrompts?: QueuedPrompt[];
   composerState?: ThreadUiStateRow | null;
@@ -3471,7 +3496,6 @@ function ConversationPane({
   fileTransferController?: FileTransferController | null;
   subagentSummaryDatabase?: ThreadSummaryDatabase | null;
   subagentThreadDetails?: ThreadDetailDatabase | null;
-  onReadSubagentThread?(connectionId: string, threadId: string): Promise<import("./data/use-remote-workspace").ThreadWindow | null>;
   onRefreshSubagents?(rootThreadId: string): Promise<void>;
   onOpenSubagentThread?(threadId: string): void;
   onSend?(text: string, mode: SendMode, options: TurnSendOptions): Promise<string>;
@@ -3570,6 +3594,7 @@ function ConversationPane({
   const [menuVisible, setMenuVisible] = useState(false);
   const [menuInitialPage, setMenuInitialPage] = useState<ComposerMenuPage>("model");
   const [composerInputHeight, setComposerInputHeight] = useState(COMPOSER_MIN_HEIGHT);
+  const [composerDiscardDistance, setComposerDiscardDistance] = useState(() => swipeDiscardDistanceForWidth(0));
   const composerInputWidthRef = useRef(0);
   const [pastedAttachmentPending, setPastedAttachmentPending] = useState(false);
   const pastedAttachmentPendingRef = useRef(false);
@@ -3793,9 +3818,6 @@ function ConversationPane({
     saveScrollOffset,
   });
   const newItemCount = awayFromLatest ? unread : 0;
-  const threadLifecycleActive = isThreadLifecycleActive(thread?.state);
-  const currentTurnId = threadLifecycleActive ? activeTurnId(remoteThread) : null;
-  const liveTurnPlan = selectLiveTurnPlan(remoteThread, currentTurnId);
   const serverExecution = remoteThread === null || remoteThread === undefined ? null : latestProjectedThreadExecutionSettings(remoteThread);
   const catalogDefaultModel = controls.models.find((candidate) => candidate.isDefault) ?? null;
   const effectiveModel = selectedModel ?? serverExecution?.model ?? controls.defaults.model ?? catalogDefaultModel?.id ?? null;
@@ -3873,6 +3895,12 @@ function ConversationPane({
         ? mergeProjectedThreadPartitions(remoteThread.turns, sealedTimeline, liveTimeline)
         : fullTimeline;
   }, { values: { sealedItemCount: sealedTimeline.length, liveItemCount: liveTimeline.length, fullItemCount: fullTimeline.length } });
+  const pendingDeliveryOwnsTurn = timeline.some((item) =>
+    item.kind === "optimistic" && pendingDeliveryMayOwnTurn(item.status),
+  );
+  const threadLifecycleActive = isThreadLifecycleActive(thread?.state) || pendingDeliveryOwnsTurn;
+  const currentTurnId = threadLifecycleActive ? activeTurnId(remoteThread) : null;
+  const liveTurnPlan = selectLiveTurnPlan(remoteThread, currentTurnId);
   const latestTimelineTurnId = (() => {
     for (let index = timeline.length - 1; index >= 0; index -= 1) {
       const item = timeline[index];
@@ -4295,7 +4323,7 @@ function ConversationPane({
       ...(selectedPersonality === null ? {} : { personality: selectedPersonality }),
       ...(selectedPermissions === null ? {} : { permissions: selectedPermissions }),
       ...(skills.length === 0 ? {} : { skills }),
-      ...(sentAttachments.length === 0 ? {} : { attachments: sentAttachments }),
+      ...(sentAttachments.length === 0 ? {} : { attachments: sentAttachments.map(remoteAttachment) }),
     });
     updateDraft("");
     updateAttachments([]);
@@ -4399,7 +4427,7 @@ function ConversationPane({
     return subagentEventProjection.project(resource.view$.peek().subagents);
   };
   const openSubagents = useEvent((summaries: readonly StoredThreadSummary[], initialThreadId: string | null = null) => {
-    if (draftConnectionId === null || draftThreadId === null || onReadSubagentThread === undefined) return;
+    if (draftConnectionId === null || draftThreadId === null || subagentThreadDetails === null) return;
     // Opening the sheet is the user event that starts the background catalog
     // refresh. The sheet itself only reads Legend-owned resources.
     void onRefreshSubagents?.(draftThreadId).catch(() => {
@@ -4412,7 +4440,6 @@ function ConversationPane({
         parentThread={remoteThread ?? null}
         summaries={summaries}
         threadDetails={subagentThreadDetails}
-        onReadThread={onReadSubagentThread}
         initialThreadId={initialThreadId}
         renderThread={({ summary, thread: subagentThread, compact: subagentCompact, onBack: onBackToSubagents, onOpenSubagent }) => (
           <ConversationPane
@@ -4428,7 +4455,6 @@ function ConversationPane({
             cwd={subagentThread.cwd}
             subagentSummaryDatabase={subagentSummaryDatabase}
             subagentThreadDetails={subagentThreadDetails}
-            onReadSubagentThread={onReadSubagentThread}
             onOpenSubagentThread={onOpenSubagent}
             {...(onRefreshSubagents === undefined ? {} : { onRefreshSubagents })}
             {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
@@ -4520,14 +4546,109 @@ function ConversationPane({
     );
     return await uploadSelectedAttachment(selected) !== null;
   };
-  const attachImageReview = async (markdown: string): Promise<boolean> => {
-    if (markdown === "") return false;
-    const selected = createTextUpload(
-      `codex-image-review-${new Date().toISOString().replace(/[:.]/g, "-")}.md`,
-      "text/markdown",
-      markdown,
+  const commitDrawing = async (
+    existing: ComposerAttachment | null,
+    mode: "drawing" | "image-annotation",
+    name: string | null,
+    value: DrawingCommit,
+  ): Promise<boolean> => {
+    if (fileTransferController === null || getTransferAccess === undefined || draftThreadId === null) return false;
+    const selected = createBinaryUpload(
+      existing?.name ?? name ?? quickdrawAttachmentName(),
+      "image/png",
+      quickdrawPngBytes(value.pngDataUrl),
     );
-    return await uploadSelectedAttachment(selected) !== null;
+    if (existing === null) {
+      const uploaded = await uploadSelectedAttachment(selected, (attachment) => {
+        const next: ComposerAttachment = {
+          ...attachment,
+          editor: { kind: "quickdraw", mode, snapshot: value.snapshot, revision: Date.now() },
+        };
+        updateAttachments([...latestAttachmentsRef.current.latest.filter((candidate) => candidate.id !== next.id), next]);
+      }, false);
+      return uploaded !== null;
+    }
+
+    try {
+      let committed = false;
+      await fileTransferController.start({
+        scope: composerScope,
+        mode: "upload",
+        rootId: existing.rootId,
+        remotePath: existing.path,
+        overwrite: true,
+        upload: selected,
+        directory: null,
+        getAccess: getStableTransferAccess,
+        onUploaded: () => {
+          const current = latestAttachmentsRef.current.latest;
+          if (!current.some((candidate) => candidate.id === existing.id)) return;
+          updateAttachments(current.map((candidate) => candidate.id === existing.id
+            ? { ...existing, editor: { kind: "quickdraw", mode, snapshot: value.snapshot, revision: Date.now() } }
+            : candidate));
+          committed = true;
+        },
+      });
+      return committed;
+    } catch (cause) {
+      dialog.alert(
+        "Could not save drawing",
+        cause instanceof Error ? cause.message : "Drawing upload failed",
+        [{ text: "OK" }],
+      );
+      return false;
+    }
+  };
+  const presentDrawing = ({
+    attachment,
+    initialSnapshot,
+    mode,
+    name = null,
+    onAttached,
+  }: {
+    attachment: ComposerAttachment | null;
+    initialSnapshot: Record<string, unknown> | null;
+    mode: "drawing" | "image-annotation";
+    name?: string | null;
+    onAttached?(): void;
+  }) => {
+    fullscreenOverlay.present(({ close }) => (
+      <DrawingWorkspace
+        editing={attachment !== null}
+        initialSnapshot={initialSnapshot}
+        mode={mode}
+        onCommit={async (value) => {
+          const committed = await commitDrawing(attachment, mode, name, value);
+          if (committed) onAttached?.();
+          return committed;
+        }}
+        onClose={close}
+      />
+    ));
+  };
+  const openDrawing = () => {
+    if (!fileAttachmentEnabled) return;
+    setComposerTrayVisible(false);
+    presentDrawing({ attachment: null, initialSnapshot: null, mode: "drawing" });
+  };
+  const editDrawing = (attachment: ComposerAttachment) => {
+    if (!isQuickdrawDraftAttachment(attachment)) return;
+    presentDrawing({
+      attachment,
+      initialSnapshot: attachment.editor.snapshot,
+      mode: attachment.editor.mode,
+    });
+  };
+  const annotateImage = async (item: ImagePreviewItem, onAttached: () => void): Promise<void> => {
+    if (!fileAttachmentEnabled) throw new Error("File attachments are unavailable");
+    const snapshot = await loadQuickdrawImageSnapshot(item.source);
+    presentDrawing({
+      attachment: null,
+      initialSnapshot: snapshot,
+      mode: "image-annotation",
+      name: annotatedImageName(item.label),
+      onAttached,
+    });
   };
   const attachContentReview = async (markdown: string): Promise<string | null> => {
     if (markdown === "") return null;
@@ -4547,7 +4668,7 @@ function ConversationPane({
       setContentReviewAttachmentId(scope, attachment.id);
     }).then((attachment) => attachment?.id ?? null);
   };
-  useImagePreviewAnnotationHandler(attachImageReview);
+  useImagePreviewAnnotationHandler(annotateImage);
   useContentReviewRuntime({
     attach: attachContentReview,
     attachmentId: contentReviewAttachmentId,
@@ -4700,6 +4821,10 @@ function ConversationPane({
       void pickComposerAttachment();
       return;
     }
+    if (action === "drawing") {
+      openDrawing();
+      return;
+    }
     if (action === "terminal") {
       createAndOpenTerminal();
       return;
@@ -4714,13 +4839,14 @@ function ConversationPane({
   const useAnchoredComposerMenu = Platform.OS === "android";
   const anchoredComposerActions: ActionMenuItem[] = [
     { id: "files", label: "Attach file", icon: "attach-outline", disabled: !fileAttachmentEnabled },
+    { id: "drawing", label: "Drawing", icon: "brush-outline", disabled: !fileAttachmentEnabled },
     { id: "terminal", label: "Terminal", icon: "terminal-outline", disabled: newChat || Platform.OS !== "android" || draftConnectionId === null || draftThreadId === null },
     { id: "ports", label: "Port forward", icon: "git-network-outline", disabled: portForwardingConnectionId === null },
     { id: "skills", label: "Skills", icon: "sparkles-outline" },
     { id: "goal", label: "Goal", icon: "flag-outline" },
   ];
   const handleAnchoredComposerAction = (id: string) => {
-    if (id === "files" || id === "terminal" || id === "ports" || id === "skills" || id === "goal") {
+    if (id === "files" || id === "drawing" || id === "terminal" || id === "ports" || id === "skills" || id === "goal") {
       openAccessoryAction(id);
     }
   };
@@ -4822,6 +4948,14 @@ function ConversationPane({
     bindVoiceController();
     await voiceController?.toggle();
   };
+  const discardVoice = async () => {
+    await voiceController?.discard(composerScope);
+  };
+  const clearComposerText = () => {
+    draftSelectionRef.current = { start: 0, end: 0 };
+    voiceController?.clearPendingSelection(composerScope);
+    updateDraft("");
+  };
 
   if (thread === null) {
     return (
@@ -4836,11 +4970,24 @@ function ConversationPane({
   const sendDisabled = voicePhase === "finishing"
     || pastedAttachmentPending
     || (voicePhase === "idle" && !stoppingResponse && draft.trim() === "" && attachments.length === 0);
+  const composerDiscardEnabled = voicePhase !== "idle"
+    || voiceRetryAvailable
+    || voiceError !== null
+    || draft !== "";
+  const discardComposer = () => {
+    if (voicePhase !== "idle" || voiceRetryAvailable || voiceError !== null) void discardVoice();
+    else clearComposerText();
+  };
+  const activatePrimaryAction = () => {
+    if (voicePhase !== "idle") void finishVoice(true);
+    else if (currentTurnId !== null && onInterrupt !== undefined && draft.trim() === "" && attachments.length === 0) void onInterrupt(currentTurnId);
+    else send();
+  };
   return (
     <AppVoiceInputProvider runtime={appVoiceInputRuntime}>
     <AppFullscreenOverlayBoundary scope={composerScope} lifecycle={fullscreenOverlayLifecycle}>
     <SubagentNavigationContext.Provider value={onOpenSubagentThread
-      ?? (draftConnectionId !== null && draftThreadId !== null && onReadSubagentThread !== undefined
+      ?? (draftConnectionId !== null && draftThreadId !== null && subagentThreadDetails !== null
         ? (threadId) => openSubagents(currentSubagentSummaries(), threadId)
         : null)}>
     <LargeContentViewerHost>
@@ -4861,9 +5008,16 @@ function ConversationPane({
           </Pressable>
         )}
         <View style={styles.conversationIdentity}>
-          <Text testID="conversation-title" numberOfLines={1} ellipsizeMode="tail" style={styles.conversationTitle}>
-            {emojiSafeTitle(thread.title)}
-          </Text>
+          <View style={styles.conversationTitleRow}>
+            <Text testID="conversation-title" numberOfLines={1} ellipsizeMode="tail" style={[styles.conversationTitle, styles.conversationHeaderTitle]}>
+              {emojiSafeTitle(thread.title)}
+            </Text>
+            <ConversationBackendRefreshIndicator
+              model={threadChatModel}
+              connectionId={draftConnectionId}
+              threadId={draftThreadId}
+            />
+          </View>
           <ConversationHistorySubtitle
             model={historyActivityModel}
             resourceId={historyActivityResourceId}
@@ -4936,6 +5090,7 @@ function ConversationPane({
       >
       <ThreadCwdContext.Provider value={cwd}>
       <ThreadCodeDocumentContext.Provider value={openCodeDocument}>
+      <MessageActionMenuProvider>
       <View ref={timelineViewportRef} style={styles.timelineShell}>
       {draftConnectionId !== null && draftThreadId !== null && (
         <CommitOnChangeProbe
@@ -4999,6 +5154,7 @@ function ConversationPane({
               values: { nativeListDrawMs: elapsedTimeInMs, itemCount: displayedTimeline.length },
             });
           }
+          onTimelineFirstDraw?.();
           commitInitialTimelineLoad();
         }}
         onLayout={({ nativeEvent }) => {
@@ -5187,6 +5343,7 @@ function ConversationPane({
         </View>
       )}
       </View>
+      </MessageActionMenuProvider>
       </ThreadCodeDocumentContext.Provider>
       </ThreadCwdContext.Provider>
       </KeyboardGestureArea>
@@ -5262,7 +5419,7 @@ function ConversationPane({
         />}
         <ComposerPortContextChip connectionId={portForwardingConnectionId} onOpen={() => openControls("ports")} />
         <ComposerTerminalContextChip connectionId={draftConnectionId} threadId={draftThreadId} onOpen={openTerminal} />
-        {onReadSubagentThread !== undefined && <ComposerSubagentContextChip
+        {subagentThreadDetails !== null && <ComposerSubagentContextChip
           database={subagentSummaryDatabase}
           connectionId={draftConnectionId}
           parentThreadId={draftThreadId}
@@ -5280,12 +5437,17 @@ function ConversationPane({
           {inlineQueue.slice(0, 2).map((entry) => <Text key={entry.id} numberOfLines={1} style={styles.inlineQueueText}>{entry.text}</Text>)}
         </Pressable>
       )}
-      {voiceError !== null && <Text style={styles.composerError}>{voiceError}</Text>}
+      {voiceError !== null && (
+        <View style={styles.composerErrorRow}>
+          <Text style={styles.composerError}>{voiceError}</Text>
+        </View>
+      )}
       {attachments.length > 0 && (
         <CompactAttachmentStrip
           testID="composer-attachment-strip"
           attachments={attachments}
           {...(getTransferAccess === undefined ? {} : { getTransferAccess: getStableTransferAccess })}
+          onEditDrawing={editDrawing}
           onRemove={(attachmentId) => {
             updateAttachments(latestAttachmentsRef.current.latest.filter((candidate) => candidate.id !== attachmentId));
             if (contentReviewAttachmentId === attachmentId) setContentReviewAttachmentId(composerScope, null);
@@ -5333,6 +5495,8 @@ function ConversationPane({
           onLayout={({ nativeEvent }) => {
             const previousWidth = composerInputWidthRef.current;
             composerInputWidthRef.current = nativeEvent.layout.width;
+            const nextDiscardDistance = swipeDiscardDistanceForWidth(nativeEvent.layout.width);
+            setComposerDiscardDistance((current) => current === nextDiscardDistance ? current : nextDiscardDistance);
             if (previousWidth <= 0 && nativeEvent.layout.width > 0) setComposerInputHeight(COMPOSER_MIN_HEIGHT);
           }}
           style={[styles.composerInputShell, { height: visibleComposerInputHeight }]}
@@ -5400,41 +5564,31 @@ function ConversationPane({
             }}
             onSelect={handleDeliveryAction}
             style={styles.composerSendMenuAnchor}
-          ><Pressable
-            disabled={sendDisabled}
-            onPress={() => {
-              if (voicePhase !== "idle") void finishVoice(true);
-              else if (currentTurnId !== null && onInterrupt !== undefined && draft.trim() === "" && attachments.length === 0) void onInterrupt(currentTurnId);
-              else send();
-            }}
-            style={({ pressed }) => [
-              styles.sendButton,
-              pressed && styles.sendButtonPressed,
-              sendDisabled && styles.disabled,
-              stoppingResponse && styles.stopButton,
-            ]}
-            accessibilityState={{ disabled: sendDisabled }}
+          ><SwipeDiscardAction
             accessibilityLabel={voicePhase !== "idle" ? "Finish voice input and send transcript" : stoppingResponse ? "Stop response" : "Send message"}
-          >
-            <Ionicons name={voicePhase === "finishing" ? "hourglass-outline" : stoppingResponse ? "stop" : "arrow-up"} size={19} color={stoppingResponse ? "#ffffff" : colors.onPrimary} />
-          </Pressable></ActionMenu> : <Pressable
             disabled={sendDisabled}
-            onPress={() => {
-              if (voicePhase !== "idle") void finishVoice(true);
-              else if (currentTurnId !== null && onInterrupt !== undefined && draft.trim() === "" && attachments.length === 0) void onInterrupt(currentTurnId);
-              else send();
-            }}
-            style={({ pressed }) => [
-              styles.sendButton,
-              pressed && styles.sendButtonPressed,
-              sendDisabled && styles.disabled,
-              stoppingResponse && styles.stopButton,
-            ]}
-            accessibilityState={{ disabled: sendDisabled }}
+            discardEnabled={composerDiscardEnabled}
+            discardDistance={composerDiscardDistance}
+            icon={voicePhase === "finishing" ? "hourglass-outline" : stoppingResponse ? "stop" : "arrow-up"}
+            iconColor={stoppingResponse ? "#ffffff" : colors.onPrimary}
+            style={[styles.sendButton, stoppingResponse && styles.stopButton]}
+            pressedStyle={stoppingResponse ? undefined : styles.sendButtonPressed}
+            disabledStyle={styles.disabled}
+            onDiscard={discardComposer}
+            onPress={activatePrimaryAction}
+          /></ActionMenu> : <SwipeDiscardAction
             accessibilityLabel={voicePhase !== "idle" ? "Finish voice input and send transcript" : stoppingResponse ? "Stop response" : "Send message"}
-          >
-            <Ionicons name={voicePhase === "finishing" ? "hourglass-outline" : stoppingResponse ? "stop" : "arrow-up"} size={19} color={stoppingResponse ? "#ffffff" : colors.onPrimary} />
-          </Pressable>}
+            disabled={sendDisabled}
+            discardEnabled={composerDiscardEnabled}
+            discardDistance={composerDiscardDistance}
+            icon={voicePhase === "finishing" ? "hourglass-outline" : stoppingResponse ? "stop" : "arrow-up"}
+            iconColor={stoppingResponse ? "#ffffff" : colors.onPrimary}
+            style={[styles.sendButton, stoppingResponse && styles.stopButton]}
+            pressedStyle={stoppingResponse ? undefined : styles.sendButtonPressed}
+            disabledStyle={styles.disabled}
+            onDiscard={discardComposer}
+            onPress={activatePrimaryAction}
+          />}
         </View>
       </View>
       </>}
@@ -5443,7 +5597,7 @@ function ConversationPane({
 
       <ContentReviewComposer targetPrefix="agent-response:" />
 
-      <ResourceComposerMenu
+      {menuVisible && <ResourceComposerMenu
         visible={menuVisible}
         thread={remoteThread ?? null}
         initialPage={menuInitialPage}
@@ -5484,8 +5638,8 @@ function ConversationPane({
         {...(onStartReview === undefined ? {} : { onStartReview })}
         {...(onCreateTunnel === undefined ? {} : { onCreateTunnel })}
         {...(onRevokeTunnel === undefined ? {} : { onRevokeTunnel })}
-      />
-      <ProjectPickerSheet
+      />}
+      {projectPickerVisible && <ProjectPickerSheet
         visible={projectPickerVisible}
         cwd={cwd}
         projects={projects}
@@ -5496,14 +5650,14 @@ function ConversationPane({
         {...(onAddProject === undefined ? {} : { onAddProject })}
         {...(onReadDirectory === undefined ? {} : { onReadDirectory })}
         onClose={closeProjectPicker}
-      />
-      <ThreadRenameSheet
+      />}
+      {threadRenameVisible && <ThreadRenameSheet
         visible={threadRenameVisible}
         title={thread.title}
         onClose={closeThreadRename}
         {...(onRename === undefined ? {} : { onRename })}
-      />
-      <ThreadResourcesSheet
+      />}
+      {threadResourceSheet !== null && <ThreadResourcesSheet
         visible={threadResourceSheet !== null}
         model={threadResourcesModel}
         resourceId={threadResourceId}
@@ -5516,7 +5670,7 @@ function ConversationPane({
         {...(onLoadThreadChangeDiff === undefined ? {} : { onLoadThreadChangeDiff })}
         {...(onLoadThreadResources === undefined ? {} : { onReload: () => onLoadThreadResources(undefined, "attachments") })}
         onClose={closeThreadResources}
-      />
+      />}
     </View>
     </View>
     </LargeContentViewerHost>
@@ -5805,10 +5959,11 @@ function ThreadResourcesSheet({
                   </RichContentWidthProvider>
                 )}
               {documentResult.truncated && <Text style={styles.menuNotice}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text>}
+              {document.request.kind === "markdown" && <ContentReviewComments targetId={`markdown-document:${document.request.path}`} />}
             </AppSheetScrollView>
           )}
           {documentResult.phase === "ready" && document.request.kind === "markdown" && (
-            <ContentReviewComposer targetId={`markdown-document:${document.request.path}`} />
+            <ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />
           )}
         </View>
       )}
@@ -5918,7 +6073,7 @@ function ThreadHeaderMenu({
         <Pressable accessibilityLabel="Thread menu" onPress={() => setWebMenuVisible(true)} style={styles.headerIcon}>
           <Ionicons name="ellipsis-vertical" size={21} color={colors.text} />
         </Pressable>
-        <AppSheet isOpen={webMenuVisible} onOpenChange={setWebMenuVisible} contentProps={{ index: 0, enableDynamicSizing: true }}>
+        {webMenuVisible && <AppSheet isOpen onOpenChange={setWebMenuVisible} contentProps={{ index: 0, enableDynamicSizing: true }}>
           <Text style={styles.sheetTitle}>Thread</Text>
           <MenuAction icon="copy-outline" title="Copy session ID" subtitle="" onPress={() => { setWebMenuVisible(false); handleAction("copy-session-id"); }} />
           <MenuAction icon="pencil-outline" title="Rename" subtitle="" onPress={() => { setWebMenuVisible(false); onRenameRequest(); }} />
@@ -5927,7 +6082,7 @@ function ThreadHeaderMenu({
           <MenuAction icon="contract-outline" title="Compact context" subtitle="" onPress={() => { setWebMenuVisible(false); run(onCompact, "Compact"); }} />
           <MenuAction icon={archived ? "archive" : "archive-outline"} title={archived ? "Unarchive thread" : "Archive thread"} subtitle="" onPress={() => { setWebMenuVisible(false); run(archived ? onUnarchive : onArchive, archived ? "Unarchive" : "Archive"); }} />
           <MenuAction danger icon="trash-outline" title="Delete thread" subtitle="" onPress={() => { setWebMenuVisible(false); handleAction("delete"); }} />
-        </AppSheet>
+        </AppSheet>}
       </>
     );
   }
@@ -5991,11 +6146,13 @@ const QUEUE_DRAG_ROW_STEP = 76;
 function CompactAttachmentStrip({
   attachments,
   getTransferAccess,
+  onEditDrawing,
   onRemove,
   testID,
 }: {
   attachments: readonly ComposerAttachment[];
   getTransferAccess?: GetTransferAccess;
+  onEditDrawing?(attachment: ComposerAttachment): void;
   onRemove(attachmentId: string): void;
   testID?: string;
 }) {
@@ -6017,6 +6174,7 @@ function CompactAttachmentStrip({
               getTransferAccess={getTransferAccess}
               groupId={previewGroupId}
               order={index}
+              {...(onEditDrawing === undefined ? {} : { onEditDrawing })}
               onRemove={onRemove}
             />
           )
@@ -6037,17 +6195,22 @@ function CompactImageAttachmentCard({
   getTransferAccess,
   groupId,
   order,
+  onEditDrawing,
   onRemove,
 }: {
   attachment: ComposerAttachment;
   getTransferAccess: GetTransferAccess;
   groupId: string;
   order: number;
+  onEditDrawing?(attachment: ComposerAttachment): void;
   onRemove(attachmentId: string): void;
 }) {
   const openImagePreview = useImagePreview();
   const [retryRevision, setRetryRevision] = useState(0);
-  const source = composerAttachmentSource(attachment);
+  const baseSource = composerAttachmentSource(attachment);
+  const source = attachment.editor?.kind === "quickdraw"
+    ? { ...baseSource, cacheRevision: String(attachment.editor.revision) }
+    : baseSource;
   const privateImage = usePrivateAssetUri(source, retryRevision, getTransferAccess);
   const resolvedSource = privateImage.source;
   const previewItem = {
@@ -6059,13 +6222,18 @@ function CompactImageAttachmentCard({
   };
   useRegisterImagePreviewItem(resolvedSource === null ? null : groupId, previewItem);
   const retrying = resolvedSource === null && privateImage.failed;
+  const editableDrawing = isQuickdrawDraftAttachment(attachment) && onEditDrawing !== undefined;
   return (
     <View style={styles.composerAttachmentCard}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={retrying ? `Retry ${attachment.name}` : `Open ${attachment.name}`}
-        disabled={resolvedSource === null && !retrying}
+        accessibilityLabel={editableDrawing ? `Edit ${attachment.name}` : retrying ? `Retry ${attachment.name}` : `Open ${attachment.name}`}
+        disabled={!editableDrawing && resolvedSource === null && !retrying}
         onPress={() => {
+          if (isQuickdrawDraftAttachment(attachment) && onEditDrawing !== undefined) {
+            onEditDrawing(attachment);
+            return;
+          }
           if (retrying) setRetryRevision((current) => current + 1);
           else if (resolvedSource !== null) openImagePreview({ ...previewItem, source: resolvedSource, groupId });
         }}
@@ -6080,7 +6248,7 @@ function CompactImageAttachmentCard({
         </View>
         <View style={styles.composerAttachmentText}>
           <Text numberOfLines={1} style={styles.composerAttachmentName}>{attachment.name}</Text>
-          <Text numberOfLines={1} style={styles.composerAttachmentKind}>{retrying ? "Preview failed · Retry" : "Image"}</Text>
+          <Text numberOfLines={1} style={styles.composerAttachmentKind}>{retrying ? "Preview failed · Retry" : isQuickdrawDraftAttachment(attachment) ? "Drawing · Tap to edit" : "Image"}</Text>
         </View>
       </Pressable>
       <CompactAttachmentRemove attachment={attachment} onRemove={onRemove} />
@@ -6641,6 +6809,7 @@ const COMPOSER_ACCESSORY_ACTIONS: ReadonlyArray<{
   label: string;
 }> = [
   { id: "files", icon: "attach-outline", label: "File" },
+  { id: "drawing", icon: "brush-outline", label: "Drawing" },
   { id: "terminal", icon: "terminal-outline", label: "Terminal" },
   { id: "ports", icon: "git-network-outline", label: "Port forward" },
   { id: "skills", icon: "extension-puzzle-outline", label: "Skill" },
@@ -6658,7 +6827,7 @@ function ComposerAccessoryTray({
   portForwardEnabled: boolean;
   onSelect(action: ComposerAccessoryAction): void;
 }) {
-  const enabled = (action: ComposerAccessoryAction) => action === "files"
+  const enabled = (action: ComposerAccessoryAction) => action === "files" || action === "drawing"
     ? fileEnabled
     : action === "terminal"
       ? terminalEnabled
@@ -7421,41 +7590,29 @@ function CopyButton({ text, getText, compact = false }: { text?: string; getText
   );
 }
 
-function MessageContextMenu({ copyText, forkEnabled, onFork, children }: { copyText: string; forkEnabled: boolean; onFork?(): Promise<void>; children: React.ReactNode }) {
-  const dialog = useAppDialog();
-  const canCopy = copyText !== "";
-  const canFork = forkEnabled && onFork !== undefined;
-  const actions: ActionMenuItem[] = [
-    { id: "copy", label: "Copy", icon: "copy-outline", disabled: !canCopy },
-    { id: "fork", label: "Fork", icon: "git-branch-outline", disabled: !canFork },
-  ];
-  const handleAction = (id: string) => {
-    if (id === "copy") {
-      void Clipboard.setStringAsync(copyText);
-      return;
-    }
-    if (id === "fork" && canFork && onFork !== undefined) {
-      void onFork().catch((cause) => dialog.alert("Fork failed", cause instanceof Error ? cause.message : "Could not fork thread"));
-    }
+function MessageActionRail({ request, completedAt, showActions }: { request: MessageActionMenuRequest; completedAt: number | null; showActions: boolean }) {
+  const openMessageActions = useMessageActionMenu();
+  const actionButtonRef = useRef<View>(null);
+  const openActions = () => {
+    actionButtonRef.current?.measureInWindow((pageX, pageY, width, height) => {
+      openMessageActions(request, { pageX, pageY, width, height });
+    });
   };
   return (
-    <ActionMenu
-      accessibilityLabel="Message actions"
-      actions={actions}
-      trigger="long-press"
-      placement="top"
-      align="start"
-      onSelect={handleAction}
-      style={styles.messageContextRoot}
-    >
-      <GesturePressable
-        accessible={false}
-        cancelable
-        delayLongPress={350}
+    <View style={styles.messageActionRail}>
+      {showActions && <Pressable
+        ref={actionButtonRef}
+        accessibilityRole="button"
+        accessibilityLabel="Message actions"
+        collapsable={false}
+        hitSlop={6}
+        onPress={openActions}
+        style={({ pressed }) => [styles.messageActionButton, pressed && styles.pressed]}
       >
-        {children}
-      </GesturePressable>
-    </ActionMenu>
+        <Ionicons name="ellipsis-vertical" size={18} color={colors.textDim} style={styles.messageActionIcon} />
+      </Pressable>}
+      {completedAt !== null && <Text style={styles.messageRailTime}>{formatClockTime(completedAt)}</Text>}
+    </View>
   );
 }
 
@@ -7465,16 +7622,19 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
   getTransferAccess?: GetTransferAccess;
 }) {
   const failed = item.status === "failed";
-  const delivered = item.status === "delivered";
   const deliveryLabel = failed
     ? "Failed"
-    : delivered
-      ? "Sent"
-      : item.status === "uncertain"
+    : item.status === "uncertain"
         ? "Checking delivery"
-        : item.workspaceRequestId !== null && item.workspaceRequestId !== undefined
-          ? "Preparing workspace"
-          : "Sending";
+        : item.status === "appServerAccepted"
+          ? "Running"
+          : item.status === "companionAccepted"
+            ? item.workspaceRequestId !== null && item.workspaceRequestId !== undefined
+              ? "Preparing workspace"
+              : "Accepted by Companion"
+            : item.status === "sending"
+              ? "Sending to Companion"
+              : "Queued";
   const [retrying, setRetrying] = useState(false);
   const dialog = useAppDialog();
   const retry = () => {
@@ -7489,7 +7649,6 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
     <View testID="turn-group" style={styles.turnGroup}>
       <View style={styles.userTurnCluster}>
       <RecoverableRenderBoundary scope="bubble" label="Pending user message" context={`Delivery: ${item.id}`} resetKey={`${item.scope}:${item.id}`}>
-      <MessageContextMenu copyText={item.text} forkEnabled={false}>
         <ImagePreviewGroup id={`${item.scope}:${item.id}:user`}>
         <View style={styles.userMessageRow}>
           <Text style={styles.messageTime}>{formatClockTime(item.createdAt / 1_000)}</Text>
@@ -7510,7 +7669,6 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
           </Bubble>
         </View>
         </ImagePreviewGroup>
-      </MessageContextMenu>
       </RecoverableRenderBoundary>
       <View
         accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}
@@ -7519,9 +7677,7 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
       >
         {failed
           ? <View style={[styles.turnStatusDot, styles.turnStatusFailed]} />
-          : delivered
-            ? <View style={[styles.turnStatusDot, styles.turnStatusCompleted]} />
-            : <CalmSpinner size={9} color={colors.textMuted} durationMs={3_000} />}
+          : <CalmSpinner size={9} color={colors.textMuted} durationMs={3_000} />}
         <Text style={styles.turnMetaText}>{deliveryLabel}</Text>
         {failed && onRetry !== undefined && (
           <Pressable
@@ -7553,6 +7709,7 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
 type CachedTurnProjection = {
   renderWindow: ReturnType<typeof selectTurnRenderWindow>;
   userBlocks: RenderBlock[];
+  preTurnBlocks: RenderBlock[];
   latestAgentBlock: RenderBlock | null;
   liveActivityBlocks: RenderBlock[];
 };
@@ -7564,6 +7721,10 @@ function projectTurnProjection(turn: Extract<TimelineItem, { kind: "turn" }>): C
     const item = rawTurn.items[index];
     return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
+  const preTurnBlocks = renderWindow.preTurnActivityIndexes.flatMap((index) => {
+    const item = rawTurn.items[index];
+    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
+  });
   const latestAgentItem = renderWindow.latestAgentIndex < 0 ? undefined : rawTurn.items[renderWindow.latestAgentIndex];
   const latestAgentBlock = latestAgentItem === undefined
     ? null
@@ -7572,7 +7733,7 @@ function projectTurnProjection(turn: Extract<TimelineItem, { kind: "turn" }>): C
     const item = rawTurn.items[index];
     return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
-  return { renderWindow, userBlocks, latestAgentBlock, liveActivityBlocks };
+  return { renderWindow, userBlocks, preTurnBlocks, latestAgentBlock, liveActivityBlocks };
 }
 
 function TurnTimelineItem({
@@ -7605,7 +7766,8 @@ function TurnTimelineItem({
   onLatestAgentLayout?(): void;
 }) {
   const rawTurn = turn.turn;
-  const { renderWindow, userBlocks, latestAgentBlock, liveActivityBlocks } = projectTurnProjection(turn);
+  const beginContentReview = useContentReview();
+  const { renderWindow, userBlocks, preTurnBlocks, latestAgentBlock, liveActivityBlocks } = projectTurnProjection(turn);
   const liveActivityEntries = renderWindow.liveActivityIndexes.flatMap((itemIndex, projectionIndex) => {
     const block = liveActivityBlocks[projectionIndex];
     return block === undefined ? [] : [{ index: itemIndex, block }];
@@ -7636,8 +7798,16 @@ function TurnTimelineItem({
     ? latestAgentBlock
     : { ...latestAgentBlock, body: latestAgentProjection.visibleSource };
   const copyText = latestAgentBlock?.body ?? "";
-  const userCopyText = userBlocks.map((block) => protocolCopyText(block)).join("\n");
   const canForkThrough = rawTurn.status !== "inProgress" && onForkThroughTurn !== undefined;
+  const agentReviewTarget: ContentReviewTarget | null = latestAgentBlock === null
+    ? null
+    : {
+        id: `agent-response:${latestAgentBlock.key}`,
+        label: "Completed agent response",
+        reference: latestAgentBlock.key,
+      };
+  const canReviewResponse = rawTurn.status !== "inProgress" && agentReviewTarget !== null;
+  const showMessageActions = copyText !== "" || canForkThrough || canReviewResponse;
   const completedWithoutFinal = rawTurn.status === "completed" && latestAgentBlock === null;
   const completedActivityCount = rawTurn.status === "inProgress" ? 0 : completedActivityItemCount(rawTurn);
   const agentBubbleFill = latestAgentBlock?.content?.fields["/text"] !== undefined
@@ -7656,10 +7826,9 @@ function TurnTimelineItem({
       {userBlocks.length > 0 && (
         <View style={styles.userTurnCluster}>
         <RecoverableRenderBoundary scope="bubble" label="User message" context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`} resetKey={`${turn.key}:user`}>
-        <MessageContextMenu copyText={userCopyText} forkEnabled={canForkThrough} {...(onForkThroughTurn === undefined ? {} : { onFork: () => onForkThroughTurn(turn.id) })}>
           <ImagePreviewGroup id={`${turn.key}:user`}>
           <View style={styles.userMessageRow}>
-          {rawTurn.startedAt !== null && <Text style={styles.messageTime}>{formatClockTime(rawTurn.startedAt)}</Text>}
+          {rawTurn.startedAt !== null && <Text style={styles.messageTime}>{`Sent · ${formatClockTime(rawTurn.startedAt)}`}</Text>}
           <Bubble
             variant="user"
             testID="user-bubble"
@@ -7683,13 +7852,20 @@ function TurnTimelineItem({
           </Bubble>
           </View>
           </ImagePreviewGroup>
-        </MessageContextMenu>
         </RecoverableRenderBoundary>
         </View>
       )}
+      {preTurnBlocks.length > 0 && (
+        <PreTurnLifecycleRows
+          blocks={preTurnBlocks}
+          turnStatus={rawTurn.status}
+          turnKey={turn.key}
+          {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+          {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+        />
+      )}
       {showAgentBubble && (
         <RecoverableRenderBoundary scope="bubble" label="Agent message" context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`} resetKey={`${turn.key}:agent`}>
-        <MessageContextMenu copyText={copyText} forkEnabled={canForkThrough} {...(onForkThroughTurn === undefined ? {} : { onFork: () => onForkThroughTurn(turn.id) })}>
           <ImagePreviewGroup id={`${turn.key}:agent`}>
           <View style={styles.agentMessageRow}>
           <Bubble
@@ -7758,10 +7934,17 @@ function TurnTimelineItem({
           {!hasAgentContent && <Text style={styles.agentPlaceholder}>{rawTurn.status === "failed" ? "The turn failed before Codex returned a response." : "Stopped before a response was completed."}</Text>}
           </BubbleContent>
           </Bubble>
-          {rawTurn.completedAt !== null && <Text style={styles.messageTime}>{formatClockTime(rawTurn.completedAt)}</Text>}
+          {(showMessageActions || rawTurn.completedAt !== null) && (
+            <MessageActionRail completedAt={rawTurn.completedAt} showActions={showMessageActions} request={{
+              copyText,
+              ...(canForkThrough && onForkThroughTurn !== undefined ? { onFork: () => onForkThroughTurn(turn.id) } : {}),
+              ...(canReviewResponse && agentReviewTarget !== null
+                ? { onReview: async () => { await beginContentReview({ kind: "response", target: agentReviewTarget }); } }
+                : {}),
+            }} />
+          )}
           </View>
           </ImagePreviewGroup>
-        </MessageContextMenu>
         </RecoverableRenderBoundary>
       )}
       <TurnFooter
@@ -7817,6 +8000,63 @@ function AppendOnlyLiveContent({ cacheKey, source, mode, streamMetricKey = null,
 
 function LiveAgentResponse({ cacheKey, projection, streamMetricKey }: { cacheKey: string; projection: LiveMarkdownProjection; streamMetricKey: string | null }) {
   return <AppendOnlyLiveContent cacheKey={cacheKey} source={projection.source} mode="markdown" streamMetricKey={streamMetricKey} markdownProjection={projection} />;
+}
+
+function PreTurnLifecycleRows({
+  blocks,
+  turnStatus,
+  turnKey,
+  getTransferAccess,
+  onFixUnsupportedBlock,
+}: {
+  blocks: RenderBlock[];
+  turnStatus: "completed" | "interrupted" | "failed" | "inProgress";
+  turnKey: string;
+  getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
+  onFixUnsupportedBlock?(block: RenderBlock): Promise<void>;
+}) {
+  return (
+    <View testID="pre-turn-lifecycle" style={styles.preTurnLifecycleList}>
+      {blocks.map((block) => {
+        const lifecyclePhase = block.raw.codewideLifecyclePhase;
+        const running = lifecyclePhase === "started"
+          || block.status === "inProgress"
+          || block.status === "running";
+        const simpleStatus = block.body === null && !isToolActivityKind(block.kind);
+        if (!simpleStatus) {
+          return (
+            <ExpansionItemKeyContext.Provider key={block.key} value={`${turnKey}:pre-turn:${block.key}`}>
+              <View style={styles.preTurnLifecycleDetail}>
+                <ProtocolBlock
+                  block={block}
+                  {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+                  {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+                />
+              </View>
+            </ExpansionItemKeyContext.Provider>
+          );
+        }
+        return (
+          <View
+            key={block.key}
+            accessible
+            accessibilityLabel={`${block.title}, ${running ? "running" : "completed"}`}
+            testID="pre-turn-lifecycle-row"
+            style={styles.preTurnLifecycleRow}
+          >
+            <View style={styles.preTurnLifecycleIcon}>
+              {running && turnStatus === "inProgress"
+                ? <CalmSpinner size={10} color={colors.textMuted} durationMs={3_000} />
+                : <Ionicons name="checkmark-circle-outline" size={14} color={colors.textMuted} />}
+            </View>
+            {running && turnStatus === "inProgress"
+              ? <WaveText text={block.title} style={styles.preTurnLifecycleText} containerStyle={styles.preTurnLifecycleWave} />
+              : <Text numberOfLines={1} style={styles.preTurnLifecycleText}>{block.title}</Text>}
+          </View>
+        );
+      })}
+    </View>
+  );
 }
 
 function CollapsedTurnActivity({
@@ -7913,14 +8153,15 @@ function CompletedTurnHistory({
   });
   const metadataKinds = turnMetadataKinds(rawTurn);
   const activitySummary = projectedTurnMetadata(rawTurn)?.activity;
+  const hasFullItems = rawTurn.itemsView === "full";
   const activityKinds = [
-    ...(activityItems.length > 0 ? activityItems.map(({ rawItem }) => rawItem.type) : activitySummary?.kinds ?? []),
+    ...(hasFullItems ? activityItems.map(({ rawItem }) => rawItem.type) : activitySummary?.kinds ?? []),
     ...metadataKinds,
   ];
-  const activityCount = activityItems.length > 0
+  const activityCount = hasFullItems
     ? activityItems.length + metadataKinds.length
     : (activitySummary?.count ?? 0) + metadataKinds.length;
-  const outputFootprint = activityItems.length > 0
+  const outputFootprint = hasFullItems
     ? activityOutputFootprint(activityItems.flatMap(({ rawItem }) => {
         if (rawItem.type !== "commandExecution") return [];
         const raw = rawItem as unknown as Record<string, unknown>;
@@ -8397,6 +8638,7 @@ function AgentResponseMarkdown({ block, getTransferAccess, visibilityRef, onVisi
   return (
     <View ref={visibilityRef} onLayout={onVisibilityLayout} style={styles.agentMarkdownDocument}>
       {segments.map((segment, index) => <RichMarkdown key={`${reference.id}:${index}`} source={segment} reviewTarget={reviewTarget} reviewPathPrefix={`segment-${index}`} />)}
+      <ContentReviewComments targetId={reviewTarget.id} />
       {loading && <ActivityIndicator accessibilityLabel="Loading complete response" size="small" color={colors.textMuted} />}
       {error !== null && <Text style={styles.errorText}>{error}</Text>}
     </View>
@@ -8412,6 +8654,7 @@ function CompleteAgentMarkdown({ source, reviewTarget }: { source: string; revie
   return (
     <View style={styles.agentMarkdownDocument}>
       {segments.map((segment, index) => <RichMarkdown key={index} source={segment} {...(reviewTarget === undefined ? {} : { reviewTarget, reviewPathPrefix: `segment-${index}` })} />)}
+      {reviewTarget !== undefined && <ContentReviewComments targetId={reviewTarget.id} />}
     </View>
   );
 }
@@ -9461,7 +9704,6 @@ function NewThreadServerSheet({
 
 function ConnectionSheet({
   visible,
-  openedAt,
   localReady,
   localError,
   onRetryStartup,
@@ -9470,7 +9712,6 @@ function ConnectionSheet({
   initialCode,
 }: {
   visible: boolean;
-  openedAt: number;
   localReady: boolean;
   localError: string | null;
   onRetryStartup(): Promise<void>;
@@ -9490,7 +9731,6 @@ function ConnectionSheet({
     >
       <ConnectionSheetSession
         visible={visible}
-        openedAt={openedAt}
         localReady={localReady}
         localError={localError}
         onRetryStartup={onRetryStartup}
@@ -9506,7 +9746,6 @@ function ConnectionSheet({
 
 function ConnectionSheetSession({
   visible,
-  openedAt,
   localReady,
   localError,
   onRetryStartup,
@@ -9517,7 +9756,6 @@ function ConnectionSheetSession({
   setSaving,
 }: {
   visible: boolean;
-  openedAt: number;
   localReady: boolean;
   localError: string | null;
   onRetryStartup(): Promise<void>;
@@ -9538,6 +9776,7 @@ function ConnectionSheetSession({
   const [token, setToken] = useState(initialValue?.pairingToken ?? "");
   const [tlsPinSha256, setTlsPinSha256] = useState(initialValue?.tlsPinSha256 ?? "");
   const [expiresAt, setExpiresAt] = useState<number | null>(initialValue?.expiresAt ?? null);
+  const [pairingParsedAt, setPairingParsedAt] = useState<number | null>(initialPairing?.parsedAt ?? null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const fullscreenOverlay = useAppFullscreenOverlay();
   const [error, setError] = useState<string | null>(initialPairing?.error ?? null);
@@ -9554,6 +9793,7 @@ function ConnectionSheetSession({
     setToken(initialValue?.pairingToken ?? "");
     setTlsPinSha256(initialValue?.tlsPinSha256 ?? "");
     setExpiresAt(initialValue?.expiresAt ?? null);
+    setPairingParsedAt(initialPairing?.parsedAt ?? null);
     setError(initialPairing?.error ?? null);
   } else if (openIdentity === null && presentedOpenIdentity !== null) {
     // Preserve the rendered contents through the closing animation. Marking
@@ -9568,8 +9808,9 @@ function ConnectionSheetSession({
       setEmoji(pairing.emoji);
       setEndpoint(pairing.endpoint);
       setToken(pairing.pairingToken);
-      setTlsPinSha256(pairing.tlsPinSha256 ?? "");
+      setTlsPinSha256(pairing.tlsPinSha256);
       setExpiresAt(pairing.expiresAt);
+      setPairingParsedAt(result.parsedAt);
       setError(null);
       setMode("review");
       return null;
@@ -9629,7 +9870,9 @@ function ConnectionSheetSession({
     setSaving(false);
   };
   const endpointLabel = pairingEndpointLabel(endpoint);
-  const minutesLeft = expiresAt === null ? null : Math.max(0, Math.ceil((expiresAt - openedAt) / 60_000));
+  const minutesLeft = expiresAt === null || pairingParsedAt === null
+    ? null
+    : Math.max(0, Math.ceil((expiresAt - pairingParsedAt) / 60_000));
   return (
     <AppSheetScrollView
               style={styles.connectionSheetScroll}
@@ -9704,7 +9947,7 @@ function ConnectionSheetSession({
                   <TextInput accessibilityLabel="Server endpoint" value={endpoint} onChangeText={setEndpoint} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="wss://host.example/v1/sync" placeholderTextColor={colors.textDim} style={styles.fieldInput} />
                   <Text style={styles.fieldLabel}>One-time pairing token</Text>
                   <TextInput accessibilityLabel="One-time pairing token" value={token} onChangeText={setToken} autoCapitalize="none" autoCorrect={false} secureTextEntry placeholder="Paste token" placeholderTextColor={colors.textDim} style={styles.fieldInput} />
-                  <Text style={styles.fieldLabel}>TLS pin · optional</Text>
+                  <Text style={styles.fieldLabel}>Companion identity pin (required)</Text>
                   <TextInput voiceInput={false} accessibilityLabel="TLS certificate pin" value={tlsPinSha256} onChangeText={setTlsPinSha256} autoCapitalize="none" autoCorrect={false} placeholder="sha256/base64…" placeholderTextColor={colors.textDim} style={styles.fieldInput} />
                   {(error ?? localError) !== null && <View style={styles.pairingError}><Ionicons name="alert-circle-outline" size={18} color={colors.red} /><Text style={[styles.errorText, styles.flex]}>{error ?? localError}</Text>{localError !== null && <Pressable accessibilityRole="button" accessibilityLabel="Retry local startup" hitSlop={8} onPress={() => void onRetryStartup()}><Ionicons name="refresh" size={20} color={colors.text} /></Pressable>}</View>}
                   <Pressable accessibilityRole="button" accessibilityLabel="Connect server manually" disabled={saving || !localReady} onPress={() => void save()} style={[styles.pairingPrimaryAction, (saving || !localReady) && styles.disabled]}>
@@ -9817,6 +10060,19 @@ function ConnectionSettings({
   onUpdateAccountProfile?(connectionId: string, profileId: string, update: { enabled?: boolean; priority?: number }): Promise<AccountPoolSnapshot>;
   onRemoveAccountProfile?(connectionId: string, profileId: string): Promise<AccountPoolSnapshot>;
 }) {
+  const appLock = useAppLockSettings();
+  const [appLockSaving, setAppLockSaving] = useState(false);
+  const [appLockError, setAppLockError] = useState<string | null>(null);
+  const changeAppLock = async (enabled: boolean) => {
+    setAppLockSaving(true);
+    setAppLockError(null);
+    try {
+      await appLock.setEnabled(enabled);
+    } catch (cause) {
+      setAppLockError(cause instanceof Error ? cause.message : "Could not update app lock");
+    }
+    setAppLockSaving(false);
+  };
   return (
     <AppSheet
       isOpen={visible}
@@ -9831,6 +10087,26 @@ function ConnectionSettings({
           </Pressable>
           </View>
           <AppSheetScrollView style={styles.menuScroll} contentContainerStyle={styles.menuScrollContent} keyboardShouldPersistTaps="handled">
+            {Platform.OS !== "web" && (
+              <View style={styles.settingsSection} testID="app-lock-setting">
+                <Text style={styles.settingsSectionTitle}>Security</Text>
+                <View style={styles.securitySettingRow}>
+                  <View style={styles.securitySettingIcon}><Ionicons name="finger-print" size={21} color={colors.textMuted} /></View>
+                  <View style={styles.controlOptionText}>
+                    <Text style={styles.menuActionTitle}>Biometric app lock</Text>
+                    <Text style={styles.menuActionSubtitle}>Require fingerprint, face, or device authentication when opening CodeWide</Text>
+                  </View>
+                  {appLockSaving && <ActivityIndicator color={colors.textMuted} size="small" />}
+                  <Switch
+                    accessibilityLabel="Biometric app lock"
+                    disabled={appLockSaving}
+                    value={appLock.enabled}
+                    onValueChange={(enabled) => void changeAppLock(enabled)}
+                  />
+                </View>
+                {appLockError !== null && <Text style={styles.errorText}>{appLockError}</Text>}
+              </View>
+            )}
             {connections.length === 0 && <Text style={styles.emptyText}>No saved servers</Text>}
             {connections.map((connection) => (
               <ConnectionRowEditor
@@ -9955,7 +10231,7 @@ function ConnectionRowEditor({
           <TextInput voiceInput={false} accessibilityLabel={`Endpoint for ${connection.displayName}`} value={endpoint} onChangeText={setEndpoint} autoCapitalize="none" autoCorrect={false} style={styles.fieldInput} />
           <Text style={styles.fieldLabel}>Replacement capability (leave blank to keep current)</Text>
           <TextInput accessibilityLabel={`Replacement capability for ${connection.displayName}`} value={replacementToken} onChangeText={setReplacementToken} autoCapitalize="none" autoCorrect={false} secureTextEntry style={styles.fieldInput} />
-          <Text style={styles.fieldLabel}>TLS certificate pin (blank disables pinning)</Text>
+          <Text style={styles.fieldLabel}>Companion identity pin (required)</Text>
           <TextInput voiceInput={false} accessibilityLabel={`TLS pin for ${connection.displayName}`} value={tlsPinSha256} onChangeText={setTlsPinSha256} autoCapitalize="none" autoCorrect={false} style={styles.fieldInput} />
           {error !== null && <Text style={styles.errorText}>{error}</Text>}
           <View style={styles.sheetActions}>
@@ -10591,7 +10867,10 @@ const styles = StyleSheet.create({
   projectPickerProgress: { minHeight: touchTarget, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs },
   conversationHeader: { minHeight: 56, paddingLeft: spacing.xs, paddingRight: 0, flexDirection: "row", alignItems: "center", gap: 0, backgroundColor: colors.surface },
   conversationIdentity: { flex: 1, minWidth: 0 },
+  conversationTitleRow: { minWidth: 0, maxWidth: "100%", flexDirection: "row", alignItems: "center", gap: spacing.xs },
   conversationTitle: { color: colors.text, ...typeScale.titleMedium },
+  conversationHeaderTitle: { minWidth: 0, flexShrink: 1 },
+  conversationBackendRefreshIndicator: { flexShrink: 0 },
   emojiText: { fontFamily: Platform.select({ web: "system-ui", default: "sans-serif" }) },
   conversationSubtitle: { color: colors.textMuted, ...typeScale.labelMedium, marginTop: 1 },
   threadSearchBar: { minHeight: 50, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.border },
@@ -10609,7 +10888,12 @@ const styles = StyleSheet.create({
   timelineItem: { width: "100%", maxWidth: 880, alignSelf: "center" },
   timelineItemWide: { alignSelf: "flex-start" },
   turnGroup: { gap: 5 },
-  messageContextRoot: { alignSelf: "stretch", position: "relative" },
+  preTurnLifecycleList: { width: "100%", minWidth: 0, alignSelf: "stretch", gap: 3, paddingVertical: 2 },
+  preTurnLifecycleRow: { width: "100%", minHeight: 28, flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 8 },
+  preTurnLifecycleIcon: { width: 16, height: 18, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  preTurnLifecycleText: { minWidth: 0, flexShrink: 1, color: colors.textMuted, fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  preTurnLifecycleWave: { minWidth: 0, flexShrink: 1 },
+  preTurnLifecycleDetail: { width: "100%", minWidth: 0, alignSelf: "stretch" },
   turnMessages: { gap: 3 },
   turnBlock: { width: "100%" },
   turnFooter: { minHeight: TURN_FOOTER_MIN_HEIGHT, flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6, paddingHorizontal: 5 },
@@ -10622,7 +10906,11 @@ const styles = StyleSheet.create({
   turnStatusCompleted: { backgroundColor: colors.green },
   userTurnCluster: { width: "100%", alignItems: "stretch", gap: 2 },
   userMessageRow: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-end", gap: 7 },
-  agentMessageRow: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-end", justifyContent: "flex-start", gap: 7 },
+  agentMessageRow: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "stretch", justifyContent: "flex-start", gap: 7 },
+  messageActionRail: { width: 40, minHeight: 32, flexShrink: 0, alignSelf: "stretch", justifyContent: "space-between", alignItems: "flex-start", marginLeft: -12, paddingBottom: 4 },
+  messageActionButton: { width: 32, height: 32, marginLeft: -3, flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 16 },
+  messageActionIcon: { transform: [{ translateX: 2 }] },
+  messageRailTime: { marginLeft: 12, color: colors.textDim, fontSize: 10, lineHeight: 13, fontVariant: ["tabular-nums"] },
   userBubble: { minWidth: 0, alignSelf: "flex-end", width: "auto", maxWidth: "82%", backgroundColor: colors.surfaceRaised, borderRadius: radii.selected, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 9 },
   userBubbleText: { color: colors.text, fontSize: 13, lineHeight: 18 },
   userMessageContent: { minWidth: 0, gap: 6 },
@@ -10808,7 +11096,8 @@ const styles = StyleSheet.create({
   composerAccessoryAction: { minWidth: 0, minHeight: 52, flex: 1, alignItems: "center", justifyContent: "center", gap: 3, borderRadius: 16 },
   composerAccessoryLabel: { maxWidth: "100%", color: colors.textMuted, fontSize: 10, lineHeight: 13, fontWeight: "600", textAlign: "center" },
   composer: { minWidth: 0, flexShrink: 1, minHeight: touchTarget + 12, paddingHorizontal: spacing.xs, paddingVertical: 6, flexDirection: "row", alignSelf: "stretch", alignItems: "flex-end", gap: spacing.xs, overflow: "hidden", backgroundColor: colors.surface },
-  composerError: { color: colors.red, backgroundColor: colors.surface, paddingHorizontal: 14, paddingTop: 7, fontSize: 12 },
+  composerErrorRow: { minHeight: 34, paddingHorizontal: 14, paddingTop: 5, flexDirection: "row", alignItems: "center", backgroundColor: colors.surface },
+  composerError: { minWidth: 0, flex: 1, color: colors.red, fontSize: 12 },
   composerMenu: { width: touchTarget, height: touchTarget, flexShrink: 0, borderRadius: radii.composer, flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainer },
   composerMenuActive: { backgroundColor: colors.primaryContainer },
   composerMenuAnchor: { width: touchTarget, height: touchTarget, flexShrink: 0 },
@@ -10846,6 +11135,10 @@ const styles = StyleSheet.create({
   menuNotice: { color: colors.textMuted, fontSize: 13, paddingVertical: 8 },
   menuScroll: { flex: 1, minHeight: 0 },
   menuScrollContent: { paddingBottom: spacing.sm },
+  settingsSection: { borderBottomColor: colors.borderSoft, borderBottomWidth: 1, paddingBottom: spacing.sm },
+  settingsSectionTitle: { color: colors.textMuted, fontSize: 12, fontWeight: "700", paddingBottom: spacing.xs, paddingTop: spacing.xs, textTransform: "uppercase" },
+  securitySettingRow: { alignItems: "center", flexDirection: "row", gap: spacing.sm, minHeight: 64 },
+  securitySettingIcon: { alignItems: "center", backgroundColor: colors.surfaceRaised, borderRadius: radii.medium, height: 40, justifyContent: "center", width: 40 },
   settingsVersion: { color: colors.textDim, fontSize: 11, lineHeight: 15, textAlign: "center", paddingTop: spacing.lg, paddingBottom: spacing.sm },
   menuAction: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.outlineVariant },
   menuActionIcon: { width: 40, height: 40, borderRadius: radii.medium, backgroundColor: colors.surfaceRaised, alignItems: "center", justifyContent: "center" },

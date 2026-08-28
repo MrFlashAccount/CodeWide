@@ -85,7 +85,9 @@ systemctl --user restart codewide-companion.service
 attempt=0
 while ! curl --silent --fail --unix-socket "$control_endpoint" http://localhost/healthz >/dev/null; do
   attempt=$((attempt + 1))
-  if [ "$attempt" -ge 30 ]; then
+  # Startup initializes the authoritative source before binding the control
+  # socket. Large local histories can legitimately take longer than six seconds.
+  if [ "$attempt" -ge 300 ]; then
     systemctl --user status codewide-companion.service --no-pager >&2 || true
     restore_previous
     exit 1

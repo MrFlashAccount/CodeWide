@@ -213,49 +213,12 @@ export function threadProjectionPatchFromEvent(payload: Record<string, unknown>)
 }
 
 export function threadIdFromEvent(payload: Record<string, unknown>): string | null {
-  const projected = threadProjectionPatchFromEvent(payload);
-  if (projected !== null) return projected.threadId;
-  const params = asObject(payload.params);
-  return typeof params?.threadId === "string" ? params.threadId : null;
-}
-
-/** Legacy adapter for pre-patch companions. Keep raw method knowledge here only. */
-export function legacyThreadProjectionPatch(payload: Record<string, unknown>): ThreadProjectionPatchV1 | null {
-  const method = payload.method;
-  const params = asObject(payload.params);
-  if (typeof method !== "string" || params === null || typeof params.threadId !== "string") return null;
-  let operation: ThreadProjectionPatchV1["operation"] | null = null;
-  if (method === "thread/status/changed") operation = pickOperation("threadStatus", params, ["status"]);
-  else if (method === "thread/name/updated") operation = pickOperation("threadName", params, ["threadName"]);
-  else if (method === "thread/deleted") operation = pickOperation("threadDeleted", params, []);
-  else if (method === "thread/settings/updated") operation = pickOperation("threadSettings", params, ["threadSettings"]);
-  else if (method === "turn/started") operation = pickOperation("turnStarted", params, ["turn"]);
-  else if (method === "turn/completed") operation = pickOperation("turnCompleted", params, ["turn"]);
-  else if (method === "model/rerouted") operation = pickOperation("modelRerouted", params, ["turnId", "toModel"]);
-  else if (method === "item/started" || method === "item/completed") operation = pickOperation("itemUpsert", params, ["turnId", "item"]);
-  else if (method === "item/agentMessage/delta") operation = { ...pickOperation("itemTextDelta", params, ["turnId", "itemId", "delta"]), itemType: "agentMessage" };
-  else if (method === "item/plan/delta") operation = { ...pickOperation("itemTextDelta", params, ["turnId", "itemId", "delta"]), itemType: "plan" };
-  else if (method === "item/commandExecution/outputDelta") operation = { ...pickOperation("itemTextDelta", params, ["turnId", "itemId", "delta"]), itemType: "commandExecution" };
-  else if (method === "item/fileChange/patchUpdated") operation = pickOperation("fileChanges", params, ["turnId", "itemId", "changes"]);
-  else if (method === "item/mcpToolCall/progress") operation = pickOperation("mcpProgress", params, ["turnId", "itemId", "message"]);
-  else if (method === "thread/tokenUsage/updated") operation = pickOperation("tokenUsage", params, ["turnId", "tokenUsage"]);
-  else if (method === "turn/diff/updated") operation = pickOperation("turnDiff", params, ["turnId", "diff"]);
-  else if (method === "turn/plan/updated") operation = pickOperation("turnPlan", params, ["turnId", "explanation", "plan"]);
-  else if (method === "item/reasoning/summaryPartAdded") operation = { ...pickOperation("reasoningPart", params, ["turnId", "itemId", "summaryIndex"]), field: "summary" };
-  else if (method === "item/reasoning/summaryTextDelta") operation = { ...pickOperation("reasoningDelta", params, ["turnId", "itemId", "summaryIndex", "delta"]), field: "summary" };
-  else if (method === "item/reasoning/textDelta") operation = { ...pickOperation("reasoningDelta", params, ["turnId", "itemId", "contentIndex", "delta"]), field: "content" };
-  return operation === null ? null : { version: 1, threadId: params.threadId, operation };
-}
-
-function pickOperation(kind: string, source: Record<string, unknown>, fields: string[]): ThreadProjectionPatchV1["operation"] {
-  const operation: ThreadProjectionPatchV1["operation"] = { kind };
-  for (const field of fields) if (field in source) operation[field] = source[field];
-  return operation;
+  return threadProjectionPatchFromEvent(payload)?.threadId ?? null;
 }
 
 /** Applies the App Server notifications that materially change a cached thread. */
 export function applyThreadEvent(thread: Thread, payload: Record<string, unknown>): boolean {
-  const patch = threadProjectionPatchFromEvent(payload) ?? legacyThreadProjectionPatch(payload);
+  const patch = threadProjectionPatchFromEvent(payload);
   return patch === null ? false : applyThreadProjectionPatch(thread, patch);
 }
 
@@ -276,7 +239,9 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
     updateTurnUsage(thread, asObject(params.turn)?.id, params.usage);
   }
   else if (params.kind === "modelRerouted") updateReroutedModel(thread, params.turnId, params.toModel);
-  else if (params.kind === "itemUpsert") upsertItem(thread, params.turnId, params.item);
+  else if (params.kind === "itemUpsert") {
+    upsertItem(thread, params.turnId, itemWithLifecycleMetadata(thread, params.turnId, params.item, params.itemPhase));
+  }
   else if (params.kind === "itemTextDelta" && (params.itemType === "agentMessage" || params.itemType === "plan" || params.itemType === "commandExecution")) {
     appendText(thread, params.turnId, params.itemId, params.delta, params.itemType);
   }
@@ -303,7 +268,7 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
  */
 export function applyThreadEventsImmutable(thread: Thread, payloads: Record<string, unknown>[]): Thread {
   const patches = payloads
-    .map((payload) => threadProjectionPatchFromEvent(payload) ?? legacyThreadProjectionPatch(payload))
+    .map((payload) => threadProjectionPatchFromEvent(payload))
     .filter((patch): patch is ThreadProjectionPatchV1 => patch !== null);
   return applyThreadProjectionPatchesImmutable(thread, patches);
 }
@@ -550,6 +515,24 @@ function upsertItem(thread: Thread, rawTurnId: unknown, value: unknown): void {
   const lookup = eventIndex(thread);
   removeMatchingAgentPlaceholder(turn, rawTurnId, nextItem.id);
   indexTurnItems(lookup, turn);
+}
+
+function itemWithLifecycleMetadata(thread: Thread, rawTurnId: unknown, value: unknown, phase: unknown): unknown {
+  const item = asObject(value);
+  if (item === null) return value;
+  const turn = typeof rawTurnId === "string" ? turnInThread(thread, rawTurnId) : undefined;
+  const existing = typeof item.id === "string"
+    ? turn?.items.find((candidate) => candidate.id === item.id) as (ThreadItem & { codewidePreTurn?: boolean }) | undefined
+    : undefined;
+  const preTurn = item.type !== "userMessage" && (
+    existing?.codewidePreTurn === true
+    || turn?.items.some((candidate) => candidate.type === "userMessage") === false
+  );
+  return {
+    ...item,
+    ...(phase === "started" || phase === "completed" ? { codewideLifecyclePhase: phase } : {}),
+    ...(preTurn ? { codewidePreTurn: true } : {}),
+  };
 }
 
 function removeMatchingAgentPlaceholder(turn: Turn, turnId: string, canonicalItemId: string): boolean {

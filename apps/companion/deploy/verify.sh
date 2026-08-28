@@ -12,6 +12,11 @@ curl --fail --silent --show-error --max-time 3 --unix-socket "$control_endpoint"
   -H "Authorization: Bearer $token" \
   http://localhost/v1/devices >/dev/null
 systemctl --user is-active --quiet codewide-companion.service
+public_status=$(curl --silent --show-error \
+  --output /dev/null --write-out '%{http_code}' --max-time 3 \
+  -H 'content-type: application/json' --data '{"action":"challenge"}' \
+  http://127.0.0.1:8766/v1/auth)
+test "$public_status" = 404
 plugins=$("$HOME/.local/lib/codewide/codewide-companion" vcs plugin list)
 printf '%s' "$plugins" | grep -F '"id":"git"' >/dev/null
 test -x "$HOME/.local/lib/codewide/plugins/codewide-vcs-git"
@@ -26,4 +31,4 @@ for legacy in codewide-host-rust-shadow.service codewide-host-rust.service codew
     exit 1
   fi
 done
-printf '%s\n' 'companion=healthy mutations=enabled legacy=inactive'
+printf '%s\n' 'companion=healthy ingress=secure-tunnel-only inner-tls=required mutations=enabled legacy-services=inactive'

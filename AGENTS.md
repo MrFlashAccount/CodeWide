@@ -23,6 +23,7 @@ Use only the repository-owned one-shot release commands:
 
 - Publish an OTA update: `./scripts/release-ota`
 - Build and publish a new APK: `./scripts/release-apk`
+- Build, validate, and publish Companion: `./scripts/release-companion`
 - Validate either release path without publishing: append `--dry-run`
 
 Rules:

@@ -391,7 +391,7 @@ impl TelemetryJsonlSink {
         Ok(sink)
     }
 
-    fn append(&mut self, events: &[StoredTelemetryEvent]) -> Result<(), TelemetryError> {
+    fn append(&self, events: &[StoredTelemetryEvent]) -> Result<(), TelemetryError> {
         let mut encoded = Vec::new();
         for event in events {
             serde_json::to_writer(&mut encoded, event)?;

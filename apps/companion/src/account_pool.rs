@@ -11,7 +11,7 @@ use tokio::{
     fs,
     io::AsyncWriteExt,
     process::{Child, Command},
-    sync::{Mutex, broadcast},
+    sync::{Mutex, Notify, broadcast},
     time::{Instant, timeout},
 };
 use tracing::{info, warn};
@@ -19,10 +19,13 @@ use tracing::{info, warn};
 use crate::upstream::{ConnectionStatus, UpstreamHandle};
 
 const STATE_VERSION: u32 = 1;
-const APP_SERVER_LIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const AUTH_REFRESH_TIMEOUT: Duration = Duration::from_secs(8);
 const ENROLLMENT_SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 const ENROLLMENT_AUTH_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+const ACCOUNT_PROFILE_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
+const ACCOUNT_POOL_REFRESH_INTERVAL: Duration = Duration::from_mins(30);
+const ACCOUNT_POOL_REFRESH_RETRY: Duration = Duration::from_mins(1);
+const ACCOUNT_POOL_RESET_JITTER: Duration = Duration::from_secs(5);
 const CHATGPT_TOKEN_ENDPOINT: &str = "https://auth.openai.com/oauth/token";
 const CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
@@ -62,6 +65,10 @@ pub struct AccountProfile {
     pub exhausted_until: Option<i64>,
     pub exhausted_indefinitely: bool,
     pub rate_limits: Option<Value>,
+    #[serde(default)]
+    pub rate_limits_updated_at: Option<i64>,
+    #[serde(default)]
+    pub rate_limits_error: Option<String>,
     pub last_used_at: Option<i64>,
 }
 
@@ -73,7 +80,7 @@ impl AccountProfile {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct PersistedAccountPool {
     version: u32,
@@ -126,6 +133,20 @@ enum BlockingState {
     Indefinite,
 }
 
+#[derive(Debug)]
+struct ProfileObservation {
+    profile_id: String,
+    account_result: Value,
+    rate_snapshot: Value,
+    refreshed_credentials: Option<Vec<u8>>,
+}
+
+#[derive(Debug)]
+struct PoolRefreshReport {
+    active_outcome: RefreshOutcome,
+    active_error: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct AccountPoolService {
     upstream: UpstreamHandle,
@@ -137,6 +158,7 @@ pub struct AccountPoolService {
     state: Arc<Mutex<RuntimeState>>,
     switch_lock: Arc<Mutex<()>>,
     login_lock: Arc<Mutex<()>>,
+    refresh_wakeup: Arc<Notify>,
     events: broadcast::Sender<Value>,
 }
 
@@ -183,11 +205,12 @@ impl AccountPoolService {
             })),
             switch_lock: Arc::new(Mutex::new(())),
             login_lock: Arc::new(Mutex::new(())),
+            refresh_wakeup: Arc::new(Notify::new()),
             events,
         });
         service.capture_current_credentials().await?;
         service.spawn_event_worker();
-        service.spawn_initial_refresh();
+        service.spawn_refresh_scheduler();
         Ok(service)
     }
 
@@ -266,6 +289,26 @@ impl AccountPoolService {
         Ok(last_limit_response.unwrap_or_else(exhausted_response))
     }
 
+    /// Rehydrates one thread in the active App Server before retrying a turn
+    /// that was conclusively rejected because the runtime had not loaded it.
+    /// The response excludes historical turns because Companion already owns
+    /// the indexed read projection; App Server only needs the live session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an upstream error when the active App Server cannot be reached.
+    pub async fn resume_thread_for_turn(&self, thread_id: &str) -> Result<Value, AccountPoolError> {
+        self.request(json!({
+            "id": "turn-start-resume",
+            "method": "thread/resume",
+            "params": {
+                "threadId": thread_id,
+                "excludeTurns": true
+            }
+        }))
+        .await
+    }
+
     async fn send_turn_start_once(
         &self,
         request: Value,
@@ -309,9 +352,12 @@ impl AccountPoolService {
         if self.current_lease().await.as_ref() != Some(lease) {
             return Ok(true);
         }
-        let outcome = self.refresh_active_account_locked().await?;
+        let report = self.refresh_all_profiles_locked().await?;
+        if let Some(error) = report.active_error {
+            return Err(AccountPoolError::Upstream(error));
+        }
         if matches!(
-            outcome,
+            report.active_outcome,
             RefreshOutcome::Current {
                 blocking: Some(BlockingState::Available) | None
             }
@@ -341,7 +387,7 @@ impl AccountPoolService {
             return Ok(result);
         }
         self.capture_current_credentials().await?;
-        let (upstream, mut child, home) = self.spawn_isolated_enrollment().await?;
+        let (upstream, mut child, home) = self.spawn_isolated_server(None).await?;
         let mut events = upstream.subscribe_events();
         let mut status = upstream.subscribe_status();
         let response = upstream
@@ -536,17 +582,26 @@ impl AccountPoolService {
         });
     }
 
-    fn spawn_initial_refresh(self: &Arc<Self>) {
+    fn spawn_refresh_scheduler(self: &Arc<Self>) {
         let service = self.clone();
         tokio::spawn(async move {
-            if wait_for_live(&service.upstream, APP_SERVER_LIVE_TIMEOUT)
-                .await
-                .is_ok()
-                && let Err(error) = service.refresh_and_reconcile().await
-            {
-                warn!(%error, "initial account pool refresh failed");
+            loop {
+                if let Err(error) = service.refresh_and_reconcile().await {
+                    warn!(%error, "scheduled account pool refresh failed");
+                }
+                loop {
+                    let delay = service.next_refresh_delay().await;
+                    tokio::select! {
+                        () = tokio::time::sleep(delay) => break,
+                        () = service.refresh_wakeup.notified() => {}
+                    }
+                }
             }
         });
+    }
+
+    async fn next_refresh_delay(&self) -> Duration {
+        next_refresh_delay_at(&self.state.lock().await.persisted, unix_time())
     }
 
     async fn handle_upstream_event(&self, event: &Value) {
@@ -555,8 +610,8 @@ impl AccountPoolService {
                 self.handle_external_auth_refresh(event).await;
             }
             Some("account/rateLimits/updated") => {
-                if let Err(error) = self.refresh_and_reconcile().await {
-                    warn!(%error, "account pool could not reconcile rate-limit update");
+                if let Err(error) = self.apply_active_rate_limit_update(event).await {
+                    warn!(%error, "account pool could not apply rate-limit update");
                 }
             }
             Some("error") if is_usage_limit_notification(event) => {
@@ -683,13 +738,17 @@ impl AccountPoolService {
         }
     }
 
-    async fn spawn_isolated_enrollment(
+    async fn spawn_isolated_server(
         &self,
+        credentials: Option<&[u8]>,
     ) -> Result<(UpstreamHandle, Child, PathBuf), AccountPoolError> {
         let nonce = hex::encode(rand::random::<[u8; 8]>());
         let home = self.enrollment_dir.join(&nonce);
         fs::create_dir_all(&home).await?;
         set_private_directory(&home).await?;
+        if let Some(credentials) = credentials {
+            write_private_atomic(&home.join("auth.json"), credentials).await?;
+        }
         let local_codex = self
             .codex_home
             .parent()
@@ -744,6 +803,8 @@ impl AccountPoolService {
                 exhausted_until: None,
                 exhausted_indefinitely: false,
                 rate_limits: None,
+                rate_limits_updated_at: None,
+                rate_limits_error: None,
                 last_used_at: None,
             });
         }
@@ -753,7 +814,7 @@ impl AccountPoolService {
             .iter_mut()
             .find(|profile| profile.id == profile_id)
         {
-            apply_profile_observation(profile, account_result, rate_snapshot, true);
+            apply_profile_observation(profile, account_result, rate_snapshot, true, unix_time());
         }
         normalize_priorities(&mut state.persisted.profiles);
         let activate = state.persisted.active_profile_id.is_none();
@@ -769,53 +830,222 @@ impl AccountPoolService {
 
     async fn refresh_and_reconcile(&self) -> Result<(), AccountPoolError> {
         let _switch = self.switch_lock.lock().await;
-        self.capture_current_credentials_locked().await?;
-        self.refresh_active_account_locked().await?;
+        let report = self.refresh_all_profiles_locked().await?;
+        if let Some(error) = report.active_error {
+            warn!(%error, "active Codex account usage refresh failed");
+        }
         self.reconcile_account_selection_locked().await?;
         Ok(())
     }
 
-    async fn refresh_active_account_locked(&self) -> Result<RefreshOutcome, AccountPoolError> {
-        let Some(lease) = self.current_lease().await else {
-            return Ok(RefreshOutcome::NoActive);
-        };
-        let account = self
-            .request(json!({
-                "id": "account-pool-account-read",
-                "method": "account/read",
-                "params": {"refreshToken": false}
-            }))
-            .await?;
-        if account.get("error").is_some() {
-            return Err(AccountPoolError::Upstream(rpc_error_message(&account)));
-        }
-        let rate_limits = self
-            .request(json!({
-                "id": "account-pool-rate-limits",
-                "method": "account/rateLimits/read",
-                "params": {}
-            }))
-            .await?;
-        let account_result = account.get("result").cloned().unwrap_or(Value::Null);
-        let rate_snapshot = rate_limits
-            .get("error")
-            .is_none()
-            .then(|| rate_limits.get("result").cloned())
-            .flatten();
-        let (outcome, persisted) = {
+    async fn apply_active_rate_limit_update(&self, event: &Value) -> Result<(), AccountPoolError> {
+        let update = event
+            .pointer("/params/rateLimits")
+            .cloned()
+            .ok_or_else(|| {
+                AccountPoolError::Upstream("rate-limit update has no snapshot".into())
+            })?;
+        let _switch = self.switch_lock.lock().await;
+        let persisted = {
             let mut state = self.state.lock().await;
-            let outcome =
-                apply_account_observation(&mut state, &lease, &account_result, rate_snapshot, true);
-            let persisted =
-                matches!(outcome, RefreshOutcome::Current { .. }).then(|| state.persisted.clone());
-            (outcome, persisted)
+            let active_profile_id = state.persisted.active_profile_id.clone();
+            let Some(profile) = active_profile_id.as_deref().and_then(|profile_id| {
+                state
+                    .persisted
+                    .profiles
+                    .iter_mut()
+                    .find(|profile| profile.id == profile_id)
+            }) else {
+                return Ok(());
+            };
+            let merged = merge_rate_limit_update(profile.rate_limits.as_ref(), &update);
+            let before = profile.clone();
+            apply_profile_observation(profile, &Value::Null, Some(merged), true, unix_time());
+            (profile != &before).then(|| state.persisted.clone())
         };
-        let Some(persisted) = persisted else {
-            return Ok(outcome);
+        if let Some(persisted) = persisted {
+            // The original App Server notification is already projected through
+            // the durable sync log. Persist the pool's scheduler state without
+            // emitting a second derived event for the same observation.
+            self.persist(&persisted).await?;
+            self.refresh_wakeup.notify_one();
+            self.reconcile_account_selection_locked().await?;
+        }
+        Ok(())
+    }
+
+    async fn refresh_all_profiles_locked(&self) -> Result<PoolRefreshReport, AccountPoolError> {
+        let _captured = self
+            .capture_current_credentials_unpublished_locked()
+            .await?;
+        let (active_profile_id, profile_ids) = {
+            let state = self.state.lock().await;
+            (
+                state.persisted.active_profile_id.clone(),
+                state
+                    .persisted
+                    .profiles
+                    .iter()
+                    .filter(|profile| profile.enabled)
+                    .map(|profile| profile.id.clone())
+                    .collect::<Vec<_>>(),
+            )
         };
-        self.persist(&persisted).await?;
-        self.emit_updated(&persisted);
-        Ok(outcome)
+        let mut observations = Vec::with_capacity(profile_ids.len());
+        let mut failures = Vec::new();
+        for profile_id in profile_ids {
+            let observation = if active_profile_id.as_deref() == Some(profile_id.as_str()) {
+                self.refresh_active_profile(&profile_id).await
+            } else {
+                self.refresh_inactive_profile(&profile_id).await
+            };
+            match observation {
+                Ok(observation) => observations.push(observation),
+                Err(error) => {
+                    warn!(profile_id, %error, "Codex account usage refresh failed");
+                    failures.push((profile_id, refresh_error_message(&error)));
+                }
+            }
+        }
+
+        let committed_observations = self
+            .commit_refreshed_credentials(observations, &mut failures)
+            .await;
+
+        let observed_at = unix_time();
+        let mut active_outcome = if active_profile_id.is_some() {
+            RefreshOutcome::Stale
+        } else {
+            RefreshOutcome::NoActive
+        };
+        let mut active_error = None;
+        let persisted = {
+            let mut state = self.state.lock().await;
+            let before = state.persisted.clone();
+            for observation in committed_observations {
+                let Some(profile) = state
+                    .persisted
+                    .profiles
+                    .iter_mut()
+                    .find(|profile| profile.id == observation.profile_id)
+                else {
+                    continue;
+                };
+                let blocking = apply_profile_observation(
+                    profile,
+                    &observation.account_result,
+                    Some(observation.rate_snapshot),
+                    true,
+                    observed_at,
+                );
+                if active_profile_id.as_deref() == Some(observation.profile_id.as_str()) {
+                    active_outcome = RefreshOutcome::Current { blocking };
+                }
+            }
+            for (profile_id, error) in failures {
+                if let Some(profile) = state
+                    .persisted
+                    .profiles
+                    .iter_mut()
+                    .find(|profile| profile.id == profile_id)
+                {
+                    mark_profile_refresh_failed(profile, &error);
+                }
+                if active_profile_id.as_deref() == Some(profile_id.as_str()) {
+                    active_error = Some(error);
+                }
+            }
+            (state.persisted != before).then(|| state.persisted.clone())
+        };
+        if let Some(persisted) = persisted {
+            self.persist(&persisted).await?;
+            self.emit_updated(&persisted);
+        }
+        Ok(PoolRefreshReport {
+            active_outcome,
+            active_error,
+        })
+    }
+
+    async fn commit_refreshed_credentials(
+        &self,
+        observations: Vec<ProfileObservation>,
+        failures: &mut Vec<(String, String)>,
+    ) -> Vec<ProfileObservation> {
+        let mut committed = Vec::with_capacity(observations.len());
+        for observation in observations {
+            if let Some(credentials) = observation.refreshed_credentials.as_deref()
+                && let Err(error) = write_private_atomic(
+                    &self.credential_path(&observation.profile_id),
+                    credentials,
+                )
+                .await
+            {
+                failures.push((observation.profile_id, refresh_error_message(&error)));
+                continue;
+            }
+            committed.push(observation);
+        }
+        committed
+    }
+
+    async fn refresh_inactive_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<ProfileObservation, AccountPoolError> {
+        let credentials = fs::read(self.credential_path(profile_id))
+            .await
+            .map_err(|error| AccountPoolError::Storage(error.to_string()))?;
+        let (upstream, mut child, home) = self.spawn_isolated_server(Some(&credentials)).await?;
+        let observation = self
+            .attach_refreshed_credentials(
+                profile_id,
+                &home.join("auth.json"),
+                read_profile_observation(&upstream, profile_id, None).await,
+            )
+            .await;
+        cleanup_isolated_enrollment(&mut child, &home).await;
+        observation
+    }
+
+    async fn refresh_active_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<ProfileObservation, AccountPoolError> {
+        self.attach_refreshed_credentials(
+            profile_id,
+            &self.codex_home.join("auth.json"),
+            read_profile_observation(&self.upstream, profile_id, None).await,
+        )
+        .await
+    }
+
+    async fn attach_refreshed_credentials(
+        &self,
+        profile_id: &str,
+        auth_path: &Path,
+        observation: Result<ProfileObservation, AccountPoolError>,
+    ) -> Result<ProfileObservation, AccountPoolError> {
+        let refreshed_credentials = fs::read(auth_path)
+            .await
+            .map_err(|error| AccountPoolError::Storage(error.to_string()))?;
+        let refreshed_profile_id = profile_id_from_auth(&refreshed_credentials)?;
+        if refreshed_profile_id != profile_id {
+            return Err(AccountPoolError::Storage(
+                "App Server changed account identity during refresh".into(),
+            ));
+        }
+        match observation {
+            Ok(mut observation) => {
+                observation.refreshed_credentials = Some(refreshed_credentials);
+                Ok(observation)
+            }
+            Err(error) => {
+                write_private_atomic(&self.credential_path(profile_id), &refreshed_credentials)
+                    .await?;
+                Err(error)
+            }
+        }
     }
 
     async fn mark_lease_exhausted_from_known_limits_locked(
@@ -886,15 +1116,29 @@ impl AccountPoolService {
     }
 
     async fn capture_current_credentials_locked(&self) -> Result<(), AccountPoolError> {
+        let persisted = self
+            .capture_current_credentials_unpublished_locked()
+            .await?;
+        if let Some(persisted) = persisted {
+            self.persist(&persisted).await?;
+            self.emit_updated(&persisted);
+        }
+        Ok(())
+    }
+
+    async fn capture_current_credentials_unpublished_locked(
+        &self,
+    ) -> Result<Option<PersistedAccountPool>, AccountPoolError> {
         let auth_path = self.codex_home.join("auth.json");
         let auth = match fs::read(&auth_path).await {
             Ok(auth) => auth,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
         let profile_id = profile_id_from_auth(&auth)?;
         write_private_atomic(&self.credential_path(&profile_id), &auth).await?;
         let mut state = self.state.lock().await;
+        let before = state.persisted.clone();
         let was_empty = state.persisted.profiles.is_empty();
         if !state
             .persisted
@@ -913,6 +1157,8 @@ impl AccountPoolService {
                 exhausted_until: None,
                 exhausted_indefinitely: false,
                 rate_limits: None,
+                rate_limits_updated_at: None,
+                rate_limits_error: None,
                 last_used_at: Some(unix_time()),
             });
         }
@@ -920,11 +1166,7 @@ impl AccountPoolService {
         if was_empty {
             normalize_priorities(&mut state.persisted.profiles);
         }
-        let persisted = state.persisted.clone();
-        drop(state);
-        self.persist(&persisted).await?;
-        self.emit_updated(&persisted);
-        Ok(())
+        Ok((state.persisted != before).then(|| state.persisted.clone()))
     }
 
     async fn activate_profile_locked(&self, profile_id: &str) -> Result<(), AccountPoolError> {
@@ -957,6 +1199,8 @@ impl AccountPoolService {
                 None => error.to_string(),
             }));
         }
+        let observation = read_profile_observation(&self.upstream, profile_id, None).await;
+        let observed_at = unix_time();
         let mut state = self.state.lock().await;
         set_active_profile(&mut state, profile_id);
         if let Some(profile) = state
@@ -968,13 +1212,29 @@ impl AccountPoolService {
             profile.last_used_at = Some(unix_time());
             profile.exhausted_until = None;
             profile.exhausted_indefinitely = false;
+            match &observation {
+                Ok(observation) => {
+                    apply_profile_observation(
+                        profile,
+                        &observation.account_result,
+                        Some(observation.rate_snapshot.clone()),
+                        true,
+                        observed_at,
+                    );
+                }
+                Err(error) => {
+                    mark_profile_refresh_failed(profile, &refresh_error_message(error));
+                }
+            }
         }
         let persisted = state.persisted.clone();
         drop(state);
         self.persist(&persisted).await?;
         self.emit_updated(&persisted);
         info!(profile_id, "activated Codex account profile");
-        self.refresh_active_account_locked().await?;
+        if let Err(error) = observation {
+            warn!(profile_id, %error, "activated account usage remains stale");
+        }
         Ok(())
     }
 
@@ -1129,7 +1389,57 @@ impl AccountPoolService {
             "method": "companion/accountPool/updated",
             "params": public_snapshot(state)
         }));
+        self.refresh_wakeup.notify_one();
     }
+}
+
+async fn read_profile_observation(
+    upstream: &UpstreamHandle,
+    profile_id: &str,
+    refreshed_credentials: Option<Vec<u8>>,
+) -> Result<ProfileObservation, AccountPoolError> {
+    let account = timeout(
+        ACCOUNT_PROFILE_REFRESH_TIMEOUT,
+        upstream.request(json!({
+            "id": format!("account-pool-account-read-{profile_id}"),
+            "method": "account/read",
+            "params": {"refreshToken": false}
+        })),
+    )
+    .await
+    .map_err(|_| AccountPoolError::Upstream("account refresh timed out".into()))?
+    .map_err(|error| AccountPoolError::Upstream(error.to_string()))?;
+    if account.get("error").is_some() {
+        return Err(AccountPoolError::Upstream(rpc_error_message(&account)));
+    }
+    let rate_limits = timeout(
+        ACCOUNT_PROFILE_REFRESH_TIMEOUT,
+        upstream.request(json!({
+            "id": format!("account-pool-rate-limits-{profile_id}"),
+            "method": "account/rateLimits/read",
+            "params": {}
+        })),
+    )
+    .await
+    .map_err(|_| AccountPoolError::Upstream("rate-limit refresh timed out".into()))?
+    .map_err(|error| AccountPoolError::Upstream(error.to_string()))?;
+    if rate_limits.get("error").is_some() {
+        return Err(AccountPoolError::Upstream(rpc_error_message(&rate_limits)));
+    }
+    let rate_snapshot = rate_limits
+        .get("result")
+        .cloned()
+        .ok_or_else(|| AccountPoolError::Upstream("rate-limit result is missing".into()))?;
+    Ok(ProfileObservation {
+        profile_id: profile_id.to_owned(),
+        account_result: account.get("result").cloned().unwrap_or(Value::Null),
+        rate_snapshot,
+        refreshed_credentials,
+    })
+}
+
+fn refresh_error_message(error: &AccountPoolError) -> String {
+    error.to_string().chars().take(500).collect()
 }
 
 fn active_lease(state: &RuntimeState) -> Option<AccountLease> {
@@ -1153,33 +1463,12 @@ fn set_active_profile(state: &mut RuntimeState, profile_id: &str) {
     }
 }
 
-fn apply_account_observation(
-    state: &mut RuntimeState,
-    lease: &AccountLease,
-    result: &Value,
-    rate_snapshot: Option<Value>,
-    authoritative: bool,
-) -> RefreshOutcome {
-    if active_lease(state).as_ref() != Some(lease) {
-        return RefreshOutcome::Stale;
-    }
-    let Some(profile) = state
-        .persisted
-        .profiles
-        .iter_mut()
-        .find(|profile| profile.id == lease.profile_id)
-    else {
-        return RefreshOutcome::NoActive;
-    };
-    let blocking = apply_profile_observation(profile, result, rate_snapshot, authoritative);
-    RefreshOutcome::Current { blocking }
-}
-
 fn apply_profile_observation(
     profile: &mut AccountProfile,
     result: &Value,
     rate_snapshot: Option<Value>,
     authoritative: bool,
+    observed_at: i64,
 ) -> Option<BlockingState> {
     let account = result.get("account");
     profile.email = account
@@ -1197,6 +1486,8 @@ fn apply_profile_observation(
     let limit_snapshot = normalized.get("rateLimits").unwrap_or(&normalized);
     let blocking = blocking_state(limit_snapshot);
     profile.rate_limits = Some(normalized);
+    profile.rate_limits_updated_at = Some(observed_at);
+    profile.rate_limits_error = None;
     match blocking {
         BlockingState::Until(reset) => {
             profile.exhausted_until = Some(reset);
@@ -1215,6 +1506,10 @@ fn apply_profile_observation(
     Some(blocking)
 }
 
+fn mark_profile_refresh_failed(profile: &mut AccountProfile, error: &str) {
+    profile.rate_limits_error = Some(error.chars().take(500).collect());
+}
+
 fn normalize_rate_limits(snapshot: Value) -> Value {
     if snapshot.get("rateLimits").is_some() {
         snapshot
@@ -1224,6 +1519,40 @@ fn normalize_rate_limits(snapshot: Value) -> Value {
             "rateLimitsByLimitId": null,
             "rateLimitResetCredits": null
         })
+    }
+}
+
+fn merge_rate_limit_update(previous: Option<&Value>, update: &Value) -> Value {
+    let mut merged = previous
+        .cloned()
+        .unwrap_or_else(|| normalize_rate_limits(update.clone()));
+    if let Some(current) = merged.get_mut("rateLimits") {
+        merge_available_json(current, update);
+    } else {
+        merge_available_json(&mut merged, update);
+    }
+    merged
+}
+
+fn merge_available_json(current: &mut Value, update: &Value) {
+    if update.is_null() {
+        return;
+    }
+    match (current, update) {
+        (Value::Object(current), Value::Object(update)) => {
+            for (key, value) in update {
+                if value.is_null() {
+                    continue;
+                }
+                match current.get_mut(key) {
+                    Some(previous) => merge_available_json(previous, value),
+                    None => {
+                        current.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (current, update) => *current = update.clone(),
     }
 }
 
@@ -1326,6 +1655,47 @@ fn latest_reset(snapshot: &Value) -> Option<i64> {
                 .and_then(Value::as_i64),
         )
         .max()
+}
+
+fn earliest_reset(snapshot: &Value) -> Option<i64> {
+    ["primary", "secondary"]
+        .into_iter()
+        .filter_map(|key| snapshot.get(key))
+        .filter_map(|window| window.get("resetsAt").and_then(Value::as_i64))
+        .chain(
+            snapshot
+                .get("individualLimit")
+                .and_then(|limit| limit.get("resetsAt"))
+                .and_then(Value::as_i64),
+        )
+        .min()
+}
+
+fn next_refresh_delay_at(state: &PersistedAccountPool, now: i64) -> Duration {
+    if state
+        .profiles
+        .iter()
+        .any(|profile| profile.enabled && profile.rate_limits_error.is_some())
+    {
+        return ACCOUNT_POOL_REFRESH_RETRY;
+    }
+    let next_reset = state
+        .profiles
+        .iter()
+        .filter(|profile| profile.enabled)
+        .filter_map(|profile| profile.rate_limits.as_ref())
+        .filter_map(|limits| earliest_reset(limits.get("rateLimits").unwrap_or(limits)))
+        .min();
+    let Some(next_reset) = next_reset else {
+        return ACCOUNT_POOL_REFRESH_INTERVAL;
+    };
+    let seconds = next_reset.saturating_sub(now);
+    if seconds <= 0 {
+        return ACCOUNT_POOL_REFRESH_RETRY;
+    }
+    Duration::from_secs(u64::try_from(seconds).unwrap_or(u64::MAX))
+        .saturating_add(ACCOUNT_POOL_RESET_JITTER)
+        .min(ACCOUNT_POOL_REFRESH_INTERVAL)
 }
 
 fn is_confirmed_usage_limit_error(message: &str) -> bool {
@@ -1588,6 +1958,8 @@ mod tests {
             exhausted_until: reset,
             exhausted_indefinitely: false,
             rate_limits: None,
+            rate_limits_updated_at: None,
+            rate_limits_error: None,
             last_used_at: None,
         }
     }
@@ -1684,6 +2056,93 @@ mod tests {
     }
 
     #[test]
+    fn failed_refresh_keeps_the_last_snapshot_but_marks_it_stale() {
+        let mut account = profile("backup", 1, None, false);
+        account.rate_limits = Some(json!({
+            "rateLimits": {"secondary": {"usedPercent": 100, "resetsAt": 500}}
+        }));
+        account.rate_limits_updated_at = Some(100);
+        let previous = account.rate_limits.clone();
+        mark_profile_refresh_failed(&mut account, "isolated refresh failed");
+        assert_eq!(account.rate_limits, previous);
+        assert_eq!(account.rate_limits_updated_at, Some(100));
+        assert_eq!(
+            account.rate_limits_error.as_deref(),
+            Some("isolated refresh failed")
+        );
+    }
+
+    #[test]
+    fn rolling_rate_limit_update_merges_only_available_fields() {
+        let previous = json!({
+            "rateLimits": {
+                "limitId": "codex",
+                "limitName": "Codex",
+                "primary": {
+                    "usedPercent": 25,
+                    "windowDurationMins": 300,
+                    "resetsAt": 500
+                },
+                "secondary": {
+                    "usedPercent": 40,
+                    "windowDurationMins": 10_080,
+                    "resetsAt": 900
+                }
+            },
+            "rateLimitsByLimitId": null,
+            "rateLimitResetCredits": null
+        });
+        let merged = merge_rate_limit_update(
+            Some(&previous),
+            &json!({
+                "limitId": null,
+                "limitName": null,
+                "primary": {
+                    "usedPercent": 31,
+                    "windowDurationMins": null,
+                    "resetsAt": null
+                },
+                "secondary": null
+            }),
+        );
+        assert_eq!(
+            merged.pointer("/rateLimits/limitName"),
+            Some(&json!("Codex"))
+        );
+        assert_eq!(
+            merged.pointer("/rateLimits/primary/usedPercent"),
+            Some(&json!(31))
+        );
+        assert_eq!(
+            merged.pointer("/rateLimits/primary/windowDurationMins"),
+            Some(&json!(300))
+        );
+        assert_eq!(
+            merged.pointer("/rateLimits/secondary/windowDurationMins"),
+            Some(&json!(10_080))
+        );
+    }
+
+    #[test]
+    fn scheduler_wakes_after_a_reset_or_retries_a_failed_profile() {
+        let mut account = profile("primary", 0, None, true);
+        account.rate_limits = Some(json!({
+            "rateLimits": {"secondary": {"usedPercent": 25, "resetsAt": 200}}
+        }));
+        let mut state = PersistedAccountPool {
+            version: STATE_VERSION,
+            active_profile_id: Some("primary".into()),
+            profiles: vec![account],
+        };
+        assert_eq!(next_refresh_delay_at(&state, 100), Duration::from_secs(105));
+        state.profiles[0].rate_limits_error = Some("offline".into());
+        assert_eq!(
+            next_refresh_delay_at(&state, 100),
+            ACCOUNT_POOL_REFRESH_RETRY
+        );
+    }
+
+    #[test]
     fn classifier_does_not_rotate_on_generic_failures() {
         assert!(!is_confirmed_usage_limit_error("429 upstream unavailable"));
         assert!(!is_confirmed_usage_limit_error("Unauthorized"));
@@ -1728,62 +2187,12 @@ mod tests {
     }
 
     #[test]
-    fn stale_limit_observation_cannot_poison_the_new_active_account() {
-        let mut state = RuntimeState {
-            persisted: PersistedAccountPool {
-                version: STATE_VERSION,
-                active_profile_id: Some("backup".into()),
-                profiles: vec![
-                    profile("primary", 0, None, false),
-                    profile("backup", 1, None, true),
-                ],
-            },
-            pending_login: None,
-            account_epoch: 2,
-        };
-        let stale_lease = AccountLease {
-            profile_id: "primary".into(),
-            epoch: 1,
-        };
-        let outcome = apply_account_observation(
-            &mut state,
-            &stale_lease,
-            &json!({"account": {"email": "wrong@example.com"}}),
-            Some(json!({
-                "rateLimits": {
-                    "rateLimitReachedType": "rate_limit_reached"
-                }
-            })),
-            true,
-        );
-        assert_eq!(outcome, RefreshOutcome::Stale);
-        let backup = state
-            .persisted
-            .profiles
-            .iter()
-            .find(|candidate| candidate.id == "backup")
-            .expect("backup profile");
-        assert_eq!(backup.email, None);
-        assert!(!backup.exhausted_indefinitely);
-    }
-
-    #[test]
-    fn fresh_healthy_observation_clears_only_the_leased_account() {
+    fn fresh_healthy_observation_clears_only_the_observed_account() {
         let mut active = profile("primary", 0, None, true);
         active.exhausted_indefinitely = true;
-        let mut state = RuntimeState {
-            persisted: PersistedAccountPool {
-                version: STATE_VERSION,
-                active_profile_id: Some("primary".into()),
-                profiles: vec![active, profile("backup", 1, Some(900), false)],
-            },
-            pending_login: None,
-            account_epoch: 7,
-        };
-        let lease = active_lease(&state).expect("active lease");
-        let outcome = apply_account_observation(
-            &mut state,
-            &lease,
+        let backup = profile("backup", 1, Some(900), false);
+        let blocking = apply_profile_observation(
+            &mut active,
             &json!({"account": {"email": "primary@example.com", "planType": "pro"}}),
             Some(json!({
                 "rateLimits": {
@@ -1791,19 +2200,13 @@ mod tests {
                 }
             })),
             true,
+            100,
         );
-        assert_eq!(
-            outcome,
-            RefreshOutcome::Current {
-                blocking: Some(BlockingState::Available)
-            }
-        );
-        assert_eq!(
-            state.persisted.profiles[0].email.as_deref(),
-            Some("primary@example.com")
-        );
-        assert!(!state.persisted.profiles[0].exhausted_indefinitely);
-        assert_eq!(state.persisted.profiles[1].exhausted_until, Some(900));
+        assert_eq!(blocking, Some(BlockingState::Available));
+        assert_eq!(active.email.as_deref(), Some("primary@example.com"));
+        assert!(!active.exhausted_indefinitely);
+        assert_eq!(active.rate_limits_updated_at, Some(100));
+        assert_eq!(backup.exhausted_until, Some(900));
     }
 
     #[test]
@@ -1848,6 +2251,7 @@ mod tests {
                 "rateLimits": {"primary": {"usedPercent": 12, "resetsAt": 900}}
             })),
             true,
+            100,
         );
         assert_eq!(blocking, Some(BlockingState::Available));
         assert!(!enrolled.active);
@@ -1879,9 +2283,10 @@ mod tests {
             state: Arc::new(Mutex::new(RuntimeState::default())),
             switch_lock: Arc::new(Mutex::new(())),
             login_lock: Arc::new(Mutex::new(())),
+            refresh_wakeup: Arc::new(Notify::new()),
             events,
         };
-        let (upstream, mut child, home) = service.spawn_isolated_enrollment().await?;
+        let (upstream, mut child, home) = service.spawn_isolated_server(None).await?;
         let response = upstream
             .request(json!({
                 "id": "probe",

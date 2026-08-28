@@ -58,7 +58,7 @@ pub async fn connect_raw_app_server(
     client_async_with_config(
         "ws://localhost/",
         stream,
-        Some(app_server_websocket_config()),
+        Some(app_server_websocket_config(APP_SERVER_MAX_MESSAGE_BYTES)),
     )
     .await
     .map(|(socket, _response)| socket)
@@ -159,6 +159,11 @@ pub enum UpstreamError {
 impl UpstreamHandle {
     #[must_use]
     pub fn spawn(socket_path: PathBuf) -> Self {
+        Self::spawn_with_message_limit(socket_path, APP_SERVER_MAX_MESSAGE_BYTES)
+    }
+
+    #[must_use]
+    pub fn spawn_with_message_limit(socket_path: PathBuf, max_message_bytes: usize) -> Self {
         let (commands, command_rx) = mpsc::channel(REQUEST_QUEUE_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let (status_tx, status) = watch::channel(ConnectionStatus::Reconnecting);
@@ -169,7 +174,14 @@ impl UpstreamHandle {
             status,
             generation: generation.clone(),
         };
-        tokio::spawn(run(socket_path, command_rx, events, status_tx, generation));
+        tokio::spawn(run(
+            socket_path,
+            command_rx,
+            events,
+            status_tx,
+            generation,
+            max_message_bytes,
+        ));
         handle
     }
 
@@ -281,11 +293,21 @@ async fn run(
     events: broadcast::Sender<Value>,
     status: watch::Sender<ConnectionStatus>,
     generation: Arc<AtomicU64>,
+    max_message_bytes: usize,
 ) {
     let mut attempt = 0_u32;
     loop {
         let _ = status.send(ConnectionStatus::Reconnecting);
-        match run_connection(&socket_path, &mut commands, &events, &status, &generation).await {
+        match run_connection(
+            &socket_path,
+            &mut commands,
+            &events,
+            &status,
+            &generation,
+            max_message_bytes,
+        )
+        .await
+        {
             Ok(()) => {
                 attempt = 0;
                 warn!("App Server WebSocket closed");
@@ -331,6 +353,7 @@ async fn run_stdio(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_stdio_connection(
     stdin: &mut ChildStdin,
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
@@ -378,8 +401,12 @@ async fn run_stdio_connection(
     let mut counter = 0_u64;
     let mut pending: HashMap<String, oneshot::Sender<Result<Value, UpstreamError>>> =
         HashMap::new();
+    let mut pending_cleanup = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
+            _ = pending_cleanup.tick() => {
+                pending.retain(|_, response| !response.is_closed());
+            }
             outbound = commands.recv() => {
                 let Some(outbound) = outbound else { break; };
                 match outbound {
@@ -450,8 +477,9 @@ async fn run_connection(
     events: &broadcast::Sender<Value>,
     status: &watch::Sender<ConnectionStatus>,
     generation: &AtomicU64,
+    max_message_bytes: usize,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut socket = connect_initialized(socket_path).await?;
+    let mut socket = connect_initialized(socket_path, max_message_bytes).await?;
     generation.fetch_add(1, Ordering::AcqRel);
     let _ = status.send(ConnectionStatus::Live);
     info!(socket = %socket_path.display(), "Connected to Codex App Server");
@@ -459,8 +487,12 @@ async fn run_connection(
     let mut counter = 0_u64;
     let mut pending: HashMap<String, oneshot::Sender<Result<Value, UpstreamError>>> =
         HashMap::new();
+    let mut pending_cleanup = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
+            _ = pending_cleanup.tick() => {
+                pending.retain(|_, response| !response.is_closed());
+            }
             outbound = commands.recv() => {
                 let Some(outbound) = outbound else { return Ok(()); };
                 match outbound {
@@ -526,12 +558,13 @@ async fn run_connection(
 
 async fn connect_initialized(
     socket_path: &PathBuf,
+    max_message_bytes: usize,
 ) -> Result<AppServerSocket, Box<dyn std::error::Error + Send + Sync>> {
     let stream = UnixStream::connect(socket_path).await?;
     let (mut socket, _) = client_async_with_config(
         "ws://localhost/",
         stream,
-        Some(app_server_websocket_config()),
+        Some(app_server_websocket_config(max_message_bytes)),
     )
     .await?;
     socket
@@ -575,10 +608,10 @@ async fn connect_initialized(
     Ok(socket)
 }
 
-fn app_server_websocket_config() -> WebSocketConfig {
+fn app_server_websocket_config(max_message_bytes: usize) -> WebSocketConfig {
     WebSocketConfig::default()
-        .max_frame_size(Some(APP_SERVER_MAX_FRAME_BYTES))
-        .max_message_size(Some(APP_SERVER_MAX_MESSAGE_BYTES))
+        .max_frame_size(Some(max_message_bytes.min(APP_SERVER_MAX_FRAME_BYTES)))
+        .max_message_size(Some(max_message_bytes))
 }
 
 fn message_payload_len(message: &Message) -> usize {
@@ -828,6 +861,53 @@ mod tests {
             true
         );
         fake.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn configured_message_limit_rejects_oversized_source_before_json_delivery()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let directory = tempfile::tempdir()?;
+        let socket_path = directory.path().join("bounded-app-server.sock");
+        let handle = UpstreamHandle::spawn_with_message_limit(socket_path.clone(), 512);
+        let mut events = handle.subscribe_events();
+        let listener = UnixListener::bind(&socket_path)?;
+        let fake = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let mut socket = accept_async(stream).await?;
+            let initialize = receive_json(&mut socket).await?;
+            let id = initialize
+                .get("id")
+                .cloned()
+                .ok_or_else(|| std::io::Error::other("initialize id missing"))?;
+            socket
+                .send(Message::Text(
+                    json!({"id": id, "result": {}}).to_string().into(),
+                ))
+                .await?;
+            let initialized = receive_json(&mut socket).await?;
+            assert_eq!(initialized["method"], "initialized");
+            socket
+                .send(Message::Text(
+                    json!({
+                        "method": "item/completed",
+                        "params": {"payload": "x".repeat(2_048)}
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await?;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+
+        wait_for_status(&handle, ConnectionStatus::Live).await?;
+        fake.await??;
+        wait_for_status(&handle, ConnectionStatus::Reconnecting).await?;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), events.recv())
+                .await
+                .is_err()
+        );
         Ok(())
     }
 

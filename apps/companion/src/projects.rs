@@ -95,7 +95,12 @@ impl ProjectService {
                     .get("path")
                     .and_then(Value::as_str)
                     .ok_or_else(|| ProjectError::InvalidRequest("path is required".into()))?;
-                Ok(json!({ "project": self.add(path).await? }))
+                let name = params.get("name").and_then(Value::as_str);
+                let pinned = params
+                    .get("pinned")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                Ok(json!({ "project": self.add_with_options(path, name, pinned).await? }))
             }
             _ => Err(ProjectError::InvalidRequest(format!(
                 "unsupported method {method}"
@@ -158,7 +163,18 @@ impl ProjectService {
         }
     }
 
-    async fn add(&self, raw_path: &str) -> Result<Project, ProjectError> {
+    /// Adds or updates a project while preserving the caller-owned label and
+    /// pin state. Omitting the label keeps the existing V1 basename behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation, filesystem, or durable registry failures.
+    pub async fn add_with_options(
+        &self,
+        raw_path: &str,
+        requested_name: Option<&str>,
+        pinned: bool,
+    ) -> Result<Project, ProjectError> {
         let requested = Path::new(raw_path.trim());
         if raw_path.contains('\0') || !requested.is_absolute() {
             return Err(ProjectError::InvalidRequest(
@@ -180,12 +196,20 @@ impl ProjectService {
             .to_str()
             .ok_or_else(|| ProjectError::InvalidDirectory("path is not valid UTF-8".into()))?
             .to_owned();
-        let name = canonical
-            .file_name()
-            .and_then(|value| value.to_str())
+        let name = requested_name
+            .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or(path.as_str())
-            .to_owned();
+            .map_or_else(
+                || {
+                    canonical
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or(path.as_str())
+                        .to_owned()
+                },
+                ToOwned::to_owned,
+            );
         let now = unix_time_ms();
         let mut state = self.state.lock().await;
         if let Some(existing) = state
@@ -194,13 +218,15 @@ impl ProjectService {
             .find(|project| project.path == path)
         {
             existing.last_used_at = now;
+            existing.name = name;
+            existing.pinned = pinned;
         } else {
             state.projects.push(Project {
                 path: path.clone(),
                 name,
                 added_at: now,
                 last_used_at: now,
-                pinned: true,
+                pinned,
             });
         }
         persist_registry(&self.state_path, &state).await?;
@@ -210,6 +236,11 @@ impl ProjectService {
             .find(|project| project.path == path)
             .cloned()
             .ok_or(ProjectError::Corrupted)
+    }
+
+    #[cfg(test)]
+    async fn add(&self, raw_path: &str) -> Result<Project, ProjectError> {
+        self.add_with_options(raw_path, None, true).await
     }
 }
 

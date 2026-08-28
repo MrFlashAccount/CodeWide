@@ -14,6 +14,8 @@ use tokio::{
     net::TcpStream,
 };
 
+use crate::auth::AuthorizationChange;
+
 const MAX_PORTS: usize = 256;
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const FULL_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
@@ -897,12 +899,50 @@ fn contains_word(text: &str, word: &str) -> bool {
 
 /// Bridges binary WebSocket frames to one host-loopback TCP stream.
 pub async fn bridge_tcp(mut socket: WebSocket, mut target: TcpStream) {
+    bridge_tcp_with_authorization(&mut socket, &mut target, None, None).await;
+}
+
+/// Bridges an unauthenticated carrier while bounding inactive permit retention.
+pub async fn bridge_tcp_idle_bounded(
+    mut socket: WebSocket,
+    mut target: TcpStream,
+    idle_timeout: Duration,
+) {
+    bridge_tcp_with_authorization(&mut socket, &mut target, None, Some(idle_timeout)).await;
+}
+
+pub async fn bridge_tcp_authorized(
+    mut socket: WebSocket,
+    mut target: TcpStream,
+    device_id: String,
+    authorization_changes: tokio::sync::broadcast::Receiver<AuthorizationChange>,
+) {
+    bridge_tcp_with_authorization(
+        &mut socket,
+        &mut target,
+        Some((device_id, authorization_changes)),
+        None,
+    )
+    .await;
+}
+
+async fn bridge_tcp_with_authorization(
+    socket: &mut WebSocket,
+    target: &mut TcpStream,
+    mut authorization: Option<(
+        String,
+        tokio::sync::broadcast::Receiver<AuthorizationChange>,
+    )>,
+    idle_timeout: Option<Duration>,
+) {
     let mut host_buffer = vec![0_u8; 64 * 1024];
+    let mut idle = idle_timeout.map(|duration| Box::pin(tokio::time::sleep(duration)));
     loop {
         tokio::select! {
             phone = socket.recv() => match phone {
                 Some(Ok(Message::Binary(bytes))) if bytes.len() <= MAX_FRAME_BYTES => {
                     if target.write_all(&bytes).await.is_err() { break; }
+                    reset_idle(&mut idle, idle_timeout);
                 }
                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                 Some(Ok(Message::Ping(bytes))) => {
@@ -921,12 +961,50 @@ pub async fn bridge_tcp(mut socket: WebSocket, mut target: TcpStream) {
                 Ok(0) | Err(_) => break,
                 Ok(bytes) => {
                     if socket.send(Message::Binary(host_buffer[..bytes].to_vec().into())).await.is_err() { break; }
+                    reset_idle(&mut idle, idle_timeout);
+                }
+            },
+            () = wait_for_idle(&mut idle), if idle.is_some() => break,
+            change = receive_authorization_change(&mut authorization), if authorization.is_some() => {
+                match change {
+                    Ok(change) if authorization.as_ref().is_some_and(|(device_id, _)| device_id == &change.device_id) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_) | tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Ok(_) => {}
                 }
             }
         }
     }
     let _ = target.shutdown().await;
     let _ = socket.close().await;
+}
+
+async fn wait_for_idle(idle: &mut Option<std::pin::Pin<Box<tokio::time::Sleep>>>) {
+    match idle {
+        Some(idle) => idle.as_mut().await,
+        None => std::future::pending().await,
+    }
+}
+
+fn reset_idle(
+    idle: &mut Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    idle_timeout: Option<Duration>,
+) {
+    if let (Some(idle), Some(idle_timeout)) = (idle, idle_timeout) {
+        idle.as_mut()
+            .reset(tokio::time::Instant::now() + idle_timeout);
+    }
+}
+
+async fn receive_authorization_change(
+    authorization: &mut Option<(
+        String,
+        tokio::sync::broadcast::Receiver<AuthorizationChange>,
+    )>,
+) -> Result<AuthorizationChange, tokio::sync::broadcast::error::RecvError> {
+    match authorization {
+        Some((_, changes)) => changes.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 #[must_use]

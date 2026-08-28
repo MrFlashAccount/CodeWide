@@ -1,10 +1,12 @@
 import { MAX_TURN_TEXT_CHARS } from "@codewide/sync-client";
+import { observable, type Observable } from "@legendapp/state";
 import type { Collection } from "@tanstack/react-db";
 
 import { createPersistentCollectionModel } from "./persistent-collection.native";
 import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import { sanitizeHistoryAnchorOffset } from "./thread-history-anchor";
 import type {
+  QuickdrawDraftState,
   StoredComposerPreferences,
   StoredDraftAttachment,
   ThreadUiStateRow,
@@ -13,6 +15,8 @@ import type {
 export type ThreadUiStateDatabase = {
   collection: Collection<ThreadUiStateRow, string>;
   get(connectionId: string, threadId: string): ThreadUiStateRow | null;
+  /** Key-scoped live row. Reading one thread never subscribes to the collection snapshot. */
+  row$(connectionId: string, threadId: string): Observable<ThreadUiStateRow | null>;
   /** Stable React resource for the persisted composer/anchor row. */
   read(connectionId: string, threadId: string): Promise<ThreadUiStateRow>;
   getOrCreate(connectionId: string, threadId: string): Promise<ThreadUiStateRow>;
@@ -41,10 +45,28 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
   });
   const { collection } = model;
   const reads = new Map<string, Promise<ThreadUiStateRow>>();
+  const rows = new Map<string, Observable<ThreadUiStateRow | null>>();
 
   const get = (connectionId: string, threadId: string): ThreadUiStateRow | null => {
     return collection.get(threadUiStateKey(connectionId, threadId)) ?? null;
   };
+
+  const publishRow = (id: string): void => {
+    rows.get(id)?.set(collection.get(id) ?? null);
+  };
+
+  const row$ = (connectionId: string, threadId: string): Observable<ThreadUiStateRow | null> => {
+    const id = threadUiStateKey(connectionId, threadId);
+    const existing = rows.get(id);
+    if (existing !== undefined) return existing;
+    const created = observable<ThreadUiStateRow | null>(collection.get(id) ?? null);
+    rows.set(id, created);
+    return created;
+  };
+
+  const subscription = collection.subscribeChanges((changes) => {
+    for (const change of changes) publishRow(String(change.key));
+  }, { includeInitialState: false });
 
   const patch = async (
     connectionId: string,
@@ -61,6 +83,7 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
           draft.updatedAt = Date.now();
         });
     await transaction.isPersisted.promise;
+    publishRow(id);
   };
 
   const getOrCreate = async (connectionId: string, threadId: string): Promise<ThreadUiStateRow> => {
@@ -82,20 +105,27 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       };
       const transaction = collection.insert(row);
       await transaction.isPersisted.promise;
+      publishRow(id);
       return row;
   };
 
   return {
     collection,
     get,
+    row$,
     read(connectionId, threadId) {
       const id = threadUiStateKey(connectionId, threadId);
       let resource = reads.get(id);
       if (resource === undefined) {
-        resource = getOrCreate(connectionId, threadId).catch((cause: unknown) => {
-          if (reads.get(id) === resource) reads.delete(id);
-          throw cause;
-        });
+        resource = getOrCreate(connectionId, threadId)
+          .then((row) => {
+            row$(connectionId, threadId).set(row);
+            return row;
+          })
+          .catch((cause: unknown) => {
+            if (reads.get(id) === resource) reads.delete(id);
+            throw cause;
+          });
         reads.set(id, resource);
       }
       return resource;
@@ -126,6 +156,11 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       for (const key of reads.keys()) {
         if (key.startsWith(`${connectionId}\u0000`)) reads.delete(key);
       }
+      for (const [key, row] of rows) {
+        if (!key.startsWith(`${connectionId}\u0000`)) continue;
+        row.set(null);
+        rows.delete(key);
+      }
       const keys = collection.toArray
         .filter((row) => row.connectionId === connectionId)
         .map((row) => row.id);
@@ -134,7 +169,9 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       await transaction.isPersisted.promise;
     },
     close() {
+      subscription.unsubscribe();
       reads.clear();
+      rows.clear();
       model.close();
     },
   };
@@ -192,7 +229,7 @@ function sanitizeDraftAttachments(value: unknown): StoredDraftAttachment[] {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 128).flatMap((raw) => {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return [];
-    const { id, rootId, path, name, kind } = raw as Record<string, unknown>;
+    const { id, rootId, path, name, kind, editor } = raw as Record<string, unknown>;
     if (
       typeof id !== "string" || id.length < 1 || id.length > 128 ||
       typeof rootId !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/u.test(rootId) ||
@@ -200,8 +237,25 @@ function sanitizeDraftAttachments(value: unknown): StoredDraftAttachment[] {
       typeof name !== "string" || name.length < 1 || name.length > 4_096 || /[\u0000-\u001f\u007f]/u.test(name) ||
       (kind !== "image" && kind !== "audio" && kind !== "file")
     ) return [];
-    return [{ id, rootId, path, name, kind }];
+    const quickdrawEditor = sanitizeQuickdrawEditor(editor);
+    return [{ id, rootId, path, name, kind, ...(quickdrawEditor === null ? {} : { editor: quickdrawEditor }) }];
   });
+}
+
+function sanitizeQuickdrawEditor(value: unknown): QuickdrawDraftState | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const { kind, mode, snapshot, revision } = value as Record<string, unknown>;
+  if (
+    kind !== "quickdraw"
+    || (mode !== "drawing" && mode !== "image-annotation")
+    || snapshot === null
+    || typeof snapshot !== "object"
+    || Array.isArray(snapshot)
+    || typeof revision !== "number"
+    || !Number.isSafeInteger(revision)
+    || revision < 0
+  ) return null;
+  return { kind, mode, snapshot: snapshot as Record<string, unknown>, revision };
 }
 
 function threadUiStateKey(connectionId: string, threadId: string): string {

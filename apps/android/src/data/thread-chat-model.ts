@@ -9,12 +9,16 @@ export type ThreadChatWindowRequest = {
   connectionId: string;
   threadId: string;
   anchorTurnId: string | null;
+  /** Changes once per explicit chat opening, including a repeated selection. */
+  openGeneration?: number;
 };
 
 export type ThreadChatWindowSnapshot = {
   scope: string;
   requestKey: string | null;
   status: ThreadLoadStatus;
+  /** An authoritative backend hydration is currently in flight. */
+  backendRefreshing: boolean;
   error: string | null;
   historyEpoch: number;
   latestSealedOrdinal: number | null;
@@ -29,7 +33,7 @@ export type ThreadChatWindowSnapshot = {
   revision: number;
 };
 
-export type LoadedThreadChatWindow = Omit<ThreadChatWindowSnapshot, "status" | "error" | "layoutRevision" | "revision"> & {
+export type LoadedThreadChatWindow = Omit<ThreadChatWindowSnapshot, "status" | "backendRefreshing" | "error" | "layoutRevision" | "revision"> & {
   rows: readonly ThreadDetailRow[];
 };
 
@@ -39,7 +43,10 @@ export type ThreadChatModel = {
   retainWindow(connectionId: string, threadId: string): () => void;
   row$(rowId: string): Observable<ThreadDetailRow | null>;
   readRows(rowIds: readonly string[]): ThreadDetailRow[];
+  beginPresentation(connectionId: string, threadId: string): void;
+  finishPresentation(connectionId: string, threadId: string): void;
   startWindow(request: ThreadChatWindowRequest): number;
+  setBackendRefreshing(request: ThreadChatWindowRequest, generation: number, refreshing: boolean): void;
   commitWindow(request: ThreadChatWindowRequest, generation: number, loaded: LoadedThreadChatWindow): boolean;
   commitRange(
     connectionId: string,
@@ -73,18 +80,23 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const generations = new Map<string, number>();
   const windowLayoutSignatures = new Map<string, string>();
   const changedRowIdsByScope = new Map<string, Set<string>>();
+  const presentations = new Map<string, {
+    hasCommittedWindow: boolean;
+    pendingWindow: { sequence: number; request: ThreadChatWindowRequest; generation: number; loaded: LoadedThreadChatWindow } | null;
+    pendingRows: { sequence: number; rows: readonly ThreadDetailRow[] } | null;
+  }>();
   const resources = new Map<string, {
     ready$: Observable<boolean>;
     requestKey: string;
     loadingKey: string | null;
     token: number;
     hasReadySnapshot: boolean;
-    initialFailed: boolean;
     retryAttempt: number;
     retryTimer: ReturnType<typeof setTimeout> | null;
   }>();
   let closed = false;
   let reportedResidentRowCount = -1;
+  let presentationSequence = 0;
 
   const reportResidentRowCount = (): void => {
     if (options.onResidentRowCountChange === undefined) return;
@@ -126,6 +138,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     windowIdentities.delete(scope);
     windowLayoutSignatures.delete(scope);
     changedRowIdsByScope.delete(scope);
+    presentations.delete(scope);
     resources.delete(scope);
     if (identity !== undefined) options.onEvictWindow?.(identity.connectionId, identity.threadId);
   };
@@ -171,6 +184,83 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     changedRowIdsByScope.set(scope, ids);
   };
 
+  const commitWindowNow = (
+    request: ThreadChatWindowRequest,
+    generation: number,
+    loaded: LoadedThreadChatWindow,
+  ): boolean => {
+    const scope = threadChatScope(request.connectionId, request.threadId);
+    if (closed || generations.get(scope) !== generation || threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)) return false;
+    batch(() => {
+      const rowsChanged = installRows(loaded.rows);
+      const node = window$(request.connectionId, request.threadId);
+      const previous = node.peek();
+      const signature = threadLayoutSignature(loaded.rows, loaded);
+      const layoutChanged = windowLayoutSignatures.get(scope) !== signature;
+      const { rows: _rows, ...loadedWindow } = loaded;
+      const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
+        ...loadedWindow,
+        status: "ready",
+        backendRefreshing: previous.backendRefreshing,
+        error: null,
+        layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
+        revision: previous.revision + (rowsChanged ? 1 : 0),
+      });
+      if (next !== previous) node.set(next);
+      windowLayoutSignatures.set(scope, signature);
+    });
+    // commitWindow is the atomic presentation seam. Mark the resident
+    // snapshot ready here, in the same synchronous turn as the Legend
+    // commit. Waiting for the loader promise's `.then` leaves a race where
+    // the native list can draw, request a neighbouring range, and replace
+    // ready$ with a second suspending promise even though usable content is
+    // already resident.
+    const resource = resources.get(scope);
+    if (resource !== undefined && resource.requestKey === threadChatRequestKey(request)) {
+      resource.hasReadySnapshot = true;
+    }
+    return true;
+  };
+
+  const refreshThreadNow = (connectionId: string, threadId: string, rows: readonly ThreadDetailRow[]): void => {
+    const scope = threadChatScope(connectionId, threadId);
+    const publishedChanges = changedRowIdsByScope.get(scope);
+    changedRowIdsByScope.delete(scope);
+    const request = activeRequests.get(scope);
+    const node = windowNodes.get(scope);
+    if (request === undefined || node === undefined) return;
+    const previous = node.peek();
+    const next = projectResidentRows(rows, previous, previous.residentTurnLimit);
+    const signature = threadLayoutSignature(rows, {
+      ...next,
+      residentTurnLimit: previous.residentTurnLimit,
+    });
+    const layoutChanged = windowLayoutSignatures.get(scope) !== signature;
+    const residentRowIds = new Set([
+      ...previous.turnRowIds,
+      ...previous.detailRowIds,
+      ...previous.liveRowIds,
+      ...next.turnRowIds,
+      ...next.detailRowIds,
+      ...next.liveRowIds,
+    ]);
+    const publishedContentChanged = publishedChanges !== undefined
+      && [...publishedChanges].some((rowId) => residentRowIds.has(rowId));
+    batch(() => {
+      const rowsChanged = installRows(rows.filter((row) => residentRowIds.has(row.id)));
+      const nextSnapshot = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
+        ...previous,
+        ...next,
+        status: previous.status === "initial-loading" || previous.status === "initial-error" ? "ready" : previous.status,
+        error: null,
+        layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
+        revision: previous.revision + (publishedContentChanged || rowsChanged ? 1 : 0),
+      });
+      if (nextSnapshot !== previous) node.set(nextSnapshot);
+    });
+    windowLayoutSignatures.set(scope, signature);
+  };
+
   const beginResourceLoad = (
     request: ThreadChatWindowRequest,
     loader: () => Promise<void>,
@@ -187,7 +277,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       record.requestKey = requestKey;
       record.loadingKey = requestKey;
       record.token = token;
-      record.initialFailed = false;
       record.retryAttempt = retryAttempt;
     }
     return Promise.resolve().then(loader).then(() => {
@@ -205,7 +294,6 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         && current.requestKey === requestKey;
       if (!ownsLoad) return false;
       current.loadingKey = null;
-      current.initialFailed = initial;
       if (initial) throw cause;
       const retryDelay = Math.min(250 * (2 ** current.retryAttempt), 5_000);
       current.retryTimer = setTimeout(() => {
@@ -231,15 +319,12 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           loadingKey: requestKey,
           token: 0,
           hasReadySnapshot: false,
-          initialFailed: false,
           retryAttempt: 0,
           retryTimer: null,
         };
         resources.set(scope, holder);
         holder.ready$ = observable(beginResourceLoad(request, loader, true)) as unknown as Observable<boolean>;
         record = holder;
-      } else if (record.initialFailed && record.loadingKey === null) {
-        record.ready$ = observable(beginResourceLoad(request, loader, true)) as unknown as Observable<boolean>;
       } else if (record.requestKey !== requestKey && record.loadingKey !== requestKey) {
         // Window changes preserve the current rows. The SQLite page is merged
         // into the active resident set atomically, so pagination never removes
@@ -261,12 +346,18 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         const next = (retainCounts.get(scope) ?? 1) - 1;
         if (next <= 0) retainCounts.delete(scope);
         else retainCounts.set(scope, next);
-        // Evict only the scope whose final owner disappeared. During a React
-        // navigation commit the next scope may already have been observed in
-        // render but not retained by its passive effect yet.
+        // React destroys the old passive effect before mounting the replacement
+        // effect. A responsive mobile/desktop handoff therefore reaches zero
+        // owners briefly even though the same thread remains visible. Defer
+        // eviction to the commit's microtask boundary so the new owner can
+        // retain the exact same observable instead of subscribing to a window
+        // that cleanup has already removed from the model.
         if (next <= 0) {
-          evictWindow(scope);
-          pruneUnreferencedRows();
+          queueMicrotask(() => {
+            if ((retainCounts.get(scope) ?? 0) > 0) return;
+            evictWindow(scope);
+            pruneUnreferencedRows();
+          });
         }
       };
     },
@@ -275,6 +366,32 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       return rowIds.flatMap((rowId) => {
         const row = row$(rowId).peek();
         return row === null ? [] : [row];
+      });
+    },
+    beginPresentation(connectionId, threadId) {
+      if (closed) return;
+      const scope = threadChatScope(connectionId, threadId);
+      if (presentations.has(scope)) return;
+      const snapshot = windowNodes.get(scope)?.peek();
+      presentations.set(scope, {
+        hasCommittedWindow: snapshot !== undefined && threadLoadHasResidentSnapshot(snapshot.status),
+        pendingWindow: null,
+        pendingRows: null,
+      });
+    },
+    finishPresentation(connectionId, threadId) {
+      const scope = threadChatScope(connectionId, threadId);
+      const presentation = presentations.get(scope);
+      if (presentation === undefined) return;
+      presentations.delete(scope);
+      batch(() => {
+        const pending = [presentation.pendingWindow, presentation.pendingRows]
+          .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+          .sort((left, right) => left.sequence - right.sequence);
+        for (const entry of pending) {
+          if ("request" in entry) commitWindowNow(entry.request, entry.generation, entry.loaded);
+          else refreshThreadNow(connectionId, threadId, entry.rows);
+        }
       });
     },
     startWindow(request) {
@@ -294,6 +411,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...previous,
         requestKey,
+        backendRefreshing: false,
         status: hasResidentSnapshot
           ? previous.requestKey === requestKey ? "background-updating" : "loading-history"
           : "initial-loading",
@@ -303,38 +421,27 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       if (next !== previous) node.set(next);
       return generation;
     },
+    setBackendRefreshing(request, generation, refreshing) {
+      const scope = threadChatScope(request.connectionId, request.threadId);
+      if (closed
+        || generations.get(scope) !== generation
+        || threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)) return;
+      const node = window$(request.connectionId, request.threadId);
+      const previous = node.peek();
+      if (previous.backendRefreshing === refreshing) return;
+      node.set({ ...previous, backendRefreshing: refreshing });
+    },
     commitWindow(request, generation, loaded) {
       const scope = threadChatScope(request.connectionId, request.threadId);
       if (closed || generations.get(scope) !== generation || threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)) return false;
-      batch(() => {
-        const rowsChanged = installRows(loaded.rows);
-        const node = window$(request.connectionId, request.threadId);
-        const previous = node.peek();
-        const signature = threadLayoutSignature(loaded.rows, loaded);
-        const layoutChanged = windowLayoutSignatures.get(scope) !== signature;
-        const { rows: _rows, ...loadedWindow } = loaded;
-        const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
-          ...loadedWindow,
-          status: "ready",
-          error: null,
-          layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
-          revision: previous.revision + (rowsChanged ? 1 : 0),
-        });
-        if (next !== previous) node.set(next);
-        windowLayoutSignatures.set(scope, signature);
-      });
-      // commitWindow is the atomic presentation seam. Mark the resident
-      // snapshot ready here, in the same synchronous turn as the Legend
-      // commit. Waiting for the loader promise's `.then` leaves a race where
-      // the native list can draw, request a neighbouring range, and replace
-      // ready$ with a second suspending promise even though usable content is
-      // already resident.
-      const resource = resources.get(scope);
-      if (resource !== undefined && resource.requestKey === threadChatRequestKey(request)) {
-        resource.hasReadySnapshot = true;
-        resource.initialFailed = false;
+      const presentation = presentations.get(scope);
+      if (presentation?.hasCommittedWindow) {
+        presentation.pendingWindow = { sequence: ++presentationSequence, request, generation, loaded };
+        return true;
       }
-      return true;
+      const committed = commitWindowNow(request, generation, loaded);
+      if (committed && presentation !== undefined) presentation.hasCommittedWindow = true;
+      return committed;
     },
     commitRange(connectionId, threadId, expected, loaded) {
       const scope = threadChatScope(connectionId, threadId);
@@ -354,6 +461,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
           ...loadedWindow,
           status: "ready",
+          backendRefreshing: previous.backendRefreshing,
           error: null,
           layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
           revision: previous.revision + (rowsChanged ? 1 : 0),
@@ -400,41 +508,12 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     },
     refreshThread(connectionId, threadId, rows) {
       const scope = threadChatScope(connectionId, threadId);
-      const publishedChanges = changedRowIdsByScope.get(scope);
-      changedRowIdsByScope.delete(scope);
-      const request = activeRequests.get(scope);
-      const node = windowNodes.get(scope);
-      if (request === undefined || node === undefined) return;
-      const previous = node.peek();
-      const next = projectResidentRows(rows, previous, previous.residentTurnLimit);
-      const signature = threadLayoutSignature(rows, {
-        ...next,
-        residentTurnLimit: previous.residentTurnLimit,
-      });
-      const layoutChanged = windowLayoutSignatures.get(scope) !== signature;
-      const residentRowIds = new Set([
-        ...previous.turnRowIds,
-        ...previous.detailRowIds,
-        ...previous.liveRowIds,
-        ...next.turnRowIds,
-        ...next.detailRowIds,
-        ...next.liveRowIds,
-      ]);
-      const publishedContentChanged = publishedChanges !== undefined
-        && [...publishedChanges].some((rowId) => residentRowIds.has(rowId));
-      batch(() => {
-        const rowsChanged = installRows(rows.filter((row) => residentRowIds.has(row.id)));
-        const nextSnapshot = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
-          ...previous,
-          ...next,
-          status: previous.status === "initial-loading" || previous.status === "initial-error" ? "ready" : previous.status,
-          error: null,
-          layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
-          revision: previous.revision + (publishedContentChanged || rowsChanged ? 1 : 0),
-        });
-        if (nextSnapshot !== previous) node.set(nextSnapshot);
-      });
-      windowLayoutSignatures.set(scope, signature);
+      const presentation = presentations.get(scope);
+      if (presentation !== undefined) {
+        presentation.pendingRows = { sequence: ++presentationSequence, rows };
+        return;
+      }
+      refreshThreadNow(connectionId, threadId, rows);
     },
     residentRowCount() {
       let count = 0;
@@ -447,6 +526,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       activeRequests.clear();
       retainCounts.clear();
       generations.clear();
+      presentations.clear();
       resources.clear();
       windowNodes.clear();
       windowIdentities.clear();
@@ -468,6 +548,7 @@ export function threadChatRequestKey(request: ThreadChatWindowRequest | undefine
     request.connectionId,
     request.threadId,
     request.anchorTurnId ?? "",
+    request.openGeneration ?? 0,
   ].join("\u0000");
 }
 
@@ -476,6 +557,7 @@ function emptyWindow(scope: string): ThreadChatWindowSnapshot {
     scope,
     requestKey: null,
     status: "idle",
+    backendRefreshing: false,
     error: null,
     historyEpoch: 0,
     latestSealedOrdinal: null,

@@ -13,7 +13,6 @@ import type { ThreadChatWindowView } from "./use-thread-chat-window";
 import type { PendingTimelineEntry } from "./thread-detail-projection";
 import type { StoredThreadSummary } from "./thread-summary-types";
 import { applyThreadSummaryMetadata } from "./thread-metadata-projection";
-import { reconcileThreadLifecyclePresentation, staleTurnLifecycleId } from "./thread-lifecycle";
 import {
   projectResidentThreadTimeline,
   type ProjectedThreadChatDelivery,
@@ -29,8 +28,6 @@ export type ProjectedThreadChatWindow = {
   remoteLiveTurns: Thread["turns"];
   timeline: ProjectedThreadChatTimelineEntry[];
   queuedPrompts: QueuedPrompt[];
-  /** A terminal thread whose mutable detail head still needs canonical repair. */
-  staleLifecycleTurnId: string | null;
 };
 
 type CachedPendingDelivery = {
@@ -115,7 +112,6 @@ export function projectThreadChatWindow(
       remoteLiveTurns: [],
       timeline: projectResidentThreadTimeline([], pendingDeliveries, { includesEarliest: true, includesLatest: true }),
       queuedPrompts,
-      staleLifecycleTurnId: null,
     };
   }
   const mergedTurns = measure(
@@ -124,35 +120,32 @@ export function projectThreadChatWindow(
     { sealedTurnCount: sealedTurns.length, liveTurnCount: liveSnapshot.thread.turns.length },
   );
   const projectedThread = applyThreadSummaryMetadata({ ...liveSnapshot.thread, turns: mergedTurns }, summary);
-  const staleLifecycle = staleTurnLifecycleId(projectedThread);
-  const consistentThread = reconcileThreadLifecyclePresentation(projectedThread);
   const residentLiveTurnIds = new Set(liveSnapshot.thread.turns.map(({ id }) => id));
-  const liveTurnIds = new Set(consistentThread.turns.flatMap((turn) => (
+  const liveTurnIds = new Set(projectedThread.turns.flatMap((turn) => (
     residentLiveTurnIds.has(turn.id) && turn.status === "inProgress" ? [turn.id] : []
   )));
   const partitions = measure(
     "split_visible_turn_partitions",
     () => ({
-      sealed: consistentThread.turns.filter(({ id }) => !liveTurnIds.has(id)),
-      live: consistentThread.turns.filter(({ id }) => liveTurnIds.has(id)),
+      sealed: projectedThread.turns.filter(({ id }) => !liveTurnIds.has(id)),
+      live: projectedThread.turns.filter(({ id }) => liveTurnIds.has(id)),
     }),
-    { mergedTurnCount: consistentThread.turns.length },
+    { mergedTurnCount: projectedThread.turns.length },
   );
   const residentOrdinals = view.turnRows.flatMap((row) => row.kind === "turn" && row.sealed ? [row.ordinal] : []);
   const residentMinimum = residentOrdinals.length === 0 ? null : Math.min(...residentOrdinals);
   const residentMaximum = residentOrdinals.length === 0 ? null : Math.max(...residentOrdinals);
-  const timeline = projectResidentThreadTimeline(consistentThread.turns, pendingDeliveries, {
+  const timeline = projectResidentThreadTimeline(projectedThread.turns, pendingDeliveries, {
     includesEarliest: view.snapshot.earliestSealedOrdinal === null
       || (residentMinimum !== null && residentMinimum <= view.snapshot.earliestSealedOrdinal),
     includesLatest: view.snapshot.latestSealedOrdinal === null
       || (residentMaximum !== null && residentMaximum >= view.snapshot.latestSealedOrdinal),
   });
   return {
-    remoteThread: consistentThread,
+    remoteThread: projectedThread,
     remoteSealedTurns: partitions.sealed,
     remoteLiveTurns: partitions.live,
     timeline,
     queuedPrompts,
-    staleLifecycleTurnId: staleLifecycle,
   };
 }

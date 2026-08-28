@@ -24,11 +24,12 @@ import type {
   Turn,
 } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { Personality } from "@codewide/codex-protocol/v0.147.0";
-import { createTextOutboxCommand, MAX_TURN_TEXT_CHARS, RpcResponseError, seedThreadExecutionSettings, threadIdFromEvent, threadProjectionPatchFromEvent, type RemoteConnection, type RemoteFileAttachment, type RpcClient } from "@codewide/sync-client";
+import { createTextOutboxCommand, MAX_TURN_TEXT_CHARS, RpcResponseError, seedThreadExecutionSettings, threadIdFromEvent, threadProjectionPatchFromEvent, type RemoteConnection, type RemoteConnectionState, type RemoteFileAttachment, type RpcClient } from "@codewide/sync-client";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { useLiveQuery } from "@tanstack/react-db";
+import { useSelector } from "@legendapp/state/react";
 import { useSyncExternalStore } from "react";
 import { AppState, PermissionsAndroid, Platform } from "react-native";
 
@@ -40,14 +41,14 @@ import type { AccountLoginStart, AccountPoolSnapshot } from "./account-pool";
 import { createAccountRateLimitsDatabase, type AccountRateLimitsDatabase } from "./account-rate-limits-database";
 import { createConnectionProfileDatabase, type ConnectionProfileDatabase } from "./connection-profile-database";
 import type { StoredConnection } from "./connection-profile-types";
-import { createConnectionStateDatabase, type ConnectionStateDatabase } from "./connection-state-database";
+import { connectionDisplayState, createConnectionStateModel, type ConnectionStateModel } from "./connection-state-model";
 import { createThreadDetailDatabase, type ThreadDetailDatabase } from "./thread-detail-database";
 import type { PendingTimelineMutation } from "./thread-detail-projection";
 import { projectThreadHotStates } from "./thread-hot-state";
 import { createThreadUiStateDatabase, type ThreadUiStateDatabase } from "./thread-ui-state-database";
 import { incrementMetric, recordTiming } from "./operational-metrics";
 import { configureTelemetryAppVersion, configureTelemetryTransport, recordTelemetryEvent, type TelemetryBatch } from "./telemetry";
-import { hasAcceptedPendingDelivery, hasUnresolvedDeliveredCommand, parseHostQueueSnapshot } from "./queue-event";
+import { hasAppServerAcceptedPendingDelivery, hasUnresolvedDeliveredCommand, parseHostQueueSnapshot } from "./queue-event";
 import { parseAddedRemoteProject, parseRemoteDirectory, parseRemoteProjects, type RemoteDirectoryEntry, type RemoteProject } from "./remote-projects";
 import { parseCreatedWorkspace, parseWorkspaceSupport, startThreadInCreatedWorkspace, type CreatedWorkspace, type WorkspaceSupport } from "./workspace-creation";
 import { queuedInputPayload } from "./queued-input";
@@ -57,14 +58,20 @@ import { RealtimeAudioUploader } from "./realtime-audio-uploader";
 import { LegacyRemoteStore } from "./legacy-remote-store";
 import { createThreadSummaryDatabase, type ThreadSummaryDatabase } from "./thread-summary-database";
 import { createThreadProjectionStore } from "./thread-projection-store";
+import { loadThreadCatalog } from "./thread-catalog-loader";
 import { streamRepairThreadIds, terminalProjectionMatches, terminalProjectionProofs } from "./stream-recovery";
-import { materializeReadOnlyThreadWindow, materializeResumedThread, type CompanionThreadResumeResponse } from "./thread-read-model";
+import {
+  materializeReadOnlyThreadWindow,
+  materializeResumedThread,
+  type CompanionThreadResumeResponse,
+} from "./thread-read-model";
 import { shouldRefreshInvalidatedThread } from "./thread-detail-invalidation";
-import { collectThreadCursorDelta, latestSealedTurnId, planThreadOpenSync, threadOpenNeedsCursorCatchUp } from "./thread-cursor-sync";
+import { collectThreadCursorDelta, latestSealedTurnId, planThreadOpenSync, shouldUseBoundedThreadWindowRead, threadOpenNeedsCursorCatchUp } from "./thread-cursor-sync";
+import { recordThreadHistoryTelemetry, telemetryErrorKind } from "./thread-history-telemetry";
 import { projectThreadResourcePatch } from "./thread-resource-projection";
 import { loadSubagentDescendants, subagentActivityRootThreadId } from "./subagent-loader";
 import type { StoredThreadSummary } from "./thread-summary-types";
-import type { StoredComposerPreferences } from "./thread-ui-state-types";
+import type { StoredComposerPreferences, StoredDraftAttachment } from "./thread-ui-state-types";
 import { buildThreadForkParams, type ThreadForkOptions } from "./thread-fork";
 import {
   THREAD_HISTORY_PAGE_SIZE,
@@ -78,7 +85,8 @@ import { FileTransferController } from "./file-transfer-controller";
 import type { TransferAccess } from "./private-transfer";
 import { assertSecureCryptoRuntime } from "../polyfills/secure-crypto";
 import { NativeEngineSupervisor } from "../native/native-engine";
-import { acknowledgeNativeCommandReceipt, claimNativePairing, deleteNativeConnection, enqueueNativeCommand, listNativeCommands, listNativeConnectionConfigs, mintNativeSession, purgeLegacyDerivedStorage, reconnectNativeConnection, retryNativeCommand, saveNativeConnectionCredentials, setNativeConnectionEnabled, wakeNativeConnection, type NativeCommandDelivery } from "../native/native-transport";
+import { acknowledgeNativeCommandReceipt, claimNativePairing, deleteNativeConnection, enqueueNativeCommand, listNativeCommands, listNativeConnectionConfigs, mintNativeSession, nativeCompanionHttpOrigin, purgeLegacyDerivedStorage, reconnectNativeConnection, retryNativeCommand, saveNativeConnectionCredentials, setNativeConnectionEnabled, wakeNativeConnection, type NativeCommandDelivery } from "../native/native-transport";
+import { createNativeSyncV2Lifecycle, type NativeSyncV2Lifecycle } from "../native/sync-v2-lifecycle";
 
 export type RemoteWorkspace = {
   native: boolean;
@@ -117,8 +125,8 @@ export type RemoteWorkspace = {
   markThreadRead(connectionId: string, threadId: string): Promise<void>;
   loadDraft(connectionId: string, threadId: string): Promise<string>;
   saveDraft(connectionId: string, threadId: string, text: string): Promise<void>;
-  loadDraftAttachments(connectionId: string, threadId: string): Promise<RemoteFileAttachment[]>;
-  saveDraftAttachments(connectionId: string, threadId: string, attachments: RemoteFileAttachment[]): Promise<void>;
+  loadDraftAttachments(connectionId: string, threadId: string): Promise<StoredDraftAttachment[]>;
+  saveDraftAttachments(connectionId: string, threadId: string, attachments: StoredDraftAttachment[]): Promise<void>;
   loadScrollOffset(connectionId: string, threadId: string): Promise<number | null>;
   saveScrollOffset(connectionId: string, threadId: string, offset: number, historyAnchorTurnId: string | null, historyAnchorOffsetPx: number | null): Promise<void>;
   loadComposerPreferences(connectionId: string, threadId: string): Promise<StoredComposerPreferences | null>;
@@ -130,13 +138,11 @@ export type RemoteWorkspace = {
   steerQueuedPrompt(connectionId: string, commandId: string, expectedTurnId: string): Promise<void>;
   listBackgroundTerminals(connectionId: string, threadId: string): Promise<BackgroundTerminal[]>;
   terminateBackgroundTerminal(connectionId: string, threadId: string, processId: string): Promise<boolean>;
-  readThread(connectionId: string, threadId: string, cachedThread?: Thread | null): Promise<ThreadWindow | null>;
-  readSubagentThread(connectionId: string, threadId: string): Promise<ThreadWindow | null>;
-  refreshSubagents(connectionId: string, rootThreadId: string): Promise<void>;
+  readThread(connectionId: string, threadId: string, cachedThread?: Thread | null, requireAuthoritative?: boolean, mutableHeadOnly?: boolean): Promise<ThreadWindow | null>;
+  observeThread(connectionId: string, threadId: string, keepAcrossReconnect?: boolean): Promise<void>;
+  refreshSubagents(connectionId: string, rootThreadId: string, force?: boolean): Promise<void>;
   loadThreadResources(connectionId: string, threadId: string, scope?: ThreadChangeScope, kind?: ThreadResourceLoadKind): Promise<ThreadResourcesValue>;
   loadThreadChangeDiff(connectionId: string, threadId: string, path: string, scope?: ThreadChangeScope): Promise<ThreadChangeDiffValue>;
-  reconcileThreadLifecycle(connectionId: string, threadId: string, turnId: string, cachedThread: Thread): Promise<void>;
-  loadOlderTurns(connectionId: string, threadId: string, cursor: string, expectedHistoryEpoch: number): Promise<ThreadTurnPage>;
   loadTurnItems(connectionId: string, threadId: string, turnId: string): Promise<Turn["items"]>;
   startVoiceTranscription(connectionId: string, threadId: string, listener: VoiceTranscriptionListener, options?: VoiceTranscriptionOptions): Promise<VoiceTranscriptionSession>;
   sendText(connectionId: string, threadId: string, text: string, mode?: SendMode, options?: TurnSendOptions): Promise<string>;
@@ -171,7 +177,7 @@ export type TurnSendOptions = ThreadSettings & {
   attachments?: RemoteFileAttachment[];
   workspaceRequestId?: string;
 };
-export type ComposerAttachment = RemoteFileAttachment;
+export type ComposerAttachment = StoredDraftAttachment;
 export type TurnControls = TurnControlsValue;
 export type TunnelPreview = TunnelValue;
 export type { TransferAccess } from "./private-transfer";
@@ -218,11 +224,15 @@ type WorkspaceProjectionKey =
   | "pendingRequests"
   | "threadDetails";
 type WorkspaceActions = Omit<RemoteWorkspace, WorkspaceProjectionKey> & {
-  repairThreadProjection(connectionId: string, threadId: string): Promise<ThreadWindow | null>;
+  refreshThreadCatalog(connectionId: string, force?: boolean): Promise<void>;
+  repairThreadProjection(connectionId: string, threadId: string, indexedHeadOnly?: boolean): Promise<ThreadWindow | null>;
+  loadOlderTurns(connectionId: string, threadId: string, cursor: string, expectedHistoryEpoch: number): Promise<ThreadTurnPage>;
 };
 const CONNECTION_PROFILE_MIGRATION_KEY = "codex-remote-connection-profiles-v1-migrated";
 const CONNECTION_PROFILE_STORAGE_MIGRATION_KEY = "codex-remote-connection-profiles-cache-split-v1-migrated";
 const NATIVE_CREDENTIAL_MIGRATION_KEY = "codex-remote-native-credentials-v1-migrated";
+const THREAD_CATALOG_REPAIR_INTERVAL_MS = 10 * 60 * 1_000;
+const THREAD_CATALOG_REPAIR_TICK_MS = 60 * 1_000;
 const TURN_CONTROLS_FRESH_MS = 6 * 60 * 60 * 1_000;
 const EMPTY_TURN_CONTROLS: TurnControls = {
   models: [],
@@ -235,7 +245,7 @@ type WorkspaceRuntimeSnapshot = {
   ready: boolean;
   error: string | null;
   connectionProfiles: ConnectionProfileDatabase | null;
-  connectionStates: ConnectionStateDatabase | null;
+  connectionState: ConnectionStateModel | null;
   threadSummaries: ThreadSummaryDatabase | null;
   threadDetails: ThreadDetailDatabase | null;
   pendingRequests: PendingRequestDatabase | null;
@@ -250,7 +260,7 @@ class WorkspaceRuntime {
     ready: !this.native,
     error: null,
     connectionProfiles: null,
-    connectionStates: null,
+    connectionState: null,
     threadSummaries: null,
     threadDetails: null,
     pendingRequests: null,
@@ -262,24 +272,34 @@ class WorkspaceRuntime {
   readonly threadUiStateSeedInFlight = new Map<string, ReturnType<ThreadUiStateDatabase["getOrCreate"]>>();
   readonly httpSessions = new Map<string, { credentialKey: string; sessionToken: string; expiresAt: number }>();
   readonly httpSessionMintInFlight = new Map<string, { credentialKey: string; promise: Promise<{ sessionToken: string; expiresAt: number }> }>();
-  readonly threadReadInFlight = new Map<string, Promise<ThreadWindow | null>>();
+  readonly threadReadInFlight = new Map<string, {
+    authority: "local" | "mutable-head" | "recovery";
+    promise: Promise<ThreadWindow | null>;
+  }>();
+  readonly threadObserverDesired = new Map<string, string>();
+  readonly threadObserverAttachInFlight = new Map<string, Promise<void>>();
   readonly threadInvalidationGeneration = new Map<string, number>();
   readonly threadInvalidationRefreshInFlight = new Map<string, Promise<void>>();
   readonly threadInvalidationArchived = new Map<string, boolean>();
   readonly threadInvalidationActive = new Map<string, boolean>();
   readonly threadResourcesInFlight = new Map<string, Promise<ThreadResourcesValue>>();
+  readonly threadCatalogRefreshInFlight = new Map<string, Promise<void>>();
+  readonly threadCatalogRefreshedAt = new Map<string, number>();
   readonly subagentRefreshInFlight = new Map<string, Promise<void>>();
+  readonly subagentRefreshedAt = new Map<string, number>();
   readonly turnItemsInFlight = new Map<string, Promise<Turn["items"]>>();
-  readonly lifecycleRepairAttempt = new Map<string, number>();
   readonly turnControlsInFlight = new Map<string, Promise<TurnControls>>();
   readonly accountRateLimitsInFlight = new Map<string, Promise<GetAccountRateLimitsResponse>>();
   readonly connectionAttemptStartedAt = new Map<string, number>();
   supervisor: WorkspaceSyncSupervisor | null = null;
+  syncV2Lifecycle: NativeSyncV2Lifecycle | null = null;
   voiceController: VoiceInputController | null = null;
   fileTransferController: FileTransferController | null = null;
   startPromise: Promise<void> | null = null;
   profileSubscription: { unsubscribe(): void } | null = null;
   connectionStateSubscription: { unsubscribe(): void } | null = null;
+  catalogRepairTimer: ReturnType<typeof setInterval> | null = null;
+  catalogLifecycleSubscriptions: Array<{ remove(): void }> = [];
 
   get resourceDatabase(): WorkspaceResourceDatabase {
     const database = this.snapshot.resources;
@@ -343,7 +363,8 @@ async function scopedHttpAuthorization(connection: StoredConnection, forceRefres
 async function uploadTelemetryBatch(connectionId: string, batch: TelemetryBatch): Promise<void> {
   const connection = currentConnections().find((candidate) => candidate.id === connectionId);
   if (connection === undefined || !connection.enabled) throw new Error("Telemetry connection is unavailable");
-  const send = async (forceRefresh: boolean) => await fetch(companionHttpUrl(connection.endpoint, "/v1/telemetry/events"), {
+  const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+  const send = async (forceRefresh: boolean) => await fetch(companionHttpUrl(origin, "/v1/telemetry/events"), {
     method: "POST",
     headers: {
       authorization: await scopedHttpAuthorization(connection, forceRefresh),
@@ -493,22 +514,24 @@ function createWorkspaceActions(): WorkspaceActions {
         endpoint: validated.endpoint,
         pairingToken: validated.token,
         deviceName: "CodeWide Android",
-        ...(validated.tlsPinSha256 === undefined ? {} : { tlsPinSha256: validated.tlsPinSha256 }),
+        tlsPinSha256: validated.tlsPinSha256,
       });
-      const connectionId = `connection-${randomUUID()}`;
+      const connectionId = `saved-server-${randomUUID()}`;
       const nativeCredentials = {
         connectionId,
         endpoint: validated.endpoint,
         token: claimed.capabilityToken,
         enabled: true,
-        ...(validated.tlsPinSha256 === undefined ? {} : { tlsPinSha256: validated.tlsPinSha256 }),
+        tlsPinSha256: validated.tlsPinSha256,
+        deviceId: claimed.deviceId,
       };
       try {
         await saveNativeConnectionCredentials(nativeCredentials);
+        await workspaceRuntime.syncV2Lifecycle?.reconcile(await listNativeConnectionConfigs());
         const connection = await profiles.add({ ...validated, token: claimed.capabilityToken }, connectionId);
         wakeNativeConnection(connection.id);
         await refreshConnectionProfiles();
-        workspaceRuntime.snapshot.connectionStates?.setState(connection.id, "connecting", null);
+        workspaceRuntime.snapshot.connectionState?.setState(connection.id, "connecting", null, false);
         return connection;
       } catch (cause) {
         // A successful claim cannot be rolled back. Retain/retry the native
@@ -517,12 +540,13 @@ function createWorkspaceActions(): WorkspaceActions {
         try {
           await saveNativeConnectionCredentials(nativeCredentials);
           const nativeConfigs = await listNativeConnectionConfigs();
+          await workspaceRuntime.syncV2Lifecycle?.reconcile(nativeConfigs);
           await profiles.reconcileRuntimeConfigs(nativeConfigs);
           const reconciledProfiles = await refreshConnectionProfiles();
           const recovered = reconciledProfiles.find((connection) => connection.id === connectionId);
           if (recovered !== undefined) {
             wakeNativeConnection(recovered.id);
-            workspaceRuntime.snapshot.connectionStates?.setState(recovered.id, "connecting", null);
+            workspaceRuntime.snapshot.connectionState?.setState(recovered.id, "connecting", null, false);
             return recovered;
           }
         } catch {
@@ -535,11 +559,20 @@ function createWorkspaceActions(): WorkspaceActions {
   
     const deleteConnection = async (connectionId: string) => {
       workspaceRuntime.supervisor?.session(connectionId)?.stop();
-      await deleteNativeConnection(connectionId);
-      await requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles).delete(connectionId);
+      const finalizeSavedServerDelete = async () => {
+        await deleteNativeConnection(connectionId);
+        await requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles).delete(connectionId);
+      };
+      if (workspaceRuntime.syncV2Lifecycle === null) await finalizeSavedServerDelete();
+      else await workspaceRuntime.syncV2Lifecycle.deleteSavedServer(connectionId, finalizeSavedServerDelete);
       workspaceRuntime.httpSessions.delete(connectionId);
+      workspaceRuntime.threadObserverDesired.delete(connectionId);
+      workspaceRuntime.threadCatalogRefreshedAt.delete(connectionId);
+      for (const key of workspaceRuntime.subagentRefreshedAt.keys()) {
+        if (key.startsWith(`${connectionId}\u0000`)) workspaceRuntime.subagentRefreshedAt.delete(key);
+      }
       await refreshConnectionProfiles();
-      workspaceRuntime.snapshot.connectionStates?.remove(connectionId);
+      workspaceRuntime.snapshot.connectionState?.remove(connectionId);
       workspaceRuntime.snapshot.accountRateLimits?.remove(connectionId);
       await workspaceRuntime.snapshot.threadUiState?.deleteConnection(connectionId);
     };
@@ -547,16 +580,18 @@ function createWorkspaceActions(): WorkspaceActions {
     const setConnectionEnabled = async (connectionId: string, enabled: boolean) => {
       const profiles = requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles);
       await setNativeConnectionEnabled(connectionId, enabled);
+      await workspaceRuntime.syncV2Lifecycle?.reconcile(await listNativeConnectionConfigs());
       await profiles.setEnabled(connectionId, enabled);
       if (!enabled) workspaceRuntime.supervisor?.session(connectionId)?.stop();
+      if (!enabled) workspaceRuntime.threadObserverDesired.delete(connectionId);
       await refreshConnectionProfiles();
-      workspaceRuntime.snapshot.connectionStates?.setState(connectionId, enabled ? "connecting" : "offline", null);
+      workspaceRuntime.snapshot.connectionState?.setState(connectionId, enabled ? "connecting" : "offline", null, false);
     };
   
     const reconnectConnection = async (connectionId: string): Promise<void> => {
       const connection = currentConnections().find((candidate) => candidate.id === connectionId);
       if (connection === undefined || !connection.enabled) throw new Error("Connection is disabled or missing");
-      workspaceRuntime.snapshot.connectionStates?.setState(connectionId, "connecting", null);
+      workspaceRuntime.snapshot.connectionState?.setState(connectionId, "connecting", null, false);
       reconnectNativeConnection(connectionId);
     };
   
@@ -576,11 +611,12 @@ function createWorkspaceActions(): WorkspaceActions {
         enabled,
         ...(updated.tlsPinSha256 === undefined ? {} : { tlsPinSha256: updated.tlsPinSha256 }),
       });
+      await workspaceRuntime.syncV2Lifecycle?.reconcile(await listNativeConnectionConfigs());
       await profiles.update(connectionId, updated);
       if (enabled) wakeNativeConnection(connectionId);
       workspaceRuntime.httpSessions.delete(connectionId);
       await refreshConnectionProfiles();
-      workspaceRuntime.snapshot.connectionStates?.setState(connectionId, "connecting", null);
+      workspaceRuntime.snapshot.connectionState?.setState(connectionId, "connecting", null, false);
     };
   
     const moveConnection = async (connectionId: string, direction: -1 | 1) => {
@@ -702,11 +738,11 @@ function createWorkspaceActions(): WorkspaceActions {
       await requireThreadUiStateDatabase(workspaceRuntime.snapshot.threadUiState).saveDraft(connectionId, threadId, text);
     };
   
-    const loadDraftAttachments = async (connectionId: string, threadId: string): Promise<RemoteFileAttachment[]> => {
+    const loadDraftAttachments = async (connectionId: string, threadId: string): Promise<StoredDraftAttachment[]> => {
       return (await getOrCreateThreadUiState(connectionId, threadId, workspaceRuntime.snapshot.threadUiState, workspaceRuntime.threadUiStateSeedInFlight)).attachments;
     };
   
-    const saveDraftAttachments = async (connectionId: string, threadId: string, attachments: RemoteFileAttachment[]): Promise<void> => {
+    const saveDraftAttachments = async (connectionId: string, threadId: string, attachments: StoredDraftAttachment[]): Promise<void> => {
       await requireThreadUiStateDatabase(workspaceRuntime.snapshot.threadUiState).saveAttachments(connectionId, threadId, attachments);
     };
   
@@ -991,8 +1027,35 @@ function createWorkspaceActions(): WorkspaceActions {
       return parseThreadChangeDiff(response, threadId, path, scope);
     };
 
-    const refreshSubagents = (connectionId: string, rootThreadId: string): Promise<void> => {
+    const refreshThreadCatalog = (connectionId: string, force = false): Promise<void> => {
+      const now = Date.now();
+      if (!force && now - (workspaceRuntime.threadCatalogRefreshedAt.get(connectionId) ?? 0) < THREAD_CATALOG_REPAIR_INTERVAL_MS) {
+        return Promise.resolve();
+      }
+      const pending = workspaceRuntime.threadCatalogRefreshInFlight.get(connectionId);
+      if (pending !== undefined) return pending;
+      const operation = (async () => {
+        const session = workspaceRuntime.supervisor?.session(connectionId);
+        const summaries = workspaceRuntime.snapshot.threadSummaries;
+        if (session === undefined || summaries === null) return;
+        const catalog = await loadThreadCatalog(session);
+        await summaries.replaceCatalog(connectionId, catalog);
+        workspaceRuntime.threadCatalogRefreshedAt.set(connectionId, Date.now());
+      })().finally(() => {
+        if (workspaceRuntime.threadCatalogRefreshInFlight.get(connectionId) === operation) {
+          workspaceRuntime.threadCatalogRefreshInFlight.delete(connectionId);
+        }
+      });
+      workspaceRuntime.threadCatalogRefreshInFlight.set(connectionId, operation);
+      return operation;
+    };
+
+    const refreshSubagents = (connectionId: string, rootThreadId: string, force = false): Promise<void> => {
       const key = `${connectionId}\u0000${rootThreadId}`;
+      const now = Date.now();
+      if (!force && now - (workspaceRuntime.subagentRefreshedAt.get(key) ?? 0) < THREAD_CATALOG_REPAIR_INTERVAL_MS) {
+        return Promise.resolve();
+      }
       const pending = workspaceRuntime.subagentRefreshInFlight.get(key);
       if (pending !== undefined) return pending;
       const operation = (async () => {
@@ -1000,7 +1063,8 @@ function createWorkspaceActions(): WorkspaceActions {
         const summaries = workspaceRuntime.snapshot.threadSummaries;
         if (session === undefined || summaries === null) return;
         const descendants = await loadSubagentDescendants(session, rootThreadId);
-        await summaries.mergeSnapshots(connectionId, descendants);
+        await summaries.replaceSubagentCatalog(connectionId, rootThreadId, descendants);
+        workspaceRuntime.subagentRefreshedAt.set(key, Date.now());
       })().finally(() => {
         if (workspaceRuntime.subagentRefreshInFlight.get(key) === operation) {
           workspaceRuntime.subagentRefreshInFlight.delete(key);
@@ -1009,35 +1073,75 @@ function createWorkspaceActions(): WorkspaceActions {
       workspaceRuntime.subagentRefreshInFlight.set(key, operation);
       return operation;
     };
+
+    const observeThread = (
+      connectionId: string,
+      threadId: string,
+      keepAcrossReconnect = true,
+    ): Promise<void> => {
+      if (keepAcrossReconnect) workspaceRuntime.threadObserverDesired.set(connectionId, threadId);
+      const key = `${connectionId}\u0000${threadId}`;
+      const existing = workspaceRuntime.threadObserverAttachInFlight.get(key);
+      if (existing !== undefined) return existing;
+      const operation = (async (): Promise<void> => {
+        const session = workspaceRuntime.supervisor?.session(connectionId);
+        if (session === undefined) throw new Error("Connection is not enabled");
+        // This resume attaches the Companion App Server connection to live
+        // notifications. It is intentionally not the history source and must
+        // never hold navigation behind a large thread: the indexed bounded
+        // window remains the only history loader.
+        await rpcAfterAttach(session, "companion/thread/observe", {
+          threadId,
+        });
+      })().finally(() => {
+        if (workspaceRuntime.threadObserverAttachInFlight.get(key) === operation) {
+          workspaceRuntime.threadObserverAttachInFlight.delete(key);
+        }
+      });
+      workspaceRuntime.threadObserverAttachInFlight.set(key, operation);
+      return operation;
+    };
   
     const readThread = async (
       connectionId: string,
       threadId: string,
       cachedThread?: Thread | null,
       requireAuthoritative = false,
+      mutableHeadOnly = false,
     ): Promise<ThreadWindow | null> => {
-      const regularRequestKey = `${connectionId}\u0000${threadId}`;
-      const authoritativeRequestKey = `${regularRequestKey}\u0000authoritative`;
-      if (!requireAuthoritative) {
-        const authoritative = workspaceRuntime.threadReadInFlight.get(authoritativeRequestKey);
-        if (authoritative !== undefined) return await authoritative;
-      } else {
-        const regular = workspaceRuntime.threadReadInFlight.get(regularRequestKey);
-        if (regular !== undefined) {
-          try {
-            await regular;
-          } catch {
-            // The strict read below is the recovery boundary.
-          }
+      const requestKey = `${connectionId}\u0000${threadId}`;
+      const requestedAuthority: "local" | "mutable-head" | "recovery" = requireAuthoritative
+        ? "recovery"
+        : mutableHeadOnly
+          ? "mutable-head"
+          : "local";
+      const authorityRank = (authority: "local" | "mutable-head" | "recovery"): number => (
+        authority === "recovery" ? 2 : authority === "mutable-head" ? 1 : 0
+      );
+      while (true) {
+        const inFlight = workspaceRuntime.threadReadInFlight.get(requestKey);
+        if (inFlight === undefined) break;
+        if (authorityRank(inFlight.authority) >= authorityRank(requestedAuthority)) {
+          return await inFlight.promise;
+        }
+        // A stronger repair never races a weaker cache-aside read. Wait for
+        // its durable commit, then re-evaluate the single per-thread lane.
+        try {
+          await inFlight.promise;
+        } catch {
+          // The authoritative request below is the recovery boundary.
         }
       }
-      const requestKey = requireAuthoritative ? authoritativeRequestKey : regularRequestKey;
-      const inFlight = workspaceRuntime.threadReadInFlight.get(requestKey);
-      if (inFlight !== undefined) return await inFlight;
       const operation = (async (): Promise<ThreadWindow | null> => {
         const details = workspaceRuntime.snapshot.threadDetails;
         const summaries = workspaceRuntime.snapshot.threadSummaries;
-        const cached = cachedThread ?? details?.getThread(connectionId, threadId) ?? null;
+        // `undefined` means "use the resident cache"; explicit `null` is the
+        // cache-aside miss signal from the range model and must cross the
+        // authoritative boundary. Nullish coalescing used to erase that
+        // distinction, accepting metadata-only rows as an empty thread.
+        const cached = cachedThread === undefined
+          ? details?.getThread(connectionId, threadId) ?? null
+          : cachedThread;
         const initialTurnsLimit = threadResumePageLimit(cached?.turns.length ?? 0);
         // Capture before sending the authoritative request. Only invalidations at
         // or below this cursor can be cleared by its response; newer events stay
@@ -1093,7 +1197,7 @@ function createWorkspaceActions(): WorkspaceActions {
               const projected = details.getThread(connectionId, threadId) ?? cached;
               const persistedHistoryCursor = details.historyCursor(connectionId, threadId);
               void loadTurnControls(connectionId, projected.cwd).catch(() => undefined);
-              return {
+    return {
                 thread: residentThreadWindow(projected),
                 nextCursor: persistedHistoryCursor === undefined ? delta.historyCursor : persistedHistoryCursor,
               };
@@ -1105,26 +1209,61 @@ function createWorkspaceActions(): WorkspaceActions {
           incrementMetric("thread_cursor_recovery_fallbacks");
         }
         const persistHydratedThread = async (hydrated: Thread, historyCursor: string | null): Promise<void> => {
-          await details?.importThreadSnapshot(connectionId, hydrated, "recovery", refreshCursor, historyCursor);
-          await reconcileActiveThreadCommands(details, connectionId, threadId);
-          const previous = await summaries?.get(connectionId, threadId);
-          await summaries?.mergeSnapshots(connectionId, [{
-            thread: hydrated,
-            archived: previous?.archived ?? workspaceRuntime.threadInvalidationArchived.get(regularRequestKey) ?? false,
-          }]);
+          let stage = "detail_import";
+          try {
+            // Cache-aside hydration exists to populate this exact database.
+            // Treating an unavailable owner as a successful optional write
+            // used to let the caller install an empty reread as a ready chat.
+            if (details === null) throw new Error("Thread history database is not available");
+            await details.importThreadSnapshot(connectionId, hydrated, "recovery", refreshCursor, historyCursor);
+            stage = "pending_reconciliation";
+            await reconcileActiveThreadCommands(details, connectionId, threadId);
+            stage = "summary_merge";
+            if (summaries !== null) {
+              const previous = await summaries.get(connectionId, threadId);
+              await summaries.mergeSnapshots(connectionId, [{
+                thread: hydrated,
+                archived: previous?.archived ?? workspaceRuntime.threadInvalidationArchived.get(requestKey) ?? false,
+              }]);
+            }
+            recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.hydration_persisted", {
+              values: { turnCount: hydrated.turns.length },
+              tags: { nextCursor: historyCursor === null ? "exhausted" : "available" },
+            });
+          } catch (cause) {
+            recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.hydration_persist_failed", {
+              tags: { stage, errorKind: telemetryErrorKind(cause) },
+            });
+            throw cause;
+          }
         };
-        try {
-          const resumeStartedAt = performance.now();
-          const response = await rpcAfterAttach<CompanionThreadResumeResponse>(session, "thread/resume", {
+        if (mutableHeadOnly && cached !== null) {
+          const readStartedAt = performance.now();
+          const page = await rpcAfterAttach<ThreadTurnsListResponse>(session, "thread/turns/list", {
             threadId,
-            excludeTurns: true,
+            cursor: null,
+            limit: initialTurnsLimit,
+            sortDirection: "desc",
+            itemsView: "summary",
+          });
+          recordTiming("thread_mutable_head_read_ms", performance.now() - readStartedAt);
+          const hydrated = materializeReadOnlyThreadWindow(cached, [...page.data].reverse(), cached);
+          await persistHydratedThread(hydrated, page.nextCursor);
+          void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
+          return { thread: hydrated, nextCursor: page.nextCursor };
+        }
+        let hydratedWindow: ThreadWindow;
+        try {
+          const readStartedAt = performance.now();
+          const response = await rpcAfterAttach<CompanionThreadResumeResponse>(session, "companion/threadWindow/read", {
+            threadId,
             initialTurnsPage: {
               limit: initialTurnsLimit,
               sortDirection: "desc",
               itemsView: "summary",
             },
           });
-          recordTiming("thread_resume_ms", performance.now() - resumeStartedAt);
+          recordTiming("thread_window_read_ms", performance.now() - readStartedAt);
           let page = response.initialTurnsPage;
           if (page === null && response.turnsBackwardsCursor !== null) {
             page = await rpcAfterAttach<ThreadTurnsListResponse>(session, "thread/turns/list", {
@@ -1138,11 +1277,16 @@ function createWorkspaceActions(): WorkspaceActions {
           const hydrated = materializeResumedThread(
             page === response.initialTurnsPage ? response : { ...response, initialTurnsPage: page },
           );
-          await persistHydratedThread(hydrated, page?.nextCursor ?? null);
-          void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
-          return { thread: hydrated, nextCursor: page?.nextCursor ?? null };
+          hydratedWindow = { thread: hydrated, nextCursor: page?.nextCursor ?? null };
+          recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.authoritative_window_received", {
+            values: { turnCount: hydrated.turns.length },
+            tags: { nextCursor: page?.nextCursor == null ? "exhausted" : "available" },
+          });
         } catch (cause) {
-          console.warn("CodeWide thread refresh failed:", cause instanceof Error ? cause.message : "unknown error");
+          recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.authoritative_window_rejected", {
+            tags: { errorKind: telemetryErrorKind(cause) },
+          });
+          console.warn("CodeWide indexed thread window read failed:", cause instanceof Error ? cause.message : "unknown error");
           try {
             // Viewing history must still work when the thread cannot be resumed
             // (for example, another app-server process owns a paginated writer).
@@ -1157,12 +1301,22 @@ function createWorkspaceActions(): WorkspaceActions {
               limit: initialTurnsLimit,
               sortDirection: "desc",
               itemsView: "summary",
+              expectedRecencyAt: read.thread.recencyAt,
+              expectedThreadActive: read.thread.status.type === "active",
             });
+            if (page.data.length === 0 && page.nextCursor !== null) {
+              throw new Error("Thread history fallback returned an empty page with a continuation cursor");
+            }
             const hydrated = materializeReadOnlyThreadWindow(read.thread, [...page.data].reverse(), cached);
-            await persistHydratedThread(hydrated, page.nextCursor);
-            void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
-            return { thread: hydrated, nextCursor: page.nextCursor };
+            hydratedWindow = { thread: hydrated, nextCursor: page.nextCursor };
+            recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.read_only_fallback_received", {
+              values: { turnCount: hydrated.turns.length },
+              tags: { nextCursor: page.nextCursor === null ? "exhausted" : "available" },
+            });
           } catch (fallbackCause) {
+            recordThreadHistoryTelemetry(connectionId, threadId, "chat.history.read_only_fallback_rejected", {
+              tags: { errorKind: telemetryErrorKind(fallbackCause) },
+            });
             console.warn("CodeWide read-only thread fallback failed:", fallbackCause instanceof Error ? fallbackCause.message : "unknown error");
             if (!requireAuthoritative && cached !== null && cached.turns.length > 0) {
               return { thread: residentThreadWindow(cached), nextCursor: details?.historyCursor(connectionId, threadId) };
@@ -1170,19 +1324,31 @@ function createWorkspaceActions(): WorkspaceActions {
             throw fallbackCause;
           }
         }
+        // Persistence is outside the source-selection catch. A SQLite or
+        // projection failure must surface as such; retrying against a weaker
+        // read source used to overwrite a valid bounded window with an empty
+        // shell and permanently strand cold-cache navigation.
+        await persistHydratedThread(hydratedWindow.thread, hydratedWindow.nextCursor ?? null);
+        void loadTurnControls(connectionId, hydratedWindow.thread.cwd).catch(() => undefined);
+        return hydratedWindow;
       })();
-      workspaceRuntime.threadReadInFlight.set(requestKey, operation);
+      const flight = { authority: requestedAuthority, promise: operation };
+      workspaceRuntime.threadReadInFlight.set(requestKey, flight);
       try {
         return await operation;
       } finally {
-        if (workspaceRuntime.threadReadInFlight.get(requestKey) === operation) workspaceRuntime.threadReadInFlight.delete(requestKey);
+        if (workspaceRuntime.threadReadInFlight.get(requestKey) === flight) workspaceRuntime.threadReadInFlight.delete(requestKey);
       }
     };
 
     const repairThreadProjection = async (
       connectionId: string,
       threadId: string,
-    ): Promise<ThreadWindow | null> => await readThread(connectionId, threadId, undefined, true);
+      indexedHeadOnly = false,
+    ): Promise<ThreadWindow | null> => {
+      const cached = workspaceRuntime.snapshot.threadDetails?.getThread(connectionId, threadId);
+      return await readThread(connectionId, threadId, cached, true, indexedHeadOnly && cached !== null && cached !== undefined);
+    };
   
     const loadOlderTurns = async (connectionId: string, threadId: string, cursor: string | null, expectedHistoryEpoch: number): Promise<ThreadTurnPage> => {
       const session = workspaceRuntime.supervisor?.session(connectionId);
@@ -1217,30 +1383,6 @@ function createWorkspaceActions(): WorkspaceActions {
       };
     };
 
-    const readSubagentThread = async (connectionId: string, threadId: string): Promise<ThreadWindow | null> => {
-      // A subagent is still a regular Codex thread. Reusing the authoritative
-      // resume path preserves model, effort and permission settings in the
-      // local projection; the old thread/read-only path returned transcript
-      // data without those settings, so read-only chips rendered unavailable.
-      return await readThread(connectionId, threadId);
-    };
-  
-    const reconcileThreadLifecycle = async (
-      connectionId: string,
-      threadId: string,
-      turnId: string,
-      cachedThread: Thread,
-    ): Promise<void> => {
-      const repairKey = `${connectionId}\u0000${threadId}\u0000${turnId}`;
-      const now = Date.now();
-      if (now - (workspaceRuntime.lifecycleRepairAttempt.get(repairKey) ?? 0) < 5_000) return;
-      workspaceRuntime.lifecycleRepairAttempt.set(repairKey, now);
-      // This path exists precisely because the local lifecycle is internally
-      // inconsistent. A regular read may return the local cache and therefore
-      // cannot repair it; force the canonical cursor-tail read.
-      await readThread(connectionId, threadId, cachedThread, true);
-    };
-  
     const loadTurnItems = async (connectionId: string, threadId: string, turnId: string): Promise<Turn["items"]> => {
       const requestKey = `${connectionId}\u0000${threadId}\u0000${turnId}`;
       const pending = workspaceRuntime.turnItemsInFlight.get(requestKey);
@@ -1343,7 +1485,7 @@ function createWorkspaceActions(): WorkspaceActions {
               ...pending,
               pending: pending.pending === null || pending.pending === undefined
                 ? null
-                : { ...pending.pending, state: presentation === "queue" ? "queued" : "accepted", updatedAt: Date.now() },
+                : { ...pending.pending, state: "queued", updatedAt: Date.now() },
             }, { durable: true });
             if (!projected) console.warn("Accepted command will be reconciled from the native outbox when the thread becomes active");
           },
@@ -1362,7 +1504,7 @@ function createWorkspaceActions(): WorkspaceActions {
         delivery.connectionId === connectionId && delivery.commandId === commandId,
       );
       if (original?.method === "turn/start" && original.state === "failed") {
-        const retrying = { ...original, state: "accepted" as const, lastError: null, updatedAt: Date.now() };
+        const retrying = { ...original, state: "sending" as const, lastError: null, updatedAt: Date.now() };
         await commitNativeThenProject(
           async () => await enqueueNativeCommand(connectionId, `queue-retry-${randomUUID()}`, "companion/queue/retry", { commandId }),
           async () => await details?.applyCommandDelivery(retrying),
@@ -1583,13 +1725,13 @@ function createWorkspaceActions(): WorkspaceActions {
       const operation = (async () => {
         const session = workspaceRuntime.supervisor?.session(connectionId);
         if (session === undefined) throw new Error("Connection is not enabled");
-        const [response, accountPool] = await Promise.all([
-          rpcAfterAttach<GetAccountRateLimitsResponse>(session, "account/rateLimits/read", {}),
-          rpcAfterAttach<AccountPoolSnapshot>(session, "companion/accountPool/list", {}).catch(() => null),
-        ]);
-        database.putSnapshot(connectionId, response);
-        if (accountPool !== null) database.putAccountPool(connectionId, accountPool);
-        return response;
+        const accountPool = await rpcAfterAttach<AccountPoolSnapshot>(session, "companion/accountPool/refresh", {});
+        database.putAccountPool(connectionId, accountPool);
+        const active = accountPool.profiles.find((profile) => profile.id === accountPool.activeProfileId) ?? null;
+        if (active?.rateLimits === null || active?.rateLimits === undefined || active.rateLimitsError !== null) {
+          throw new Error(active?.rateLimitsError ?? "Active account limits are unavailable");
+        }
+        return active.rateLimits;
       })();
       workspaceRuntime.accountRateLimitsInFlight.set(connectionId, operation);
       try {
@@ -1663,7 +1805,8 @@ function createWorkspaceActions(): WorkspaceActions {
       try {
         const connection = currentConnections().find((candidate) => candidate.id === connectionId);
         if (connection === undefined) throw new Error("Connection not found");
-        const controlUrl = companionHttpUrl(connection.endpoint, "/v1/tunnels");
+        const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+        const controlUrl = companionHttpUrl(origin, "/v1/tunnels");
         const authorization = await scopedHttpAuthorization(connection);
         const response = await fetch(controlUrl, {
           method: "POST",
@@ -1672,7 +1815,7 @@ function createWorkspaceActions(): WorkspaceActions {
         });
         if (!response.ok) throw new Error(`Tunnel creation failed (${response.status})`);
         const body = await response.json() as { id: string; expiresAt: number; basePath: string };
-        const tunnel = { id: body.id, expiresAt: body.expiresAt, url: companionHttpUrl(connection.endpoint, body.basePath), authorization };
+        const tunnel = { id: body.id, expiresAt: body.expiresAt, url: companionHttpUrl(origin, body.basePath), authorization };
         workspaceRuntime.resourceDatabase.putTunnel({ id: key, connectionId, status: "ready", tunnel, error: null });
         return tunnel;
       } catch (cause) {
@@ -1689,7 +1832,8 @@ function createWorkspaceActions(): WorkspaceActions {
       workspaceRuntime.resourceDatabase.putTunnel({ id: key, connectionId, status: "revoking", tunnel: current, error: null });
       try {
         const authorization = await scopedHttpAuthorization(connection);
-        const response = await fetch(companionHttpUrl(connection.endpoint, `/v1/tunnels/${encodeURIComponent(tunnelId)}`), {
+        const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+        const response = await fetch(companionHttpUrl(origin, `/v1/tunnels/${encodeURIComponent(tunnelId)}`), {
           method: "DELETE",
           headers: { authorization },
         });
@@ -1721,7 +1865,8 @@ function createWorkspaceActions(): WorkspaceActions {
     const transferAccess = async (connectionId: string, forceRefresh = false): Promise<TransferAccess> => {
       const connection = currentConnections().find((candidate) => candidate.id === connectionId);
       if (connection === undefined) throw new Error("Connection not found");
-      return { baseUrl: companionHttpUrl(connection.endpoint, "/"), authorization: await scopedHttpAuthorization(connection, forceRefresh) };
+      const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+      return { baseUrl: companionHttpUrl(origin, "/"), authorization: await scopedHttpAuthorization(connection, forceRefresh) };
     };
 
   return {
@@ -1764,13 +1909,13 @@ function createWorkspaceActions(): WorkspaceActions {
     listBackgroundTerminals,
     terminateBackgroundTerminal,
     readThread,
+    observeThread,
     repairThreadProjection,
-    readSubagentThread,
+    refreshThreadCatalog,
     refreshSubagents,
     loadThreadResources,
     loadThreadChangeDiff,
     loadOlderTurns,
-    reconcileThreadLifecycle,
     loadTurnItems,
     sendText,
     retryFailedMessage,
@@ -1851,27 +1996,32 @@ export function useRemoteWorkspace(): RemoteWorkspace {
     ready,
     error,
     connectionProfiles: connectionProfileDatabase,
-    connectionStates: connectionStateDatabase,
+    connectionState: connectionStateModel,
     threadSummaries: threadDatabase,
     threadDetails,
     pendingRequests: pendingRequestDatabase,
   } = runtime;
-  const connectionStateQuery = useLiveQuery(
-    () => connectionStateDatabase?.collection,
-    [connectionStateDatabase],
-  );
+  const connectionStateRows = useSelector(() => connectionStateModel?.rows$.get() ?? []);
   const connectionProfileQuery = useLiveQuery(
     () => connectionProfileDatabase?.collection,
     [connectionProfileDatabase],
   );
   const connectionProfiles = connectionProfileDatabase?.project(connectionProfileQuery.data === undefined ? undefined : [...connectionProfileQuery.data]) ?? [];
   const connections = (() => {
-    const states = new Map((connectionStateQuery.data ?? []).map((row) => [row.connectionId, row]));
+    const states = new Map(connectionStateRows.map((row) => [row.connectionId, row]));
     return connectionProfiles.map((profile) => {
       const state = states.get(profile.id);
-      return state === undefined ? profile : {
+      return state === undefined ? {
         ...profile,
-        state: state.state,
+        state: profile.enabled ? "connecting" as const : "offline" as const,
+        lastError: null,
+        lastErrorAt: null,
+      } : {
+        ...profile,
+        // `live` is a user-visible claim that foreground RPC is available. The
+        // native engine publishes both axes; never promote a stale or partial
+        // transport state to Live when it cannot serve a request.
+        state: connectionDisplayState(state),
         lastError: state.lastError,
         lastErrorAt: state.lastErrorAt,
       };
@@ -1917,9 +2067,31 @@ async function startWorkspaceRuntime(): Promise<void> {
     assertSecureCryptoRuntime();
     startupStage = "local database";
     const profiles = createConnectionProfileDatabase();
-    const connectionStates = createConnectionStateDatabase();
+    const connectionState = createConnectionStateModel();
     const summaries = createThreadSummaryDatabase();
     const details = createThreadDetailDatabase();
+    details.setRemoteLoader({
+      observe({ connectionId, threadId }) {
+        void workspaceActions.observeThread(connectionId, threadId).catch((cause: unknown) => {
+          console.warn("Could not attach retained thread observer", cause);
+        });
+      },
+      async reconcilePending({ connectionId, threadId }) {
+        await reconcileActiveThreadCommands(details, connectionId, threadId);
+      },
+      async hydrateWindow({ request, cachedThread, requireAuthoritative }) {
+        await workspaceActions.readThread(
+          request.connectionId,
+          request.threadId,
+          cachedThread,
+          requireAuthoritative,
+          shouldUseBoundedThreadWindowRead(cachedThread !== null),
+        );
+      },
+      async loadOlder({ connectionId, threadId, cursor, historyEpoch }) {
+        await workspaceActions.loadOlderTurns(connectionId, threadId, cursor, historyEpoch);
+      },
+    });
     createdThreadDetails = details;
     const pendingRequests = createPendingRequestDatabase();
     const threadUiState = createThreadUiStateDatabase();
@@ -1934,7 +2106,7 @@ async function startWorkspaceRuntime(): Promise<void> {
       ready: false,
       error: null,
       connectionProfiles: profiles,
-      connectionStates,
+      connectionState,
       threadSummaries: summaries,
       threadDetails: details,
       pendingRequests,
@@ -1949,7 +2121,6 @@ async function startWorkspaceRuntime(): Promise<void> {
       summaries.prepare(),
       details.prepare(),
       profiles.collection.preload(),
-      connectionStates.collection.preload(),
       pendingRequests.collection.preload(),
       threadUiState.collection.preload(),
       resources.turnControls.preload(),
@@ -2023,6 +2194,11 @@ async function startWorkspaceRuntime(): Promise<void> {
 
     startupStage = "native credential projection";
     const nativeConfigs = await listNativeConnectionConfigs();
+    workspaceRuntime.syncV2Lifecycle?.stop();
+    workspaceRuntime.syncV2Lifecycle = createNativeSyncV2Lifecycle({
+      enabled: Constants.expoConfig?.extra?.syncV2Rollout === "canary",
+    });
+    await workspaceRuntime.syncV2Lifecycle.reconcile(nativeConfigs);
     await profiles.purgeLegacyCredentials(nativeConfigs.map((config) => config.connectionId));
     await profiles.reconcileRuntimeConfigs(nativeConfigs);
     initialProfiles = await profiles.hydrate();
@@ -2036,57 +2212,73 @@ async function startWorkspaceRuntime(): Promise<void> {
       // locked old WAL must never prevent the server-backed cache from loading.
       console.warn("Could not remove obsolete local cache databases", cause);
     }
-    const projection = createThreadProjectionStore({ summaries, details });
+    const projection = createThreadProjectionStore({
+      summaries,
+      details,
+      async reconcileBeforeSummary(connectionId, events, projected) {
+        const proofs = terminalProjectionProofs(events);
+        const repairThreadIds = streamRepairThreadIds(events, projected.threads);
+        if (repairThreadIds.length === 0) return projected;
+        const threads = new Map(projected.threads);
+        const terminalThreadIds = new Set(events.flatMap((event) => {
+          const patch = threadProjectionPatchFromEvent(event.payload);
+          return patch?.operation.kind === "turnCompleted" ? [patch.threadId] : [];
+        }));
+        for (const threadId of repairThreadIds) {
+          const repaired = await workspaceActions.repairThreadProjection(
+            connectionId,
+            threadId,
+            terminalThreadIds.has(threadId),
+          );
+          if (repaired === null) throw new Error(`Authoritative stream repair returned no thread for ${threadId}`);
+          for (const proof of proofs.filter((candidate) => candidate.threadId === threadId)) {
+            if (terminalProjectionMatches(repaired.thread, proof)) continue;
+            // The canonical indexed head has already been durably projected.
+            // A witness mismatch is integrity telemetry, not a reason to reject
+            // and replay a deterministic cursor forever.
+            incrementMetric("stream_repair_mismatches");
+            recordTelemetryEvent(connectionId, {
+              name: "stream.authoritative_repair_mismatch",
+              sessionId: threadId,
+              threadId,
+              turnId: proof.turnId,
+              tags: { witness: "agent_message_hash" },
+            });
+            console.warn(`Authoritative stream repair witness mismatch for ${threadId}`);
+          }
+          const before = projected.threads.get(threadId)?.before ?? repaired.thread;
+          threads.set(threadId, { before, after: repaired.thread });
+        }
+        incrementMetric("stream_repairs", repairThreadIds.length);
+        return { checkpoint: projected.checkpoint, threads };
+      },
+    });
 
     startupStage = "connection engine";
     const nativeSupervisorOptions: ConstructorParameters<typeof NativeEngineSupervisor>[0] = {
       connectionState: {
-        setConnectionState(connectionId, state, diagnostic) {
-          connectionStates.setState(connectionId, state, diagnostic);
+        setConnectionState(connectionId, state, diagnostic, rpcAvailable) {
+          connectionState.setState(connectionId, state, diagnostic, rpcAvailable);
         },
       },
       projection: {
         async applySnapshot(connectionId, snapshots, cursor) {
           await projection.applySnapshot(connectionId, snapshots, cursor);
+          workspaceRuntime.threadCatalogRefreshedAt.set(connectionId, Date.now());
           await reconcileDeliveredCommandReceipts(
             connectionId,
             snapshots.map(({ thread }) => thread),
           );
         },
         async applyEvents(connectionId, events) {
-          const terminalProofs = terminalProjectionProofs(events);
           const projected = await projection.applyEvents(connectionId, events);
           const projectedThreads = new Map([...projected.threads].map(([threadId, thread]) => [threadId, thread.after]));
-          const repairThreadIds = streamRepairThreadIds(events, projected.threads);
-          for (const threadId of repairThreadIds) {
-            const repaired = await workspaceActions.repairThreadProjection(connectionId, threadId);
-            if (repaired === null) throw new Error(`Authoritative stream repair returned no thread for ${threadId}`);
-            for (const proof of terminalProofs.filter((candidate) => candidate.threadId === threadId)) {
-              if (!terminalProjectionMatches(repaired.thread, proof)) {
-                // `thread/resume` is the recovery authority and has already
-                // been durably projected. A witness mismatch is integrity
-                // telemetry, not a reason to reject the cursor forever: the
-                // native checkpoint would otherwise replay this deterministic
-                // event and reconnect in a permanent loop.
-                incrementMetric("stream_repair_mismatches");
-                recordTelemetryEvent(connectionId, {
-                  name: "stream.authoritative_repair_mismatch",
-                  sessionId: threadId,
-                  threadId,
-                  turnId: proof.turnId,
-                  tags: { witness: "agent_message_hash" },
-                });
-                console.warn(`Authoritative stream repair witness mismatch for ${threadId}`);
-              }
-            }
-            projectedThreads.set(threadId, repaired.thread);
-          }
-          if (repairThreadIds.length > 0) incrementMetric("stream_repairs", repairThreadIds.length);
           const receiptThreadIds = new Set<string>();
           const deliveredReceiptThreads = new Set<string>();
           const subagentRoots = new Set<string>();
           for (const event of events) {
             const params = asRecord(event.payload.params);
+            const patch = threadProjectionPatchFromEvent(event.payload);
             if (event.payload.method === "account/rateLimits/updated" && params !== null) {
               accountRateLimits.mergeUpdate(connectionId, params as AccountRateLimitsUpdatedNotification);
             }
@@ -2097,28 +2289,29 @@ async function startWorkspaceRuntime(): Promise<void> {
               const queueThreadId = params.threadId;
               const commands = parseHostQueueSnapshot(params.data);
               if (commands !== null) {
+                // A host acceptance receipt starts bounded canonical repair,
+                // but does not retire the durable optimistic row. Only the
+                // matching stable client id in thread history owns that handoff.
                 await details.replaceQueued(connectionId, queueThreadId, commands);
-                if (hasAcceptedPendingDelivery(
+                const appServerAcceptedPendingDelivery = hasAppServerAcceptedPendingDelivery(
                   commands,
                   (commandId) => details.hasPendingDelivery(connectionId, queueThreadId, commandId),
-                )) {
-                  deliveredReceiptThreads.add(queueThreadId);
-                }
+                );
+                if (appServerAcceptedPendingDelivery) deliveredReceiptThreads.add(queueThreadId);
               }
             }
-            if (event.payload.method === "companion/thread/invalidated" && params !== null && typeof params.threadId === "string") {
+            if (patch?.operation.kind === "threadInvalidated") {
               refreshInvalidatedThread(
                 connectionId,
-                params.threadId,
-                params.archived === true,
-                params.turnActive === true,
+                patch.threadId,
+                patch.operation.archived === true,
+                patch.operation.turnActive === true,
               );
             }
             const subagentRoot = subagentActivityRootThreadId(event.payload);
             if (subagentRoot !== null) subagentRoots.add(subagentRoot);
             const threadId = threadIdFromEvent(event.payload);
             if (threadId === null) continue;
-            const patch = threadProjectionPatchFromEvent(event.payload);
             if (patch !== null) {
               if (operationConfirmsDeliveredCommand(patch.operation)) receiptThreadIds.add(threadId);
               const key = threadResourceKey(connectionId, threadId);
@@ -2148,18 +2341,21 @@ async function startWorkspaceRuntime(): Promise<void> {
             }),
           );
           for (const threadId of deliveredReceiptThreads) {
-            // Companion delivery means App Server accepted turn/start. Refresh
-            // the bounded authoritative window so its user item replaces the
-            // local receipt even when the live item event raced or was missed.
-            // This is part of the durable projection boundary: awaiting it
-            // prevents the native journal from acknowledging queue/changed
-            // before the canonical user turn has reached SQLite.
-            const repaired = await workspaceActions.repairThreadProjection(connectionId, threadId);
-            if (repaired === null) throw new Error(`Accepted message receipt repair returned no thread for ${threadId}`);
-            await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread]);
+            // `queue/changed: delivered` should be followed by the canonical
+            // `turn/started` frame. Do not put an authoritative network read in
+            // the ordered projection lane: doing so holds that lifecycle frame
+            // (and the visible Running state) behind thread/resume. The repair
+            // remains a fallback for a genuinely missed canonical frame, but
+            // it runs independently of live event publication.
+            void workspaceActions.repairThreadProjection(connectionId, threadId).then(async (repaired) => {
+              if (repaired === null) throw new Error(`Accepted message receipt repair returned no thread for ${threadId}`);
+              await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread]);
+            }).catch((cause: unknown) => {
+              console.warn("Accepted message receipt background repair failed:", cause instanceof Error ? cause.message : "unknown error");
+            });
           }
           for (const rootThreadId of subagentRoots) {
-            void workspaceActions.refreshSubagents(connectionId, rootThreadId).catch((cause: unknown) => {
+            void workspaceActions.refreshSubagents(connectionId, rootThreadId, true).catch((cause: unknown) => {
               console.warn("CodeWide subagent event refresh failed:", cause instanceof Error ? cause.message : "unknown error");
             });
           }
@@ -2178,34 +2374,48 @@ async function startWorkspaceRuntime(): Promise<void> {
     };
     const supervisor: WorkspaceSyncSupervisor = new NativeEngineSupervisor(nativeSupervisorOptions);
     workspaceRuntime.supervisor = supervisor;
-    connectionStates.reconcileProfiles(initialProfiles.map((connection) => ({
+    connectionState.reconcileProfiles(initialProfiles.map((connection) => ({
       id: connection.id,
       connectionId: connection.id,
-      state: connection.state,
-      lastError: connection.lastError,
-      lastErrorAt: connection.lastErrorAt,
+      enabled: connection.enabled,
     })));
     supervisor.replaceConnections(initialProfiles);
     workspaceRuntime.profileSubscription?.unsubscribe();
     workspaceRuntime.profileSubscription = profiles.collection.subscribeChanges(() => {
       const currentProfiles = profiles.project();
-      connectionStates.reconcileProfiles(currentProfiles.map(connectionStateSeed));
+      connectionState.reconcileProfiles(currentProfiles.map(connectionStateSeed));
       supervisor.replaceConnections(currentProfiles);
+      void listNativeConnectionConfigs()
+        .then((configs) => workspaceRuntime.syncV2Lifecycle?.reconcile(configs))
+        .catch((cause: unknown) => console.warn("Sync V2 lifecycle reconcile failed", cause));
     });
     workspaceRuntime.connectionStateSubscription?.unsubscribe();
-    workspaceRuntime.connectionStateSubscription = connectionStates.collection.subscribeChanges((changes) => {
-      for (const change of changes) {
-        recordConnectionUsability(change.value);
-        if (change.value.state === "live" && accountRateLimitsStale(accountRateLimits.get(change.value.connectionId))) {
-          void workspaceActions.refreshAccountRateLimits(change.value.connectionId).catch(() => undefined);
+    workspaceRuntime.connectionStateSubscription = connectionState.subscribeChanges((row) => {
+        recordConnectionUsability(row);
+        if (row.state === "live" && row.rpcAvailable) {
+          const desiredThreadId = workspaceRuntime.threadObserverDesired.get(row.connectionId);
+          if (desiredThreadId !== undefined) {
+            // A Companion or App Server restart drops observer state while the
+            // selected mobile route stays mounted. Reattach the desired thread
+            // on every new live generation instead of waiting for another tap.
+            workspaceRuntime.threadObserverAttachInFlight.delete(`${row.connectionId}\u0000${desiredThreadId}`);
+            void workspaceActions.observeThread(row.connectionId, desiredThreadId).catch((cause: unknown) => {
+              console.warn("Thread observer reattach failed after reconnect", cause);
+            });
+          }
+          void workspaceActions.refreshThreadCatalog(row.connectionId).catch((cause: unknown) => {
+            console.warn("Thread catalog repair failed after connection became live", cause);
+          });
+          if (accountRateLimitsStale(accountRateLimits.get(row.connectionId))) {
+            void workspaceActions.refreshAccountRateLimits(row.connectionId).catch(() => undefined);
+          }
         }
-      }
     }, { includeInitialState: true });
     workspaceRuntime.update({
       ready: true,
       error: null,
       connectionProfiles: profiles,
-      connectionStates,
+      connectionState,
       threadSummaries: summaries,
       threadDetails: details,
       pendingRequests,
@@ -2213,13 +2423,26 @@ async function startWorkspaceRuntime(): Promise<void> {
       resources,
       accountRateLimits,
     });
-    const activateConnections = () => {
-      for (const connectionId of workspaceRuntime.enabledConnectionIds()) wakeNativeConnection(connectionId);
+    const repairCatalogs = (): void => {
+      for (const connectionId of workspaceRuntime.enabledConnectionIds()) {
+        wakeNativeConnection(connectionId);
+        void workspaceActions.refreshThreadCatalog(connectionId).catch((cause: unknown) => {
+          console.warn("Thread catalog lifecycle repair failed", cause);
+        });
+      }
     };
-    AppState.addEventListener("focus", activateConnections);
-    AppState.addEventListener("change", (state) => {
-      if (state === "active") activateConnections();
-    });
+    for (const subscription of workspaceRuntime.catalogLifecycleSubscriptions) subscription.remove();
+    workspaceRuntime.catalogLifecycleSubscriptions = [
+      AppState.addEventListener("focus", repairCatalogs),
+      AppState.addEventListener("change", (state) => {
+        if (state === "active") repairCatalogs();
+      }),
+    ];
+    if (workspaceRuntime.catalogRepairTimer !== null) clearInterval(workspaceRuntime.catalogRepairTimer);
+    workspaceRuntime.catalogRepairTimer = setInterval(() => {
+      if (AppState.currentState === "active") repairCatalogs();
+    }, THREAD_CATALOG_REPAIR_TICK_MS);
+    repairCatalogs();
   } catch (cause) {
     if (createdThreadDetails !== null) {
       if (workspaceRuntime.snapshot.threadDetails === createdThreadDetails) {
@@ -2240,20 +2463,19 @@ function connectionStateSeed(connection: StoredConnection) {
   return {
     id: connection.id,
     connectionId: connection.id,
-    state: connection.state,
-    lastError: connection.lastError,
-    lastErrorAt: connection.lastErrorAt,
+    enabled: connection.enabled,
   };
 }
 
-function recordConnectionUsability(connection: { connectionId: string; state: string }): void {
-  if (connection.state === "connecting") {
+function recordConnectionUsability(connection: { connectionId: string; state: RemoteConnectionState; rpcAvailable: boolean }): void {
+  const effectiveState = connectionDisplayState(connection);
+  if (effectiveState === "connecting") {
     if (!workspaceRuntime.connectionAttemptStartedAt.has(connection.connectionId)) {
       workspaceRuntime.connectionAttemptStartedAt.set(connection.connectionId, performance.now());
     }
     return;
   }
-  if (connection.state !== "syncing" && connection.state !== "live") return;
+  if (effectiveState !== "syncing" && effectiveState !== "live") return;
   const startedAt = workspaceRuntime.connectionAttemptStartedAt.get(connection.connectionId);
   if (startedAt === undefined) return;
   const elapsed = performance.now() - startedAt;

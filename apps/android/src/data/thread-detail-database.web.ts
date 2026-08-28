@@ -8,6 +8,21 @@ import type { ThreadChatModel, ThreadChatWindowRequest, ThreadChatWindowResource
 
 export { materializePendingTimeline, materializeThreadDetails, materializeThreadTurns } from "./thread-detail-projection";
 export type { PendingTimelineEntry, ThreadDetailRow, ThreadDetailSnapshot } from "./thread-detail-projection";
+export type ThreadWindowCoverage = {
+  complete: boolean;
+  reason: "complete" | "metadata-missing" | "mutable-head" | "tail-uninitialized" | "coverage-unproven" | "anchor-missing" | "history-evicted";
+};
+export type ThreadRemoteLoader = {
+  observe?(input: { connectionId: string; threadId: string }): void;
+  reconcilePending(input: { connectionId: string; threadId: string }): Promise<void>;
+  hydrateWindow(input: {
+    request: ThreadChatWindowRequest;
+    cachedThread: Thread | null;
+    requireAuthoritative: boolean;
+    reason: ThreadWindowCoverage["reason"] | "invalidated";
+  }): Promise<void>;
+  loadOlder(input: { connectionId: string; threadId: string; cursor: string; historyEpoch: number }): Promise<void>;
+};
 export type ThreadHistoryPrependResult = { accepted: boolean; historyEpoch: number; extendedMinimum: boolean };
 export type ThreadHistoryAppendResult = { accepted: boolean; historyEpoch: number };
 export type ThreadSnapshotImportReason = "initial" | "fork" | "recovery";
@@ -15,6 +30,7 @@ export type ThreadDetailDatabase = {
   readonly sessionId: string;
   readonly chat: ThreadChatModel;
   prepare(): Promise<void>;
+  setRemoteLoader(loader: ThreadRemoteLoader): void;
   windowResource(request: ThreadChatWindowRequest): ThreadChatWindowResource;
   preloadWindow(request: ThreadChatWindowRequest): () => void;
   retainWindow(connectionId: string, threadId: string): () => void;
@@ -26,6 +42,7 @@ export type ThreadDetailDatabase = {
     detailRows: ThreadDetailRow[];
     liveRows: ThreadDetailRow[];
   };
+  windowCoverage(request: ThreadChatWindowRequest, snapshot: ThreadChatWindowSnapshot): ThreadWindowCoverage;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
   captureRefreshCursor(connectionId: string, threadId: string): number | null;

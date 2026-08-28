@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,12 +16,17 @@ const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_files
 const RECORDS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_records");
 const TURNS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_turns");
 const TURNS_BY_ID: TableDefinition<&[u8], u64> = TableDefinition::new("rollout_turns_by_id");
+const TURN_SUMMARIES: TableDefinition<&[u8], &[u8]> =
+    TableDefinition::new("rollout_turn_summaries");
 const REPLAY: TableDefinition<u64, &[u8]> = TableDefinition::new("sync_replay");
 const OUTBOX: TableDefinition<&str, &[u8]> = TableDefinition::new("command_outbox");
 const THREAD_USAGE: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_usage");
-const SCHEMA_VERSION: u32 = 4;
-const FILE_STATE_VERSION: u8 = 1;
-const FILE_STATE_BYTES: usize = 65;
+const THREAD_METADATA: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_metadata");
+const THREADS_BY_PARENT: TableDefinition<&[u8], u8> = TableDefinition::new("threads_by_parent");
+const SCHEMA_VERSION: u32 = 6;
+const FILE_STATE_VERSION: u8 = 2;
+const FILE_STATE_V1_BYTES: usize = 65;
+const FILE_STATE_BYTES: usize = 73;
 const MAX_OUTBOX_COMMANDS: usize = 1_000;
 const MAX_OUTBOX_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_OUTBOX_BYTES: usize = 48 * 1024 * 1024;
@@ -73,6 +79,29 @@ pub struct TurnRef {
     pub completed: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecordRef {
+    pub offset: u64,
+    pub length: u32,
+    pub record_type: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexedThreadMetadata {
+    pub id: String,
+    pub parent_thread_id: Option<String>,
+    pub cwd: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub model_provider: String,
+    pub cli_version: String,
+    pub source: Value,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
+    pub archived: bool,
+}
+
 impl TurnRef {
     fn encode(&self) -> Result<Vec<u8>, StoreError> {
         let id_bytes = self.id.as_bytes();
@@ -114,6 +143,9 @@ impl TurnRef {
 pub struct FileState {
     pub device: u64,
     pub inode: u64,
+    /// First byte in the contiguous indexed range. Version-1 states always
+    /// decode as zero because the old index covered the complete prefix.
+    pub indexed_from: u64,
     pub indexed_bytes: u64,
     pub records: u64,
     pub tail_hash: [u8; 32],
@@ -125,24 +157,67 @@ impl FileState {
         Self {
             device,
             inode,
+            indexed_from: 0,
             indexed_bytes: 0,
             records: 0,
             tail_hash: [0; 32],
         }
     }
 
-    fn encode(self) -> [u8; FILE_STATE_BYTES] {
-        let mut encoded = [0_u8; FILE_STATE_BYTES];
+    #[must_use]
+    pub const fn tail(device: u64, inode: u64, indexed_from: u64) -> Self {
+        Self {
+            device,
+            inode,
+            indexed_from,
+            indexed_bytes: indexed_from,
+            records: 0,
+            tail_hash: [0; 32],
+        }
+    }
+
+    #[must_use]
+    pub const fn is_complete(self) -> bool {
+        self.indexed_from == 0
+    }
+
+    fn encode(self) -> Vec<u8> {
+        if self.is_complete() {
+            // Keep complete checkpoints byte-compatible with the previous
+            // companion so a binary rollback can still consume mature indexes.
+            let mut encoded = vec![0_u8; FILE_STATE_V1_BYTES];
+            encoded[0] = 1;
+            encoded[1..9].copy_from_slice(&self.device.to_be_bytes());
+            encoded[9..17].copy_from_slice(&self.inode.to_be_bytes());
+            encoded[17..25].copy_from_slice(&self.indexed_bytes.to_be_bytes());
+            encoded[25..33].copy_from_slice(&self.records.to_be_bytes());
+            encoded[33..65].copy_from_slice(&self.tail_hash);
+            return encoded;
+        }
+        let mut encoded = vec![0_u8; FILE_STATE_BYTES];
         encoded[0] = FILE_STATE_VERSION;
         encoded[1..9].copy_from_slice(&self.device.to_be_bytes());
         encoded[9..17].copy_from_slice(&self.inode.to_be_bytes());
-        encoded[17..25].copy_from_slice(&self.indexed_bytes.to_be_bytes());
-        encoded[25..33].copy_from_slice(&self.records.to_be_bytes());
-        encoded[33..65].copy_from_slice(&self.tail_hash);
+        encoded[17..25].copy_from_slice(&self.indexed_from.to_be_bytes());
+        encoded[25..33].copy_from_slice(&self.indexed_bytes.to_be_bytes());
+        encoded[33..41].copy_from_slice(&self.records.to_be_bytes());
+        encoded[41..73].copy_from_slice(&self.tail_hash);
         encoded
     }
 
     fn decode(encoded: &[u8]) -> Result<Self, StoreError> {
+        if encoded.len() == FILE_STATE_V1_BYTES && encoded[0] == 1 {
+            return Ok(Self {
+                device: read_u64(&encoded[1..9])?,
+                inode: read_u64(&encoded[9..17])?,
+                indexed_from: 0,
+                indexed_bytes: read_u64(&encoded[17..25])?,
+                records: read_u64(&encoded[25..33])?,
+                tail_hash: encoded[33..65]
+                    .try_into()
+                    .map_err(|_| StoreError::CorruptedIndex("invalid tail hash".into()))?,
+            });
+        }
         if encoded.len() != FILE_STATE_BYTES || encoded[0] != FILE_STATE_VERSION {
             return Err(StoreError::CorruptedIndex(
                 "invalid rollout file state".into(),
@@ -151,9 +226,10 @@ impl FileState {
         Ok(Self {
             device: read_u64(&encoded[1..9])?,
             inode: read_u64(&encoded[9..17])?,
-            indexed_bytes: read_u64(&encoded[17..25])?,
-            records: read_u64(&encoded[25..33])?,
-            tail_hash: encoded[33..65]
+            indexed_from: read_u64(&encoded[17..25])?,
+            indexed_bytes: read_u64(&encoded[25..33])?,
+            records: read_u64(&encoded[33..41])?,
+            tail_hash: encoded[41..73]
                 .try_into()
                 .map_err(|_| StoreError::CorruptedIndex("invalid tail hash".into()))?,
         })
@@ -184,11 +260,15 @@ pub enum StoreError {
 
 pub struct IndexStore {
     database: Database,
+    rollout_index_locks: Mutex<HashMap<[u8; 32], Arc<Mutex<()>>>>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ReplayPage {
     pub head_cursor: u64,
+    pub oldest_cursor: Option<u64>,
+    pub retained_entries: u64,
+    pub retained_bytes: u64,
     pub snapshot_required: bool,
     pub entries: Vec<(u64, Vec<u8>)>,
 }
@@ -203,13 +283,18 @@ impl IndexStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
         let database = Database::create(path)?;
         let write = database.begin_write()?;
-        {
+        let rebuild_rollout_index = {
             let mut meta = write.open_table(META)?;
             let stored = meta.get("schema_version")?.map(|value| value.value());
             match stored {
-                Some(version) if version == u64::from(SCHEMA_VERSION) => {}
-                None | Some(2 | 3) => {
+                Some(version) if version == u64::from(SCHEMA_VERSION) => false,
+                None => {
                     meta.insert("schema_version", u64::from(SCHEMA_VERSION))?;
+                    false
+                }
+                Some(2..=5) => {
+                    meta.insert("schema_version", u64::from(SCHEMA_VERSION))?;
+                    true
                 }
                 Some(version) => {
                     return Err(StoreError::Database(redb::Error::Corrupted(format!(
@@ -217,16 +302,145 @@ impl IndexStore {
                     ))));
                 }
             }
+        };
+        {
             write.open_table(FILES)?;
             write.open_table(RECORDS)?;
             write.open_table(TURNS)?;
             write.open_table(TURNS_BY_ID)?;
+            write.open_table(TURN_SUMMARIES)?;
             write.open_table(REPLAY)?;
             write.open_table(OUTBOX)?;
             write.open_table(THREAD_USAGE)?;
+            write.open_table(THREAD_METADATA)?;
+            write.open_table(THREADS_BY_PARENT)?;
+        }
+        if rebuild_rollout_index {
+            write.open_table(FILES)?.retain(|_key, _value| false)?;
+            write.open_table(RECORDS)?.retain(|_key, _value| false)?;
+            write.open_table(TURNS)?.retain(|_key, _value| false)?;
+            write
+                .open_table(TURNS_BY_ID)?
+                .retain(|_key, _value| false)?;
+            write
+                .open_table(TURN_SUMMARIES)?
+                .retain(|_key, _value| false)?;
         }
         write.commit()?;
-        Ok(Self { database })
+        Ok(Self {
+            database,
+            rollout_index_locks: Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub(crate) fn rollout_index_lock(&self, file_id: [u8; 32]) -> Arc<Mutex<()>> {
+        self.rollout_index_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entry(file_id)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    /// Atomically updates one thread's canonical metadata and parent index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when serialization or the redb transaction fails.
+    pub fn put_thread_metadata(&self, metadata: &IndexedThreadMetadata) -> Result<(), StoreError> {
+        self.put_thread_metadata_batch(std::slice::from_ref(metadata))
+    }
+
+    /// Atomically updates a batch of canonical thread metadata rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when serialization or the redb transaction fails.
+    pub fn put_thread_metadata_batch(
+        &self,
+        values: &[IndexedThreadMetadata],
+    ) -> Result<(), StoreError> {
+        let encoded = values
+            .iter()
+            .map(serde_json::to_vec)
+            .collect::<Result<Vec<_>, _>>()?;
+        let write = self.database.begin_write()?;
+        {
+            let mut metadata_table = write.open_table(THREAD_METADATA)?;
+            let mut parents = write.open_table(THREADS_BY_PARENT)?;
+            for (metadata, encoded) in values.iter().zip(encoded) {
+                let previous = metadata_table
+                    .get(metadata.id.as_str())?
+                    .map(|value| serde_json::from_slice::<IndexedThreadMetadata>(value.value()))
+                    .transpose()?;
+                metadata_table.insert(metadata.id.as_str(), encoded.as_slice())?;
+                if let Some(previous_parent) = previous.and_then(|value| value.parent_thread_id) {
+                    parents.remove(parent_thread_key(&previous_parent, &metadata.id).as_slice())?;
+                }
+                if let Some(parent) = metadata.parent_thread_id.as_deref() {
+                    parents.insert(parent_thread_key(parent, &metadata.id).as_slice(), 1)?;
+                }
+            }
+        }
+        write.commit()?;
+        Ok(())
+    }
+
+    /// Reads one indexed thread metadata row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the index cannot be read or contains invalid JSON.
+    pub fn thread_metadata(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<IndexedThreadMetadata>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(THREAD_METADATA)?;
+        table
+            .get(thread_id)?
+            .map(|value| serde_json::from_slice(value.value()))
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    /// Returns all indexed descendants of one root in parent-before-child order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the index cannot be read or contains invalid JSON.
+    pub fn thread_descendants(
+        &self,
+        root_thread_id: &str,
+    ) -> Result<Vec<IndexedThreadMetadata>, StoreError> {
+        let read = self.database.begin_read()?;
+        let parents = read.open_table(THREADS_BY_PARENT)?;
+        let metadata = read.open_table(THREAD_METADATA)?;
+        let mut pending = vec![root_thread_id.to_owned()];
+        let mut seen = HashSet::new();
+        let mut descendants = Vec::new();
+        while let Some(parent) = pending.pop() {
+            let prefix = parent_thread_prefix(&parent);
+            let mut end = prefix.clone();
+            end.push(u8::MAX);
+            let mut children = parents
+                .range(prefix.as_slice()..=end.as_slice())?
+                .filter_map(|entry| {
+                    let (key, _value) = entry.ok()?;
+                    let key = key.value();
+                    let child = std::str::from_utf8(&key[prefix.len()..]).ok()?;
+                    seen.insert(child.to_owned()).then_some(child.to_owned())
+                })
+                .collect::<Vec<_>>();
+            children.sort();
+            for child in children.into_iter().rev() {
+                if let Some(value) = metadata.get(child.as_str())? {
+                    descendants.push(serde_json::from_slice(value.value())?);
+                    pending.push(child);
+                }
+            }
+        }
+        Ok(descendants)
     }
 
     #[must_use]
@@ -287,6 +501,33 @@ impl IndexStore {
             .transpose()
     }
 
+    /// Returns indexed source-record references at or after `from_offset`.
+    ///
+    /// Consumers use this compact shared index to build semantic projections
+    /// without independently scanning the canonical JSONL file again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index cannot be read or contains an invalid
+    /// record reference.
+    pub fn records_from(
+        &self,
+        file_id: &[u8; 32],
+        from_offset: u64,
+    ) -> Result<Vec<RecordRef>, StoreError> {
+        let start = offset_key(file_id, from_offset);
+        let end = offset_key(file_id, u64::MAX);
+        let read = self.database.begin_read()?;
+        let table = read.open_table(RECORDS)?;
+        table
+            .range(start.as_slice()..=end.as_slice())?
+            .map(|entry| {
+                let (_key, value) = entry?;
+                decode_record_ref(value.value())
+            })
+            .collect()
+    }
+
     /// Commits rollout references and their exact source checkpoint atomically.
     ///
     /// # Errors
@@ -297,6 +538,7 @@ impl IndexStore {
         file_id: &[u8; 32],
         records: &[(Vec<u8>, Vec<u8>)],
         turns: &[TurnRef],
+        turn_summaries: &[(u64, Vec<u8>)],
         file_state: FileState,
     ) -> Result<(), StoreError> {
         let write = self.database.begin_write()?;
@@ -315,6 +557,13 @@ impl IndexStore {
                 table.insert(key.as_slice(), value.as_slice())?;
                 let id_key = turn_id_key(file_id, &turn.id);
                 by_id.insert(id_key.as_slice(), turn.start_offset)?;
+            }
+        }
+        {
+            let mut table = write.open_table(TURN_SUMMARIES)?;
+            for (start_offset, summary) in turn_summaries {
+                let key = offset_key(file_id, *start_offset);
+                table.insert(key.as_slice(), summary.as_slice())?;
             }
         }
         {
@@ -358,6 +607,10 @@ impl IndexStore {
             turns_by_id.retain_in(id_start.as_slice()..=id_end.as_slice(), |_key, _value| {
                 false
             })?;
+        }
+        {
+            let mut summaries = write.open_table(TURN_SUMMARIES)?;
+            summaries.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
         }
         {
             let mut files = write.open_table(FILES)?;
@@ -433,6 +686,50 @@ impl IndexStore {
             .transpose()
     }
 
+    /// Reads the materialized projection state for one indexed turn.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index cannot be read or the row is invalid JSON.
+    pub fn turn_summary_state<T: for<'de> Deserialize<'de>>(
+        &self,
+        file_id: &[u8; 32],
+        start_offset: u64,
+    ) -> Result<Option<T>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(TURN_SUMMARIES)?;
+        let key = offset_key(file_id, start_offset);
+        table
+            .get(key.as_slice())?
+            .map(|value| serde_json::from_slice(value.value()))
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    /// Persists one materialized turn projection without changing the rollout
+    /// checkpoint. Used to lazily enrich an offset index created by an older
+    /// companion without rebuilding the whole session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when serialization or the redb transaction fails.
+    pub fn put_turn_summary_state<T: Serialize>(
+        &self,
+        file_id: &[u8; 32],
+        start_offset: u64,
+        state: &T,
+    ) -> Result<(), StoreError> {
+        let encoded = serde_json::to_vec(state)?;
+        let write = self.database.begin_write()?;
+        {
+            let mut table = write.open_table(TURN_SUMMARIES)?;
+            let key = offset_key(file_id, start_offset);
+            table.insert(key.as_slice(), encoded.as_slice())?;
+        }
+        write.commit()?;
+        Ok(())
+    }
+
     /// Returns the number of indexed turns.
     ///
     /// # Errors
@@ -503,7 +800,9 @@ impl IndexStore {
         let meta = read.open_table(META)?;
         let replay = read.open_table(REPLAY)?;
         let head_cursor = meta.get("replay_head")?.map_or(0, |value| value.value());
+        let retained_bytes = meta.get("replay_bytes")?.map_or(0, |value| value.value());
         let oldest = replay.first()?.map(|(key, _value)| key.value());
+        let retained_entries = replay.len()?;
         let snapshot_required = match cursor {
             None => true,
             Some(cursor) => {
@@ -521,6 +820,9 @@ impl IndexStore {
         }
         Ok(ReplayPage {
             head_cursor,
+            oldest_cursor: oldest,
+            retained_entries,
+            retained_bytes,
             snapshot_required,
             entries,
         })
@@ -692,6 +994,37 @@ impl IndexStore {
             let (_key, value) = entry?;
             let command: OutboxCommand = serde_json::from_slice(value.value())?;
             if remote_thread_id.is_none_or(|thread_id| command.remote_thread_id == thread_id) {
+                commands.push(command);
+            }
+        }
+        commands.sort_by_key(|command| (command.order, command.created_at));
+        Ok(commands)
+    }
+
+    /// Lists durable outbox commands with explicit scan and result ceilings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either ceiling is exceeded or a record is invalid.
+    pub fn outbox_list_bounded(
+        &self,
+        remote_thread_id: Option<&str>,
+        scan_limit: usize,
+        result_limit: usize,
+    ) -> Result<Vec<OutboxCommand>, StoreError> {
+        let read = self.database.begin_read()?;
+        let table = read.open_table(OUTBOX)?;
+        let mut commands = Vec::new();
+        for (scanned, entry) in table.iter()?.enumerate() {
+            if scanned >= scan_limit {
+                return Err(StoreError::OutboxCapacityExceeded);
+            }
+            let (_key, value) = entry?;
+            let command: OutboxCommand = serde_json::from_slice(value.value())?;
+            if remote_thread_id.is_none_or(|thread_id| command.remote_thread_id == thread_id) {
+                if commands.len() >= result_limit {
+                    return Err(StoreError::OutboxCapacityExceeded);
+                }
                 commands.push(command);
             }
         }
@@ -1181,6 +1514,19 @@ fn turn_id_key(file_id: &[u8; 32], turn_id: &str) -> Vec<u8> {
     key
 }
 
+fn parent_thread_prefix(parent_thread_id: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(parent_thread_id.len() + 1);
+    key.extend_from_slice(parent_thread_id.as_bytes());
+    key.push(0);
+    key
+}
+
+fn parent_thread_key(parent_thread_id: &str, child_thread_id: &str) -> Vec<u8> {
+    let mut key = parent_thread_prefix(parent_thread_id);
+    key.extend_from_slice(child_thread_id.as_bytes());
+    key
+}
+
 fn read_u64(bytes: &[u8]) -> Result<u64, StoreError> {
     let array: [u8; 8] = bytes
         .try_into()
@@ -1193,4 +1539,70 @@ fn read_u16(bytes: &[u8]) -> Result<u16, StoreError> {
         .try_into()
         .map_err(|_| StoreError::CorruptedIndex("invalid integer width".into()))?;
     Ok(u16::from_be_bytes(array))
+}
+
+fn decode_record_ref(encoded: &[u8]) -> Result<RecordRef, StoreError> {
+    if encoded.len() != 13 {
+        return Err(StoreError::CorruptedIndex(
+            "invalid rollout record reference".into(),
+        ));
+    }
+    Ok(RecordRef {
+        offset: read_u64(&encoded[..8])?,
+        length: u32::from_be_bytes(
+            encoded[8..12]
+                .try_into()
+                .map_err(|_| StoreError::CorruptedIndex("invalid record length".into()))?,
+        ),
+        record_type: encoded[12],
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FILE_STATE_V1_BYTES, FileState};
+
+    #[test]
+    fn decodes_v1_file_state_as_a_complete_prefix() -> Result<(), Box<dyn std::error::Error>> {
+        let mut encoded = [0_u8; FILE_STATE_V1_BYTES];
+        encoded[0] = 1;
+        encoded[1..9].copy_from_slice(&11_u64.to_be_bytes());
+        encoded[9..17].copy_from_slice(&22_u64.to_be_bytes());
+        encoded[17..25].copy_from_slice(&33_u64.to_be_bytes());
+        encoded[25..33].copy_from_slice(&44_u64.to_be_bytes());
+        encoded[33..65].copy_from_slice(&[55_u8; 32]);
+
+        let decoded = FileState::decode(&encoded)?;
+
+        assert_eq!(decoded.device, 11);
+        assert_eq!(decoded.inode, 22);
+        assert_eq!(decoded.indexed_from, 0);
+        assert_eq!(decoded.indexed_bytes, 33);
+        assert_eq!(decoded.records, 44);
+        assert_eq!(decoded.tail_hash, [55; 32]);
+        assert!(decoded.is_complete());
+        Ok(())
+    }
+
+    #[test]
+    fn v2_file_state_round_trips_tail_coverage() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = FileState::tail(1, 2, 3);
+        state.indexed_bytes = 4;
+        state.records = 5;
+        state.tail_hash = [6; 32];
+
+        assert_eq!(FileState::decode(&state.encode())?, state);
+        assert!(!state.is_complete());
+        Ok(())
+    }
+
+    #[test]
+    fn complete_state_keeps_the_v1_rollback_encoding() {
+        let state = FileState::empty(1, 2);
+
+        let encoded = state.encode();
+
+        assert_eq!(encoded.len(), FILE_STATE_V1_BYTES);
+        assert_eq!(encoded[0], 1);
+    }
 }

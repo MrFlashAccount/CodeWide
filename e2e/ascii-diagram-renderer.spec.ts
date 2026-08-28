@@ -52,3 +52,44 @@ test("bundled Svgbob renders generated ASCII architecture as scalable SVG", asyn
   await expect(page.locator("#canvas svg text").filter({ hasText: "source" })).toBeVisible();
   await expect(page.locator("#canvas svg rect.backdrop")).toHaveCSS("fill", "rgba(0, 0, 0, 0)");
 });
+
+test("bundled Svgbob preserves Cyrillic labels on the monospace cell grid", async ({ page }) => {
+  await page.setViewportSize({ width: 920, height: 620 });
+  await page.addInitScript(() => {
+    const messages: string[] = [];
+    Object.assign(window, {
+      __rendererMessages: messages,
+      ReactNativeWebView: { postMessage: (value: string) => messages.push(value) },
+    });
+  });
+  await page.goto(rendererUrl);
+  const source = `Пользователь касается строки треда
+              │
+              ▼
+       onPressIn: preload
+              │
+              ▼
+     Прочитать сохранённый anchor
+              │
+              ▼
+   Запросить окно треда из SQLite
+       максимум 36 turns`;
+  await page.evaluate((diagram) => {
+    const runtime = window as typeof window & { renderAsciiDiagram(source: string, requestId: number, mode: string): Promise<void> };
+    return runtime.renderAsciiDiagram(diagram, 2, "fullscreen");
+  }, source);
+  await expect.poll(async () => await page.evaluate(() => {
+    const messages = (window as typeof window & { __rendererMessages?: string[] }).__rendererMessages ?? [];
+    return messages.some((value) => {
+      const message = JSON.parse(value) as { type?: string; requestId?: number };
+      return message.type === "rendered" && message.requestId === 2;
+    });
+  })).toBe(true);
+
+  const userLabel = page.locator("#canvas svg text").filter({ hasText: "Пользователь" });
+  await expect(userLabel).toHaveCount(1);
+  await expect(userLabel).toHaveAttribute("x", "2 10 18 26 34 42 50 58 66 74 82 90");
+  await expect(userLabel).toHaveCSS("font-family", /CodeWideDiagramMono/u);
+  await expect(page.locator("#canvas svg text").filter({ hasText: "Прочитать" })).toHaveCount(1);
+  await expect(page.locator("#canvas svg text").filter({ hasText: "максимум" })).toHaveCount(1);
+});

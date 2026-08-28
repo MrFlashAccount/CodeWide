@@ -1,7 +1,14 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { projectedOutputFootprint, projectedTurnMetadata, reconcileTurnItems, sumOutputFootprints, type ProjectedTurnMetadata, type RemoteFileAttachment } from "@codewide/sync-client";
 
+import { cloneProtocolValue } from "./clone-protocol-value";
+
 import { deduplicateThreadTurns } from "./thread-partitions";
+import {
+  deliveryProgressRank,
+  normalizePendingDeliveryState,
+  type PendingDeliveryState,
+} from "./thread-delivery-state";
 
 export type ThreadDetailRow = {
   id: string;
@@ -13,10 +20,24 @@ export type ThreadDetailRow = {
   historyEpoch: number;
   /**
    * Opaque continuation for the oldest durable turn in this epoch. Present on
-   * the thread row only. Missing means an older app cached the history before
-   * cursor persistence existed; null means the server proved it complete.
+   * the thread row only. Missing means the current live shell has not received
+   * an authoritative history window; null means the server proved it complete.
    */
   historyCursor?: string | null;
+  /**
+   * Monotonic proof that this thread has had authoritative turn history.
+   * `false` is written only for a server-proven empty history. `true` survives
+   * FIFO eviction, allowing a metadata-only row to be recognized as a cache
+   * miss instead of an empty conversation.
+   */
+  historyHadTurns?: boolean;
+  /**
+   * Inclusive ordinal interval proven to be a contiguous authoritative cache
+   * range. Missing means that persisted rows predate the coverage contract and
+   * must be refreshed before they can satisfy a render request.
+   */
+  historyCoverageMinOrdinal?: number | null;
+  historyCoverageMaxOrdinal?: number | null;
   ordinal: number;
   sessionId: string | null;
   lastOpenedAt: number;
@@ -125,7 +146,7 @@ export type PendingTimelineEntry = {
   workspaceRequestId?: string | null;
   text: string;
   attachments: RemoteFileAttachment[];
-  state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
+  state: PendingDeliveryState;
   attempts: number;
   lastError: string | null;
   createdAt: number;
@@ -168,38 +189,40 @@ export function reusableTurnOrdinal(row: ThreadDetailRow | undefined, historyEpo
 }
 
 /**
- * Merges native delivery observations with the optimistic JS transaction.
- * Native delivery can finish before the JS mutation records `accepted`, so a
- * later timestamp alone must not revive `Sending` after delivery was proven.
- * Other transitions remain timestamp-driven so retries can leave a failed or
- * uncertain state.
+ * Merges transport observations without allowing a late native receipt to
+ * move an App Server-accepted command backwards. A failed or uncertain command
+ * may still enter a new sending attempt. Only a canonical turn with the same
+ * stable client id removes the pending row.
  */
 export function mergePendingTimelineEntry(
   previous: PendingTimelineEntry,
   incoming: PendingTimelineEntry,
 ): PendingTimelineEntry {
-  if (incoming.state === "delivered") {
-    return incoming.attachments.length === 0 && previous.attachments.length > 0
-      ? { ...incoming, attachments: previous.attachments }
-      : incoming;
+  const previousState = normalizePendingDeliveryState(previous.state);
+  const incomingState = normalizePendingDeliveryState(incoming.state);
+  if (previousState === "appServerAccepted") return { ...previous, state: previousState };
+  if (incomingState === "appServerAccepted") return mergePendingAttachments(previous, { ...incoming, state: incomingState });
+  const retryStarted = (previousState === "failed" || previousState === "uncertain")
+    && (incomingState === "queued" || incomingState === "sending" || incomingState === "companionAccepted");
+  const previousRank = deliveryProgressRank(previousState);
+  const incomingRank = deliveryProgressRank(incomingState);
+  if (!retryStarted && incomingRank < previousRank) {
+    return { ...previous, state: previousState };
   }
-  if (previous.state === "delivered") return previous;
-  if (incoming.updatedAt < previous.updatedAt) return previous;
-  if (incoming.updatedAt === previous.updatedAt && deliveryStateRank(incoming.state) < deliveryStateRank(previous.state)) return previous;
+  const normalized = { ...incoming, state: incomingState };
+  if (!retryStarted && incomingRank === previousRank && incoming.updatedAt < previous.updatedAt) {
+    return { ...previous, state: previousState };
+  }
+  return mergePendingAttachments(previous, normalized);
+}
+
+function mergePendingAttachments(
+  previous: PendingTimelineEntry,
+  incoming: PendingTimelineEntry,
+): PendingTimelineEntry {
   return incoming.attachments.length === 0 && previous.attachments.length > 0
     ? { ...incoming, attachments: previous.attachments }
     : incoming;
-}
-
-function deliveryStateRank(state: PendingTimelineEntry["state"]): number {
-  switch (state) {
-    case "queued": return 0;
-    case "sending": return 1;
-    case "accepted": return 2;
-    case "uncertain": return 3;
-    case "failed": return 4;
-    case "delivered": return 5;
-  }
 }
 
 export function planQueuedEditMutation(
@@ -249,8 +272,23 @@ export function pendingTimelineRowId(connectionId: string, threadId: string, com
   return `${connectionId}\u0000${threadId}\u0000turnClient\u0000${commandId}`;
 }
 
+/**
+ * Runtime recovery values can contain a metadata-only turn envelope even
+ * though the generated protocol type requires `items`. Keep that compatibility
+ * rule inside the Conversation projection: reuse resident content when it is
+ * available, otherwise represent the shell explicitly as not loaded.
+ */
+export function normalizeConversationTurn(turn: Turn, resident: Turn | null = null): Turn {
+  if (Array.isArray((turn as unknown as { items?: unknown }).items)) return turn;
+  if (resident !== null && Array.isArray((resident as unknown as { items?: unknown }).items)) {
+    return { ...turn, items: resident.items, itemsView: resident.itemsView };
+  }
+  return { ...turn, items: [], itemsView: "notLoaded" };
+}
+
 export function authoritativeTimelineRowId(connectionId: string, threadId: string, turn: Turn): string {
-  const user = turn.items.find((item): item is Extract<Turn["items"][number], { type: "userMessage" }> => item.type === "userMessage");
+  const items = Array.isArray((turn as unknown as { items?: unknown }).items) ? turn.items : [];
+  const user = items.find((item): item is Extract<Turn["items"][number], { type: "userMessage" }> => item.type === "userMessage");
   return typeof user?.clientId === "string" && user.clientId.length > 0
     ? pendingTimelineRowId(connectionId, threadId, user.clientId)
     : `${connectionId}\u0000${threadId}\u0000turn\u0000${turn.id}`;
@@ -374,30 +412,6 @@ export function planPendingDeliveryProjectionCleanup(
   return { upserts: [], deletes };
 }
 
-/**
- * Builds the smallest thread slice needed by a live event batch. Static sealed
- * history is deliberately excluded; only the mutable head and explicitly
- * addressed turns participate in event reduction.
- */
-export function selectLiveThreadDetailRows(
-  rows: Iterable<ThreadDetailRow>,
-  connectionId: string,
-  threadId: string,
-  payloads: Record<string, unknown>[],
-): ThreadDetailRow[] {
-  const values = [...rows].filter((row) => row.connectionId === connectionId && row.remoteThreadId === threadId);
-  const selectedTurnIds = new Set(values
-    .filter((row) => row.kind === "turn" && !row.sealed && row.remoteTurnId !== null)
-    .map((row) => row.remoteTurnId!));
-  for (const payload of payloads) {
-    const params = asRecord(payload.params);
-    if (typeof params?.turnId === "string") selectedTurnIds.add(params.turnId);
-    const turn = asRecord(params?.turn);
-    if (typeof turn?.id === "string") selectedTurnIds.add(turn.id);
-  }
-  return values.filter((row) => row.kind === "thread" || (row.remoteTurnId !== null && selectedTurnIds.has(row.remoteTurnId)));
-}
-
 export function reconcileAuthoritativeThread(
   incoming: Thread,
   current: Thread | null | undefined,
@@ -474,7 +488,7 @@ function materializeTurn(
     ? { ...source }
     : { ...source, items: mergeSummaryWithActivity(source.items, activity), itemsView: "full" as const };
   if (metadata !== undefined) {
-    (value as Turn & { codewide?: ProjectedTurnMetadata }).codewide = structuredClone(metadata);
+    (value as Turn & { codewide?: ProjectedTurnMetadata }).codewide = cloneProtocolValue(metadata);
   }
   materializedTurnCache.set(source, { activity, metadata, value });
   return value;
@@ -484,97 +498,23 @@ export function shouldApplyLiveThreadRow(previous: ThreadDetailRow | undefined, 
   return shouldWriteThreadDetailRow(previous, next);
 }
 
-/**
- * Keeps sealed message content immutable while allowing an authoritative read
- * to repair the small lifecycle envelope. Terminal state is monotonic: a stale
- * in-progress response can never reopen a turn completed by a live event.
- */
+/** A sealed row is immutable inside one history generation. */
 export function reconcileAuthoritativeThreadDetailRow(
   previous: ThreadDetailRow | undefined,
   next: ThreadDetailRow,
 ): ThreadDetailRow {
-  if (previous?.kind !== "turn" || !previous.sealed || previous.turn === null || next.kind !== "turn" || next.turn === null) {
-    return next;
-  }
-  const content = reconcileSealedChatBoundary(previous.turn, next.turn);
-  const lifecycle = previous.turn.status !== "inProgress" && next.turn.status === "inProgress" ? previous.turn : next.turn;
-  const turn: Turn = {
-    ...next.turn,
-    items: content.items,
-    itemsView: content.itemsView,
-    status: lifecycle.status,
-    error: lifecycle.error,
-    startedAt: lifecycle.startedAt,
-    completedAt: lifecycle.completedAt,
-    durationMs: lifecycle.durationMs,
-  };
-  return { ...next, sealed: turn.status !== "inProgress", turn };
+  return previous?.kind === "turn"
+    && previous.sealed
+    && next.kind === "turn"
+    && previous.historyEpoch === next.historyEpoch
+    ? previous
+    : next;
 }
 
-/**
- * A completion event can seal a protocol turn before its bounded history
- * summary arrives. The authoritative summary may therefore fill missing chat
- * boundary items once, while already-complete sealed content stays immutable.
- */
+/** Only a mutable row, or the same turn in a new history generation, is writable. */
 export function shouldWriteAuthoritativeThreadDetailRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
-  if (previous?.kind === "turn" && previous.sealed && next.kind === "turn") {
-    return previous.historyEpoch !== next.historyEpoch
-      || previous.ordinal !== next.ordinal
-      || shouldReplaceSealedChatBoundary(previous.turn, next.turn)
-      || !sameTurnLifecycle(previous.turn, next.turn);
-  }
+  if (previous?.kind === "turn" && previous.sealed && next.kind === "turn" && previous.historyEpoch === next.historyEpoch) return false;
   return shouldWriteThreadDetailRow(previous, next);
-}
-
-function shouldReplaceSealedChatBoundary(previous: Turn | null, next: Turn | null): boolean {
-  if (previous === null || next === null) return next !== null && previous === null;
-  if (previous.itemsView === "summary" && next.itemsView === "summary") {
-    const previousCounts = chatBoundaryCounts(previous);
-    const nextCounts = chatBoundaryCounts(next);
-    // A page can be temporarily incomplete while the rollout tail settles.
-    // Never let it erase the last persisted prompt or final answer. Count
-    // reduction remains valid for cleaning an already-duplicated summary.
-    if ((previousCounts.users > 0 && nextCounts.users === 0)
-      || (previousCounts.agents > 0 && nextCounts.agents === 0)) return false;
-    if (previousCounts.users > nextCounts.users || previousCounts.agents > nextCounts.agents) return true;
-  }
-  const previousScore = chatBoundaryScore(previous);
-  const nextScore = chatBoundaryScore(next);
-  if (nextScore !== previousScore) return nextScore > previousScore;
-  // A live completion can seal a summary that still points at an intermediate
-  // agent message. The subsequent authoritative page has the same coarse
-  // user/agent score, but a different final item. Treat that final boundary as
-  // canonical; reconciliation below preserves any hydrated full activity.
-  return chatBoundaryRevision(previous) !== chatBoundaryRevision(next);
-}
-
-function chatBoundaryCounts(turn: Turn): { users: number; agents: number } {
-  let users = 0;
-  let agents = 0;
-  for (const item of turn.items) {
-    if (item.type === "userMessage") users += 1;
-    else if (item.type === "agentMessage") agents += 1;
-  }
-  return { users, agents };
-}
-
-function reconcileSealedChatBoundary(previous: Turn, next: Turn): Turn {
-  if (!shouldReplaceSealedChatBoundary(previous, next)) return previous;
-  if (previous.itemsView === "full" && next.itemsView !== "full") {
-    return { ...previous, items: reconcileTurnItems(previous.items, next.items) };
-  }
-  const reconciled = reconcileTurnItems(previous.items, next.items);
-  const reconciledByIncomingId = new Map(reconciled.map((item) => [item.id, item] as const));
-  return {
-    ...next,
-    items: next.items.map((item) => reconciledByIncomingId.get(item.id) ?? item),
-  };
-}
-
-function chatBoundaryRevision(turn: Turn): string {
-  const user = turn.items.find((item) => item.type === "userMessage");
-  const agent = [...turn.items].reverse().find((item) => item.type === "agentMessage");
-  return `${user?.id ?? ""}\u0000${agent?.id ?? ""}`;
 }
 
 /** Large completed content and hydrated activity are immutable cache entries. */
@@ -595,23 +535,6 @@ export function shouldWriteHydratedActivityRow(previous: ThreadDetailRow | undef
   return JSON.stringify(previous.activityItems) !== JSON.stringify(next.activityItems);
 }
 
-function chatBoundaryScore(turn: Turn | null): number {
-  if (turn === null) return 0;
-  let score = 0;
-  if (turn.items.some((item) => item.type === "userMessage")) score += 1;
-  if (turn.items.some((item) => item.type === "agentMessage")) score += 1;
-  return score;
-}
-
-function sameTurnLifecycle(left: Turn | null, right: Turn | null): boolean {
-  if (left === null || right === null) return left === right;
-  return left.status === right.status
-    && left.startedAt === right.startedAt
-    && left.completedAt === right.completedAt
-    && left.durationMs === right.durationMs
-    && JSON.stringify(left.error) === JSON.stringify(right.error);
-}
-
 function mergeSummaryWithActivity(summary: Turn["items"], activity: Turn["items"]): Turn["items"] {
   const activityIds = new Set(activity.map((item) => item.id));
   if (summary.every((item) => activityIds.has(item.id))) return activity;
@@ -625,10 +548,4 @@ function compareTurnRows(left: ThreadDetailRow, right: ThreadDetailRow): number 
     return leftStartedAt - rightStartedAt;
   }
   return left.ordinal - right.ordinal || left.id.localeCompare(right.id);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
 }

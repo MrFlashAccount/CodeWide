@@ -6,7 +6,8 @@ export type CodeWidePairingPayload = {
   expiresAt: number;
   displayName: string;
   emoji: string;
-  tlsPinSha256?: string;
+  tlsPinSha256: string;
+  identityExpiresAt?: number;
 };
 
 export function encodePairingPayload(payload: CodeWidePairingPayload): string {
@@ -25,7 +26,8 @@ export function encodePairingLink(payload: CodeWidePairingPayload): string {
   url.searchParams.set("x", String(validated.expiresAt));
   url.searchParams.set("n", validated.displayName);
   url.searchParams.set("i", validated.emoji);
-  if (validated.tlsPinSha256 !== undefined) url.searchParams.set("p", validated.tlsPinSha256);
+  url.searchParams.set("p", validated.tlsPinSha256);
+  if (validated.identityExpiresAt !== undefined) url.searchParams.set("y", String(validated.identityExpiresAt));
   return url.toString();
 }
 
@@ -55,6 +57,7 @@ function parsePairingLink(raw: string, now: number): CodeWidePairingPayload {
     throw new Error("Unsupported CodeWide connection link");
   }
   const pin = url.searchParams.get("p");
+  const identityExpiry = url.searchParams.get("y");
   return validatePairingPayload({
     type: "codewide-pairing",
     version: Number(url.searchParams.get("v")),
@@ -63,7 +66,8 @@ function parsePairingLink(raw: string, now: number): CodeWidePairingPayload {
     expiresAt: Number(url.searchParams.get("x")),
     displayName: url.searchParams.get("n"),
     emoji: url.searchParams.get("i"),
-    ...(pin === null ? {} : { tlsPinSha256: pin }),
+    tlsPinSha256: pin,
+    ...(identityExpiry === null ? {} : { identityExpiresAt: Number(identityExpiry) }),
   }, now);
 }
 
@@ -87,9 +91,14 @@ function validatePairingPayload(value: unknown, now: number): CodeWidePairingPay
   }
   if (typeof payload.endpoint !== "string") throw new Error("Invalid pairing endpoint");
   const endpoint = validateEndpoint(payload.endpoint);
-  if (payload.tlsPinSha256 !== undefined && !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(payload.tlsPinSha256)) {
+  if (typeof payload.tlsPinSha256 !== "string" || !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(payload.tlsPinSha256)) {
     throw new Error("Invalid TLS certificate pin");
   }
+  if (payload.identityExpiresAt !== undefined && (
+    typeof payload.identityExpiresAt !== "number"
+    || !Number.isSafeInteger(payload.identityExpiresAt)
+    || payload.identityExpiresAt <= now
+  )) throw new Error("Invalid companion identity expiry");
   return {
     type: "codewide-pairing",
     version: 1,
@@ -98,7 +107,8 @@ function validatePairingPayload(value: unknown, now: number): CodeWidePairingPay
     expiresAt: payload.expiresAt,
     displayName: payload.displayName.trim(),
     emoji: payload.emoji.trim(),
-    ...(payload.tlsPinSha256 === undefined ? {} : { tlsPinSha256: payload.tlsPinSha256 }),
+    tlsPinSha256: payload.tlsPinSha256,
+    ...(payload.identityExpiresAt === undefined ? {} : { identityExpiresAt: payload.identityExpiresAt }),
   };
 }
 

@@ -6,7 +6,7 @@ use codewide_companion::{
     catalog::SessionCatalog,
     history_service::HistoryService,
     server::{self, CompanionServices},
-    store::IndexStore,
+    store::{IndexStore, IndexedThreadMetadata},
     sync::SyncHub,
     upstream::UpstreamHandle,
 };
@@ -20,6 +20,13 @@ use tokio_tungstenite::{
 };
 
 const TOKEN: &str = "companion-transport-test-admin-token-that-is-long-enough";
+
+struct ThreadTerminalFixtures {
+    catalog: Arc<SessionCatalog>,
+    authoritative_cwd: std::path::PathBuf,
+    client_cwd: std::path::PathBuf,
+    catalog_cwd: std::path::PathBuf,
+}
 
 #[tokio::test]
 async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
@@ -41,14 +48,21 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
 
     let upstream = UpstreamHandle::spawn(socket_path.clone());
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let ThreadTerminalFixtures {
+        catalog,
+        authoritative_cwd,
+        client_cwd,
+        catalog_cwd,
+    } = prepare_thread_terminal_fixtures(directory.path(), &store)?;
+    let history = HistoryService::new(catalog.clone(), store.clone());
     let sync = SyncHub::new(upstream, store.clone(), history);
     let app = server::router_with_services(
-        store,
+        store.clone(),
         Arc::from(TOKEN),
         sync,
         CompanionServices {
             app_server_socket_path: Some(socket_path),
+            catalog: Some(catalog),
             excluded_ports: HashSet::new(),
             ..CompanionServices::default()
         },
@@ -92,13 +106,90 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
 
     verify_port_discovery(address, echo_port).await?;
 
-    let mut terminal_request =
+    verify_legacy_terminal(address).await?;
+
+    verify_durable_terminal(address).await?;
+    verify_thread_owned_terminal(
+        address,
+        "01a03e19-ee87-7a33-adcb-a93b9e5b0768",
+        "01a03e20-ee87-7a33-adcb-a93b9e5b0768",
+        "terminal-22345678-1234-1234-1234-123456789abc",
+        &authoritative_cwd,
+        &client_cwd,
+    )
+    .await?;
+    verify_thread_owned_terminal(
+        address,
+        "01a03e20-ee87-7a33-adcb-a93b9e5b0768",
+        "01a03e19-ee87-7a33-adcb-a93b9e5b0768",
+        "terminal-32345678-1234-1234-1234-123456789abc",
+        &catalog_cwd,
+        &client_cwd,
+    )
+    .await?;
+
+    raw.close(None).await?;
+    forward.close(None).await?;
+    server_task.abort();
+    fake_app_server.abort();
+    echo.abort();
+    Ok(())
+}
+
+fn prepare_thread_terminal_fixtures(
+    root: &std::path::Path,
+    store: &IndexStore,
+) -> Result<ThreadTerminalFixtures, Box<dyn std::error::Error + Send + Sync>> {
+    let authoritative_cwd = root.join("authoritative-cwd");
+    let client_cwd = root.join("client-cwd");
+    std::fs::create_dir_all(&authoritative_cwd)?;
+    std::fs::create_dir_all(&client_cwd)?;
+    let authoritative_cwd = authoritative_cwd.canonicalize()?;
+    let client_cwd = client_cwd.canonicalize()?;
+    store.put_thread_metadata(&IndexedThreadMetadata {
+        id: "01a03e19-ee87-7a33-adcb-a93b9e5b0768".into(),
+        parent_thread_id: None,
+        cwd: authoritative_cwd.to_string_lossy().into_owned(),
+        created_at: 1,
+        updated_at: 1,
+        model_provider: "openai".into(),
+        cli_version: "test".into(),
+        source: json!("vscode"),
+        agent_nickname: None,
+        agent_role: None,
+        archived: false,
+    })?;
+    let catalog_cwd = root.join("catalog-cwd");
+    std::fs::create_dir_all(&catalog_cwd)?;
+    let catalog_cwd = catalog_cwd.canonicalize()?;
+    let rollout_directory = root.join("sessions/2026/08/26");
+    std::fs::create_dir_all(&rollout_directory)?;
+    std::fs::write(
+        rollout_directory
+            .join("rollout-2026-08-26T00-00-00-01a03e20-ee87-7a33-adcb-a93b9e5b0768.jsonl"),
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"01a03e20-ee87-7a33-adcb-a93b9e5b0768\",\"cwd\":{}}}}}\n",
+            serde_json::to_string(&catalog_cwd.to_string_lossy())?
+        ),
+    )?;
+    Ok(ThreadTerminalFixtures {
+        catalog: Arc::new(SessionCatalog::scan(root)),
+        authoritative_cwd,
+        client_cwd,
+        catalog_cwd,
+    })
+}
+
+async fn verify_legacy_terminal(
+    address: std::net::SocketAddr,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut request =
         format!("ws://{address}/v1/terminals?cols=80&rows=24").into_client_request()?;
-    terminal_request.headers_mut().insert(
+    request.headers_mut().insert(
         "authorization",
         HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
     );
-    let (mut terminal, _) = connect_async(terminal_request).await?;
+    let (mut terminal, _) = connect_async(request).await?;
     let mut input = vec![0_u8];
     input.extend_from_slice(b"printf '\\x43\\x4f\\x44\\x45\\x57\\x49\\x44\\x45\\x2d\\x50\\x54\\x59\\x2d\\x4f\\x4b\\n'\r");
     terminal.send(Message::Binary(input.into())).await?;
@@ -114,14 +205,73 @@ async fn raw_app_server_and_binary_loopback_forward_match_v1_transport()
     })
     .await??;
     terminal.send(Message::Binary(vec![2_u8].into())).await?;
+    Ok(())
+}
 
-    verify_durable_terminal(address).await?;
+async fn verify_thread_owned_terminal(
+    address: std::net::SocketAddr,
+    thread_id: &str,
+    other_thread_id: &str,
+    terminal_id: &str,
+    authoritative_cwd: &std::path::Path,
+    client_cwd: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let encoded_client_cwd =
+        url::form_urlencoded::byte_serialize(client_cwd.to_string_lossy().as_bytes())
+            .collect::<String>();
+    let mut request = format!(
+        "ws://{address}/v1/terminals?threadId={thread_id}&cwd={encoded_client_cwd}&cols=80&rows=24&sessionId={terminal_id}&offset=0&create=true"
+    )
+    .into_client_request()?;
+    request.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
+    );
+    let (mut terminal, _) = connect_async(request).await?;
+    let mut input = vec![0_u8];
+    input.extend_from_slice(b"pwd\r");
+    terminal.send(Message::Binary(input.into())).await?;
+    let expected = authoritative_cwd.to_string_lossy();
+    let mut output = Vec::new();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !String::from_utf8_lossy(&output).contains(expected.as_ref()) {
+            let frame = terminal.next().await.ok_or("terminal closed")??;
+            if let Message::Binary(bytes) = frame {
+                output.extend_from_slice(&bytes);
+            }
+        }
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await
+    .map_err(|_| {
+        std::io::Error::other(format!(
+            "thread-owned terminal did not report its working directory; output={}",
+            String::from_utf8_lossy(&output)
+        ))
+    })??;
+    assert!(!String::from_utf8_lossy(&output).contains(&*client_cwd.to_string_lossy()));
 
-    raw.close(None).await?;
-    forward.close(None).await?;
-    server_task.abort();
-    fake_app_server.abort();
-    echo.abort();
+    let mut mismatched_request = format!(
+        "ws://{address}/v1/terminals?threadId={other_thread_id}&cols=80&rows=24&sessionId={terminal_id}&offset=0&create=false"
+    )
+    .into_client_request()?;
+    mismatched_request.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
+    );
+    let Err(mismatch) = connect_async(mismatched_request).await else {
+        return Err(
+            std::io::Error::other("terminal attachment with another thread id succeeded").into(),
+        );
+    };
+    match mismatch {
+        tokio_tungstenite::tungstenite::Error::Http(response) => {
+            assert_eq!(response.status(), http::StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        error => return Err(error.into()),
+    }
+
+    terminal.send(Message::Binary(vec![2_u8].into())).await?;
     Ok(())
 }
 

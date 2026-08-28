@@ -17,7 +17,9 @@
       "expo-asset@57.0.9": "patches/expo-asset@57.0.9.patch",
       "heroui-native@1.0.8": "patches/heroui-native@1.0.8.patch",
       "expo-libghostty@0.8.1": "patches/expo-libghostty@0.8.1.patch",
-      "expo-file-system@57.0.2": "patches/expo-file-system@57.0.2.patch"
+      "expo-file-system@57.0.2": "patches/expo-file-system@57.0.2.patch",
+      "@expo/ui@57.0.9": "patches/@expo__ui@57.0.9.patch",
+      "@quickdrawjs/react-native@0.2.0": "patches/@quickdrawjs__react-native@0.2.0.patch"
     }
   },
   "scripts": {

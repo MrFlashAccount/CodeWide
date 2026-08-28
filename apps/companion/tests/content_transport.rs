@@ -98,7 +98,10 @@ async fn large_text_and_inline_images_use_private_bounded_content()
     assert_eq!(pointer(&projected, "/contentItems/0/imageUrl")?, "");
 
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
         store.clone(),

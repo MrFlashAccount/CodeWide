@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::store::TurnRef;
@@ -17,7 +17,7 @@ use crate::usage::{
 #[serde(rename_all = "camelCase")]
 pub struct TurnDigest {
     pub id: String,
-    pub status: &'static str,
+    pub status: String,
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub duration_ms: Option<i64>,
@@ -41,16 +41,16 @@ pub enum HistoryError {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct ProjectedItem {
     key: String,
     kind: String,
     text_bytes: Option<usize>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct DigestBuilder {
-    status: &'static str,
+    status: String,
     started_at: Option<i64>,
     completed_at: Option<i64>,
     duration_ms: Option<i64>,
@@ -67,14 +67,14 @@ impl DigestBuilder {
         };
         match kind {
             "task_started" => {
-                self.status = "inProgress";
+                self.status = "inProgress".into();
                 self.started_at = integer(payload, "started_at");
             }
             "task_complete" => {
                 self.status = if payload.get("error").is_some_and(|value| !value.is_null()) {
-                    "failed"
+                    "failed".into()
                 } else {
-                    "completed"
+                    "completed".into()
                 };
                 self.completed_at = integer(payload, "completed_at");
                 self.duration_ms = integer(payload, "duration_ms");
@@ -85,7 +85,7 @@ impl DigestBuilder {
                 }
             }
             "turn_aborted" => {
-                self.status = "interrupted";
+                self.status = "interrupted".into();
                 self.completed_at = integer(payload, "completed_at");
                 self.duration_ms = integer(payload, "duration_ms");
             }
@@ -230,6 +230,7 @@ impl DigestBuilder {
     fn finish(self, id: String) -> TurnDigest {
         let first_user = self.items.iter().find(|item| item.kind == "userMessage");
         let final_agent_key = self.final_agent().map(|item| item.key.as_str());
+        let final_agent_text_bytes = self.final_agent().and_then(|item| item.text_bytes);
         let activity_kinds: Vec<String> = self
             .items
             .iter()
@@ -244,7 +245,7 @@ impl DigestBuilder {
             completed_at: self.completed_at,
             duration_ms: self.duration_ms,
             user_text_bytes: first_user.and_then(|item| item.text_bytes),
-            final_agent_text_bytes: self.final_agent().and_then(|item| item.text_bytes),
+            final_agent_text_bytes,
             activity_count: activity_kinds.len(),
             activity_kinds,
             unknown_event_kinds: self.unknown_event_kinds,
@@ -272,7 +273,7 @@ pub fn digest_turn(path: &Path, turn: &TurnRef) -> Result<TurnDigest, HistoryErr
     let mut reader = BufReader::new(file.take(span_bytes));
     let mut line = Vec::new();
     let mut builder = DigestBuilder {
-        status: "inProgress",
+        status: "inProgress".into(),
         ..DigestBuilder::default()
     };
     let mut malformed_records = 0_u64;
@@ -319,6 +320,13 @@ pub(crate) fn project_summary_turn_from_file(
     file: &File,
     turn: &TurnRef,
 ) -> Result<Value, HistoryError> {
+    Ok(summary_projection_state_from_file(file, turn)?.project())
+}
+
+pub(crate) fn summary_projection_state_from_file(
+    file: &File,
+    turn: &TurnRef,
+) -> Result<SummaryProjectionState, HistoryError> {
     if turn.end_offset < turn.start_offset {
         return Err(HistoryError::InvalidSpan {
             start: turn.start_offset,
@@ -329,45 +337,32 @@ pub(crate) fn project_summary_turn_from_file(
     snapshot.seek(SeekFrom::Start(turn.start_offset))?;
     let mut reader = BufReader::new(snapshot.take(turn.end_offset - turn.start_offset));
     let mut line = Vec::new();
-    let mut builder = SummaryBuilder::new(turn.id.clone());
+    let mut builder = SummaryProjectionState::new(turn.id.clone());
     let mut malformed_records = 0_u64;
+    let mut offset = turn.start_offset;
     loop {
         line.clear();
         let bytes = reader.read_until(b'\n', &mut line)?;
         if bytes == 0 {
             break;
         }
-        let relevant_event = memchr::memmem::find(&line, b"\"type\":\"event_msg\"").is_some();
-        let turn_context = memchr::memmem::find(&line, b"\"type\":\"turn_context\"").is_some();
-        let response_message = memchr::memmem::find(
-            &line,
-            b"\"type\":\"response_item\",\"payload\":{\"type\":\"message\"",
-        )
-        .is_some();
-        if relevant_event || response_message || turn_context {
-            match serde_json::from_slice::<Value>(&line) {
-                Ok(envelope) => {
-                    if let Some(payload) = envelope.get("payload") {
-                        if turn_context {
-                            builder.handle_turn_context(payload);
-                        } else if relevant_event {
-                            builder.handle_event(payload);
-                        } else {
-                            builder.handle_response_message(payload);
-                        }
-                    }
-                }
-                Err(_) => malformed_records = malformed_records.saturating_add(1),
-            }
+        if builder.ingest_rollout_record(&line, offset).is_err() {
+            malformed_records = malformed_records.saturating_add(1);
         }
+        offset = offset.saturating_add(bytes as u64);
     }
     if malformed_records > 0 {
         tracing::warn!(malformed_records, "skipped malformed rollout records");
     }
-    Ok(builder.finish())
+    Ok(builder)
 }
 
-struct SummaryBuilder {
+const SUMMARY_PROJECTION_VERSION: u8 = 2;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct SummaryProjectionState {
+    #[serde(default)]
+    projection_version: u8,
     id: String,
     digest: DigestBuilder,
     user: Option<Value>,
@@ -385,12 +380,13 @@ struct SummaryBuilder {
     model_context_window: Option<u64>,
 }
 
-impl SummaryBuilder {
-    fn new(id: String) -> Self {
+impl SummaryProjectionState {
+    pub(crate) fn new(id: String) -> Self {
         Self {
+            projection_version: SUMMARY_PROJECTION_VERSION,
             id,
             digest: DigestBuilder {
-                status: "inProgress",
+                status: "inProgress".into(),
                 ..DigestBuilder::default()
             },
             user: None,
@@ -468,15 +464,41 @@ impl SummaryBuilder {
                     self.model_context_window = context.or(self.model_context_window);
                 }
             }
+            Some("item_started" | "item_completed") => {
+                // Newer App Server rollouts materialize the authored prompt as
+                // an item event instead of emitting a separate `user_message`
+                // event. The stable client id is the ownership key used by the
+                // Android optimistic row, so dropping it here leaves both the
+                // canonical turn and the optimistic row visible forever.
+                let item = payload.get("item");
+                let user_message = item
+                    .and_then(|item| item.get("type"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| matches!(kind, "UserMessage" | "userMessage"));
+                if user_message && self.client_id.is_none() {
+                    self.client_id = item
+                        .and_then(|item| item.get("client_id").or_else(|| item.get("clientId")))
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned);
+                }
+            }
             _ => {}
         }
         self.digest.handle_event(payload);
+    }
+
+    pub(crate) const fn is_current(&self) -> bool {
+        self.projection_version == SUMMARY_PROJECTION_VERSION
     }
 
     fn handle_response_message(&mut self, payload: &Value) {
         let Some(role) = payload.get("role").and_then(Value::as_str) else {
             return;
         };
+        if role == "user" && is_environment_context_response_message(payload) {
+            return;
+        }
         let id = payload
             .get("id")
             .and_then(Value::as_str)
@@ -521,6 +543,45 @@ impl SummaryBuilder {
             }
             _ => {}
         }
+    }
+
+    pub(crate) fn ingest_rollout_record(
+        &mut self,
+        line: &[u8],
+        offset: u64,
+    ) -> Result<(), HistoryError> {
+        // Envelope type always lives near the beginning. Bounding these probes
+        // is crucial for compacted records whose opaque payload can be many
+        // megabytes and is irrelevant to the thread summary.
+        let prefix = &line[..line.len().min(8 * 1024)];
+        let relevant_event = memchr::memmem::find(prefix, b"\"type\":\"event_msg\"").is_some();
+        let turn_context = memchr::memmem::find(prefix, b"\"type\":\"turn_context\"").is_some();
+        let response_message = memchr::memmem::find(
+            prefix,
+            b"\"type\":\"response_item\",\"payload\":{\"type\":\"message\"",
+        )
+        .is_some();
+        if !relevant_event && !response_message && !turn_context {
+            return Ok(());
+        }
+        let envelope = serde_json::from_slice::<Value>(line)
+            .map_err(|source| HistoryError::InvalidEvent { offset, source })?;
+        let Some(payload) = envelope.get("payload") else {
+            return Ok(());
+        };
+        if turn_context {
+            self.handle_turn_context(payload);
+        } else if relevant_event {
+            self.handle_event(payload);
+        } else {
+            self.handle_response_message(payload);
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn project(&self) -> Value {
+        self.clone().finish()
     }
 
     fn finish(mut self) -> Value {
@@ -648,6 +709,35 @@ fn project_user_input(item: &Value) -> Option<Value> {
     }
 }
 
+fn is_environment_context_response_message(payload: &Value) -> bool {
+    payload
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|content| {
+            content.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("input_text")
+                    && item
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(is_environment_context_text)
+            })
+        })
+}
+
+fn is_environment_context_text(value: &str) -> bool {
+    const OPEN: &str = "<environment_context>";
+    const CLOSE: &str = "</environment_context>";
+
+    let trimmed = value.trim();
+    let starts_with_marker = trimmed
+        .get(..OPEN.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(OPEN));
+    let ends_with_marker = trimmed
+        .get(trimmed.len().saturating_sub(CLOSE.len())..)
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(CLOSE));
+    starts_with_marker && ends_with_marker
+}
+
 fn message_phase(phase: Option<&str>) -> Value {
     match phase {
         Some(phase) => Value::String(phase.to_owned()),
@@ -672,7 +762,7 @@ fn integer(value: &Value, key: &str) -> Option<i64> {
 mod tests {
     use std::io::Write;
 
-    use super::{digest_turn, project_summary_turn};
+    use super::{SummaryProjectionState, digest_turn, project_summary_turn};
     use crate::store::TurnRef;
 
     #[test]
@@ -748,6 +838,116 @@ mod tests {
         assert_eq!(projected["items"][1]["text"], "final");
         assert_eq!(projected["items"][1]["phase"], "final_answer");
         assert_eq!(projected["codewide"]["activity"]["kinds"][0], "reasoning");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_preserves_client_id_from_materialized_user_item()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        for line in [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn","started_at":10}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","id":"user-id","role":"user","content":[{"type":"input_text","text":"Test"}]}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","thread_id":"thread","turn_id":"turn","item":{"type":"UserMessage","id":"item-id","client_id":"android-command","content":[{"type":"text","text":"Test"}]}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","completed_at":12}}"#,
+        ] {
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
+
+        let projected = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(projected["items"][0]["clientId"], "android-command");
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_summary_without_projection_version_is_stale()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut serialized = serde_json::to_value(SummaryProjectionState::new("turn".into()))?;
+        serialized
+            .as_object_mut()
+            .ok_or("summary state must be an object")?
+            .remove("projection_version");
+        let restored: SummaryProjectionState = serde_json::from_value(serialized)?;
+        assert!(!restored.is_current());
+        Ok(())
+    }
+
+    #[test]
+    fn summary_omits_codex_environment_context_user_message()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        let lines = [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn","started_at":10}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","id":"context-id","role":"user","content":[{"type":"input_text","text":"  <ENVIRONMENT_CONTEXT>\n  <cwd>/tmp</cwd>\n  <subagents>worker</subagents>\n</environment_context>  "}]}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","id":"agent-id","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Done"}]}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","completed_at":12,"duration_ms":2000}}"#,
+        ];
+        for line in lines {
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
+
+        let projected = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(projected["items"].as_array().map(Vec::len), Some(1));
+        assert_eq!(projected["items"][0]["type"], "agentMessage");
+        assert_eq!(projected["items"][0]["text"], "Done");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_keeps_authored_text_that_quotes_environment_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        let lines = [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn","started_at":10}}"#,
+            r#"{"type":"response_item","payload":{"type":"message","id":"user-id","role":"user","content":[{"type":"input_text","text":"'''<environment_context>internal</environment_context>''' visible report"}]}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","completed_at":12,"duration_ms":2000}}"#,
+        ];
+        for line in lines {
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
+
+        let projected = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(projected["items"][0]["type"], "userMessage");
+        assert_eq!(
+            projected["items"][0]["content"][0]["text"],
+            "'''<environment_context>internal</environment_context>''' visible report"
+        );
         Ok(())
     }
 

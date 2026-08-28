@@ -23,11 +23,11 @@ describe("review voice input", () => {
     expect(codeReviewWorkspace).toContain("voiceController?.unbind(voiceScope)");
   });
 
-  it("bridges the active voice runtime into image point captions", () => {
-    expect(imagePreviewHost).toContain("voiceRuntime={annotationRegistrationRef.current?.voiceRuntime ?? null}");
-    expect(imagePreviewHost).toContain("<AppVoiceInputProvider runtime={voiceRuntime}>{preview}</AppVoiceInputProvider>");
-    expect(imagePreviewHost).toMatch(/<TextInput[\s\S]*voiceInput[\s\S]*voiceScope/u);
-    expect(imagePreviewHost).toContain('voicePhase !== "idle"');
+  it("does not retain the removed point-caption editor in image previews", () => {
+    expect(imagePreviewHost).toContain("Annotate image in QuickDraw");
+    expect(imagePreviewHost).not.toContain("voiceRuntime");
+    expect(imagePreviewHost).not.toContain("<TextInput");
+    expect(imagePreviewHost).not.toContain("annotationDraft");
   });
 
   it("lets any recording review scope drive the shared native glow", () => {

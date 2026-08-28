@@ -17,6 +17,7 @@ internal object ProjectionBatchPolicy {
     "item/started",
     "item/completed",
     "thread/status/changed",
+    "thread/tokenUsage/updated",
     "serverRequest/resolved",
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",

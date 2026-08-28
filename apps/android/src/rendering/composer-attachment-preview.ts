@@ -9,7 +9,7 @@ import { remoteFileKind, type DocumentPreviewKind } from "./document-preview";
  * hosts; treating the relative path as a workspace path would address a
  * different file and eventually produce a 404.
  */
-export function composerAttachmentSource(attachment: RemoteFileAttachment): PrivateAssetSource {
+export function composerAttachmentSource(attachment: RemoteFileAttachment): Extract<PrivateAssetSource, { kind: "scoped" }> {
   return { kind: "scoped", rootId: attachment.rootId, path: attachment.path };
 }
 

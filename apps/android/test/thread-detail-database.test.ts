@@ -9,6 +9,7 @@ import {
   materializeThreadTurns,
   mergePendingTimelineOverlays,
   mergePendingTimelineEntry,
+  normalizeConversationTurn,
   pendingTimelineRowId,
   planPendingDeliveryProjectionCleanup,
   planQueuedMoveMutation,
@@ -18,7 +19,6 @@ import {
   reconcileAuthoritativeThread,
   reconcileAuthoritativeThreadDetailRow,
   reusableTurnOrdinal,
-  selectLiveThreadDetailRows,
   shouldApplyLiveThreadRow,
   shouldWriteAuthoritativeThreadDetailRow,
   shouldWriteHydratedActivityRow,
@@ -200,22 +200,23 @@ describe("thread detail projection", () => {
     expect(projectAuthoritativeHistoryEpoch(existing, ["missed-0", "missed-1", "live-edge"])).toBe(5);
   });
 
-  it("persists a repaired ordinal even when sealed content is unchanged", () => {
+  it("never rewrites a sealed ordinal in the same history epoch", () => {
     const content = turn();
     const previous = row({ ordinal: 0, turn: content, sealed: true });
     const next = row({ ordinal: 6, turn: content, sealed: true });
 
-    expect(shouldWriteAuthoritativeThreadDetailRow(previous, next)).toBe(true);
+    expect(reconcileAuthoritativeThreadDetailRow(previous, next)).toBe(previous);
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, next)).toBe(false);
   });
 
-  it("does not let a late optimistic acceptance revive a delivered message", () => {
-    const delivered = {
+  it("does not let a late native receipt regress App Server acceptance", () => {
+    const acceptedByAppServer = {
       commandId: "command",
       method: "turn/steer" as const,
       presentation: "delivery" as const,
       text: "already sent",
       attachments: [],
-      state: "delivered" as const,
+      state: "appServerAccepted" as const,
       attempts: 1,
       lastError: null,
       createdAt: 10,
@@ -223,21 +224,21 @@ describe("thread detail projection", () => {
       order: 10,
     };
 
-    expect(mergePendingTimelineEntry(delivered, {
-      ...delivered,
-      state: "accepted",
+    expect(mergePendingTimelineEntry(acceptedByAppServer, {
+      ...acceptedByAppServer,
+      state: "companionAccepted",
       updatedAt: 21,
-    })).toBe(delivered);
+    })).toMatchObject({ state: "appServerAccepted", updatedAt: 20 });
   });
 
-  it("accepts definitive native delivery even when its timestamp predates the optimistic write", () => {
-    const accepted = {
+  it("advances Companion acceptance across Android and host clock skew", () => {
+    const acceptedByCompanion = {
       commandId: "command",
       method: "turn/steer" as const,
       presentation: "delivery" as const,
       text: "already sent",
       attachments: [],
-      state: "accepted" as const,
+      state: "companionAccepted" as const,
       attempts: 1,
       lastError: null,
       createdAt: 10,
@@ -245,11 +246,11 @@ describe("thread detail projection", () => {
       order: 10,
     };
 
-    expect(mergePendingTimelineEntry(accepted, {
-      ...accepted,
-      state: "delivered",
-      updatedAt: 20,
-    }).state).toBe("delivered");
+    expect(mergePendingTimelineEntry(acceptedByCompanion, {
+      ...acceptedByCompanion,
+      state: "appServerAccepted",
+      updatedAt: 5,
+    })).toMatchObject({ state: "appServerAccepted", updatedAt: 5 });
   });
 
   it("still lets an explicit retry leave a failed state", () => {
@@ -318,6 +319,21 @@ describe("thread detail projection", () => {
       .toBe(pendingTimelineRowId("server", "thread", commandId));
   });
 
+  it("normalizes a metadata-only turn inside the Conversation projection", () => {
+    const incomplete = {
+      ...turn(),
+      id: "metadata-only",
+      items: undefined,
+      itemsView: undefined,
+    } as unknown as Turn;
+
+    const normalized = normalizeConversationTurn(incomplete);
+
+    expect(normalized).toMatchObject({ id: "metadata-only", items: [], itemsView: "notLoaded" });
+    expect(authoritativeTimelineRowId("server", "thread", incomplete))
+      .toBe("server\u0000thread\u0000turn\u0000metadata-only");
+  });
+
   it("projects pending delivery and queue entries from the thread collection only", () => {
     const delivery = {
       commandId: "delivery",
@@ -381,7 +397,7 @@ describe("thread detail projection", () => {
   it("does not require the canonical client-id turn to be resident before cleanup", () => {
     const commandId = "retired";
     const pending = row({
-      id: "legacy-pending-row",
+      id: "stale-pending-row",
       kind: "pending",
       remoteTurnId: null,
       sealed: false,
@@ -401,7 +417,7 @@ describe("thread detail projection", () => {
     });
     expect(planPendingDeliveryProjectionCleanup([pending], new Set())).toEqual({
       upserts: [],
-      deletes: ["legacy-pending-row"],
+      deletes: ["stale-pending-row"],
     });
   });
 
@@ -476,6 +492,20 @@ describe("thread detail projection", () => {
     expect(shouldApplyLiveThreadRow(previous, row({ sealed: true, turn: { ...turn(), items: [{ type: "agentMessage", text: "late" }] } as Turn }))).toBe(false);
   });
 
+  it("replaces a mutable turn once and seals the authoritative result", () => {
+    const mutable = row({
+      sealed: false,
+      turn: { ...turn(), status: "inProgress", completedAt: null, durationMs: null } as Turn,
+    });
+    const authoritative = row({ sealed: true, turn: turn() });
+
+    const reconciled = reconcileAuthoritativeThreadDetailRow(mutable, authoritative);
+
+    expect(reconciled).toBe(authoritative);
+    expect(reconciled.sealed).toBe(true);
+    expect(shouldWriteAuthoritativeThreadDetailRow(mutable, reconciled)).toBe(true);
+  });
+
   it("keeps sealed history and hydrated activity immutable across authoritative refreshes", () => {
     expect(shouldWriteThreadDetailRow(row({ sealed: true, turn: turn() }), row({ sealed: true, turn: { ...turn(), durationMs: 99 } }))).toBe(false);
     expect(shouldWriteThreadDetailRow(
@@ -501,18 +531,19 @@ describe("thread detail projection", () => {
     expect(shouldWriteHydratedActivityRow(activity(freshId), activity(freshId))).toBe(false);
   });
 
-  it("repairs a sealed turn when the authoritative summary supplies its missing prompt", () => {
+  it("does not repair missing content after a turn is sealed", () => {
     const agent = { type: "agentMessage", id: "agent", text: "answer" } as Turn["items"][number];
     const user = { type: "userMessage", id: "user", clientId: "client", content: [] } as Turn["items"][number];
     const previous = row({ sealed: true, turn: { ...turn(), items: [agent] } as Turn });
     const complete = row({ sealed: true, turn: { ...turn(), items: [user, agent], itemsView: "summary" } as Turn });
 
     expect(shouldApplyLiveThreadRow(previous, complete)).toBe(false);
-    expect(shouldWriteAuthoritativeThreadDetailRow(previous, complete)).toBe(true);
+    expect(reconcileAuthoritativeThreadDetailRow(previous, complete)).toBe(previous);
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, complete)).toBe(false);
     expect(shouldWriteAuthoritativeThreadDetailRow(complete, complete)).toBe(false);
   });
 
-  it("replaces an intermediate sealed agent boundary with the authoritative final answer", () => {
+  it("does not replace a sealed agent boundary", () => {
     const user = { type: "userMessage", id: "user", clientId: "client", content: [] } as Turn["items"][number];
     const intermediate = { type: "agentMessage", id: "progress", text: "Working…" } as Turn["items"][number];
     const final = { type: "agentMessage", id: "final", text: "Done" } as Turn["items"][number];
@@ -520,11 +551,25 @@ describe("thread detail projection", () => {
     const authoritative = row({ sealed: true, turn: { ...turn(), items: [user, final], itemsView: "summary" } as Turn });
 
     const reconciled = reconcileAuthoritativeThreadDetailRow(previous, authoritative);
-    expect(reconciled.turn?.items.map((item) => item.id)).toEqual(["user", "final"]);
-    expect(shouldWriteAuthoritativeThreadDetailRow(previous, reconciled)).toBe(true);
+    expect(reconciled).toBe(previous);
+    expect(reconciled.turn?.items.map((item) => item.id)).toEqual(["user", "progress"]);
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, reconciled)).toBe(false);
   });
 
-  it("repairs a full sealed boundary without discarding hydrated activity", () => {
+  it("does not mutate sealed same-id streamed commentary", () => {
+    const user = { type: "userMessage", id: "user", clientId: "client", content: [] } as Turn["items"][number];
+    const partial = { type: "agentMessage", id: "agent", text: "Almost", phase: "commentary" } as Turn["items"][number];
+    const final = { type: "agentMessage", id: "agent", text: "Almost done", phase: "final_answer" } as Turn["items"][number];
+    const previous = row({ sealed: true, turn: { ...turn(), items: [user, partial], itemsView: "summary" } as Turn });
+    const authoritative = row({ sealed: true, turn: { ...turn(), items: [user, final], itemsView: "summary" } as Turn });
+
+    const reconciled = reconcileAuthoritativeThreadDetailRow(previous, authoritative);
+    expect(reconciled).toBe(previous);
+    expect(reconciled.turn?.items).toEqual([user, partial]);
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, reconciled)).toBe(false);
+  });
+
+  it("leaves a full sealed boundary immutable", () => {
     const user = { type: "userMessage", id: "user", clientId: "client", content: [] } as Turn["items"][number];
     const tool = { type: "commandExecution", id: "tool", command: "test" } as Turn["items"][number];
     const intermediate = { type: "agentMessage", id: "progress", text: "Working…" } as Turn["items"][number];
@@ -533,11 +578,12 @@ describe("thread detail projection", () => {
     const authoritative = row({ sealed: true, turn: { ...turn(), items: [user, final], itemsView: "summary" } as Turn });
 
     const reconciled = reconcileAuthoritativeThreadDetailRow(previous, authoritative);
-    expect(reconciled.turn?.items.map((item) => item.id)).toEqual(["user", "tool", "progress", "final"]);
+    expect(reconciled).toBe(previous);
+    expect(reconciled.turn?.items.map((item) => item.id)).toEqual(["user", "tool", "progress"]);
     expect(reconciled.turn?.itemsView).toBe("full");
   });
 
-  it("reconciles rotated summary ids without duplicating cached user and final messages", () => {
+  it("does not reconcile rotated ids after the row is sealed", () => {
     const cachedUser = {
       type: "userMessage",
       id: "live-user",
@@ -558,11 +604,12 @@ describe("thread detail projection", () => {
     const reconciled = reconcileAuthoritativeThreadDetailRow(previous, authoritative);
 
     expect(reconciled.turn?.items).toHaveLength(2);
-    expect(reconciled.turn?.items[0]).toMatchObject({ id: "history-user", clientId: "command" });
-    expect(reconciled.turn?.items[1]).toMatchObject({ id: "history-agent", text: "Done" });
+    expect(reconciled).toBe(previous);
+    expect(reconciled.turn?.items[0]).toMatchObject({ id: "live-user", clientId: "command" });
+    expect(reconciled.turn?.items[1]).toMatchObject({ id: "live-agent", text: "Done" });
   });
 
-  it("repairs an already duplicated persisted summary", () => {
+  it("does not rewrite an already sealed persisted summary", () => {
     const user = {
       type: "userMessage",
       id: "user",
@@ -581,8 +628,8 @@ describe("thread detail projection", () => {
       turn: { ...turn(), items: [user, final], itemsView: "summary" } as Turn,
     });
 
-    expect(shouldWriteAuthoritativeThreadDetailRow(previous, authoritative)).toBe(true);
-    expect(reconcileAuthoritativeThreadDetailRow(previous, authoritative).turn?.items).toEqual([user, final]);
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, authoritative)).toBe(false);
+    expect(reconcileAuthoritativeThreadDetailRow(previous, authoritative)).toBe(previous);
   });
 
   it("never erases a persisted final answer when a later summary is incomplete", () => {
@@ -617,15 +664,16 @@ describe("thread detail projection", () => {
     expect(materializeThreadTurns(rows).map(({ id }) => id)).toEqual(["original"]);
   });
 
-  it("repairs sealed lifecycle metadata without replacing immutable message content", () => {
+  it("keeps sealed lifecycle and message content immutable", () => {
     const previousTurn = { ...turn(), durationMs: 10, items: [{ type: "agentMessage", id: "agent", text: "kept" }] } as Turn;
     const incomingTurn = { ...previousTurn, durationMs: 99, items: [{ type: "agentMessage", id: "agent", text: "stale copy" }] } as Turn;
     const previous = row({ sealed: true, turn: previousTurn });
     const reconciled = reconcileAuthoritativeThreadDetailRow(previous, row({ sealed: true, turn: incomingTurn }));
 
-    expect(reconciled.turn?.durationMs).toBe(99);
+    expect(reconciled).toBe(previous);
+    expect(reconciled.turn?.durationMs).toBe(10);
     expect(reconciled.turn?.items).toBe(previousTurn.items);
-    expect(shouldWriteAuthoritativeThreadDetailRow(previous, reconciled)).toBe(true);
+    expect(shouldWriteAuthoritativeThreadDetailRow(previous, reconciled)).toBe(false);
   });
 
   it("never reopens a terminal turn from a stale authoritative response", () => {
@@ -845,55 +893,4 @@ describe("thread detail projection", () => {
     expect(second).toBe(first);
   });
 
-  it("reduces live events against the mutable head instead of the full sealed history", () => {
-    const thread = {
-      id: "thread",
-      name: "Thread",
-      preview: "preview",
-      cwd: "/repo",
-      updatedAt: 3,
-      status,
-      ephemeral: false,
-      turns: [],
-    } as unknown as Thread;
-    const rows = [
-      row({ id: "meta", kind: "thread", remoteTurnId: null, thread }),
-      row({ id: "old-content", remoteTurnId: "old", turn: { ...turn(), id: "old" }, sealed: true }),
-      row({ id: "old-metadata", kind: "turnMeta", remoteTurnId: "old", turnMetadata: { diff: "old" } }),
-      row({ id: "active-content", remoteTurnId: "active", turn: { ...turn(), id: "active", status: "inProgress" } as Turn, sealed: false }),
-      row({ id: "active-metadata", kind: "turnMeta", remoteTurnId: "active", turnMetadata: { diff: "live" } }),
-    ];
-
-    const selected = selectLiveThreadDetailRows(rows, "server", "thread", [{
-      method: "item/agentMessage/delta",
-      params: { threadId: "thread", turnId: "active", itemId: "agent", delta: "x" },
-    }]);
-
-    expect(selected.map((entry) => entry.id)).toEqual(["meta", "active-content", "active-metadata"]);
-  });
-
-  it("includes an explicitly addressed sealed turn only for its late metadata overlay", () => {
-    const thread = {
-      id: "thread",
-      name: "Thread",
-      preview: "preview",
-      cwd: "/repo",
-      updatedAt: 3,
-      status,
-      ephemeral: false,
-      turns: [],
-    } as unknown as Thread;
-    const rows = [
-      row({ id: "meta", kind: "thread", remoteTurnId: null, thread }),
-      row({ id: "old-content", remoteTurnId: "old", turn: { ...turn(), id: "old" }, sealed: true }),
-      row({ id: "other-content", remoteTurnId: "other", turn: { ...turn(), id: "other" }, sealed: true }),
-    ];
-
-    const selected = selectLiveThreadDetailRows(rows, "server", "thread", [{
-      method: "thread/tokenUsage/updated",
-      params: { threadId: "thread", turnId: "old", tokenUsage: {} },
-    }]);
-
-    expect(selected.map((entry) => entry.id)).toEqual(["meta", "old-content"]);
-  });
 });

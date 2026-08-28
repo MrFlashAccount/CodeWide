@@ -36,6 +36,19 @@ function delivery(commandId: string, createdAt: number): ProjectedThreadChatDeli
   };
 }
 
+function canonicalTextTurn(id: string, text: string, startedAt: number, clientId: string | null = null): Turn {
+  return {
+    ...turn(id, startedAt),
+    status: "inProgress",
+    items: [{
+      type: "userMessage",
+      id: `${id}-user`,
+      clientId,
+      content: [{ type: "text", text, text_elements: [] }],
+    }],
+  } as unknown as Turn;
+}
+
 describe("thread chat timeline projection", () => {
   it("orders delivery rows at their creation time inside the resident flow", () => {
     const timeline = projectResidentThreadTimeline(
@@ -70,10 +83,104 @@ describe("thread chat timeline projection", () => {
     expect(timeline[0]).toMatchObject({ kind: "turn", turn: { id: "authoritative" } });
   });
 
+  it("does not discard a delivery based only on matching legacy canonical text", () => {
+    const timeline = projectResidentThreadTimeline(
+      [canonicalTextTurn("authoritative", "Test", 2)],
+      [{ ...delivery("client-42", 2_000), text: "Test", state: "appServerAccepted", lastError: null }],
+      { includesEarliest: true, includesLatest: true },
+    );
+
+    expect(timeline).toHaveLength(2);
+    expect(timeline).toContainEqual(expect.objectContaining({ kind: "turn" }));
+    expect(timeline).toContainEqual(expect.objectContaining({
+      kind: "delivery",
+      delivery: expect.objectContaining({ commandId: "client-42" }),
+    }));
+  });
+
   it("normalizes protocol seconds without changing millisecond timestamps", () => {
     expect(protocolTimestampMs(1_786_647_000)).toBe(1_786_647_000_000);
     expect(protocolTimestampMs(1_786_647_000_123)).toBe(1_786_647_000_123);
     expect(protocolTimestampMs(null)).toBeNull();
+  });
+
+  it("hides Codex environment context without hiding the agent response in the same turn", () => {
+    const contextualTurn = {
+      ...turn("contextual", 2),
+      status: "completed",
+      items: [
+        {
+          type: "userMessage",
+          id: "context",
+          clientId: null,
+          content: [{
+            type: "text",
+            text: "  <ENVIRONMENT_CONTEXT>\n  <cwd>/tmp</cwd>\n</environment_context>  ",
+            text_elements: [],
+          }],
+        },
+        { type: "agentMessage", id: "answer", text: "Done", phase: "final_answer", memoryCitation: null },
+      ],
+    } as unknown as Turn;
+
+    const timeline = projectResidentThreadTimeline(
+      [contextualTurn],
+      [],
+      { includesEarliest: true, includesLatest: true },
+    );
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      kind: "turn",
+      turn: { items: [{ type: "agentMessage", text: "Done" }] },
+    });
+    expect(contextualTurn.items).toHaveLength(2);
+  });
+
+  it("omits a completed turn that contains only Codex environment context", () => {
+    const contextualTurn = {
+      ...turn("context-only", 2),
+      status: "completed",
+      items: [{
+        type: "userMessage",
+        id: "context",
+        clientId: null,
+        content: [{
+          type: "text",
+          text: "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>",
+          text_elements: [],
+        }],
+      }],
+    } as unknown as Turn;
+
+    expect(projectResidentThreadTimeline(
+      [contextualTurn],
+      [],
+      { includesEarliest: true, includesLatest: true },
+    )).toEqual([]);
+  });
+
+  it("keeps authored text that quotes or discusses an environment context block", () => {
+    const quoted = {
+      ...turn("quoted", 2),
+      status: "completed",
+      items: [{
+        type: "userMessage",
+        id: "quoted-message",
+        clientId: null,
+        content: [{
+          type: "text",
+          text: "'''<environment_context>internal</environment_context>''' вот такая штука видна",
+          text_elements: [],
+        }],
+      }],
+    } as unknown as Turn;
+
+    expect(projectResidentThreadTimeline(
+      [quoted],
+      [],
+      { includesEarliest: true, includesLatest: true },
+    )[0]).toMatchObject({ kind: "turn", turn: { id: "quoted" } });
   });
 });
 
@@ -115,7 +222,7 @@ describe("thread chat metadata projection", () => {
       cwd: "/new",
       updatedAt: 5,
       recencyAt: 6,
-      status: { type: "active" },
+      status: { type: "idle" },
       parentThreadId: "parent",
       agentNickname: "worker",
       agentRole: "explorer",

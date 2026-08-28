@@ -20,8 +20,9 @@ type NativeAudioEvent = PcmAudioChunk & {
 };
 
 type NativeBridge = {
-  claimPairing(endpoint: string, pairingToken: string, deviceName: string, tlsPinSha256: string | null): Promise<{ deviceId: string; capabilityToken: string }>;
+  claimPairing(endpoint: string, pairingToken: string, deviceName: string, tlsPinSha256: string): Promise<{ deviceId: string; capabilityToken: string }>;
   saveConnectionCredentials(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean): Promise<void>;
+  saveConnectionCredentialsV2?(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean, deviceId: string): Promise<void>;
   listConnectionConfigs(): Promise<NativeConnectionConfig[]>;
   purgeLegacyDerivedStorage?(): Promise<number>;
   startBrowserDevToolsBridge?(): Promise<NativeBrowserDevToolsBridge>;
@@ -31,6 +32,7 @@ type NativeBridge = {
   deleteConnectionCredentials(connectionId: string): Promise<void>;
   setConnectionEnabled(connectionId: string, enabled: boolean): Promise<void>;
   mintStoredSession(connectionId: string): Promise<{ sessionToken: string; expiresAt: number }>;
+  companionHttpOrigin(connectionId: string): Promise<string>;
   resetSocket(connectionId: string, reason: string): void;
   wakeSocket(connectionId: string): void;
   listPortForwards?(connectionId: string): Promise<string>;
@@ -77,9 +79,11 @@ export type PcmCaptureInfo = {
 
 export type NativeConnectionConfig = {
   connectionId: string;
+  savedServerId: string;
   endpoint: string;
   tlsPinSha256: string | null;
   enabled: boolean;
+  deviceId: string | null;
 };
 
 export type NativeBrowserDevToolsBridge = {
@@ -171,10 +175,15 @@ export async function claimNativePairing(input: {
   endpoint: string;
   pairingToken: string;
   deviceName: string;
-  tlsPinSha256?: string;
+  tlsPinSha256: string;
 }): Promise<{ deviceId: string; capabilityToken: string }> {
   if (bridge === undefined || Platform.OS !== "android") throw new Error("Native secure pairing is unavailable in this build");
-  return await bridge.claimPairing(input.endpoint, input.pairingToken, input.deviceName, input.tlsPinSha256 ?? null);
+  const claimed = await bridge.claimPairing(input.endpoint, input.pairingToken, input.deviceName, input.tlsPinSha256);
+  if (
+    typeof claimed.deviceId !== "string"
+    || typeof claimed.capabilityToken !== "string"
+  ) throw new Error("Native pairing returned an invalid security state");
+  return claimed;
 }
 
 export async function saveNativeConnectionCredentials(input: {
@@ -183,9 +192,14 @@ export async function saveNativeConnectionCredentials(input: {
   token?: string;
   tlsPinSha256?: string;
   enabled: boolean;
+  deviceId?: string;
 }): Promise<void> {
   if (bridge === undefined || Platform.OS !== "android") throw new Error("Native credential storage is unavailable in this build");
-  await bridge.saveConnectionCredentials(input.connectionId, input.endpoint, input.token ?? null, input.tlsPinSha256 ?? null, input.enabled);
+  if (input.deviceId !== undefined && bridge.saveConnectionCredentialsV2 !== undefined) {
+    await bridge.saveConnectionCredentialsV2(input.connectionId, input.endpoint, input.token ?? null, input.tlsPinSha256 ?? null, input.enabled, input.deviceId);
+  } else {
+    await bridge.saveConnectionCredentials(input.connectionId, input.endpoint, input.token ?? null, input.tlsPinSha256 ?? null, input.enabled);
+  }
 }
 
 export async function listNativeConnectionConfigs(): Promise<NativeConnectionConfig[]> {
@@ -193,15 +207,27 @@ export async function listNativeConnectionConfigs(): Promise<NativeConnectionCon
   const raw = await bridge.listConnectionConfigs();
   if (!Array.isArray(raw)) throw new Error("Native connection config projection is invalid");
   return raw.map((value) => {
+    const candidate = value as Partial<NativeConnectionConfig>;
+    const savedServerId = candidate.savedServerId ?? candidate.connectionId;
+    const deviceId = candidate.deviceId ?? null;
     if (
       value === null || typeof value !== "object"
-      || typeof value.connectionId !== "string" || value.connectionId.length < 1
-      || typeof value.endpoint !== "string"
-      || !(value.tlsPinSha256 === null || typeof value.tlsPinSha256 === "string")
-      || typeof value.enabled !== "boolean"
+      || typeof candidate.connectionId !== "string" || candidate.connectionId.length < 1
+      || typeof savedServerId !== "string" || savedServerId !== candidate.connectionId
+      || typeof candidate.endpoint !== "string"
+      || !(candidate.tlsPinSha256 === null || typeof candidate.tlsPinSha256 === "string")
+      || typeof candidate.enabled !== "boolean"
+      || !(deviceId === null || (typeof deviceId === "string" && /^device-[a-f0-9]{64}$/u.test(deviceId)))
     ) throw new Error("Native connection config projection is invalid");
-    return value;
+    return { ...candidate, savedServerId, deviceId } as NativeConnectionConfig;
   });
+}
+
+export async function nativeCompanionHttpOrigin(connectionId: string, _endpoint: string): Promise<string> {
+  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native pinned HTTP transport is unavailable in this build");
+  const origin = await bridge.companionHttpOrigin(connectionId);
+  if (!/^http:\/\/127\.0\.0\.1:\d+$/u.test(origin)) throw new Error("Native pinned HTTP transport returned an invalid origin");
+  return origin;
 }
 
 export async function purgeLegacyDerivedStorage(): Promise<number> {

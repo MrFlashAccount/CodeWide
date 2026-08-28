@@ -1,10 +1,10 @@
-use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
     body::Body,
     extract::{DefaultBodyLimit, FromRequestParts, Path, Query, Request, State, WebSocketUpgrade},
-    http::{HeaderMap, Method, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
     response::{IntoResponse, Response},
     routing::{any, get, patch, post},
 };
@@ -14,12 +14,16 @@ use serde_json::json;
 use crate::{
     auth::{AuthError, AuthorizationContext, DeviceRegistry, PairingClaim, SessionProof},
     build_shelf::BuildShelfProxy,
+    catalog::{CatalogError, SessionCatalog},
     content::{ContentQuery, PrivateContentService},
     files::{FileQuery, FileService},
+    identity::TransportIdentity,
     media::MediaProxyService,
     ports,
+    rollout::read_rollout_metadata,
     store::IndexStore,
     sync::SyncHub,
+    sync_v2::{SyncV2Mode, SyncV2Runtime},
     telemetry::{
         TelemetryBatch, TelemetryError, TelemetryQuery, TelemetrySettings, TelemetryStore,
     },
@@ -42,6 +46,7 @@ struct AppState {
 /// OS-local administrative control plane.
 pub struct CompanionRouters {
     pub public: Router,
+    pub inner: Router,
     pub control: Router,
 }
 
@@ -53,8 +58,14 @@ pub struct CompanionServices {
     pub media: Option<Arc<MediaProxyService>>,
     pub tunnels: Option<Arc<LocalhostTunnelService>>,
     pub telemetry: Option<Arc<TelemetryStore>>,
+    pub catalog: Option<Arc<SessionCatalog>>,
     pub app_server_socket_path: Option<PathBuf>,
     pub excluded_ports: HashSet<u16>,
+    pub transport_identity: Option<TransportIdentity>,
+    pub inner_tls_target: Option<SocketAddr>,
+    pub inner_tls_limit: Option<Arc<tokio::sync::Semaphore>>,
+    pub sync_v2: Option<SyncV2Runtime>,
+    pub sync_v2_mode: SyncV2Mode,
 }
 
 #[derive(Clone)]
@@ -117,9 +128,9 @@ pub fn router_with_registry_and_services(
     build_router(store, Authorization::Registry(registry), sync, services)
 }
 
-/// Builds the production routers. The public router contains one bootstrap
-/// auth endpoint plus session-authorized transports. Administrative routes do
-/// not exist on it, even when an admin bearer is supplied.
+/// Builds the production routers. The remotely reachable cleartext router is
+/// only an opaque carrier into the pinned TLS listener. Authentication and all
+/// private application traffic exist exclusively on the inner router.
 pub fn split_routers_with_registry_and_services(
     store: Arc<IndexStore>,
     registry: Arc<DeviceRegistry>,
@@ -135,7 +146,8 @@ pub fn split_routers_with_registry_and_services(
         terminals: terminal::TerminalRegistry::new(8),
     };
     CompanionRouters {
-        public: build_public_router(state.clone()),
+        public: build_outer_router(state.clone()),
+        inner: build_secure_router(state.clone()),
         control: build_control_router(state),
     }
 }
@@ -159,6 +171,7 @@ fn build_router(
         .route("/readyz", get(readiness))
         .route("/v1/app-server", get(app_server_upgrade))
         .route("/v1/sync", get(sync_upgrade))
+        .route("/v2/sync", get(sync_v2_upgrade))
         .route("/v1/port-forwards/discovery", get(port_discovery))
         .route("/v1/port-forwards/{port}", get(port_forward_upgrade))
         .route("/v1/terminals", get(terminal_upgrade))
@@ -218,10 +231,28 @@ fn build_router(
         .with_state(state)
 }
 
-fn build_public_router(state: AppState) -> Router {
+fn build_outer_router(state: AppState) -> Router {
+    let build_shelf = Router::new()
+        .route("/", any(build_shelf_proxy))
+        .route("/api/builds", any(build_shelf_proxy))
+        .route("/api/updates", any(build_shelf_proxy))
+        .route("/api/updates/assets/", any(build_shelf_proxy))
+        .route("/api/updates/assets/{*path}", any(build_shelf_proxy))
+        .route("/latest.apk", any(build_shelf_proxy))
+        .route("/CodeWide.apk", any(build_shelf_proxy))
+        .route("/download/", any(build_shelf_proxy))
+        .route("/download/{*path}", any(build_shelf_proxy));
+    Router::new()
+        .route("/v1/e2ee-tunnel", get(e2ee_tunnel))
+        .merge(build_shelf)
+        .with_state(state)
+}
+
+fn build_secure_router(state: AppState) -> Router {
     let transport = Router::new()
         .route("/v1/auth", post(authenticate))
         .route("/v1/sync", get(sync_upgrade))
+        .route("/v2/sync", get(sync_v2_upgrade))
         .route("/v1/port-forwards/discovery", get(port_discovery))
         .route("/v1/port-forwards/{port}", get(port_forward_upgrade))
         .route("/v1/terminals", get(terminal_upgrade))
@@ -411,13 +442,20 @@ async fn tunnel_create(
     let Some(tunnels) = state.services.tunnels.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "localhost.forward").await
-    {
+    let authorization = if headers.get("origin").is_some() {
+        None
+    } else {
+        authorization_for_scope(&state, &headers, "localhost.forward").await
+    };
+    let Some(authorization) = authorization else {
         return TunnelError::Unauthorized.into_response();
-    }
+    };
     tunnels
-        .create(request.port, request.ttl_seconds)
+        .create_for_device(
+            request.port,
+            request.ttl_seconds,
+            authorization.device_id().map(str::to_owned),
+        )
         .await
         .map_or_else(IntoResponse::into_response, |created| {
             (StatusCode::CREATED, Json(created)).into_response()
@@ -623,11 +661,14 @@ async fn port_forward_upgrade(
     upgrade: WebSocketUpgrade,
     headers: HeaderMap,
 ) -> Response {
-    if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "localhost.forward").await
-    {
+    let authorization = if headers.get("origin").is_some() {
+        None
+    } else {
+        authorization_for_scope(&state, &headers, "localhost.forward").await
+    };
+    let Some(authorization) = authorization else {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
-    }
+    };
     let target = match tokio::time::timeout(
         Duration::from_secs(10),
         tokio::net::TcpStream::connect(("127.0.0.1", port)),
@@ -638,9 +679,22 @@ async fn port_forward_upgrade(
         Ok(Err(_)) => return json_error(StatusCode::BAD_GATEWAY, "localhost_unavailable"),
         Err(_) => return json_error(StatusCode::GATEWAY_TIMEOUT, "localhost_timeout"),
     };
+    let authorization_changes = match (&state.authorization, authorization.device_id()) {
+        (Authorization::Registry(registry), Some(device_id)) => Some((
+            device_id.to_owned(),
+            registry.subscribe_authorization_changes(),
+        )),
+        _ => None,
+    };
     upgrade
         .max_message_size(1024 * 1024)
-        .on_upgrade(move |socket| ports::bridge_tcp(socket, target))
+        .on_upgrade(move |socket| async move {
+            if let Some((device_id, changes)) = authorization_changes {
+                ports::bridge_tcp_authorized(socket, target, device_id, changes).await;
+            } else {
+                ports::bridge_tcp(socket, target).await;
+            }
+        })
 }
 
 async fn terminal_upgrade(
@@ -669,16 +723,19 @@ async fn terminal_upgrade(
     };
     if query.session_id.is_some() {
         let offset = query.offset.unwrap_or(0);
-        let session = match state
-            .terminals
-            .attach_or_create(&owner, &query, authorization_changes)
-        {
-            Ok(session) => session,
-            Err(error) => {
-                tracing::error!(reason = %error, "resumable terminal attach failed");
-                return json_error(error.status(), error.code());
-            }
-        };
+        let session =
+            match state
+                .terminals
+                .attach_or_create(&owner, &query, authorization_changes, || {
+                    let spawn_query = resolve_terminal_spawn_query(&state, &query)?;
+                    terminal::TerminalSession::spawn(&spawn_query)
+                }) {
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::error!(reason = %error, "resumable terminal attach failed");
+                    return json_error(error.status(), error.code());
+                }
+            };
         return upgrade
             .max_message_size(1024 * 1024)
             .on_upgrade(move |socket| terminal::bridge_resumable(socket, session, offset));
@@ -688,7 +745,9 @@ async fn terminal_upgrade(
         Ok(permit) => permit,
         Err(error) => return json_error(error.status(), error.code()),
     };
-    let session = match terminal::TerminalSession::spawn(&query) {
+    let session = match resolve_terminal_spawn_query(&state, &query)
+        .and_then(|spawn_query| terminal::TerminalSession::spawn(&spawn_query))
+    {
         Ok(session) => session,
         Err(error) => {
             tracing::error!(reason = %error, "terminal session spawn failed");
@@ -700,6 +759,56 @@ async fn terminal_upgrade(
         .on_upgrade(move |socket| async move {
             let _permit = permit;
             terminal::bridge(socket, session, authorization_changes).await;
+        })
+}
+
+fn resolve_terminal_spawn_query(
+    state: &AppState,
+    query: &TerminalQuery,
+) -> Result<TerminalQuery, terminal::TerminalError> {
+    let Some(thread_id) = query.thread_id.as_deref() else {
+        return Ok(query.clone());
+    };
+    if !valid_thread_id(thread_id) {
+        return Err(terminal::TerminalError::InvalidThread);
+    }
+    let metadata = if let Some(metadata) = state
+        .store
+        .thread_metadata(thread_id)
+        .map_err(terminal::TerminalError::thread_resolution_failed)?
+    {
+        metadata
+    } else {
+        let catalog = state
+            .services
+            .catalog
+            .as_ref()
+            .ok_or(terminal::TerminalError::ThreadNotFound)?;
+        let rollout = catalog.resolve(thread_id).map_err(|error| match error {
+            CatalogError::NotFound(_) => terminal::TerminalError::ThreadNotFound,
+            CatalogError::Poisoned => terminal::TerminalError::thread_resolution_failed(error),
+        })?;
+        let metadata = read_rollout_metadata(&rollout)
+            .map_err(terminal::TerminalError::thread_resolution_failed)?
+            .filter(|metadata| metadata.id == thread_id)
+            .ok_or(terminal::TerminalError::ThreadNotFound)?;
+        state
+            .store
+            .put_thread_metadata(&metadata)
+            .map_err(terminal::TerminalError::thread_resolution_failed)?;
+        metadata
+    };
+    Ok(TerminalQuery {
+        cwd: Some(metadata.cwd),
+        ..query.clone()
+    })
+}
+
+fn valid_thread_id(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| match index {
+            8 | 13 | 18 | 23 => byte == b'-',
+            _ => byte.is_ascii_hexdigit(),
         })
 }
 
@@ -847,6 +956,86 @@ async fn sync_upgrade(
         })
 }
 
+async fn sync_v2_upgrade(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if state.services.sync_v2_mode == SyncV2Mode::Disabled {
+        let mut response = (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "type": "https://codewide.dev/problems/sync-v2-disabled",
+                "title": "Sync V2 disabled",
+                "status": 503,
+                "code": "sync_v2_disabled"
+            })),
+        )
+            .into_response();
+        response.headers_mut().insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json"),
+        );
+        return response;
+    }
+    let Some(runtime) = state.services.sync_v2.clone() else {
+        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
+    };
+    let authorization_changes = match &state.authorization {
+        Authorization::Registry(registry) => Some(registry.subscribe_authorization_changes()),
+        Authorization::AdminOnly(_) => None,
+    };
+    let Some(authorization @ AuthorizationContext::Session { .. }) =
+        authorize_sync(&state, &headers).await
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if headers.get("origin").is_some() {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    upgrade
+        .max_message_size(16 * 1024 * 1024)
+        .max_frame_size(16 * 1024 * 1024)
+        .on_upgrade(move |socket| runtime.serve(socket, authorization, authorization_changes))
+}
+
+async fn e2ee_tunnel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    if headers.get("origin").is_some() {
+        return json_error(StatusCode::UNAUTHORIZED, "browser_origin_rejected");
+    }
+    let Some(target) = state.services.inner_tls_target else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(limit) = state.services.inner_tls_limit.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(permit) = limit.try_acquire_owned() else {
+        return json_error(StatusCode::TOO_MANY_REQUESTS, "secure_transport_capacity");
+    };
+    let Ok(Ok(stream)) = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::net::TcpStream::connect(target),
+    )
+    .await
+    else {
+        return json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "secure_transport_unavailable",
+        );
+    };
+    upgrade
+        .max_message_size(1024 * 1024)
+        .max_frame_size(1024 * 1024)
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            ports::bridge_tcp_idle_bounded(socket, stream, Duration::from_secs(15)).await;
+        })
+}
+
 #[derive(Deserialize)]
 #[serde(
     tag = "action",
@@ -887,18 +1076,19 @@ async fn authenticate(
             device_name,
             public_key_spki,
             proof,
-        } => registry
-            .claim(PairingClaim {
-                pairing_token,
-                device_name,
-                public_key_spki,
-                proof,
-            })
+        } => {
+            complete_pairing_claim(
+                registry,
+                state.services.sync_v2.as_ref(),
+                PairingClaim {
+                    pairing_token,
+                    device_name,
+                    public_key_spki,
+                    proof,
+                },
+            )
             .await
-            .map_or_else(
-                |error| auth_error(&error),
-                |result| (StatusCode::CREATED, Json(result)).into_response(),
-            ),
+        }
         AuthRequest::Challenge => registry.challenge(header_auth(&headers)).await.map_or_else(
             |error| auth_error(&error),
             |result| (StatusCode::CREATED, Json(result)).into_response(),
@@ -930,7 +1120,17 @@ async fn pairing_start(State(state): State<AppState>, headers: HeaderMap) -> Res
         return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
     }
     match registry.create_pairing().await {
-        Ok(pairing) => (StatusCode::CREATED, Json(pairing)).into_response(),
+        Ok(pairing) => {
+            let mut response = json!({
+                "pairingToken": pairing.pairing_token,
+                "expiresAt": pairing.expires_at,
+            });
+            if let Some(identity) = &state.services.transport_identity {
+                response["tlsPinSha256"] = json!(identity.tls_pin_sha256);
+                response["identityExpiresAt"] = json!(identity.expires_at);
+            }
+            (StatusCode::CREATED, Json(response)).into_response()
+        }
         Err(error) => auth_error(&error),
     }
 }
@@ -946,10 +1146,39 @@ async fn pairing_claim(
     if headers.get("origin").is_some() {
         return json_error(StatusCode::UNAUTHORIZED, "browser_origin_rejected");
     }
-    match registry.claim(claim).await {
-        Ok(result) => (StatusCode::CREATED, Json(result)).into_response(),
-        Err(error) => auth_error(&error),
+    complete_pairing_claim(registry, state.services.sync_v2.as_ref(), claim).await
+}
+
+async fn complete_pairing_claim(
+    registry: &DeviceRegistry,
+    sync_v2: Option<&SyncV2Runtime>,
+    claim: PairingClaim,
+) -> Response {
+    let result = match registry.claim(claim).await {
+        Ok(result) => result,
+        Err(error) => return auth_error(&error),
+    };
+    if result.replaced_existing
+        && let Some(runtime) = sync_v2
+        && !runtime.purge_device_context(&result.device_id).await
+    {
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "sync_v2_context_purge_failed",
+        );
     }
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "deviceId": result.device_id,
+            "capabilityToken": result.capability_token,
+            "scopes": result.scopes,
+            // Kept for clients from the rollout window. This is no longer a
+            // per-device mode: the outer server has no private data routes.
+            "secureTransportRequired": true,
+        })),
+    )
+        .into_response()
 }
 
 async fn session_challenge(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -1010,7 +1239,17 @@ async fn device_update(
         return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
     }
     match registry.update_scopes(&device_id, update.scopes).await {
-        Ok(device) => Json(device).into_response(),
+        Ok(device) => {
+            if let Some(runtime) = &state.services.sync_v2
+                && !runtime.purge_device_context(&device_id).await
+            {
+                return json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "sync_v2_context_purge_failed",
+                );
+            }
+            Json(device).into_response()
+        }
         Err(error) => auth_error(&error),
     }
 }
@@ -1028,6 +1267,15 @@ async fn device_revoke(
     }
     match registry.revoke(&device_id).await {
         Ok(revoked) => {
+            if revoked
+                && let Some(runtime) = &state.services.sync_v2
+                && !runtime.purge_device_context(&device_id).await
+            {
+                return json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "sync_v2_context_purge_failed",
+                );
+            }
             let status = if revoked {
                 StatusCode::OK
             } else {

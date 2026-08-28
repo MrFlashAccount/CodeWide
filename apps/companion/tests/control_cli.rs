@@ -74,7 +74,7 @@ async fn native_cli_creates_a_pairing_through_local_control_only()
     std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
 
     let listener = UnixListener::bind(&endpoint)?;
-    let router = Router::new().route("/v1/pairing/start", post(pairing_start));
+    let router = Router::new().route("/v1/pairing/start", post(pairing_start_tls));
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
@@ -113,7 +113,93 @@ async fn native_cli_creates_a_pairing_through_local_control_only()
             .ok_or("pairing payload missing")?,
     )?;
     assert_eq!(payload["type"], "codewide-pairing");
-    assert!(payload.get("tlsPinSha256").is_none());
+    assert_eq!(
+        payload["tlsPinSha256"],
+        format!("sha256/{}=", "A".repeat(43))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_cli_binds_wss_pairing_to_the_running_companion_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let endpoint = directory.path().join("control.sock");
+    let token_file = directory.path().join("host.token");
+    std::fs::write(&token_file, format!("{ADMIN_TOKEN}\n"))?;
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
+    let listener = UnixListener::bind(&endpoint)?;
+    let router = Router::new().route("/v1/pairing/start", post(pairing_start_tls));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_codewide-companion"))
+        .arg("pair")
+        .arg("--json")
+        .arg("--control-endpoint")
+        .arg(&endpoint)
+        .arg("--token-file")
+        .arg(&token_file)
+        .env(
+            "CODEWIDE_PUBLIC_ENDPOINT",
+            "wss://companion.example/v1/sync",
+        )
+        .output()
+        .await?;
+    server.abort();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    let payload: Value = serde_json::from_str(
+        response["pairingPayload"]
+            .as_str()
+            .ok_or("pairing payload missing")?,
+    )?;
+    assert_eq!(
+        payload["tlsPinSha256"],
+        format!("sha256/{}=", "A".repeat(43))
+    );
+    assert_eq!(payload["identityExpiresAt"], 4_102_444_800_000_u64);
+    assert!(
+        response["pairingLink"]
+            .as_str()
+            .is_some_and(|link| link.contains("p=sha256%2F") && link.contains("y=4102444800000"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn native_cli_rejects_pairing_without_a_companion_identity_pin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let endpoint = directory.path().join("control.sock");
+    let token_file = directory.path().join("host.token");
+    std::fs::write(&token_file, format!("{ADMIN_TOKEN}\n"))?;
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
+    let listener = UnixListener::bind(&endpoint)?;
+    let router = Router::new().route("/v1/pairing/start", post(pairing_start));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_codewide-companion"))
+        .arg("pair")
+        .arg("--json")
+        .arg("--control-endpoint")
+        .arg(&endpoint)
+        .arg("--token-file")
+        .arg(&token_file)
+        .env("CODEWIDE_PUBLIC_ENDPOINT", "wss://legacy.example/v1/sync")
+        .output()
+        .await?;
+    server.abort();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("running companion returned no TLS identity pin")
+    );
     Ok(())
 }
 
@@ -128,7 +214,7 @@ async fn native_cli_renders_terminal_qr_and_private_svg_fallback()
     std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600))?;
 
     let listener = UnixListener::bind(&endpoint)?;
-    let router = Router::new().route("/v1/pairing/start", post(pairing_start));
+    let router = Router::new().route("/v1/pairing/start", post(pairing_start_tls));
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
@@ -243,6 +329,13 @@ async fn pairing_start(headers: HeaderMap) -> Json<Value> {
         "pairingToken": "pairing-token-long-enough-for-cli-test",
         "expiresAt": now + 300_000,
     }))
+}
+
+async fn pairing_start_tls(headers: HeaderMap) -> Json<Value> {
+    let mut response = pairing_start(headers).await.0;
+    response["tlsPinSha256"] = json!(format!("sha256/{}=", "A".repeat(43)));
+    response["identityExpiresAt"] = json!(4_102_444_800_000_u64);
+    Json(response)
 }
 
 async fn telemetry_query_echo(headers: HeaderMap, uri: Uri) -> Json<Value> {

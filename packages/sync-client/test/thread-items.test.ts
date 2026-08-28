@@ -31,4 +31,19 @@ describe("turn item reconciliation", () => {
 
     expect(result.filter((item) => item.type === "agentMessage")).toHaveLength(2);
   });
+
+  it("preserves the pre-turn marker when canonical history replaces a live item", () => {
+    const cached = {
+      type: "contextCompaction",
+      id: "compaction",
+      codewidePreTurn: true,
+      codewideLifecyclePhase: "started",
+    } as ThreadItem;
+    const incoming = { type: "contextCompaction", id: "compaction" } as ThreadItem;
+
+    expect(reconcileTurnItems([cached], [incoming])).toEqual([
+      expect.objectContaining({ codewidePreTurn: true }),
+    ]);
+    expect(reconcileTurnItems([cached], [incoming])[0]).not.toHaveProperty("codewideLifecyclePhase");
+  });
 });

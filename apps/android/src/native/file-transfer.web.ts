@@ -9,6 +9,9 @@ export function createTextUpload(name: string, mimeType: string, source: string)
   const bytes = new TextEncoder().encode(source);
   return { name, size: bytes.byteLength, mimeType, native: source };
 }
+export function createBinaryUpload(name: string, mimeType: string, source: Uint8Array): SelectedUpload {
+  return { name, size: source.byteLength, mimeType, native: source };
+}
 export async function pickDownloadDirectory(): Promise<SelectedDirectory> { throw new Error("File transfer is available in the Android build"); }
 export async function openDownloadedFile(): Promise<void> { throw new Error("Opening downloaded files is available in the Android build"); }
 export function startUpload(): RunningTransfer { throw new Error("File transfer is available in the Android build"); }

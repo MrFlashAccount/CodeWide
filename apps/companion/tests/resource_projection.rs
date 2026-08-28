@@ -10,6 +10,7 @@ use codewide_companion::{
     catalog::SessionCatalog,
     files::{FileQuery, FileService},
     resources::ResourceService,
+    store::IndexStore,
 };
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
@@ -57,9 +58,11 @@ async fn canonical_resources_are_incremental_crash_safe_and_live()
         .await?,
     );
     let catalog = Arc::new(SessionCatalog::scan(directory.path()));
+    let index = Arc::new(IndexStore::open(directory.path().join("index.redb"))?);
     let service = ResourceService::open(
         directory.path().join("resources.redb"),
         catalog.clone(),
+        index.clone(),
         files.clone(),
     )?;
     assert_eq!(preview_status(&files, &photo).await, StatusCode::FORBIDDEN);
@@ -204,6 +207,7 @@ async fn canonical_resources_are_incremental_crash_safe_and_live()
     let restored = ResourceService::open(
         directory.path().join("resources.redb"),
         Arc::new(SessionCatalog::scan(directory.path())),
+        index,
         files,
     )?;
     let restored_snapshot = restored
@@ -288,6 +292,7 @@ async fn agent_linked_files_outside_the_workspace_are_authorized()
     let service = ResourceService::open(
         directory.path().join("resources.redb"),
         catalog,
+        Arc::new(IndexStore::open(directory.path().join("index.redb"))?),
         files.clone(),
     )?;
 
@@ -332,6 +337,7 @@ async fn fresh_rpc_image_is_authorized_before_rollout_materializes()
         Arc::new(SessionCatalog::scan(
             &directory.path().join("missing-sessions"),
         )),
+        Arc::new(IndexStore::open(directory.path().join("index.redb"))?),
         files.clone(),
     )?;
 

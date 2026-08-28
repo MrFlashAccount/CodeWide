@@ -4,7 +4,6 @@ import { useEvent } from "../react/useEvent";
 import { useLatest } from "../react/useLatest";
 import type { ThreadHistoryState } from "./thread-pagination";
 import { recordThreadHistoryTelemetry, telemetryErrorKind } from "./thread-history-telemetry";
-import type { ThreadTurnPage } from "./use-remote-workspace";
 
 export type ThreadHistoryViewport = {
   readStatus(): ThreadHistoryState["status"];
@@ -23,11 +22,11 @@ type ThreadHistoryControllerOptions = {
   historyEpoch: number;
   cursorState: Pick<ThreadHistoryState, "historyEpoch" | "nextCursor"> | null;
   readState(): ThreadHistoryState | null;
+  readHistoryCursor(): string | null | undefined;
   isLatestRange: boolean;
   putState(state: ThreadHistoryState): void;
   pullRange(direction: "older" | "newer" | "latest"): Promise<boolean>;
   trimRange(direction: "older" | "newer"): Promise<boolean>;
-  loadOlderTurns(connectionId: string, threadId: string, cursor: string | null, expectedHistoryEpoch: number): Promise<ThreadTurnPage>;
 };
 
 async function loadRange(
@@ -38,6 +37,7 @@ async function loadRange(
   const state = context.readState();
   if (!context.enabled || context.connectionId === "" || threadId === null || state === null) return;
   if (state.historyEpoch !== context.historyEpoch) return;
+  const cursor = context.readHistoryCursor();
 
   const startedAt = performance.now();
   recordThreadHistoryTelemetry(context.connectionId, threadId, "chat.history.load_started", {
@@ -45,7 +45,7 @@ async function loadRange(
     tags: {
       direction,
       status: state.status,
-      cursorState: state.nextCursor === undefined ? "unknown" : state.nextCursor === null ? "exhausted" : "available",
+      cursorState: cursor === undefined ? "unknown" : cursor === null ? "exhausted" : "available",
     },
   });
 
@@ -56,40 +56,33 @@ async function loadRange(
     tags: { direction, pulled: loadedLocally ? "true" : "false" },
   });
 
-  if (loadedLocally || direction !== "older" || state.nextCursor === null) {
+  const nextCursor = context.readHistoryCursor();
+  const current = context.readState();
+  if (current !== null && current.historyEpoch === state.historyEpoch
+    && current.nextCursor !== nextCursor) {
+    context.putState({ ...current, nextCursor, status: "ready", error: null });
+  }
+  if (loadedLocally || direction !== "older" || nextCursor === null) {
     recordThreadHistoryTelemetry(context.connectionId, threadId, "chat.history.load_finished", {
       values: { durationMs: performance.now() - startedAt, historyEpoch: state.historyEpoch, pageCount: 0 },
       tags: {
         direction,
-        outcome: loadedLocally ? "sqlite" : state.nextCursor === null ? "exhausted" : "boundary",
+        outcome: loadedLocally ? "cache-aside" : nextCursor === null ? "exhausted" : "boundary",
       },
     });
     return;
   }
 
-  context.putState({ ...state, status: "loading-history", error: null });
-  const page = await context.loadOlderTurns(
-    context.connectionId,
-    threadId,
-    state.nextCursor ?? null,
-    state.historyEpoch,
-  );
-  if (!page.acceptedHistory) throw new Error("Backend history page was not persisted");
-  const current = context.readState();
-  if (current !== null && current.historyEpoch === state.historyEpoch) {
-    context.putState({ ...current, nextCursor: page.nextCursor, status: "ready", error: null });
-  }
   recordThreadHistoryTelemetry(context.connectionId, threadId, "chat.history.load_finished", {
     values: {
       durationMs: performance.now() - startedAt,
       historyEpoch: state.historyEpoch,
-      pageCount: 1,
-      turnCount: page.turns.length,
+      pageCount: 0,
     },
     tags: {
       direction,
-      outcome: page.extendedHistory ? "backend" : "overlap",
-      nextCursor: page.nextCursor === null ? "exhausted" : "available",
+      outcome: "boundary",
+      nextCursor: nextCursor === null ? "exhausted" : "available",
     },
   });
 }

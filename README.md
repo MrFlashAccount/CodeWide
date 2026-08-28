@@ -156,17 +156,29 @@ apps/companion/deploy/install.sh
 codewide-companion pair
 ```
 
-For camera pairing, expose the companion through a private `wss://` endpoint and
-tell the CLI which public URL belongs in the QR:
+The packaged service exposes an HTTP carrier. Put it behind any ordinary
+public-CA TLS ingress, Tailscale, ngrok, or another relay. Application traffic
+uses a separate TLS 1.3 connection inside the blind WebSocket carrier, so the
+relay cannot read it. Tell the CLI which public `wss://` URL belongs in the QR:
 
 ```sh
 set -lx CODEWIDE_PUBLIC_ENDPOINT wss://host.example/v1/sync
 set -lx CODEWIDE_SERVER_NAME 'Home workstation'
 set -lx CODEWIDE_SERVER_EMOJI '🏠'
-# Optional OkHttp-style SHA-256 SPKI pin:
-set -lx CODEWIDE_TLS_PIN_SHA256 'sha256/BASE64_PUBLIC_KEY_HASH'
 codewide-companion pair
 ```
+
+`pair` reads the Companion identity through the private control socket and puts
+its SHA-256 SPKI pin in the QR. A current Android build establishes pinned inner
+TLS before it sends the one-time pairing token, public device key, or proof. The
+initial challenge/session exchange and all later private traffic stay inside it.
+The public carrier exposes no authentication or application data routes; it
+accepts only the blind `/v1/e2ee-tunnel` plus Build Shelf / update downloads.
+
+Secure transport is mandatory. Pairing payloads and saved profiles without a
+Companion identity pin are rejected and must be paired again. There is no
+preview switch, legacy transport, automatic trust-on-current-carrier upgrade,
+or downgrade path.
 
 Scan the terminal QR from `Add server`, or enter the one-time token manually.
 The CLI selects compact Unicode, ANSI, or a private SVG fallback with
@@ -174,7 +186,37 @@ The CLI selects compact Unicode, ANSI, or a private SVG fallback with
 The QR expires after five minutes and contains a secret: do not paste it into
 logs or share a screenshot. Remote endpoints must use `wss://`; plain `ws://`
 is accepted only for loopback, the Android emulator host alias, or an SSH
-forward terminating on the device.
+forward terminating on the device. `serve --insecure-http` is retained only as
+a hidden command-line compatibility no-op; it no longer disables or changes
+inner TLS.
+
+Build Shelf / OTA and Expo Updates intentionally remain carrier-level public
+traffic. They do not pass through the native inner proxy because an app must be
+able to download its own update before the application transport is available.
+
+Inspect the public identity without exposing its private key:
+
+```sh
+codewide-companion identity
+```
+
+The private identity key is stored through the Companion Secure Store. It uses
+the platform credential store when available (Keychain, Credential Manager, or
+Linux keyring plus Secret Service) and records that backend durably. Headless
+systems fall back to a mode-0600 file. A temporarily unavailable platform store
+never causes silent key regeneration or a weaker fallback; a later successful
+load may migrate the file-backed key upward.
+
+Identity rotation is an explicit recovery event, not silent renewal. Stop the
+service, rotate with acknowledgement, restart it, then scan a fresh QR on every
+device. The previous private key is deleted and old pins fail closed:
+
+```sh
+systemctl --user stop codewide-companion.service
+codewide-companion rotate-identity --confirm-device-repair
+systemctl --user start codewide-companion.service
+codewide-companion pair
+```
 
 The phone stores only its revocable per-device capability in Android
 Keystore-backed SecureStore; the host persists only its SHA-256 hash and method
@@ -310,23 +352,24 @@ The phone listener is loopback-only, but another local app that discovers its
 port could connect to it. Prefer automatic high ports and stop profiles that are
 not in use; do not forward an unauthenticated administrative service.
 
-Development pairings created before device-proof support have no public key and
-must be paired again; the host fails closed with `device_key_required_repair`.
+Pairings created before device-proof support or before the Companion identity
+pin became mandatory must be paired again.
 
-The production companion binds only its authenticated public transport to
-`127.0.0.1:8766`. Operator commands such as pairing and device management use
+The production companion binds its blind HTTP carrier to `127.0.0.1:8766` and a
+process-private TLS 1.3 listener to a random loopback port. Operator commands
+such as pairing and device management use
 the same CLI over a private local IPC endpoint (`$XDG_RUNTIME_DIR/codewide/companion-control.sock`
 on Linux), protected by directory mode `0700`, endpoint mode `0600` and the
 administrator capability. There is no administrative TCP listener to forward by
-mistake. Reach the public port through an SSH forward or a TLS/private-network
-reverse proxy; never publish plain `ws://` to the internet.
+mistake. A reverse proxy, SSH forward, overlay, or relay sees only opaque inner
+TLS records after the WebSocket tunnel is established.
 
 The installed companion binary is also the headless operator CLI: `create-token`,
 `pair`, `devices`, `scopes` and `revoke` call the running process through that
 local endpoint.
 
 A durable deployment runs `codewide-companion.service` behind an operator-owned
-TLS reverse proxy or private overlay network. Hostnames, tunnel credentials and
+blind relay or private overlay network. Hostnames, tunnel credentials and
 provider-specific configuration are machine-local and must not be committed.
 Set the Android build's update endpoint explicitly:
 
@@ -413,7 +456,7 @@ five-minute one-time payload to a private file, then pass only its path:
 ```sh
 mkdir -p test-results/private-runtime/android
 chmod 700 test-results/private-runtime/android
-set -lx CODEWIDE_PUBLIC_ENDPOINT ws://10.0.2.2:8765/v1/sync
+set -lx CODEWIDE_PUBLIC_ENDPOINT wss://10.0.2.2:8766/v1/sync
 set -lx CODEWIDE_SERVER_NAME 'AVD test server'
 codewide-companion pair --json \
   > test-results/private-runtime/android/pairing.json

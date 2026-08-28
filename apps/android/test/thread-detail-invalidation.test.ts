@@ -7,9 +7,9 @@ import { invalidationCanBeCleared, latestThreadInvalidations, shouldPersistThrea
 describe("thread detail invalidation", () => {
   it("retains the newest cursor for every unloaded thread in a projection batch", () => {
     expect([...latestThreadInvalidations([
-      { cursor: 10, payload: { method: "turn/started", params: { threadId: "a" } } },
-      { cursor: 11, payload: { method: "item/started", params: { threadId: "b" } } },
-      { cursor: 12, payload: { method: "turn/completed", params: { threadId: "a" } } },
+      { cursor: 10, payload: semanticEvent("a", { kind: "turnStarted" }) },
+      { cursor: 11, payload: semanticEvent("b", { kind: "itemUpsert" }) },
+      { cursor: 12, payload: semanticEvent("a", { kind: "turnCompleted" }) },
       { cursor: 13, payload: { method: "account/updated", params: {} } },
     ]).entries()]).toEqual([["a", 12], ["b", 11]]);
   });
@@ -30,3 +30,11 @@ describe("thread detail invalidation", () => {
     expect(shouldPersistThreadInvalidation(null, true, false)).toBe(true);
   });
 });
+
+function semanticEvent(threadId: string, operation: ThreadProjectionPatchV1["operation"]): Record<string, unknown> {
+  return {
+    method: "test/semantic-event",
+    params: { threadId },
+    codewideThreadPatch: { version: 1, threadId, operation },
+  };
+}

@@ -1,16 +1,16 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fs::File,
-    io::{BufRead, BufReader, Seek, SeekFrom},
     path::{Component, Path, PathBuf},
-    sync::{Arc, LazyLock},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(not(unix))]
+use std::io::{Read, Seek, SeekFrom};
 #[cfg(unix)]
-use std::os::unix::fs::{FileExt, MetadataExt};
+use std::os::unix::fs::FileExt;
 
-use aho_corasick::AhoCorasick;
 use futures_util::StreamExt;
 use redb::{Database, ReadableDatabase, TableDefinition};
 use serde::{Deserialize, Serialize};
@@ -21,13 +21,15 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     catalog::{CatalogError, SessionCatalog},
     files::FileService,
+    rollout::{IndexError, index_rollout_fully, rollout_file_id},
+    store::{IndexStore, StoreError},
     vcs::{VcsDiff, VcsError, VcsFileStatus, VcsScope, VcsService, VcsSnapshot},
 };
 
 const PROJECTIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_resources");
-const PROJECTION_VERSION: u8 = 7;
+const PROJECTION_VERSION: u8 = 8;
 const MAX_DIFF_CHARS_PER_PATH: usize = 4 * 1024 * 1024;
-const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(5);
+const TAIL_CHECK_BYTES: u64 = 4_096;
 const COMPLETED_TURN_REFRESH_DELAYS: [Duration; 6] = [
     Duration::ZERO,
     Duration::from_millis(100),
@@ -36,29 +38,12 @@ const COMPLETED_TURN_REFRESH_DELAYS: [Duration; 6] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
 ];
-const SCAN_BUFFER_BYTES: usize = 8 * 1024 * 1024;
-const TAIL_CHECK_BYTES: u64 = 4_096;
 const RECENT_COMPLETED_TURNS: usize = 256;
-const RESOURCE_RECORD_NEEDLES: [&str; 10] = [
-    "\"type\":\"session_meta\"",
-    "\"type\":\"task_started\"",
-    "\"type\":\"task_complete\"",
-    "\"type\":\"turn_aborted\"",
-    "\"type\":\"thread_rolled_back\"",
-    "\"type\":\"user_message\"",
-    "\"type\":\"patch_apply_end\"",
-    "\"type\":\"view_image_tool_call\"",
-    "\"type\":\"image_generation_end\"",
-    "\"type\":\"response_item\"",
-];
-static RESOURCE_RECORD_MATCHER: LazyLock<AhoCorasick> = LazyLock::new(|| {
-    AhoCorasick::new(RESOURCE_RECORD_NEEDLES)
-        .unwrap_or_else(|error| panic!("invalid static resource record matcher: {error}"))
-});
 
 #[derive(Clone)]
 pub struct ResourceService {
     catalog: Arc<SessionCatalog>,
+    index: Arc<IndexStore>,
     store: Arc<ResourceStore>,
     files: Arc<FileService>,
     live: Arc<RwLock<HashMap<String, BTreeMap<String, ResourceData>>>>,
@@ -345,6 +330,10 @@ pub enum ResourceError {
     Commit(#[from] redb::CommitError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Index(#[from] IndexError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
     #[error("threadId is required")]
     MissingThreadId,
     #[error("path is required")]
@@ -366,6 +355,7 @@ impl ResourceService {
     pub fn open(
         path: impl AsRef<Path>,
         catalog: Arc<SessionCatalog>,
+        index: Arc<IndexStore>,
         files: Arc<FileService>,
     ) -> Result<Self, ResourceError> {
         let path = path.as_ref();
@@ -386,6 +376,7 @@ impl ResourceService {
         };
         Ok(Self {
             catalog,
+            index,
             store: Arc::new(store),
             files,
             live: Arc::new(RwLock::new(HashMap::new())),
@@ -684,12 +675,16 @@ impl ResourceService {
                 .clone()
         };
         let _guard = refresh.lock().await;
-        let path = self.catalog.resolve(thread_id)?;
+        let catalog = self.catalog.clone();
         let store = self.store.clone();
+        let index = self.index.clone();
         let thread_id = thread_id.to_owned();
-        tokio::task::spawn_blocking(move || store.refresh(&thread_id, &path))
-            .await
-            .map_err(|_| ResourceError::Join)?
+        tokio::task::spawn_blocking(move || {
+            let path = catalog.resolve(&thread_id)?;
+            store.refresh(&thread_id, &path, &index)
+        })
+        .await
+        .map_err(|_| ResourceError::Join)?
     }
 
     /// Observes App Server notifications. Only the active turn is retained in
@@ -793,7 +788,7 @@ impl ResourceService {
     pub async fn observe_rpc_result(&self, method: &str, result: &Value) {
         let mut data = ResourceData::default();
         match method {
-            "thread/read" | "thread/resume" => {
+            "companion/threadWindow/read" | "thread/read" | "thread/resume" => {
                 let Some(thread) = result.get("thread") else {
                     return;
                 };
@@ -1162,62 +1157,46 @@ impl ResourceStore {
         Ok(())
     }
 
-    fn refresh(&self, thread_id: &str, path: &Path) -> Result<PersistedProjection, ResourceError> {
+    fn refresh(
+        &self,
+        thread_id: &str,
+        path: &Path,
+        index: &IndexStore,
+    ) -> Result<PersistedProjection, ResourceError> {
+        // Resource projection consumes every source record, unlike the chat
+        // head which can be served from a tail-first index.
+        index_rollout_fully(index, path)?;
+        let file_id = rollout_file_id(path);
+        let state = index.file_state(&file_id)?.ok_or_else(|| {
+            StoreError::CorruptedIndex("rollout checkpoint is missing after indexing".into())
+        })?;
         let file = File::open(path)?;
-        let metadata = file.metadata()?;
-        let (device, inode) = file_identity(&metadata);
         let mut projection = self.load(thread_id)?.filter(|candidate| {
             candidate.version == PROJECTION_VERSION
                 && candidate.source_path == path
-                && candidate.device == device
-                && candidate.inode == inode
-                && candidate.indexed_bytes <= metadata.len()
+                && candidate.device == state.device
+                && candidate.inode == state.inode
+                && candidate.indexed_bytes <= state.indexed_bytes
                 && tail_hash(&file, candidate.indexed_bytes).ok() == Some(candidate.tail_hash)
         });
-        let mut projection = projection
-            .take()
-            .unwrap_or_else(|| PersistedProjection::empty(path.to_path_buf(), device, inode));
-        let mut reader = BufReader::with_capacity(SCAN_BUFFER_BYTES, file);
-        reader.seek(SeekFrom::Start(projection.indexed_bytes))?;
-        let mut offset = projection.indexed_bytes;
-        let mut partial_line = Vec::new();
-        let mut last_checkpoint = Instant::now();
-        loop {
-            let available = reader.fill_buf()?;
-            if available.is_empty() {
-                break;
+        let mut projection = projection.take().unwrap_or_else(|| {
+            PersistedProjection::empty(path.to_path_buf(), state.device, state.inode)
+        });
+        let initial_offset = projection.indexed_bytes;
+        for record in index.records_from(&file_id, initial_offset)? {
+            // session_meta, event_msg and response_item are the only canonical
+            // record families that can affect changes or attachments.
+            if !matches!(record.record_type, 1 | 3 | 4) {
+                continue;
             }
-            let consumed = available.len();
-            let mut segment_start = 0;
-            for newline in memchr::memchr_iter(b'\n', available) {
-                let segment = &available[segment_start..=newline];
-                let line_bytes = if partial_line.is_empty() {
-                    apply_rollout_record(&mut projection, offset, segment);
-                    segment.len()
-                } else {
-                    partial_line.extend_from_slice(segment);
-                    apply_rollout_record(&mut projection, offset, &partial_line);
-                    let line_bytes = partial_line.len();
-                    partial_line.clear();
-                    line_bytes
-                };
-                offset = offset.saturating_add(u64::try_from(line_bytes).unwrap_or(u64::MAX));
-                segment_start = newline + 1;
-            }
-            partial_line.extend_from_slice(&available[segment_start..]);
-            reader.consume(consumed);
-            if offset != projection.indexed_bytes
-                && last_checkpoint.elapsed() >= CHECKPOINT_INTERVAL
-            {
-                projection.indexed_bytes = offset;
-                projection.tail_hash = tail_hash(reader.get_ref(), offset)?;
-                self.save(thread_id, &projection)?;
-                last_checkpoint = Instant::now();
-            }
+            let mut line =
+                vec![0_u8; usize::try_from(record.length).map_err(std::io::Error::other)?];
+            read_exact_at(&file, record.offset, &mut line)?;
+            apply_rollout_record(&mut projection, record.offset, &line);
         }
-        if offset != projection.indexed_bytes {
-            projection.indexed_bytes = offset;
-            projection.tail_hash = tail_hash(reader.get_ref(), offset)?;
+        if projection.indexed_bytes != state.indexed_bytes {
+            projection.indexed_bytes = state.indexed_bytes;
+            projection.tail_hash = state.tail_hash;
             self.save(thread_id, &projection)?;
         }
         Ok(projection)
@@ -1679,9 +1658,6 @@ impl ResourceData {
 
 #[allow(clippy::too_many_lines)]
 fn apply_rollout_record(projection: &mut PersistedProjection, offset: u64, line: &[u8]) {
-    if !RESOURCE_RECORD_MATCHER.is_match(line) {
-        return;
-    }
     let Ok(envelope) = serde_json::from_slice::<Value>(line) else {
         return;
     };
@@ -2069,13 +2045,24 @@ fn base36(mut value: u32) -> String {
 }
 
 #[cfg(unix)]
-fn file_identity(metadata: &std::fs::Metadata) -> (u64, u64) {
-    (metadata.dev(), metadata.ino())
+fn read_exact_at(file: &File, offset: u64, buffer: &mut [u8]) -> Result<(), std::io::Error> {
+    let mut read = 0;
+    while read < buffer.len() {
+        let count = file.read_at(&mut buffer[read..], offset + read as u64)?;
+        if count == 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+        }
+        read += count;
+    }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-fn file_identity(_metadata: &std::fs::Metadata) -> (u64, u64) {
-    (0, 0)
+fn read_exact_at(file: &File, offset: u64, buffer: &mut [u8]) -> Result<(), std::io::Error> {
+    let mut snapshot = file.try_clone()?;
+    snapshot.seek(SeekFrom::Start(offset))?;
+    snapshot.read_exact(&mut buffer)?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -2086,20 +2073,12 @@ fn tail_hash(file: &File, indexed_bytes: u64) -> Result<[u8; 32], std::io::Error
     let bytes = TAIL_CHECK_BYTES.min(indexed_bytes);
     let start = indexed_bytes - bytes;
     let mut buffer = vec![0_u8; usize::try_from(bytes).map_err(std::io::Error::other)?];
-    let mut read = 0;
-    while read < buffer.len() {
-        let count = file.read_at(&mut buffer[read..], start + read as u64)?;
-        if count == 0 {
-            return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
-        }
-        read += count;
-    }
+    read_exact_at(file, start, &mut buffer)?;
     Ok(*blake3::hash(&buffer).as_bytes())
 }
 
 #[cfg(not(unix))]
 fn tail_hash(file: &File, indexed_bytes: u64) -> Result<[u8; 32], std::io::Error> {
-    use std::io::Read;
     if indexed_bytes == 0 {
         return Ok([0; 32]);
     }
@@ -2195,6 +2174,53 @@ mod tests {
         assert_eq!(bucket.patches.len(), 1);
         assert_eq!(bucket.patches[0].diff, "+second\n");
         assert_eq!(bucket.chars, "+second\n".len());
+    }
+
+    #[test]
+    fn resource_projection_consumes_the_shared_rollout_index()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let rollout = directory.path().join("rollout.jsonl");
+        std::fs::write(
+            &rollout,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\",\"id\":\"thread\",\"cwd\":\"/repo\",\"source\":\"cli\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"patch_apply_end\",\"call_id\":\"patch\",\"changes\":{\"src/a.rs\":{\"type\":\"update\",\"diff\":\"-old\\n+new\\n\"}}}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"id\":\"answer\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"[report](/tmp/report.md)\"}]}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn\"}}\n",
+            ),
+        )?;
+        let index = IndexStore::open(directory.path().join("index.redb"))?;
+        let resources = ResourceStore::open(directory.path().join("resources.redb"))?;
+
+        let projection = resources.refresh("thread", &rollout, &index)?;
+        let data = projection.materialized_data();
+
+        assert!(data.changes.contains_key("/repo/src/a.rs"));
+        assert!(
+            data.attachments
+                .iter()
+                .any(|attachment| attachment.path.as_deref() == Some("/tmp/report.md"))
+        );
+        assert_eq!(projection.indexed_bytes, std::fs::metadata(&rollout)?.len());
+
+        std::fs::write(
+            &rollout,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\",\"id\":\"thread\",\"cwd\":\"/repo\",\"source\":\"cli\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn\"}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"patch_apply_end\",\"call_id\":\"patch\",\"changes\":{\"src/b.rs\":{\"type\":\"update\",\"diff\":\"-old\\n+new\\n\"}}}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn\"}}\n",
+            ),
+        )?;
+        let replaced = resources
+            .refresh("thread", &rollout, &index)?
+            .materialized_data();
+        assert!(!replaced.changes.contains_key("/repo/src/a.rs"));
+        assert!(replaced.changes.contains_key("/repo/src/b.rs"));
+        assert!(replaced.attachments.is_empty());
+        Ok(())
     }
 
     #[test]

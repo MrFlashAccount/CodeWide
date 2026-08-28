@@ -89,6 +89,7 @@ export class VoiceInputController {
   private retrySendAfter: ((text: string) => void) | null = null;
   private insertionCursor = 0;
   private transcribedDraft: string | null = null;
+  private originalDraft: string | null = null;
   private capturedAudioChunks = 0;
 
   constructor(private readonly resources: WorkspaceResourceDatabase) {}
@@ -147,6 +148,7 @@ export class VoiceInputController {
     this.put(binding.scope, { ...IDLE_VOICE, phase: "starting" });
     this.activeBinding = binding;
     const source = binding.source();
+    this.originalDraft = source;
     const selection = binding.selection();
     this.transcribedDraft = source;
     const renderVoiceTranscript = (transcript: string) => {
@@ -272,6 +274,7 @@ export class VoiceInputController {
         this.resetUi(binding.scope, { pendingSelection: sendAfter === null ? { start: this.insertionCursor, end: this.insertionCursor } : null });
         const finalDraft = this.transcribedDraft ?? binding.source();
         this.transcribedDraft = null;
+        this.originalDraft = null;
         sendAfter?.(finalDraft);
       } catch (cause) {
         if (!(cause instanceof UnretryableVoiceTranscriptionError)) {
@@ -296,6 +299,37 @@ export class VoiceInputController {
     } finally {
       if (this.finishPromise === operation) this.finishPromise = null;
     }
+  }
+
+  /** Discards the current/retryable recording and restores the pre-recording draft. */
+  async discard(scope: string): Promise<void> {
+    const binding = [this.activeBinding, this.retryBinding, this.binding]
+      .find((candidate) => candidate?.scope === scope) ?? null;
+    const originalDraft = this.originalDraft;
+    this.operation += 1;
+    this.stopCapture?.();
+    this.stopCapture = null;
+    cancelVoiceRecognition();
+    const session = this.session;
+    const retrySession = this.retrySession;
+    const pendingSession = this.sessionPromise;
+    this.session = null;
+    this.retrySession = null;
+    this.sessionPromise = null;
+    this.activeBinding = null;
+    this.retryBinding = null;
+    this.sendAfterFinish = null;
+    this.retrySendAfter = null;
+    this.transcribedDraft = null;
+    this.originalDraft = null;
+    this.capturedAudioChunks = 0;
+    if (binding !== null && originalDraft !== null) binding.updateDraft(originalDraft);
+    this.resetUi(scope);
+    await Promise.all([
+      session?.cancel().catch(() => undefined),
+      retrySession !== session ? retrySession?.cancel().catch(() => undefined) : undefined,
+      pendingSession?.then(async (pending) => await pending.cancel()).catch(() => undefined),
+    ]);
   }
 
   clearPendingSelection(scope: string): void {
@@ -372,6 +406,7 @@ export class VoiceInputController {
         this.resetUi(binding.scope, { pendingSelection: sendAfter === null ? { start: this.insertionCursor, end: this.insertionCursor } : null });
         const finalDraft = this.transcribedDraft ?? binding.source();
         this.transcribedDraft = null;
+        this.originalDraft = null;
         sendAfter?.(finalDraft);
       }
     }
@@ -385,6 +420,7 @@ export class VoiceInputController {
           this.stopCapture?.();
           this.stopCapture = null;
           this.resetUi(binding.scope, event.type === "error" ? { error: `Voice input stopped${event.text === undefined ? "" : ` · ${event.text.replaceAll("_", " ")}`}` } : {});
+          if (event.type === "final") this.originalDraft = null;
           if (this.activeBinding === binding) this.activeBinding = null;
         }
       });

@@ -1,15 +1,28 @@
-import type { ThreadListResponse } from "@codewide/codex-protocol/v0.147.0/v2";
-import {
-  restoreSubagentParent,
-  type RpcClient,
-  type SyncSnapshotThread,
-} from "@codewide/sync-client";
+import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
 
-const SUBAGENT_PAGE_SIZE = 100;
+type IndexedSubagent = {
+  id: string;
+  parentThreadId: string | null;
+  cwd: string;
+  createdAt: number;
+  updatedAt: number;
+  modelProvider: string;
+  cliVersion: string;
+  source: Thread["source"];
+  agentNickname: string | null;
+  agentRole: string | null;
+  archived: boolean;
+};
+
+type IndexedSubagentResponse = {
+  threads: IndexedSubagent[];
+};
 
 export function subagentActivityRootThreadId(payload: Record<string, unknown>): string | null {
-  // Wait for completion: item/started can race the descendant index before the
-  // newly spawned child has been committed by app-server.
+  // Wait for completion: item/started can race the new rollout header. The
+  // Companion watcher advances the local metadata index independently of the
+  // UI invalidation suppression window.
   if (payload.method !== "item/completed") return null;
   const params = record(payload.params);
   const item = record(params?.item);
@@ -18,50 +31,49 @@ export function subagentActivityRootThreadId(payload: Record<string, unknown>): 
   return typeof params.threadId === "string" ? params.threadId : null;
 }
 
-/**
- * Load the authoritative descendant tree for one visible root thread.
- *
- * The unscoped state-DB snapshot is intentionally fast, but older spawned
- * threads may be absent from its source-kind index. The app-server's
- * ancestor filter repairs rollout metadata and is therefore the correct
- * source for the per-thread Subagents affordance.
- */
+/** Load one descendant tree from the Companion's canonical parent index. */
 export async function loadSubagentDescendants(
   session: RpcClient,
   rootThreadId: string,
 ): Promise<SyncSnapshotThread[]> {
-  const loadPartition = async (archived: boolean): Promise<SyncSnapshotThread[]> => {
-    const snapshots: SyncSnapshotThread[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    do {
-      const response: ThreadListResponse = await session.rpc<ThreadListResponse>("thread/list", {
-        ancestorThreadId: rootThreadId,
-        archived,
-        cursor,
-        limit: SUBAGENT_PAGE_SIZE,
-        sortKey: "updated_at",
-        sortDirection: "desc",
-        useStateDbOnly: false,
-      });
-      snapshots.push(...response.data.map((thread) => ({
-        thread: restoreSubagentParent(thread),
-        archived,
-      })));
-      cursor = response.nextCursor;
-      if (cursor !== null && seenCursors.has(cursor)) {
-        throw new Error("thread/list returned a repeated subagent cursor");
-      }
-      if (cursor !== null) seenCursors.add(cursor);
-    } while (cursor !== null);
-    return snapshots;
-  };
+  const response = await session.rpc<IndexedSubagentResponse>("companion/threadSubagents/read", {
+    threadId: rootThreadId,
+  });
+  return response.threads.map((metadata) => ({
+    archived: metadata.archived,
+    thread: indexedSubagentThread(metadata, rootThreadId),
+  }));
+}
 
-  const [active, archived] = await Promise.all([
-    loadPartition(false),
-    loadPartition(true),
-  ]);
-  return [...active, ...archived];
+function indexedSubagentThread(metadata: IndexedSubagent, rootThreadId: string): Thread {
+  return {
+    id: metadata.id,
+    extra: null,
+    sessionId: rootThreadId,
+    forkedFromId: null,
+    parentThreadId: metadata.parentThreadId,
+    preview: "",
+    ephemeral: false,
+    section: null,
+    sectionEnteredAt: null,
+    historyMode: "paginated",
+    modelProvider: metadata.modelProvider,
+    createdAt: metadata.createdAt,
+    updatedAt: metadata.updatedAt,
+    recencyAt: metadata.updatedAt,
+    status: { type: "notLoaded" },
+    path: null,
+    cwd: metadata.cwd,
+    cliVersion: metadata.cliVersion,
+    source: metadata.source,
+    canAcceptDirectInput: null,
+    threadSource: null,
+    agentNickname: metadata.agentNickname,
+    agentRole: metadata.agentRole,
+    gitInfo: null,
+    name: null,
+    turns: [],
+  };
 }
 
 function record(value: unknown): Record<string, unknown> | null {

@@ -42,12 +42,18 @@ pub struct Tunnel {
     browser_token: Arc<str>,
     revoked: watch::Receiver<bool>,
     revoke: watch::Sender<bool>,
+    owner_device_id: Option<String>,
 }
 
 impl Tunnel {
     #[must_use]
     pub fn revoked(&self) -> watch::Receiver<bool> {
         self.revoked.clone()
+    }
+
+    #[must_use]
+    pub fn owner_device_id(&self) -> Option<&str> {
+        self.owner_device_id.as_deref()
     }
 }
 
@@ -122,6 +128,21 @@ impl LocalhostTunnelService {
         port: u32,
         ttl_seconds: Option<u64>,
     ) -> Result<CreatedTunnel, TunnelError> {
+        self.create_for_device(port, ttl_seconds, None).await
+    }
+
+    /// Creates a tunnel bound to the device transport policy that created it.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the same invalid port, TTL, and randomness failures as
+    /// [`Self::create`].
+    pub async fn create_for_device(
+        &self,
+        port: u32,
+        ttl_seconds: Option<u64>,
+        owner_device_id: Option<String>,
+    ) -> Result<CreatedTunnel, TunnelError> {
         let port = u16::try_from(port)
             .ok()
             .filter(|port| *port != 0)
@@ -141,6 +162,7 @@ impl LocalhostTunnelService {
             browser_token,
             revoked,
             revoke,
+            owner_device_id,
         };
         self.purge_expired().await;
         self.tunnels.lock().await.insert(id.clone(), tunnel);
@@ -158,6 +180,20 @@ impl LocalhostTunnelService {
             true
         } else {
             false
+        }
+    }
+
+    pub async fn revoke_device_tunnels(&self, device_id: &str) {
+        let mut tunnels = self.tunnels.lock().await;
+        let ids = tunnels
+            .iter()
+            .filter(|(_, tunnel)| tunnel.owner_device_id.as_deref() == Some(device_id))
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            if let Some(tunnel) = tunnels.remove(&id) {
+                let _ = tunnel.revoke.send(true);
+            }
         }
     }
 

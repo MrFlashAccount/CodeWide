@@ -2,8 +2,8 @@
   "expo": {
     "name": "CodeWide",
     "slug": "codewide",
-    "version": "0.2.82",
-    "runtimeVersion": "0.2.82-native-95",
+    "version": "0.2.94",
+    "runtimeVersion": "0.2.94-native-107",
     "updates": {
       "enabled": true,
       "url": "https://updates.example.invalid/api/updates",
@@ -33,6 +33,12 @@
       "expo-secure-store",
       "expo-sqlite",
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow CodeWide to use Face ID to unlock the app"
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "Allow CodeWide to scan one-time host pairing QR codes",
@@ -42,7 +48,7 @@
     ],
     "android": {
       "package": "dev.codexremote.app",
-      "versionCode": 95,
+      "versionCode": 107,
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
@@ -62,6 +68,9 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "syncV2Rollout": "canary"
     }
   }
 }

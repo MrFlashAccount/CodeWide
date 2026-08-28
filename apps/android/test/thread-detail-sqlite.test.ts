@@ -3,43 +3,11 @@ import { DatabaseSync } from "node:sqlite";
 
 const sqlite = vi.hoisted(() => {
   const insertedRows: unknown[][] = [];
-  const pendingRows: Array<{ __key: string; __payload: string }> = [];
   const deletedKeys: string[] = [];
-  const bootstrapIds = new Set<string>();
-  let bulkPendingDeletes = 0;
-  const legacyRow = {
-    id: "turn:server:thread:turn-1",
-    kind: "turn",
-    connectionId: "server",
-    remoteThreadId: "thread",
-    remoteTurnId: "turn-1",
-    sessionId: null,
-    lastOpenedAt: 10,
-    thread: null,
-    turn: { id: "turn-1", status: "completed", items: [] },
-    turnMetadata: null,
-    activityItems: null,
-  };
   const execute = vi.fn(async (sql: string, params: readonly unknown[] = []) => {
-    if (sql.includes("sqlite_master")) return { rows: [{ name: "collection_registry" }] };
-    if (sql.includes("FROM collection_registry")) return { rows: [{ table_name: "c_thread_details" }] };
-    if (sql.includes('SELECT value FROM "c_thread_details"')) {
-      return { rows: [{ value: JSON.stringify(legacyRow) }] };
-    }
-    if (sql.includes('SELECT COUNT(*) AS "row_count"') && sql.includes('"kind" = \'pending\'')) {
-      return { rows: [{ row_count: pendingRows.length }] };
-    }
     if (sql.includes('SELECT COUNT(*) AS "row_count"')) return { rows: [{ row_count: 0 }] };
-    if (sql.includes('SELECT 1 AS "present"')) {
-      return { rows: bootstrapIds.has(String(params[1])) ? [{ present: 1 }] : [] };
-    }
-    if (sql.includes('SELECT "__key", "__payload"') && sql.includes('"kind" = \'pending\'')) return { rows: pendingRows };
-    if (sql === 'DELETE FROM "codewide_thread_details" WHERE "kind" = \'pending\'') {
-      bulkPendingDeletes += 1;
-      pendingRows.length = 0;
-    } else if (sql.includes('DELETE FROM "codewide_thread_details"')) deletedKeys.push(String(params[0]));
+    if (sql.includes('DELETE FROM "codewide_thread_details"')) deletedKeys.push(String(params[0]));
     if (sql.includes('INSERT INTO "codewide_thread_details"')) insertedRows.push([...params]);
-    if (sql.includes('INSERT INTO "__tanstack_db_sqlite_bootstrap"')) bootstrapIds.add(String(params[1]));
     return { rows: [] };
   });
   const database = {
@@ -50,11 +18,7 @@ const sqlite = vi.hoisted(() => {
     database,
     execute,
     insertedRows,
-    pendingRows,
     deletedKeys,
-    bootstrapIds,
-    get bulkPendingDeletes() { return bulkPendingDeletes; },
-    resetBulkPendingDeletes() { bulkPendingDeletes = 0; },
   };
 });
 
@@ -69,48 +33,42 @@ import {
   rotateHistoryCache,
 } from "../src/data/thread-detail-sqlite.native";
 
-describe("thread detail SQLite bootstrap", () => {
+describe("thread detail SQLite adapter", () => {
   beforeEach(() => {
     sqlite.execute.mockClear();
     sqlite.database.transaction.mockClear();
     sqlite.insertedRows.length = 0;
-    sqlite.pendingRows.length = 0;
     sqlite.deletedKeys.length = 0;
-    sqlite.bootstrapIds.clear();
-    sqlite.resetBulkPendingDeletes();
   });
 
-  it("purges every legacy optimistic projection exactly once", async () => {
-    sqlite.pendingRows.push(
-      {
-        __key: "string:delivery",
-        __payload: JSON.stringify({ kind: "pending", pending: { presentation: "delivery" } }),
-      },
-      {
-        __key: "string:queue",
-        __payload: JSON.stringify({ kind: "pending", pending: { presentation: "queue" } }),
-      },
-    );
+  it("starts the direct model without scanning obsolete collection tables", async () => {
     const storage = createThreadDetailSqlite(() => undefined);
     await storage.prepare();
 
-    expect(sqlite.bulkPendingDeletes).toBe(1);
-    expect(sqlite.pendingRows).toEqual([]);
-    expect(sqlite.bootstrapIds).toContain("purge-persisted-pending:v1");
+    const sql = sqlite.execute.mock.calls.map(([statement]) => String(statement)).join("\n");
+    expect(sql).not.toContain("collection_registry");
+    expect(sql).not.toContain("__tanstack_db_sqlite_bootstrap");
+    expect(sql).not.toContain("c_thread_details");
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS "codewide_thread_detail_invalidations"');
+    expect(sql).toContain('DROP TABLE IF EXISTS "codewide_thread_invalidations"');
     await storage.close();
-
-    sqlite.pendingRows.push({
-      __key: "string:queue-after-migration",
-      __payload: JSON.stringify({ kind: "pending", pending: { presentation: "queue" } }),
-    });
-    const restarted = createThreadDetailSqlite(() => undefined);
-    await restarted.prepare();
-    expect(sqlite.bulkPendingDeletes).toBe(1);
-    expect(sqlite.pendingRows).toHaveLength(1);
-    await restarted.close();
   });
 
-  it("never persists a direct-delivery projection after startup", async () => {
+  it("persists refresh cursors through the chat-specific adapter", async () => {
+    const storage = createThreadDetailSqlite(() => undefined);
+    await storage.prepare();
+    sqlite.execute.mockClear();
+
+    await storage.upsertInvalidations([{ connectionId: "server", threadId: "thread", cursor: 17 }]);
+    await storage.clearInvalidation("server", "thread", 17);
+
+    const statements = sqlite.execute.mock.calls.map(([statement]) => String(statement));
+    expect(statements).toContainEqual(expect.stringContaining('INSERT INTO "codewide_thread_detail_invalidations"'));
+    expect(statements).toContainEqual(expect.stringContaining('DELETE FROM "codewide_thread_detail_invalidations"'));
+    await storage.close();
+  });
+
+  it("persists a direct-delivery projection until canonical history takes ownership", async () => {
     const storage = createThreadDetailSqlite(() => undefined);
     await storage.prepare();
     sqlite.insertedRows.length = 0;
@@ -151,26 +109,82 @@ describe("thread detail SQLite bootstrap", () => {
     });
     await storage.commit({ durable: true });
 
-    expect(sqlite.insertedRows).toEqual([]);
-    expect(sqlite.deletedKeys).toEqual(["string:delivery"]);
+    expect(sqlite.insertedRows).toHaveLength(1);
+    expect(sqlite.insertedRows[0]?.[0]).toBe("string:delivery");
+    expect(sqlite.deletedKeys).toEqual([]);
     await storage.close();
   });
 
-  it("imports the former TanStack collection before marking the direct model ready", async () => {
+  it("discards an abandoned logical transaction before the next writer begins", async () => {
+    const committed: unknown[][] = [];
+    const storage = createThreadDetailSqlite((changes) => committed.push([...changes]));
+    await storage.prepare();
+
+    storage.begin();
+    storage.write({ type: "delete", key: "abandoned" });
+    storage.rollback();
+
+    expect(() => storage.begin()).not.toThrow();
+    storage.write({ type: "delete", key: "committed" });
+    await storage.commit({ durable: true });
+
+    expect(committed).toEqual([[{ type: "delete", key: "committed" }]]);
+    expect(sqlite.deletedKeys).toEqual(["string:committed"]);
+    await storage.close();
+  });
+
+  it("guards an off-window canonical turn from a pending mirror", async () => {
+    const storage = createThreadDetailSqlite(() => undefined);
+    await storage.prepare();
+    sqlite.execute.mockClear();
+
+    storage.begin();
+    storage.write({
+      type: "insert",
+      value: {
+        id: "stable-client-key",
+        kind: "pending",
+        connectionId: "server",
+        remoteThreadId: "thread",
+        remoteTurnId: null,
+        historyEpoch: 0,
+        ordinal: 1,
+        sessionId: null,
+        lastOpenedAt: 0,
+        sealed: false,
+        thread: null,
+        turn: null,
+        turnMetadata: null,
+        activityItems: null,
+        pending: {
+          commandId: "command",
+          method: "turn/start",
+          presentation: "delivery",
+          text: "hello",
+          attachments: [],
+          state: "failed",
+          attempts: 1,
+          lastError: "rejected",
+          createdAt: 1,
+          updatedAt: 2,
+          order: 1,
+        },
+      },
+    });
+    await storage.commit({ durable: true });
+
+    const statement = sqlite.execute.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('INSERT INTO "codewide_thread_details"'));
+    expect(statement).toContain('WHERE "codewide_thread_details"."kind" != \'turn\'');
+    await storage.close();
+  });
+
+  it("does not import rows from another persistence runtime", async () => {
     const storage = createThreadDetailSqlite(() => undefined);
     await storage.prepare();
 
-    expect(sqlite.insertedRows).toHaveLength(1);
-    expect(JSON.parse(sqlite.insertedRows[0]?.[1] as string)).toMatchObject({
-      id: "turn:server:thread:turn-1",
-      historyEpoch: 0,
-      ordinal: 0,
-      sealed: true,
-    });
-    expect(sqlite.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO "__tanstack_db_sqlite_bootstrap"'),
-      ["thread-details-v2", "tanstack-persistence:thread-details-v2:v1"],
-    );
+    expect(sqlite.insertedRows).toEqual([]);
     await storage.close();
   });
 

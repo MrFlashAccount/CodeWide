@@ -1,7 +1,6 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import {
   applyThreadProjectionPatchesImmutable,
-  legacyThreadProjectionPatch,
   preserveProjectedTurnMetadata,
   projectedTurnMetadata,
   threadIdFromEvent,
@@ -11,16 +10,14 @@ import {
   type SyncEvent,
   type SyncSnapshotThread,
 } from "@codewide/sync-client";
-import type { Collection } from "@tanstack/react-db";
-
-import { createPersistentCollectionModel } from "./persistent-collection.native";
-import { getUiCacheSqliteDatabase, registerUiCacheCollectionFlusher } from "./ui-cache-persistence.native";
+import { registerUiCacheCollectionFlusher } from "./ui-cache-persistence.native";
 import {
   compactCompletedTurnForStorage,
   authoritativeTimelineRowId,
   materializeThreadDetail,
   mergePendingTimelineOverlays,
   mergePendingTimelineEntry,
+  normalizeConversationTurn,
   reconcileAuthoritativeThreadDetailRow,
   reconcileAuthoritativeThread,
   shouldWriteAuthoritativeThreadDetailRow,
@@ -40,8 +37,10 @@ import {
   type PendingTimelineMutation,
   type ThreadDetailRow,
 } from "./thread-detail-projection";
+import { cloneProtocolValue } from "./clone-protocol-value";
 import type { HostQueuedPrompt } from "./queue-event";
 import type { NativeCommandDelivery } from "../native/native-transport";
+import { pendingDeliveryStateFromCompanion, pendingDeliveryStateFromNative } from "./thread-delivery-state";
 import type { ThreadEventProjection } from "./thread-projection-store";
 import { invalidationCanBeCleared, latestThreadInvalidations, shouldPersistThreadInvalidation } from "./thread-detail-invalidation";
 import { parseQueuedInput } from "./queued-input";
@@ -63,23 +62,16 @@ import {
 } from "./thread-navigation-metrics";
 import {
   createThreadDetailSqlite,
+  type ResolvedThreadDetailWindow,
   type ThreadDetailSqliteControls,
   type ThreadDetailSqliteDiagnostics,
 } from "./thread-detail-sqlite.native";
-import { isStableThreadCursorTurn } from "./thread-cursor-sync";
 import { ThreadWindowIntentController } from "./thread-window-intent";
 import { THREAD_HISTORY_PAGE_SIZE, THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
 import { threadLoadHasResidentSnapshot } from "./thread-load-status";
 import { recordThreadHistoryTelemetry, telemetryErrorKind } from "./thread-history-telemetry";
 
 const THREAD_DETAIL_COLLECTION_ID = "thread-details-v2";
-const THREAD_INVALIDATION_COLLECTION_ID = "thread-detail-invalidations-v1";
-const DURABLE_LIVE_BOUNDARIES = new Set([
-  "turn/started",
-  "turn/completed",
-  "thread/status/changed",
-  "thread/deleted",
-]);
 const OPTIMISTIC_RECONCILIATION_STALL_MS = 30_000;
 
 export { materializePendingTimeline, materializeThreadDetails, materializeThreadTurns } from "./thread-detail-projection";
@@ -89,6 +81,7 @@ export type ThreadDetailDatabase = {
   readonly sessionId: string;
   readonly chat: ThreadChatModel;
   prepare(): Promise<void>;
+  setRemoteLoader(loader: ThreadRemoteLoader): void;
   windowResource(request: ThreadChatWindowRequest): ThreadChatWindowResource;
   preloadWindow(request: ThreadChatWindowRequest): () => void;
   retainWindow(connectionId: string, threadId: string): () => void;
@@ -101,6 +94,7 @@ export type ThreadDetailDatabase = {
     detailRows: ThreadDetailRow[];
     liveRows: ThreadDetailRow[];
   };
+  windowCoverage(request: ThreadChatWindowRequest, snapshot: ThreadChatWindowSnapshot): ThreadWindowCoverage;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
   captureRefreshCursor(connectionId: string, threadId: string): number | null;
@@ -126,6 +120,34 @@ export type ThreadDetailDatabase = {
   close(): Promise<void>;
 };
 
+export type ThreadWindowCoverage = {
+  complete: boolean;
+  reason: "complete" | "metadata-missing" | "mutable-head" | "tail-uninitialized" | "coverage-unproven" | "anchor-missing" | "history-evicted";
+};
+
+export type ThreadRemoteLoader = {
+  observe?(input: {
+    connectionId: string;
+    threadId: string;
+  }): void;
+  reconcilePending(input: {
+    connectionId: string;
+    threadId: string;
+  }): Promise<void>;
+  hydrateWindow(input: {
+    request: ThreadChatWindowRequest;
+    cachedThread: Thread | null;
+    requireAuthoritative: boolean;
+    reason: ThreadWindowCoverage["reason"] | "invalidated";
+  }): Promise<void>;
+  loadOlder(input: {
+    connectionId: string;
+    threadId: string;
+    cursor: string;
+    historyEpoch: number;
+  }): Promise<void>;
+};
+
 export type ThreadHistoryPrependResult = {
   accepted: boolean;
   historyEpoch: number;
@@ -145,13 +167,13 @@ export type PendingTimelineInput = Omit<PendingTimelineEntry, "order"> & { order
 };
 
 type ThreadInvalidationRow = {
-  id: string;
   connectionId: string;
   threadId: string;
   cursor: number;
 };
 
 type SyncControls = ThreadDetailSqliteControls;
+type SyncWriteControls = Pick<SyncControls, "write">;
 
 type OrdinalBounds = { min: number; max: number; dirty: boolean };
 
@@ -359,6 +381,54 @@ class ThreadDetailSource extends Map<string, ThreadDetailRow> {
   }
 }
 
+type ThreadDetailTransactionResult<T> = {
+  value: T;
+  durable: boolean;
+};
+
+/**
+ * Owns both halves of one detail write: the SQLite staging map and the indexed
+ * resident source. The mutation callback is intentionally synchronous so no
+ * second writer can enter while this logical transaction is open.
+ */
+async function runThreadDetailTransaction<T>(
+  source: ThreadDetailSource,
+  controls: SyncControls,
+  mutate: (writes: SyncWriteControls) => ThreadDetailTransactionResult<T>,
+  onRollback?: () => void,
+): Promise<T> {
+  const previousRows = new Map<string, ThreadDetailRow | undefined>();
+  const writes: SyncWriteControls = {
+    write(change) {
+      const key = change.type === "delete" ? change.key : change.value.id;
+      if (!previousRows.has(key)) previousRows.set(key, source.get(key));
+      controls.write(change);
+    },
+  };
+  controls.begin({ immediate: true });
+  let committed = false;
+  try {
+    const result = mutate(writes);
+    const checkpoint = controls.commit({ durable: result.durable });
+    // commit() releases the logical transaction synchronously. A later
+    // durable-checkpoint rejection is retried by the SQLite adapter and must
+    // not rewind the already published resident model.
+    committed = true;
+    await checkpoint;
+    return result.value;
+  } catch (cause) {
+    if (!committed) {
+      controls.rollback();
+      for (const [key, previous] of previousRows) {
+        if (previous === undefined) source.delete(key);
+        else source.set(key, previous);
+      }
+      onRollback?.();
+    }
+    throw cause;
+  }
+}
+
 export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const sessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const source = new ThreadDetailSource();
@@ -383,6 +453,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
   const reportedStalledOptimisticFingerprintByThread = new Map<string, string>();
   let storageDiagnosticsPromise: Promise<ThreadDetailSqliteDiagnostics> | null = null;
   let storageDiagnosticsReported = false;
+  let remoteLoader: ThreadRemoteLoader | null = null;
 
   const detailStorage = createThreadDetailSqlite((changes) => {
     const touched = new Map<string, { connectionId: string; threadId: string }>();
@@ -417,21 +488,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       console.warn("UI cache SQLite diagnostics failed", cause);
     });
   };
-  const invalidationModel = createPersistentCollectionModel<ThreadInvalidationRow, string>({
-    id: THREAD_INVALIDATION_COLLECTION_ID,
-    tableName: "codewide_thread_invalidations",
-    schemaVersion: 1,
-    database: getUiCacheSqliteDatabase(),
-    getKey: (row) => row.id,
-    columns: [
-      { property: "connectionId", column: "connection_id", type: "TEXT" },
-      { property: "threadId", column: "thread_id", type: "TEXT" },
-      { property: "cursor", column: "cursor", type: "REAL" },
-    ],
-    indexes: [["connectionId", "threadId"]],
-    legacyCollectionId: THREAD_INVALIDATION_COLLECTION_ID,
-  });
-  const invalidations = invalidationModel.collection;
+  const invalidations = new Map<string, ThreadInvalidationRow>();
   const loadDurablePrependRows = async (
     connectionId: string,
     threadId: string,
@@ -461,79 +518,230 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     return detailStorage;
   };
 
-  const writeOwnedRow = (controls: SyncControls, key: string, row: ThreadDetailRow): boolean => {
+  const runWriteTransaction = async <T>(
+    mutate: (writes: SyncWriteControls) => ThreadDetailTransactionResult<T>,
+  ): Promise<T> => {
+    const previousOverlays = new Map(stagedPendingOverlays);
+    return await runThreadDetailTransaction(source, ensureControls(), mutate, () => {
+      stagedPendingOverlays.clear();
+      for (const [key, overlay] of previousOverlays) stagedPendingOverlays.set(key, overlay);
+    });
+  };
+
+  const writeOwnedRow = (controls: SyncWriteControls, key: string, row: ThreadDetailRow): boolean => {
     // Once the server claims a stable client-id key, no older optimistic
     // transaction may roll it back or persist a pending tombstone over it.
     if (row.kind === "turn") stagedPendingOverlays.delete(key);
     return writeRow(source, controls, key, row);
   };
 
+  const commitThreadTurn = (
+    controls: SyncWriteControls,
+    input: {
+      connectionId: string;
+      threadId: string;
+      turn: Turn;
+      ordinal: number;
+      historyEpoch: number;
+      authority: "live" | "authoritative";
+    },
+  ): number => {
+    const previousKey = source.turnRowKey(input.connectionId, input.threadId, input.turn.id);
+    const previousByTurnId = previousKey === null ? undefined : source.get(previousKey);
+    const residentTurn = previousByTurnId?.kind === "turn" ? previousByTurnId.turn : null;
+    const sourceTurn = normalizeConversationTurn(input.turn, residentTurn);
+    const completeEnvelope = sourceTurn === input.turn;
+    // A live completion is still the mutable journal head. Keep its full item
+    // projection in the turn row so leaving and reopening the chat cannot turn
+    // an already received tool call into a summary-only turn before the
+    // authoritative repair arrives. A metadata-only recovery envelope follows
+    // the same rule: it may update lifecycle state, but cannot seal or compact
+    // content that it did not carry.
+    const turn = input.authority === "authoritative" && completeEnvelope
+      ? compactCompletedTurnForStorage(sourceTurn)
+      : sourceTurn;
+    const key = turnStorageKey(input.connectionId, input.threadId, turn);
+    const previous = previousKey === null ? source.get(key) : previousByTurnId;
+    const incoming = turnRow(
+      input.connectionId,
+      input.threadId,
+      turn,
+      input.ordinal,
+      input.historyEpoch,
+      input.authority === "authoritative" && completeEnvelope ? "authoritative" : "live",
+    );
+    const content = input.authority === "authoritative"
+      ? reconcileAuthoritativeThreadDetailRow(previous, incoming)
+      : incoming;
+    const contentOrdinal = content.ordinal;
+    const contentSealed = content.sealed;
+    let mutationCount = 0;
+
+    if (previousKey !== null && previousKey !== content.id && previous !== content) {
+      if (deleteRow(source, controls, previousKey)) mutationCount += 1;
+    }
+    const shouldWriteContent = input.authority === "authoritative"
+      ? shouldWriteAuthoritativeThreadDetailRow(previous, content)
+      : shouldWriteThreadDetailRow(previous, content);
+    if (shouldWriteContent && writeOwnedRow(controls, content.id, content)) mutationCount += 1;
+
+    // A sealed turn is one immutable fact family: content, metadata and
+    // ordinal must all come from the same commit. When reconciliation keeps
+    // the previous sealed content, its existing metadata row stays untouched.
+    const metadata = content === previous ? null : projectedTurnMetadata(turn);
+    if (metadata !== null) {
+      const row = turnMetaRow(
+        input.connectionId,
+        input.threadId,
+        turn.id,
+        metadata,
+        contentOrdinal,
+        contentSealed,
+        input.historyEpoch,
+      );
+      if (writeOwnedRow(controls, row.id, row)) mutationCount += 1;
+    }
+
+    // When the authoritative projection seals and compacts a turn, preserve
+    // the richest full projection that is already local as its activity
+    // overlay. A cursor catch-up commonly returns itemsView=summary; without
+    // this handoff it replaced the mutable full row and permanently discarded
+    // tool calls that had arrived through the live journal.
+    const overlayKey = activityKey(input.connectionId, input.threadId, turn.id);
+    const fullActivitySource = sourceTurn.itemsView === "full"
+      ? sourceTurn
+      : previous?.kind === "turn" && previous.turn?.itemsView === "full"
+        ? previous.turn
+        : null;
+    if (contentSealed && turn.itemsView === "summary" && fullActivitySource !== null) {
+      const row = activityRow(
+        input.connectionId,
+        input.threadId,
+        turn.id,
+        contentOrdinal,
+        fullActivitySource.items,
+        input.historyEpoch,
+      );
+      if (shouldWriteThreadDetailRow(source.get(overlayKey), row)
+        && writeOwnedRow(controls, overlayKey, row)) mutationCount += 1;
+    }
+
+    // Activity is part of the same ordered turn family and follows its
+    // canonical ordinal/history generation in the same SQLite transaction.
+    const overlay = source.get(overlayKey);
+    if (overlay !== undefined
+      && (overlay.historyEpoch !== input.historyEpoch || overlay.ordinal !== contentOrdinal)) {
+      if (writeOwnedRow(controls, overlayKey, {
+        ...overlay,
+        historyEpoch: input.historyEpoch,
+        ordinal: contentOrdinal,
+      })) mutationCount += 1;
+    }
+    return mutationCount;
+  };
+
+  const commitThreadProjection = async (input: {
+    connectionId: string;
+    threadId: string;
+    turns: readonly Turn[];
+    ordinals: ReadonlyMap<string, number>;
+    historyEpoch: number;
+    authority: "live" | "authoritative";
+    threadMeta?: ThreadDetailRow;
+    historyCursor?: { value: string | null };
+    pruneMissingMutable?: boolean;
+    durable: boolean;
+  }): Promise<number> => await runWriteTransaction((controls) => {
+    let mutationCount = 0;
+
+    if (input.threadMeta !== undefined) {
+      if (writeOwnedRow(controls, input.threadMeta.id, input.threadMeta)) mutationCount += 1;
+    } else if (input.historyCursor !== undefined) {
+      const metaKey = threadMetaKey(input.connectionId, input.threadId);
+      const meta = source.get(metaKey);
+      if (meta?.kind === "thread" && meta.historyCursor !== input.historyCursor.value) {
+        if (writeOwnedRow(controls, metaKey, { ...meta, historyCursor: input.historyCursor.value })) mutationCount += 1;
+      }
+    }
+
+    if (input.pruneMissingMutable === true) {
+      const incomingTurnIds = new Set(input.turns.map(({ id }) => id));
+      for (const row of source.rowsForThread(input.connectionId, input.threadId)) {
+        if (row.kind !== "turn" || row.sealed || row.remoteTurnId === null || incomingTurnIds.has(row.remoteTurnId)) continue;
+        if (deleteRow(source, controls, row.id)) mutationCount += 1;
+        if (deleteRow(source, controls, turnMetaKey(input.connectionId, input.threadId, row.remoteTurnId))) mutationCount += 1;
+        if (deleteRow(source, controls, activityKey(input.connectionId, input.threadId, row.remoteTurnId))) mutationCount += 1;
+      }
+    }
+
+    for (const turn of input.turns) {
+      const ordinal = input.ordinals.get(turn.id);
+      if (ordinal === undefined) throw new Error(`Missing ordinal for turn ${turn.id}`);
+      mutationCount += commitThreadTurn(controls, {
+        connectionId: input.connectionId,
+        threadId: input.threadId,
+        turn,
+        ordinal,
+        historyEpoch: input.historyEpoch,
+        authority: input.authority,
+      });
+    }
+
+    return { value: mutationCount, durable: mutationCount > 0 && input.durable };
+  });
+
   const persistPendingMutation = async (
     mutation: PendingTimelineMutation,
     durable = false,
   ): Promise<boolean> => await writes.run(async () => {
     if (disposed) return false;
-    const controls = ensureControls();
-    controls.begin({ immediate: true });
-    let persistentChanged = false;
     const volatileChanges: Array<
       { type: "insert" | "update"; value: ThreadDetailRow }
       | { type: "delete"; key: string }
     > = [];
     const touchedVolatileScopes = new Map<string, { connectionId: string; threadId: string }>();
-    for (const key of mutation.deletes) {
-      const previous = source.get(key);
-      // An authoritative turn owns the stable client-id row forever. A late
-      // queue receipt must never delete or replace real server content.
-      if (previous?.kind === "turn") {
-        stagedPendingOverlays.delete(key);
-        continue;
-      }
-      if (previous?.kind === "pending") {
-        source.delete(key);
-        volatileChanges.push({ type: "delete", key });
-        touchedVolatileScopes.set(threadScope(previous.connectionId, previous.remoteThreadId), {
-          connectionId: previous.connectionId,
-          threadId: previous.remoteThreadId,
-        });
-      }
-      if (previous?.kind === "pending" || stagedPendingOverlays.has(key)) {
-        // Direct delivery is reconstructed from Kotlin's durable outbox. The
-        // delete is still persisted so installations which used the former
-        // dual-owner model purge any legacy SQLite projection.
-        controls.write({ type: "delete", key });
-        persistentChanged = true;
-      }
-      // A removed optimistic row must not be resurrected by the next SQLite
-      // window install. The overlay only protects the command while its native
-      // acceptance transaction is genuinely in flight.
-      stagedPendingOverlays.delete(key);
-    }
-    for (const row of mutation.upserts) {
-      if (row.kind !== "pending" || row.pending === null || row.pending === undefined) continue;
-      const previous = source.get(row.id);
-      if (previous?.kind === "turn") continue;
-      const next = previous?.kind === "pending" && previous.pending !== null && previous.pending !== undefined
-        ? { ...row, pending: mergePendingTimelineEntry(previous.pending, row.pending) }
-        : row;
-      if (next.pending?.presentation === "delivery") {
-        if (previous === undefined || !sameThreadDetailRow(previous, next)) {
-          source.set(next.id, next);
-          volatileChanges.push({ type: previous === undefined ? "insert" : "update", value: next });
-          touchedVolatileScopes.set(threadScope(next.connectionId, next.remoteThreadId), {
-            connectionId: next.connectionId,
-            threadId: next.remoteThreadId,
-          });
+    await runWriteTransaction((controls) => {
+      let persistentChanged = false;
+      for (const key of mutation.deletes) {
+        const previous = source.get(key);
+        // An authoritative turn owns the stable client-id row forever. A late
+        // queue receipt must never delete or replace real server content.
+        if (previous?.kind === "turn") {
+          stagedPendingOverlays.delete(key);
+          continue;
         }
-        continue;
+        if (previous?.kind === "pending") {
+          if (deleteRow(source, controls, key)) persistentChanged = true;
+          volatileChanges.push({ type: "delete", key });
+          touchedVolatileScopes.set(threadScope(previous.connectionId, previous.remoteThreadId), {
+            connectionId: previous.connectionId,
+            threadId: previous.remoteThreadId,
+          });
+        } else if (stagedPendingOverlays.has(key)) {
+          // The optimistic overlay can exist before its durable row is visible.
+          controls.write({ type: "delete", key });
+          persistentChanged = true;
+        }
+        // A removed optimistic row must not be resurrected by the next SQLite
+        // window install. The overlay only protects the command while its native
+        // acceptance transaction is genuinely in flight.
+        stagedPendingOverlays.delete(key);
       }
-      if (writeOwnedRow(controls, next.id, next)) persistentChanged = true;
-      else if (stagedPendingOverlays.has(next.id)) {
-        controls.write({ type: "update", value: next });
-        persistentChanged = true;
+      for (const row of mutation.upserts) {
+        if (row.kind !== "pending" || row.pending === null || row.pending === undefined) continue;
+        const previous = source.get(row.id);
+        if (previous?.kind === "turn") continue;
+        const next = previous?.kind === "pending" && previous.pending !== null && previous.pending !== undefined
+          ? { ...row, pending: mergePendingTimelineEntry(previous.pending, row.pending) }
+          : row;
+        if (writeOwnedRow(controls, next.id, next)) persistentChanged = true;
+        else if (stagedPendingOverlays.has(next.id)) {
+          controls.write({ type: "update", value: next });
+          persistentChanged = true;
+        }
       }
-    }
-    await controls.commit({ durable: durable && persistentChanged });
+      return { value: undefined, durable: durable && persistentChanged };
+    });
     if (volatileChanges.length > 0) {
       chat.publishChanges(volatileChanges);
       for (const { connectionId, threadId } of touchedVolatileScopes.values()) {
@@ -560,7 +768,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       // `sending` before the host deduplicates them. Materializing those deltas
       // as new rows makes dozens of historical bubbles flash into the resident
       // window. Only a full native-ledger reconciliation may reconstruct a
-      // missing row after process death.
+      // missing non-terminal row after process death. A bare delivered receipt
+      // is not enough to reconstruct UI: old receipts can outlive their
+      // canonical turns, including turns outside the resident SQLite window.
       if (existing === undefined && (delivery.state === "delivered"
         || !allowInsert
         || !source.has(threadMetaKey(delivery.connectionId, delivery.threadId)))) return;
@@ -570,7 +780,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         presentation: existing?.pending?.presentation ?? "delivery",
         text: delivery.text,
         attachments: existing?.pending?.attachments ?? delivery.attachments,
-        state: delivery.state,
+        state: pendingDeliveryStateFromNative(delivery.state),
         attempts: delivery.attempts,
         lastError: delivery.lastError,
         createdAt: delivery.createdAt,
@@ -630,7 +840,6 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     suppliedHistoryCursor?: string | null,
   ): Promise<void> => {
     if (disposed) throw new Error("Thread detail database is closed");
-    const controls = ensureControls();
     if (mode === "authoritative" || mode === "append") {
       for (const row of await loadDurableAuthoritativeRows(
         connectionId,
@@ -648,6 +857,14 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     const historyCursor = authoritativeDisconnected
       ? suppliedHistoryCursor
       : previousMeta?.historyCursor === undefined ? suppliedHistoryCursor : previousMeta.historyCursor;
+    const historyHadTurns = previousMeta?.historyHadTurns === true
+      || incoming.turns.length > 0
+      || existingRows.some((row) => row.kind === "turn")
+      || typeof suppliedHistoryCursor === "string"
+      ? true
+      : mode === "authoritative" && suppliedHistoryCursor !== undefined
+        ? false
+        : previousMeta?.historyHadTurns;
     const currentSnapshot = materializeThreadDetail(currentRows, connectionId, incoming.id, sessionId);
     const current = currentSnapshot?.thread;
     const authoritative = mode === "authoritative" && currentSnapshot?.fresh === true
@@ -656,92 +873,152 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     const thread = reconcileAuthoritativeThread(authoritative, current, preserveConcurrentHead);
     const ordinalSourceRows = authoritativeDisconnected ? [] : currentRows;
     const authoritativeOrdinals = projectAuthoritativeTurnOrdinals(ordinalSourceRows, thread.turns.map((turn) => turn.id));
-    const nextRows = rowsForThread(connectionId, thread, sessionId, openedAt, authoritativeOrdinals, historyEpoch, historyCursor);
-    const prefix = threadRowPrefix(connectionId, thread.id);
-    controls.begin({ immediate: true });
-    let mutationCount = 0;
-    if (mode === "authoritative") {
-      // A bounded refresh adds/reconciles the hot tail. Older sealed history
-      // stays resident and is never rewritten or discarded just because it is
-      // outside the server's latest page. Only an abandoned mutable head is
-      // removed when the authoritative page no longer contains it.
-      for (const row of source.rowsForThread(connectionId, thread.id)) {
-        const key = row.id;
-        if (!key.startsWith(prefix) || row.kind !== "turn" || row.sealed || nextRows.has(key)) continue;
-        source.delete(key);
-        controls.write({ type: "delete", key });
-        mutationCount += 1;
-        if (row.remoteTurnId === null) continue;
-        if (deleteRow(source, controls, turnMetaKey(connectionId, thread.id, row.remoteTurnId))) mutationCount += 1;
-        if (deleteRow(source, controls, activityKey(connectionId, thread.id, row.remoteTurnId))) mutationCount += 1;
-      }
-    }
-    for (const [key, row] of nextRows) {
-      const previous = source.get(key);
-      const reconciled = reconcileAuthoritativeThreadDetailRow(previous, row);
-      // Completed turn content is append-only. Late token/cost/diff changes go
-      // to turnMeta and never invalidate the large history row.
-      if (!shouldWriteAuthoritativeThreadDetailRow(previous, reconciled)) continue;
-      if (writeOwnedRow(controls, key, reconciled)) mutationCount += 1;
-    }
-    // Activity and metadata are stored separately from immutable turn content.
-    // Keep their keyset position aligned when an overlapping authoritative
-    // page repairs a turn ordinal.
-    for (const [turnId, ordinal] of authoritativeOrdinals) {
-      for (const key of [turnMetaKey(connectionId, thread.id, turnId), activityKey(connectionId, thread.id, turnId)]) {
-        const previous = source.get(key);
-        if (previous === undefined || (previous.ordinal === ordinal && previous.historyEpoch === historyEpoch)) continue;
-        if (writeOwnedRow(controls, key, { ...previous, ordinal, historyEpoch })) mutationCount += 1;
-      }
-    }
-    if (mutationCount === 0) await controls.commit();
-    else await controls.commit({ durable: true });
+    const coverage = projectAuthoritativeCoverage(
+      previousMeta,
+      existingRows,
+      currentHistoryEpoch,
+      historyEpoch,
+      thread.turns,
+      authoritativeOrdinals,
+      mode,
+      historyHadTurns,
+    );
+    await commitThreadProjection({
+      connectionId,
+      threadId: thread.id,
+      turns: thread.turns,
+      ordinals: authoritativeOrdinals,
+      historyEpoch,
+      authority: mode === "live" ? "live" : "authoritative",
+      threadMeta: threadRow(
+        connectionId,
+        thread,
+        sessionId,
+        openedAt,
+        historyEpoch,
+        historyCursor,
+        historyHadTurns,
+        coverage.min,
+        coverage.max,
+      ),
+      // A bounded refresh keeps sealed history outside the tail page and
+      // removes only mutable turns absent from the authoritative result.
+      pruneMissingMutable: mode === "authoritative",
+      durable: true,
+    });
   };
 
   const publishLiveSlice = (connectionId: string, thread: Thread, durable: boolean): Promise<void> => {
     if (disposed) return Promise.resolve();
-    const controls = ensureControls();
     const metaKey = threadMetaKey(connectionId, thread.id);
     const previousMeta = source.get(metaKey);
     if (previousMeta?.kind !== "thread") return Promise.resolve();
     const historyEpoch = previousMeta.historyEpoch;
     let nextOrdinal = (source.ordinalBounds(connectionId, thread.id, historyEpoch)?.max ?? -1) + 1;
-    controls.begin({ immediate: true });
-    let mutationCount = writeOwnedRow(controls, metaKey, threadRow(
-      connectionId,
-      thread,
-      previousMeta.sessionId,
-      previousMeta.lastOpenedAt,
-      historyEpoch,
-      previousMeta.historyCursor,
-    )) ? 1 : 0;
+    const ordinals = new Map<string, number>();
     for (const rawTurn of thread.turns) {
-      const turn = compactCompletedTurnForStorage(rawTurn);
-      const key = turnStorageKey(connectionId, thread.id, turn);
-      const previousKey = source.turnRowKey(connectionId, thread.id, turn.id);
+      const previousKey = source.turnRowKey(connectionId, thread.id, rawTurn.id);
       const previous = previousKey === null ? undefined : source.get(previousKey);
-      const currentByKey = source.get(key);
+      const currentByKey = source.get(turnStorageKey(connectionId, thread.id, rawTurn));
       const ordinal = reusableTurnOrdinal(previous, historyEpoch)
         ?? reusableTurnOrdinal(currentByKey, historyEpoch)
         ?? nextOrdinal++;
-      if (previousKey !== null && previousKey !== key) {
-        source.delete(previousKey);
-        controls.write({ type: "delete", key: previousKey });
-        mutationCount += 1;
-      }
-      const content = turnRow(connectionId, thread.id, turn, ordinal, historyEpoch);
-      if (shouldWriteThreadDetailRow(source.get(key), content) && writeOwnedRow(controls, key, content)) mutationCount += 1;
-      const metadata = projectedTurnMetadata(turn);
-      if (metadata !== null) {
-        const metadataRow = turnMetaRow(connectionId, thread.id, turn.id, metadata, ordinal, turn.status !== "inProgress", historyEpoch);
-        if (writeOwnedRow(controls, metadataRow.id, metadataRow)) mutationCount += 1;
-      }
+      ordinals.set(rawTurn.id, ordinal);
     }
-    if (mutationCount === 0) {
-      void controls.commit();
-      return Promise.resolve();
-    }
-    return controls.commit({ durable });
+    return commitThreadProjection({
+      connectionId,
+      threadId: thread.id,
+      turns: thread.turns,
+      ordinals,
+      historyEpoch,
+      authority: "live",
+      threadMeta: threadRow(
+        connectionId,
+        thread,
+        previousMeta.sessionId,
+        previousMeta.lastOpenedAt,
+        historyEpoch,
+        previousMeta.historyCursor,
+        previousMeta.historyHadTurns === true
+          || thread.turns.length > 0
+          || source.rowsForThread(connectionId, thread.id).some((row) => row.kind === "turn"),
+        previousMeta.historyCoverageMinOrdinal,
+        previousMeta.historyCoverageMaxOrdinal,
+      ),
+      durable,
+    }).then(() => undefined);
+  };
+
+  const readStoredWindow = async (
+    request: ThreadChatWindowRequest,
+    requestedAt: number,
+  ): Promise<ResolvedThreadDetailWindow> => {
+    const sqliteStartedAt = performance.now();
+    const loaded = await detailStorage.loadResolvedWindow({
+      connectionId: request.connectionId,
+      threadId: request.threadId,
+      anchorTurnId: request.anchorTurnId,
+      turnLimit: THREAD_RESIDENT_TURN_LIMIT,
+      newerBuffer: THREAD_HISTORY_PAGE_SIZE,
+    });
+    recordThreadNavigationMeasure(
+      request.connectionId,
+      request.threadId,
+      "chat_window_sqlite",
+      performance.now() - sqliteStartedAt,
+      {
+        values: {
+          elapsedMs: performance.now() - requestedAt,
+          turnRows: loaded.turnRows.length,
+          detailRows: loaded.detailRows.length,
+          liveRows: loaded.liveRows.length,
+        },
+      },
+    );
+    return loaded;
+  };
+
+  const installStoredWindow = (
+    request: ThreadChatWindowRequest,
+    generation: number,
+    loaded: ResolvedThreadDetailWindow,
+    requestedAt: number,
+    navigationId: string | null,
+  ): boolean => {
+    const persistedRows = [...loaded.turnRows, ...loaded.detailRows, ...loaded.liveRows];
+    const rows = mergePendingTimelineOverlays(
+      composeInitialRangeRows(
+        source.rowsForThread(request.connectionId, request.threadId),
+        persistedRows,
+        loaded.historyEpoch,
+      ),
+      [...stagedPendingOverlays.values()],
+      request.connectionId,
+      request.threadId,
+    );
+    const membership = rangeMembership(rows, loaded.historyEpoch);
+    const committed = chat.commitWindow(request, generation, {
+      scope: threadChatScope(request.connectionId, request.threadId),
+      requestKey: threadChatRequestKey(request),
+      historyEpoch: loaded.historyEpoch,
+      latestSealedOrdinal: loaded.latestSealedOrdinal,
+      earliestSealedOrdinal: loaded.earliestSealedOrdinal,
+      residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
+      ...membership,
+      rows,
+    });
+    if (!committed) return false;
+    source.replaceThreadLoaded(request.connectionId, request.threadId, rows);
+    reportStorageDiagnostics(request.connectionId, request.threadId);
+    recordThreadNavigationVisualEvent(request.connectionId, request.threadId, "chat_window_model_installed", {
+      values: {
+        totalLoadMs: performance.now() - requestedAt,
+        turnRows: loaded.turnRows.length,
+        detailRows: loaded.detailRows.length,
+        liveRows: loaded.liveRows.length,
+      },
+    }, navigationId ?? undefined);
+    return true;
   };
 
   const loadWindow = async (request: ThreadChatWindowRequest, navigationToken?: number): Promise<void> => {
@@ -756,8 +1033,24 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       },
     }, navigationId ?? undefined);
     const generation = chat.startWindow(request);
+    let cachedWindow: ResolvedThreadDetailWindow | null = null;
+    let hadUsableCachedThread = false;
+    const installAndReconcilePending = async (loaded: ResolvedThreadDetailWindow): Promise<void> => {
+      const installed = await writes.run(async () => {
+        if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return false;
+        return installStoredWindow(request, generation, loaded, requestedAt, navigationId);
+      });
+      if (!installed || remoteLoader === null) return;
+      // SQLite mirrors the visible delivery row while Kotlin's native outbox
+      // remains the recovery authority. Reconcile every activation so a failed
+      // command and its retry state advance even after the app slept.
+      await remoteLoader.reconcilePending({
+        connectionId: request.connectionId,
+        threadId: request.threadId,
+      });
+    };
     try {
-      await writes.run(async () => {
+      cachedWindow = await writes.run(async () => {
         const laneEnteredAt = performance.now();
         recordThreadNavigationMeasure(
           request.connectionId,
@@ -767,79 +1060,77 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         );
         // Superseded press intents that have not reached SQLite are skipped
         // instead of making the selected destination wait behind useless work.
-        if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
-        const sqliteStartedAt = performance.now();
-        const loaded = await detailStorage.loadResolvedWindow({
-          connectionId: request.connectionId,
-          threadId: request.threadId,
-          anchorTurnId: request.anchorTurnId,
-          turnLimit: THREAD_RESIDENT_TURN_LIMIT,
-          newerBuffer: THREAD_HISTORY_PAGE_SIZE,
-        });
-        recordThreadNavigationMeasure(
-          request.connectionId,
-          request.threadId,
-          "chat_window_sqlite",
-          performance.now() - sqliteStartedAt,
-          {
-            values: {
-              turnRows: loaded.turnRows.length,
-              detailRows: loaded.detailRows.length,
-              liveRows: loaded.liveRows.length,
-            },
-          },
-        );
-        // The installed SQLite API cannot interrupt a statement already in
-        // flight. Drop its projection as soon as it returns, before it can
-        // replace rows or extend the queue's useful critical section.
-        if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
-        const persistedRows = [
-          ...loaded.turnRows,
-          ...loaded.detailRows,
-          ...loaded.liveRows,
-        ];
-        // Optimistic composer mutations are synchronous and may land while
-        // this SQLite snapshot is in flight. Overlay both rows and tombstones
-        // before deriving membership so the atomic install cannot hide or
-        // resurrect them.
-        const rows = mergePendingTimelineOverlays(
-          composeInitialRangeRows(
-            source.rowsForThread(request.connectionId, request.threadId),
-            persistedRows,
-            loaded.historyEpoch,
-          ),
-          [...stagedPendingOverlays.values()],
-          request.connectionId,
-          request.threadId,
-        );
-        const membership = rangeMembership(rows, loaded.historyEpoch);
-        const committed = chat.commitWindow(request, generation, {
-          scope: threadChatScope(request.connectionId, request.threadId),
-          requestKey: threadChatRequestKey(request),
-          historyEpoch: loaded.historyEpoch,
-          latestSealedOrdinal: loaded.latestSealedOrdinal,
-          earliestSealedOrdinal: loaded.earliestSealedOrdinal,
-          residentTurnLimit: THREAD_RESIDENT_TURN_LIMIT,
-          ...membership,
-          rows,
-        });
-        if (!committed) return;
-        source.replaceThreadLoaded(request.connectionId, request.threadId, rows);
-        // Storage inspection is intentionally outside the navigation-critical
-        // SQLite read. It may scan small non-history projections and stat the
-        // database files, but it must never delay the first visible window.
-        reportStorageDiagnostics(request.connectionId, request.threadId);
-        recordThreadNavigationVisualEvent(request.connectionId, request.threadId, "chat_window_model_installed", {
-          values: {
-            totalLoadMs: performance.now() - requestedAt,
-            turnRows: loaded.turnRows.length,
-            detailRows: loaded.detailRows.length,
-            liveRows: loaded.liveRows.length,
-          },
-        }, navigationId ?? undefined);
+        if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return null;
+        return await readStoredWindow(request, requestedAt);
       });
+      if (cachedWindow === null) return;
+
+      const cachedRows = [...cachedWindow.turnRows, ...cachedWindow.detailRows, ...cachedWindow.liveRows];
+      const cachedThread = materializeThreadDetail(
+        cachedRows,
+        request.connectionId,
+        request.threadId,
+        sessionId,
+      )?.thread ?? null;
+      hadUsableCachedThread = cachedThread !== null;
+      const coverage = threadWindowCoverage(request, cachedWindow);
+      const invalidated = invalidations.get(invalidationKey(request.connectionId, request.threadId)) !== undefined;
+      const requiresHydration = !coverage.complete || cachedThread === null || invalidated;
+      if (requiresHydration && remoteLoader !== null) {
+        const loader = remoteLoader;
+        const hydrateAndInstall = async (): Promise<void> => {
+          chat.setBackendRefreshing(request, generation, true);
+          try {
+            await loader.hydrateWindow({
+              request,
+              cachedThread,
+              requireAuthoritative: invalidated || !coverage.complete || cachedThread === null,
+              reason: invalidated ? "invalidated" : coverage.reason,
+            });
+            if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
+            const refreshedWindow = await writes.run(async () => await readStoredWindow(request, requestedAt));
+            const refreshedCoverage = threadWindowCoverage(request, refreshedWindow);
+            const refreshedTurnCount = [...refreshedWindow.turnRows, ...refreshedWindow.liveRows]
+              .filter((row) => row.kind === "turn").length;
+            if (!refreshedCoverage.complete && refreshedTurnCount === 0) {
+              recordThreadHistoryTelemetry(request.connectionId, request.threadId, "chat.history.empty_hydration_rejected", {
+                tags: { reason: refreshedCoverage.reason },
+              });
+              throw new Error(`Authoritative thread hydration left no readable turns (${refreshedCoverage.reason})`);
+            }
+            await installAndReconcilePending(refreshedWindow);
+          } finally {
+            chat.setBackendRefreshing(request, generation, false);
+          }
+        };
+
+        if (cachedThread !== null) {
+          // A materializable SQLite window is immediately usable even when its
+          // coverage cursor says that an authoritative repair is desirable.
+          // Resolve the navigation resource from local data; reconnect and
+          // thread/resume must never hold an already-cached chat behind the
+          // native 12-second recovery queue.
+          await installAndReconcilePending(cachedWindow as ResolvedThreadDetailWindow);
+          void hydrateAndInstall().catch((cause: unknown) => {
+            console.warn("CodeWide background thread repair failed:", cause instanceof Error ? cause.message : "unknown error");
+          });
+          return;
+        }
+
+        // A true local miss has no chat to reveal. Keep the smallest local
+        // Suspense boundary pending until the cache-aside backend read has been
+        // durably written and installed.
+        await hydrateAndInstall();
+        return;
+      }
+
+      await installAndReconcilePending(cachedWindow as ResolvedThreadDetailWindow);
     } catch (cause) {
       if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
+      if (cachedWindow !== null && hadUsableCachedThread) {
+        await installAndReconcilePending(cachedWindow as ResolvedThreadDetailWindow);
+        return;
+      }
       chat.failWindow(request, generation, cause);
       throw cause;
     }
@@ -851,8 +1142,14 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     async prepare() {
       await detailStorage.prepare();
       // One tiny cursor row per changed thread makes unloaded detail changes
-      // durable without hydrating the full conversation history into Hermes.
-      await invalidations.preload();
+      // durable without hydrating conversation history into Hermes. The same
+      // chat-specific SQLite adapter owns both the cursor and its turn cache.
+      for (const row of await detailStorage.loadInvalidations()) {
+        invalidations.set(invalidationKey(row.connectionId, row.threadId), row);
+      }
+    },
+    setRemoteLoader(loader) {
+      remoteLoader = loader;
     },
     windowResource(request) {
       return chat.resource(request, async () => await database.loadWindow(request));
@@ -871,6 +1168,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
     retainWindow(connectionId, threadId) {
       const release = chat.retainWindow(connectionId, threadId);
       windowIntents.adopt(threadChatScope(connectionId, threadId));
+      // Retention is the model-owned subscription boundary. Unlike tap or
+      // press-in, it also runs when the app restores directly into an already
+      // open conversation after a process or OTA restart.
+      remoteLoader?.observe?.({ connectionId, threadId });
       return release;
     },
     adoptPreloadedWindow(connectionId, threadId) {
@@ -895,7 +1196,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       });
       let noOpReason = "none";
       let residentTurnCount = 0;
-      const operation = writes.run(async () => {
+      const pullStoredRange = async (): Promise<boolean> => await writes.run(async () => {
         if (disposed) {
           noOpReason = "disposed";
           return false;
@@ -997,6 +1298,16 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         source.replaceThreadLoaded(connectionId, threadId, rows);
         return true;
       });
+      const operation = (async (): Promise<boolean> => {
+        const local = await pullStoredRange();
+        if (local || direction !== "older" || noOpReason !== "older_boundary" || remoteLoader === null) return local;
+        const cursor = source.historyCursor(connectionId, threadId);
+        const historyEpoch = source.historyEpoch(connectionId, threadId);
+        if (typeof cursor !== "string") return false;
+        await remoteLoader.loadOlder({ connectionId, threadId, cursor, historyEpoch });
+        noOpReason = "none";
+        return await pullStoredRange();
+      })();
       rangePulls.set(pullKey, operation);
       try {
         const pulled = await operation;
@@ -1064,6 +1375,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         liveRows: chat.readRows(snapshot.liveRowIds),
       };
     },
+    windowCoverage(request, snapshot) {
+      return threadWindowCoverage(request, database.readWindowRows(snapshot));
+    },
     async applySnapshot(connectionId, snapshots, cursor) {
       await writes.run(async () => {
         if (disposed) return;
@@ -1072,22 +1386,35 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         // dirty at this cursor so its next open performs a bounded keyset
         // catch-up from the last locally sealed turn. Normal replay batches
         // clear this marker after their detail projection checkpoints.
-        await persistSnapshotInvalidations(invalidations, connectionId, snapshots, cursor);
-        const controls = ensureControls();
+        await persistSnapshotInvalidations(detailStorage, invalidations, connectionId, snapshots, cursor);
         const byId = new Map(snapshots.map((snapshot) => [snapshot.thread.id, snapshot]));
-        controls.begin({ immediate: true });
-        let mutationCount = 0;
-        for (const row of source.threadMetaRows(connectionId)) {
-          const snapshot = byId.get(row.remoteThreadId);
-          if (snapshot === undefined || row.thread === null) continue;
-          // Snapshot list updates only bounded thread metadata. Turn metadata is
-          // stored in independent rows and must not force a history scan here.
-          const metadata = preserveProjectedTurnMetadata(snapshot.thread, row.thread);
-          const next = threadRow(connectionId, metadata, row.sessionId, row.lastOpenedAt, row.historyEpoch, row.historyCursor);
-          if (writeOwnedRow(controls, next.id, next)) mutationCount += 1;
-        }
-        if (mutationCount === 0) await controls.commit();
-        else await controls.commit({ durable: true });
+        await runWriteTransaction((controls) => {
+          let mutationCount = 0;
+          for (const row of source.threadMetaRows(connectionId)) {
+            const snapshot = byId.get(row.remoteThreadId);
+            if (snapshot === undefined || row.thread === null) continue;
+            // Snapshot list updates only bounded thread metadata. Turn metadata is
+            // stored in independent rows and lifecycle belongs exclusively to
+            // the detail stream. The list may update presentation fields only.
+            const metadata = mergeThreadPresentationMetadata(row.thread, snapshot.thread);
+            const next = threadRow(
+              connectionId,
+              metadata,
+              row.sessionId,
+              row.lastOpenedAt,
+              row.historyEpoch,
+              row.historyCursor,
+              row.historyHadTurns === true
+                || source.rowsForThread(connectionId, row.remoteThreadId).some((candidate) => candidate.kind === "turn")
+                ? true
+                : row.historyHadTurns,
+              row.historyCoverageMinOrdinal,
+              row.historyCoverageMaxOrdinal,
+            );
+            if (writeOwnedRow(controls, next.id, next)) mutationCount += 1;
+          }
+          return { value: undefined, durable: mutationCount > 0 };
+        });
       });
     },
     async applyEvents(connectionId, events) {
@@ -1101,11 +1428,15 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         if (disposed || events.length === 0) {
           return { checkpoint: Promise.resolve(), threads: new Map() };
         }
-        const durable = events.some((event) => DURABLE_LIVE_BOUNDARIES.has(String(event.payload.method ?? "")));
+        const semanticEvents = events.map((event) => ({
+          event,
+          patch: threadProjectionPatchFromEvent(event.payload),
+        }));
+        const durable = semanticEvents.some(({ patch }) => patch !== null && projectionOperationRequiresDurability(patch.operation.kind));
         const invalidatingEvents = events.filter((event) => {
           const threadId = threadIdFromEvent(event.payload);
           if (threadId === null) return false;
-          const patch = threadProjectionPatchFromEvent(event.payload) ?? legacyThreadProjectionPatch(event.payload);
+          const patch = threadProjectionPatchFromEvent(event.payload);
           // Locally projected semantic events are already protected by the
           // native replay ACK: a failed detail checkpoint rejects the batch.
           // Only cold/unsupported events and explicit canonical invalidations
@@ -1116,7 +1447,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             startedThreadIds.has(threadId),
           );
         });
-        const checkpoints: Promise<void>[] = [persistInvalidations(invalidations, connectionId, invalidatingEvents)];
+        const checkpoints: Promise<void>[] = [persistInvalidations(detailStorage, invalidations, connectionId, invalidatingEvents)];
         const projectedThreads = new Map<string, { before: Thread; after: Thread }>();
         const hasLoadedThread = events.some((event) => {
           const threadId = threadIdFromEvent(event.payload);
@@ -1135,23 +1466,18 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           const shell = startedThreadShells.get(threadScope(connectionId, threadId));
           if (shell !== undefined) await publishThread(connectionId, shell, "live");
         }
-        const byThread = new Map<string, Record<string, unknown>[]>();
-        for (const event of events) {
-          const threadId = threadIdFromEvent(event.payload);
-          if (threadId === null || !source.has(threadMetaKey(connectionId, threadId))) continue;
-          const patch = threadProjectionPatchFromEvent(event.payload) ?? legacyThreadProjectionPatch(event.payload);
-          if (patch?.operation.kind === "threadDeleted") {
-            await deleteThreadRows(source, controls, connectionId, threadId);
+        const byThread = new Map<string, ThreadProjectionPatchV1[]>();
+        for (const { patch } of semanticEvents) {
+          if (patch === null || !source.has(threadMetaKey(connectionId, patch.threadId))) continue;
+          if (patch.operation.kind === "threadDeleted") {
+            await deleteThreadRows(source, controls, connectionId, patch.threadId);
             continue;
           }
-          const payloads = byThread.get(threadId) ?? [];
-          payloads.push(event.payload);
-          byThread.set(threadId, payloads);
+          const patches = byThread.get(patch.threadId) ?? [];
+          patches.push(patch);
+          byThread.set(patch.threadId, patches);
         }
-        for (const [threadId, payloads] of byThread) {
-          const patches = payloads
-            .map((payload) => threadProjectionPatchFromEvent(payload) ?? legacyThreadProjectionPatch(payload))
-            .filter((patch) => patch !== null);
+        for (const [threadId, patches] of byThread) {
           const slice = source.liveRows(connectionId, threadId, patches);
           const current = materializeThreadDetail(slice, connectionId, threadId, sessionId);
           if (current === null) continue;
@@ -1159,12 +1485,9 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           projectedThreads.set(threadId, { before: current.thread, after: next });
           if (next !== current.thread) checkpoints.push(publishLiveSlice(connectionId, next, durable));
         }
-        for (const event of events) {
-          const threadId = threadIdFromEvent(event.payload);
-          if (threadId === null) continue;
-          const method = String(event.payload.method ?? "");
-          if (method === "turn/completed" || method === "thread/deleted") {
-            startedThreadShells.delete(threadScope(connectionId, threadId));
+        for (const { patch } of semanticEvents) {
+          if (patch !== null && projectionOperationClosesStartedShell(patch.operation.kind)) {
+            startedThreadShells.delete(threadScope(connectionId, patch.threadId));
           }
         }
         return {
@@ -1183,9 +1506,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       const meta = await detailStorage.loadThreadMeta(connectionId, threadId);
       if (meta?.kind !== "thread") return null;
       const latest = await detailStorage.loadBoundary(connectionId, threadId, meta.historyEpoch, "desc");
-      return latest?.kind === "turn" && latest.turn !== null && isStableThreadCursorTurn(latest.turn)
-        ? latest.remoteTurnId
-        : null;
+      return latest?.kind === "turn" && latest.sealed ? latest.remoteTurnId : null;
     },
     async importThreadSnapshot(connectionId, thread, _reason, cleanThroughCursor = null, historyCursor) {
       if (thread.turns.length === 0) {
@@ -1203,7 +1524,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         const preserveConcurrentHead = cleanThroughCursor !== null && latestCursor > cleanThroughCursor;
         await publishThread(connectionId, thread, "authoritative", Date.now(), preserveConcurrentHead, historyCursor);
         if (cleanThroughCursor !== null) {
-          await clearInvalidationThrough(invalidations, connectionId, thread.id, cleanThroughCursor);
+          await clearInvalidationThrough(detailStorage, invalidations, connectionId, thread.id, cleanThroughCursor);
         }
       });
     },
@@ -1220,7 +1541,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           await publishThread(connectionId, { ...current.thread, turns }, "append", Date.now(), false, historyCursor);
         }
         if (cleanThroughCursor !== null) {
-          await clearInvalidationThrough(invalidations, connectionId, threadId, cleanThroughCursor);
+          await clearInvalidationThrough(detailStorage, invalidations, connectionId, threadId, cleanThroughCursor);
         }
         return { accepted: true, historyEpoch: source.historyEpoch(connectionId, threadId) };
       });
@@ -1241,52 +1562,36 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         for (const row of await loadDurablePrependRows(connectionId, threadId, historyEpoch, turns.map((turn) => turn.id))) {
           source.set(row.id, row);
         }
-        const controls = ensureControls();
         const prependedOrdinals = projectPrependedTurnOrdinals(
           source.rowsForThread(connectionId, threadId),
           historyEpoch,
           turns.map((turn) => turn.id),
         );
-        let mutationCount = 0;
-        controls.begin({ immediate: true });
-        const metaKey = threadMetaKey(connectionId, threadId);
-        const meta = source.get(metaKey);
-        if (meta?.kind === "thread" && meta.historyCursor !== nextCursor) {
-          if (writeOwnedRow(controls, metaKey, { ...meta, historyCursor: nextCursor })) mutationCount += 1;
-        }
-        for (const turn of turns) {
-          const previousKey = source.turnRowKey(connectionId, threadId, turn.id);
-          const key = turnStorageKey(connectionId, threadId, turn);
-          const previous = previousKey === null ? source.get(key) : source.get(previousKey);
-          const ordinal = prependedOrdinals.get(turn.id)!;
-          const incoming = turnRow(connectionId, threadId, turn, ordinal, historyEpoch);
-          const content = reconcileAuthoritativeThreadDetailRow(previous, incoming);
-          if (previousKey !== null && previousKey !== key) {
-            source.delete(previousKey);
-            controls.write({ type: "delete", key: previousKey });
-            mutationCount += 1;
-          }
-          // Cursor pages may overlap a previously persisted completion event.
-          // Reconcile those rows as well: the summary is what supplies a final
-          // agent answer to an earlier user-only sealed row.
-          if (shouldWriteAuthoritativeThreadDetailRow(previous, content) && writeOwnedRow(controls, content.id, content)) mutationCount += 1;
-          const metadata = projectedTurnMetadata(turn);
-          if (metadata !== null) {
-            const row = turnMetaRow(connectionId, threadId, turn.id, metadata, ordinal, turn.status !== "inProgress", historyEpoch);
-            if (writeOwnedRow(controls, row.id, row)) mutationCount += 1;
-          }
-          // A cursor page can reconnect a turn that was retained in an older,
-          // disconnected history epoch. Its lazy overlays must migrate with
-          // the turn or the current window would silently lose activity and
-          // completion metadata for that row.
-          for (const overlayKey of [turnMetaKey(connectionId, threadId, turn.id), activityKey(connectionId, threadId, turn.id)]) {
-            const overlay = source.get(overlayKey);
-            if (overlay === undefined || (overlay.historyEpoch === historyEpoch && overlay.ordinal === ordinal)) continue;
-            if (writeOwnedRow(controls, overlayKey, { ...overlay, historyEpoch, ordinal })) mutationCount += 1;
-          }
-        }
-        if (mutationCount === 0) await controls.commit();
-        else await controls.commit({ durable: true });
+        const metadata = source.get(threadMetaKey(connectionId, threadId));
+        const prependedCoverage = extendAuthoritativeCoverage(metadata, turns, prependedOrdinals);
+        await commitThreadProjection({
+          connectionId,
+          threadId,
+          turns,
+          ordinals: prependedOrdinals,
+          historyEpoch,
+          authority: "authoritative",
+          ...(metadata?.kind === "thread" && metadata.thread !== null
+            ? { threadMeta: threadRow(
+                connectionId,
+                metadata.thread,
+                metadata.sessionId,
+                metadata.lastOpenedAt,
+                historyEpoch,
+                nextCursor,
+                metadata.historyHadTurns === true || turns.length > 0,
+                prependedCoverage.min,
+                prependedCoverage.max,
+              ) }
+            : {}),
+          ...(metadata?.kind === "thread" ? {} : { historyCursor: { value: nextCursor } }),
+          durable: true,
+        });
         // Persistence and presentation meet here. The remote page is already
         // in SQLite; publish one atomic Legend range without trimming the
         // opposite edge while the list is still moving.
@@ -1361,13 +1666,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         if (turnContent?.turn === null || turnContent?.turn === undefined) return;
         const row = activityRow(connectionId, threadId, turnId, turnContent.ordinal, items, turnContent.historyEpoch);
         if (!shouldWriteHydratedActivityRow(source.get(row.id), row)) return;
-        const controls = ensureControls();
-        controls.begin({ immediate: true });
-        if (!writeOwnedRow(controls, row.id, row)) {
-          await controls.commit();
-          return;
-        }
-        await controls.commit({ durable: true });
+        await runWriteTransaction((controls) => {
+          const changed = writeOwnedRow(controls, row.id, row);
+          return { value: undefined, durable: changed };
+        });
       });
     },
     createPending(input) {
@@ -1467,10 +1769,10 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           : []
       )));
       // A delivered native row is a bounded receipt, not a deletion signal.
-      // It keeps an existing optimistic bubble in `sent` until the canonical
+      // It keeps an existing optimistic bubble pending until the canonical
       // server turn takes over the same stable client-id key. Missing delivered
-      // rows are never reconstructed, so historical receipts cannot flash into
-      // a cold resident window.
+      // rows are never reconstructed from historical native receipts; the
+      // durable SQLite mirror owns a currently visible accepted message.
       const retainedCommandIds = new Set(deliveries.flatMap((delivery) => (
         delivery.connectionId === connectionId
           && delivery.threadId === threadId
@@ -1541,51 +1843,62 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
         .filter((command) => command.remoteThreadId === threadId)
         .flatMap((command) => {
           const existing = source.pendingRow(connectionId, command.commandId)?.pending;
-          // The companion queue snapshot also carries direct delivery receipts.
-          // Those receipts may advance an optimistic row created by this app,
-          // but must never reconstruct historical direct messages as queue rows.
+          // Non-terminal receipts may advance an optimistic row created by
+          // this app, but must never reconstruct historical direct messages.
           if (command.presentation === "delivery" && existing?.presentation !== "delivery") return [];
+          // Once Companion has forwarded an explicit queue entry to App Server,
+          // the same durable command becomes the optimistic chat row. Keeping
+          // its command id makes the later canonical user item replace this row
+          // atomically instead of leaving a gap between queue and history.
+          const acceptedQueueHandoff = command.presentation === "queue" && command.state === "delivered";
+          // A delivered receipt is useful only while handing an existing
+          // durable queue row to the chat projection. Reconstructing every
+          // historical delivered receipt after cache loss resurrects stale
+          // optimistic bubbles on every queue/list refresh.
+          if (acceptedQueueHandoff && existing === undefined) return [];
           const queuedInput = parseQueuedInput(command.params);
           const entry: PendingTimelineEntry = {
             commandId: command.commandId,
             method: "turn/start",
-            presentation: command.presentation,
+            presentation: acceptedQueueHandoff ? "delivery" : command.presentation,
             workspaceRequestId: command.workspaceRequestId,
             text: queuedInput.text,
             attachments: queuedInput.attachments,
-            state: command.state,
+            state: command.presentation === "delivery" || acceptedQueueHandoff
+              ? pendingDeliveryStateFromCompanion(command.state)
+              : command.state,
             attempts: existing?.attempts ?? 0,
             lastError: command.lastError,
             createdAt: command.createdAt,
-            updatedAt: Date.now(),
+            updatedAt: command.updatedAt,
             order: command.order,
           };
           return [[command.commandId, pendingRow(connectionId, threadId, entry)] as const];
-        }));
+      }));
       await writes.run(async () => {
         if (disposed) return;
-        const controls = ensureControls();
-        controls.begin({ immediate: true });
-        let changed = false;
-        for (const row of source.rowsForThread(connectionId, threadId)) {
-          if (row.kind !== "pending" || row.pending?.presentation !== "queue") continue;
-          if (incoming.has(row.pending.commandId) || preserveCommandIds.has(row.pending.commandId)) continue;
-          source.delete(row.id);
-          controls.write({ type: "delete", key: row.id });
-          changed = true;
-        }
-        for (const row of incoming.values()) {
-          const incomingEntry = row.pending;
-          if (incomingEntry === null || incomingEntry === undefined) continue;
-          const previous = source.get(row.id);
-          if (previous?.kind === "turn") continue;
-          const next = previous?.kind === "pending" && previous.pending !== null && previous.pending !== undefined
-            ? { ...row, pending: mergePendingTimelineEntry(previous.pending, incomingEntry) }
-            : row;
-          if (writeOwnedRow(controls, next.id, next)) changed = true;
-        }
-        if (!changed) await controls.commit();
-        else await controls.commit({ durable: true });
+        await runWriteTransaction((controls) => {
+          let changed = false;
+          for (const row of source.rowsForThread(connectionId, threadId)) {
+            if (row.kind !== "pending" || row.pending === null || row.pending === undefined) continue;
+            const retireMissingQueue = row.pending.presentation === "queue"
+              && !incoming.has(row.pending.commandId)
+              && !preserveCommandIds.has(row.pending.commandId);
+            if (!retireMissingQueue) continue;
+            if (deleteRow(source, controls, row.id)) changed = true;
+          }
+          for (const row of incoming.values()) {
+            const incomingEntry = row.pending;
+            if (incomingEntry === null || incomingEntry === undefined) continue;
+            const previous = source.get(row.id);
+            if (previous?.kind === "turn") continue;
+            const next = previous?.kind === "pending" && previous.pending !== null && previous.pending !== undefined
+              ? { ...row, pending: mergePendingTimelineEntry(previous.pending, incomingEntry) }
+              : row;
+            if (writeOwnedRow(controls, next.id, next)) changed = true;
+          }
+          return { value: undefined, durable: changed };
+        });
       });
     },
     hasPendingDelivery(connectionId, threadId, commandId) {
@@ -1630,7 +1943,7 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
           reportedStalledOptimisticFingerprintByThread.clear();
           stagedPendingOverlays.clear();
           chat.close();
-          invalidationModel.close();
+          invalidations.clear();
         }
       })();
       return closePromise;
@@ -1640,84 +1953,58 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
 }
 
 async function persistInvalidations(
-  collection: Collection<ThreadInvalidationRow, string>,
+  storage: Pick<ReturnType<typeof createThreadDetailSqlite>, "upsertInvalidations">,
+  invalidations: Map<string, ThreadInvalidationRow>,
   connectionId: string,
   events: SyncEvent[],
 ): Promise<void> {
   const latest = latestThreadInvalidations(events);
-  const checkpoints: Promise<void>[] = [];
+  const rows: ThreadInvalidationRow[] = [];
   for (const [threadId, cursor] of latest) {
     const id = invalidationKey(connectionId, threadId);
-    const current = collection.get(id);
+    const current = invalidations.get(id);
     if (current !== undefined && current.cursor >= cursor) continue;
-    const transaction = current === undefined
-      ? collection.insert({ id, connectionId, threadId, cursor })
-      : collection.update(id, (draft) => { draft.cursor = cursor; });
-    checkpoints.push(transaction.isPersisted.promise.then(() => undefined));
+    rows.push({ connectionId, threadId, cursor });
   }
-  await Promise.all(checkpoints);
+  await storage.upsertInvalidations(rows);
+  for (const row of rows) invalidations.set(invalidationKey(row.connectionId, row.threadId), row);
 }
 
 async function persistSnapshotInvalidations(
-  collection: Collection<ThreadInvalidationRow, string>,
+  storage: Pick<ReturnType<typeof createThreadDetailSqlite>, "upsertInvalidations">,
+  invalidations: Map<string, ThreadInvalidationRow>,
   connectionId: string,
   snapshots: readonly SyncSnapshotThread[],
   cursor: number,
 ): Promise<void> {
-  const checkpoints: Promise<void>[] = [];
+  const rows: ThreadInvalidationRow[] = [];
   for (const snapshot of snapshots) {
     const threadId = snapshot.thread.id;
     const id = invalidationKey(connectionId, threadId);
-    const current = collection.get(id);
+    const current = invalidations.get(id);
     if (current !== undefined && current.cursor >= cursor) continue;
-    const transaction = current === undefined
-      ? collection.insert({ id, connectionId, threadId, cursor })
-      : collection.update(id, (draft) => { draft.cursor = cursor; });
-    checkpoints.push(transaction.isPersisted.promise.then(() => undefined));
+    rows.push({ connectionId, threadId, cursor });
   }
-  await Promise.all(checkpoints);
+  await storage.upsertInvalidations(rows);
+  for (const row of rows) invalidations.set(invalidationKey(row.connectionId, row.threadId), row);
 }
 
 async function clearInvalidationThrough(
-  collection: Collection<ThreadInvalidationRow, string>,
+  storage: Pick<ReturnType<typeof createThreadDetailSqlite>, "clearInvalidation">,
+  invalidations: Map<string, ThreadInvalidationRow>,
   connectionId: string,
   threadId: string,
   cursor: number,
 ): Promise<void> {
   const id = invalidationKey(connectionId, threadId);
-  const current = collection.get(id);
+  const current = invalidations.get(id);
   if (current === undefined || !invalidationCanBeCleared(current.cursor, cursor)) return;
-  const transaction = collection.delete(id);
-  await transaction.isPersisted.promise;
+  await storage.clearInvalidation(connectionId, threadId, cursor);
+  if (invalidations.get(id) === current) invalidations.delete(id);
 }
 
 function invalidationKey(connectionId: string, threadId: string): string {
   return `${connectionId}\u0000${threadId}`;
-}
-
-function rowsForThread(
-  connectionId: string,
-  thread: Thread,
-  sessionId: string,
-  lastOpenedAt: number,
-  turnOrdinals?: ReadonlyMap<string, number>,
-  historyEpoch = 0,
-  historyCursor?: string | null,
-): Map<string, ThreadDetailRow> {
-  const result = new Map<string, ThreadDetailRow>();
-  const meta = threadRow(connectionId, thread, sessionId, lastOpenedAt, historyEpoch, historyCursor);
-  result.set(meta.id, meta);
-  thread.turns.forEach((turn, index) => {
-    const ordinal = turnOrdinals?.get(turn.id) ?? index;
-    const content = turnRow(connectionId, thread.id, turn, ordinal, historyEpoch);
-    result.set(content.id, content);
-    const metadata = projectedTurnMetadata(turn);
-    if (metadata !== null) {
-      const row = turnMetaRow(connectionId, thread.id, turn.id, metadata, ordinal, turn.status !== "inProgress", historyEpoch);
-      result.set(row.id, row);
-    }
-  });
-  return result;
 }
 
 function baseRow(
@@ -1757,18 +2044,171 @@ function threadRow(
   lastOpenedAt: number,
   historyEpoch: number,
   historyCursor?: string | null,
+  historyHadTurns?: boolean,
+  historyCoverageMinOrdinal?: number | null,
+  historyCoverageMaxOrdinal?: number | null,
 ): ThreadDetailRow {
   return {
     ...baseRow(threadMetaKey(connectionId, thread.id), "thread", connectionId, thread.id, null, historyEpoch, -1, sessionId, lastOpenedAt),
     ...(historyCursor === undefined ? {} : { historyCursor }),
+    ...(historyHadTurns === undefined ? {} : { historyHadTurns }),
+    ...(historyCoverageMinOrdinal === undefined ? {} : { historyCoverageMinOrdinal }),
+    ...(historyCoverageMaxOrdinal === undefined ? {} : { historyCoverageMaxOrdinal }),
     thread: stripThreadTurns(thread),
   };
 }
 
-function turnRow(connectionId: string, threadId: string, turn: Turn, ordinal: number, historyEpoch: number): ThreadDetailRow {
+type HistoryCoverage = {
+  min: number | null | undefined;
+  max: number | null | undefined;
+};
+
+function projectAuthoritativeCoverage(
+  previousMeta: ThreadDetailRow | undefined,
+  existingRows: readonly ThreadDetailRow[],
+  previousHistoryEpoch: number,
+  historyEpoch: number,
+  turns: readonly Turn[],
+  ordinals: ReadonlyMap<string, number>,
+  mode: "authoritative" | "live" | "append",
+  historyHadTurns: boolean | undefined,
+): HistoryCoverage {
+  const previous = metadataCoverage(previousMeta);
+  if (mode === "live") return previous;
+  const incoming = turnOrdinalCoverage(turns, ordinals);
+  if (incoming.min === null || incoming.max === null) {
+    if (mode === "authoritative" && historyHadTurns === false) return { min: null, max: null };
+    return previous;
+  }
+  const hasResidentHistory = existingRows.some((row) => row.kind === "turn" && row.historyEpoch === previousHistoryEpoch);
+  if (historyEpoch !== previousHistoryEpoch || !hasResidentHistory) return incoming;
+  return mergeAdjacentCoverage(previous, incoming);
+}
+
+function extendAuthoritativeCoverage(
+  metadata: ThreadDetailRow | undefined,
+  turns: readonly Turn[],
+  ordinals: ReadonlyMap<string, number>,
+): HistoryCoverage {
+  return mergeAdjacentCoverage(metadataCoverage(metadata), turnOrdinalCoverage(turns, ordinals));
+}
+
+function metadataCoverage(metadata: ThreadDetailRow | undefined): HistoryCoverage {
+  return {
+    min: metadata?.kind === "thread" ? metadata.historyCoverageMinOrdinal : undefined,
+    max: metadata?.kind === "thread" ? metadata.historyCoverageMaxOrdinal : undefined,
+  };
+}
+
+function turnOrdinalCoverage(turns: readonly Turn[], ordinals: ReadonlyMap<string, number>): HistoryCoverage {
+  const values = turns.flatMap(({ id }) => {
+    const ordinal = ordinals.get(id);
+    return ordinal === undefined ? [] : [ordinal];
+  });
+  return values.length === 0
+    ? { min: null, max: null }
+    : { min: Math.min(...values), max: Math.max(...values) };
+}
+
+function mergeAdjacentCoverage(previous: HistoryCoverage, incoming: HistoryCoverage): HistoryCoverage {
+  if (incoming.min === undefined || incoming.max === undefined || incoming.min === null || incoming.max === null) return previous;
+  if (previous.min === undefined || previous.max === undefined || previous.min === null || previous.max === null) return incoming;
+  const adjacent = incoming.min <= previous.max + 1 && incoming.max >= previous.min - 1;
+  return adjacent
+    ? { min: Math.min(previous.min, incoming.min), max: Math.max(previous.max, incoming.max) }
+    : incoming;
+}
+
+function mergeThreadPresentationMetadata(detail: Thread, snapshot: Thread): Thread {
+  return {
+    ...detail,
+    name: snapshot.name,
+    preview: snapshot.preview,
+    cwd: snapshot.cwd,
+    updatedAt: snapshot.updatedAt,
+    recencyAt: snapshot.recencyAt,
+    parentThreadId: snapshot.parentThreadId,
+    agentNickname: snapshot.agentNickname,
+    agentRole: snapshot.agentRole,
+  };
+}
+
+function projectionOperationRequiresDurability(kind: string): boolean {
+  return kind === "turnStarted"
+    || kind === "turnCompleted"
+    || kind === "threadStatus"
+    || kind === "threadDeleted";
+}
+
+function projectionOperationClosesStartedShell(kind: string): boolean {
+  return kind === "turnCompleted" || kind === "threadDeleted";
+}
+
+export function threadWindowCoverage(
+  request: Pick<ThreadChatWindowRequest, "anchorTurnId">,
+  rows: {
+    turnRows: readonly ThreadDetailRow[];
+    liveRows: readonly ThreadDetailRow[];
+  },
+): ThreadWindowCoverage {
+  const metadata = rows.liveRows.find((row) => row.kind === "thread");
+  if (metadata === undefined) return { complete: false, reason: "metadata-missing" };
+  // Cursor-backed sealed rows are immutable; a live-journal turn is not. It
+  // may be an in-progress stream, or a locally observed completion whose
+  // canonical final projection has not reached SQLite yet. Always show the
+  // cached window immediately, but force its bounded authoritative head read
+  // until an authoritative write seals this head.
+  if (rows.liveRows.some((row) => row.kind === "turn" && !row.sealed)) {
+    return { complete: false, reason: "mutable-head" };
+  }
+  if (metadata.historyCursor === undefined) return { complete: false, reason: "tail-uninitialized" };
+  if (metadata.historyCoverageMinOrdinal === undefined || metadata.historyCoverageMaxOrdinal === undefined) {
+    return { complete: false, reason: "coverage-unproven" };
+  }
+  const turns = [...rows.turnRows, ...rows.liveRows].filter((row) => row.kind === "turn" && row.turn !== null);
+  if (request.anchorTurnId !== null
+    && !turns.some((row) => row.remoteTurnId === request.anchorTurnId)) {
+    return { complete: false, reason: "anchor-missing" };
+  }
+  const coverageMin = metadata.historyCoverageMinOrdinal;
+  const coverageMax = metadata.historyCoverageMaxOrdinal;
+  if (coverageMin === null || coverageMax === null) {
+    return coverageMin === null
+      && coverageMax === null
+      && turns.length === 0
+      && metadata.historyHadTurns === false
+      && metadata.historyCursor === null
+      ? { complete: true, reason: "complete" }
+      : { complete: false, reason: "history-evicted" };
+  }
+  const anchorOrdinal = request.anchorTurnId === null
+    ? null
+    : turns.find((row) => row.remoteTurnId === request.anchorTurnId)?.ordinal ?? null;
+  if (request.anchorTurnId !== null && anchorOrdinal === null) return { complete: false, reason: "anchor-missing" };
+  const expectedMax = anchorOrdinal === null
+    ? coverageMax
+    : Math.min(coverageMax, anchorOrdinal + THREAD_HISTORY_PAGE_SIZE);
+  const expectedMin = Math.max(coverageMin, expectedMax - THREAD_RESIDENT_TURN_LIMIT + 1);
+  const residentOrdinals = new Set(rows.turnRows.flatMap((row) => row.kind === "turn" && row.sealed ? [row.ordinal] : []));
+  for (let ordinal = expectedMin; ordinal <= expectedMax; ordinal += 1) {
+    if (!residentOrdinals.has(ordinal)) return { complete: false, reason: "history-evicted" };
+  }
+  return { complete: true, reason: "complete" };
+}
+
+function turnRow(
+  connectionId: string,
+  threadId: string,
+  turn: Turn,
+  ordinal: number,
+  historyEpoch: number,
+  completionProof: "authoritative" | "live",
+): ThreadDetailRow {
   return {
     ...baseRow(turnStorageKey(connectionId, threadId, turn), "turn", connectionId, threadId, turn.id, historyEpoch, ordinal, null, 0),
-    sealed: turn.status !== "inProgress",
+    // Live journal rows remain mutable through completion. The ordered stream
+    // repair reads the canonical turn, replaces this row, and seals it once.
+    sealed: completionProof === "authoritative" && turn.status !== "inProgress",
     turn: stripTurnMetadata(turn),
   };
 }
@@ -1785,7 +2225,7 @@ function turnMetaRow(
   return {
     ...baseRow(turnMetaKey(connectionId, threadId, turnId), "turnMeta", connectionId, threadId, turnId, historyEpoch, ordinal, null, 0),
     sealed,
-    turnMetadata: structuredClone(metadata),
+    turnMetadata: cloneProtocolValue(metadata),
   };
 }
 
@@ -1793,7 +2233,7 @@ function activityRow(connectionId: string, threadId: string, turnId: string, ord
   return {
     ...baseRow(activityKey(connectionId, threadId, turnId), "activity", connectionId, threadId, turnId, historyEpoch, ordinal, null, 0),
     sealed: true,
-    activityItems: structuredClone(items),
+    activityItems: cloneProtocolValue(items),
   };
 }
 
@@ -1909,11 +2349,11 @@ function stripTurnMetadata(turn: Turn): Turn {
   return clone;
 }
 
-function writeRow(source: Map<string, ThreadDetailRow>, controls: SyncControls, key: string, row: ThreadDetailRow): boolean {
+function writeRow(source: Map<string, ThreadDetailRow>, controls: SyncWriteControls, key: string, row: ThreadDetailRow): boolean {
   const previous = source.get(key);
   if (previous !== undefined && sameThreadDetailRow(previous, row)) return false;
-  source.set(key, row);
   controls.write({ type: previous === undefined ? "insert" : "update", value: row });
+  source.set(key, row);
   return true;
 }
 
@@ -1923,6 +2363,9 @@ function sameThreadDetailRow(previous: ThreadDetailRow, next: ThreadDetailRow): 
     || previous.id !== next.id
     || previous.historyEpoch !== next.historyEpoch
     || previous.historyCursor !== next.historyCursor
+    || previous.historyHadTurns !== next.historyHadTurns
+    || previous.historyCoverageMinOrdinal !== next.historyCoverageMinOrdinal
+    || previous.historyCoverageMaxOrdinal !== next.historyCoverageMaxOrdinal
     || previous.ordinal !== next.ordinal
     || previous.sessionId !== next.sessionId
     || previous.lastOpenedAt !== next.lastOpenedAt
@@ -1949,23 +2392,22 @@ function sameThreadDetailRow(previous: ThreadDetailRow, next: ThreadDetailRow): 
   return JSON.stringify(previous.thread) === JSON.stringify(next.thread);
 }
 
-function deleteRow(source: Map<string, ThreadDetailRow>, controls: SyncControls, key: string): boolean {
-  if (!source.delete(key)) return false;
+function deleteRow(source: Map<string, ThreadDetailRow>, controls: SyncWriteControls, key: string): boolean {
+  if (!source.has(key)) return false;
   controls.write({ type: "delete", key });
+  source.delete(key);
   return true;
 }
 
 async function deleteThreadRows(source: ThreadDetailSource, controls: SyncControls, connectionId: string, threadId: string): Promise<void> {
-  controls.begin({ immediate: true });
-  let mutationCount = 0;
-  // Deleting one thread must not scan every hydrated row from every server.
-  for (const row of source.rowsForThread(connectionId, threadId)) {
-    source.delete(row.id);
-    controls.write({ type: "delete", key: row.id });
-    mutationCount += 1;
-  }
-  if (mutationCount === 0) await controls.commit();
-  else await controls.commit({ durable: true });
+  await runThreadDetailTransaction(source, controls, (writes) => {
+    let mutationCount = 0;
+    // Deleting one thread must not scan every hydrated row from every server.
+    for (const row of source.rowsForThread(connectionId, threadId)) {
+      if (deleteRow(source, writes, row.id)) mutationCount += 1;
+    }
+    return { value: undefined, durable: mutationCount > 0 };
+  });
 }
 
 function threadMetaKey(connectionId: string, threadId: string): string {

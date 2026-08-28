@@ -1,4 +1,4 @@
-import type { ThreadListParams, ThreadListResponse } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadListResponse } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import type { RemoteConnection, SocketFactory, SocketLike, SyncCache, SyncEvent, SyncEventIngress, SyncServerRequest, SyncSnapshotThread } from "./types";
 import { restoreSubagentParent } from "./thread-metadata";
@@ -366,10 +366,7 @@ export class SyncSession {
   async #loadSnapshot(headCursor: number): Promise<void> {
     if (!this.#live || this.#snapshotHead !== headCursor) return;
     try {
-      const loadThreadList = async (
-        archived: boolean,
-        sourceKinds?: ThreadListParams["sourceKinds"],
-      ): Promise<SyncSnapshotThread[]> => {
+      const loadThreadList = async (archived: boolean): Promise<SyncSnapshotThread[]> => {
         const threads: SyncSnapshotThread[] = [];
         let cursor: string | null = null;
         const seenCursors = new Set<string>();
@@ -385,8 +382,10 @@ export class SyncSession {
             // migration (for example openai -> openai_no_ws). An explicit
             // empty list means all providers.
             modelProviders: [],
+            // Snapshot hydration is latency-sensitive. Codex owns state DB
+            // backfill; JSONL scan-and-repair must run as an explicit
+            // maintenance operation rather than block client recovery.
             useStateDbOnly: true,
-            ...(sourceKinds === undefined ? {} : { sourceKinds }),
           }, this.#snapshotRpcTimeoutMs);
           threads.push(...response.data.map((thread) => ({ thread: restoreSubagentParent(thread), archived })));
           cursor = response.nextCursor;
@@ -398,17 +397,14 @@ export class SyncSession {
       // Active and archived histories have independent cursors. Fetching them
       // concurrently removes an avoidable full network round trip from every
       // cold connection without changing snapshot atomicity.
-      // `subAgent` is the app-server umbrella filter. It includes review,
-      // compact, thread-spawn and other subagent sources, so asking for the
-      // specialized kinds as well only makes the snapshot contract noisier.
-      const subagentSourceKinds: NonNullable<ThreadListParams["sourceKinds"]> = ["subAgent"];
-      const [activeThreads, archivedThreads, activeSubagents, archivedSubagents] = await Promise.all([
+      // Descendant trees are loaded from the Companion's local parent index
+      // when their root is opened. They must not add two full App Server
+      // catalog scans to every reconnect snapshot.
+      const [activeThreads, archivedThreads] = await Promise.all([
         loadThreadList(false),
         loadThreadList(true),
-        loadThreadList(false, subagentSourceKinds),
-        loadThreadList(true, subagentSourceKinds),
       ]);
-      const threads = [...activeThreads, ...archivedThreads, ...activeSubagents, ...archivedSubagents];
+      const threads = [...activeThreads, ...archivedThreads];
       if (this.#snapshotHead !== headCursor) return;
       await this.#cache.applySnapshot(this.#connection.id, threads, headCursor);
       this.#send({ type: "snapshotApplied", cursor: headCursor });

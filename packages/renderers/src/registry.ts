@@ -213,14 +213,17 @@ export const renderRegistry = {
     tone: "neutral",
     collapsible: true,
   })) satisfies Renderer,
-  contextCompaction: (() => ({
-    title: "Context compacted",
-    body: null,
-    status: null,
-    durationMs: null,
-    tone: "neutral",
-    collapsible: false,
-  })) satisfies Renderer,
+  contextCompaction: ((_item, payload) => {
+    const running = payload.codewideLifecyclePhase === "started";
+    return {
+      title: running ? "Compacting context" : "Context compacted",
+      body: null,
+      status: running ? "inProgress" : "completed",
+      durationMs: null,
+      tone: running ? "info" : "neutral",
+      collapsible: false,
+    };
+  }) satisfies Renderer,
 } satisfies Record<string, Renderer>;
 
 export function toRenderBlock(item: NormalizedItem): RenderBlock {

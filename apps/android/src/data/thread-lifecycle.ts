@@ -1,11 +1,20 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 
-export type ThreadLifecycleState = "running" | "approval" | "failed" | null | undefined;
+import { normalizePendingDeliveryState, type PendingDeliveryState } from "./thread-delivery-state";
 
-export type TurnLifecycleStatus = "completed" | "interrupted" | "failed" | "inProgress";
+export type ThreadLifecycleState = "running" | "approval" | "failed" | null | undefined;
 
 export function isThreadLifecycleActive(state: ThreadLifecycleState): boolean {
   return state === "running" || state === "approval";
+}
+
+/**
+ * A direct prompt owns the next turn before the live `turn/started` frame is
+ * projected. Treat that handoff as active so a second normal send enters the
+ * durable queue instead of racing another `turn/start` into the same turn.
+ */
+export function pendingDeliveryMayOwnTurn(state: PendingDeliveryState): boolean {
+  return normalizePendingDeliveryState(state) !== "failed";
 }
 
 /**
@@ -21,20 +30,4 @@ export function staleTurnLifecycleId(thread: Thread | null | undefined): string 
     if (turn?.status === "inProgress") return turn.id;
   }
   return null;
-}
-
-/**
- * Presents the model atomically while the canonical cursor repair is in
- * flight. Callers also use this lifecycle to partition sealed and live turns.
- */
-export function reconcileThreadLifecyclePresentation(thread: Thread): Thread {
-  const staleTurnId = staleTurnLifecycleId(thread);
-  if (staleTurnId === null) return thread;
-  const terminalStatus: TurnLifecycleStatus = thread.status.type === "systemError" ? "failed" : "completed";
-  return {
-    ...thread,
-    turns: thread.turns.map((turn) => turn.status === "inProgress"
-      ? { ...turn, status: terminalStatus }
-      : turn),
-  };
 }

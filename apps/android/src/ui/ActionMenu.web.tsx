@@ -1,6 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { cloneElement, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Image, Pressable, StyleSheet, View } from "react-native";
 
 import { colors, spacing } from "../theme";
 import type { ActionMenuProps } from "./ActionMenu.types";
@@ -12,7 +12,6 @@ export type { ActionMenuItem } from "./ActionMenu.types";
 export function ActionMenu({
   accessibilityLabel,
   actions,
-  controls,
   children,
   trigger = "press",
   style,
@@ -34,7 +33,6 @@ export function ActionMenu({
       {triggerElement}
       <AppSheet isOpen={isOpen} onOpenChange={setOpen} contentProps={{ index: 0, enableDynamicSizing: true }}>
         <View style={styles.content}>
-          {controls}
           {actions.map((action, index) => (
             <View key={action.id}>
             {action.section !== undefined && action.section !== actions[index - 1]?.section && <Text style={styles.section}>{action.section}</Text>}
@@ -48,8 +46,11 @@ export function ActionMenu({
               }}
               style={({ pressed }) => [styles.item, pressed && styles.pressed, action.disabled && styles.disabled]}
             >
-              {action.icon !== undefined && (
+              {typeof action.icon === "string" && (
                 <Ionicons name={action.icon} size={19} color={action.destructive ? colors.red : colors.textMuted} />
+              )}
+              {action.icon !== undefined && typeof action.icon !== "string" && (
+                <Image source={action.icon} style={[styles.icon, action.destructive && styles.dangerIcon]} />
               )}
               <View style={styles.text}>
                 <Text style={[styles.label, action.destructive && styles.danger]}>{action.label}</Text>
@@ -75,4 +76,6 @@ const styles = StyleSheet.create({
   label: { color: colors.text, fontSize: 15, lineHeight: 20, fontFamily: "RobotoFlex-Medium" },
   description: { color: colors.textMuted, fontSize: 12, lineHeight: 16 },
   danger: { color: colors.red },
+  icon: { width: 19, height: 19, tintColor: colors.textMuted },
+  dangerIcon: { tintColor: colors.red },
 });

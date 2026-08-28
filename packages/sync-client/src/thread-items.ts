@@ -34,7 +34,7 @@ export function reconcileTurnItems(
       (item.type === "userMessage" ? leading : trailing).push(item);
       continue;
     }
-    result[index] = preserveUserClientId(item, result[index]!);
+    result[index] = preserveProjectedItemMarkers(item, result[index]!);
     matched.add(index);
   }
 
@@ -60,6 +60,15 @@ function preserveUserClientId(incoming: ThreadItem, cached: ThreadItem): ThreadI
   if (nonEmpty(incoming.clientId) !== null) return incoming;
   const clientId = nonEmpty(cached.clientId);
   return clientId === null ? incoming : { ...incoming, clientId };
+}
+
+function preserveProjectedItemMarkers(incoming: ThreadItem, cached: ThreadItem): ThreadItem {
+  const withClientId = preserveUserClientId(incoming, cached);
+  const cachedProjection = cached as ThreadItem & { codewidePreTurn?: boolean };
+  const incomingProjection = withClientId as ThreadItem & { codewidePreTurn?: boolean };
+  return cachedProjection.codewidePreTurn === true && incomingProjection.codewidePreTurn !== true
+    ? { ...(withClientId as unknown as Record<string, unknown>), codewidePreTurn: true } as unknown as ThreadItem
+    : withClientId;
 }
 
 function userMessageFingerprint(item: Extract<ThreadItem, { type: "userMessage" }>): string {

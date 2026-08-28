@@ -9,6 +9,10 @@ import {
   encodeDocumentViewerPreferences,
   normalizeDocumentTextScale,
 } from "../src/data/user-preferences";
+import {
+  decodeAppLockPreferences,
+  encodeAppLockPreferences,
+} from "../src/data/app-lock-preferences";
 
 const nativeDatabase = readFileSync(new URL("../src/data/user-preferences-database.native.ts", import.meta.url), "utf8");
 
@@ -39,5 +43,11 @@ describe("user preferences", () => {
     expect(nativeDatabase).toContain('id: "user-preferences-v1"');
     expect(nativeDatabase).toContain("database: getSettingsSqliteDatabase()");
     expect(nativeDatabase).toContain("await transaction.isPersisted.promise");
+  });
+
+  it("stores biometric app lock as a fail-closed boolean preference", () => {
+    expect(decodeAppLockPreferences(encodeAppLockPreferences({ enabled: true }))).toEqual({ enabled: true });
+    expect(decodeAppLockPreferences('{"enabled":"yes"}')).toEqual({ enabled: false });
+    expect(decodeAppLockPreferences("not json")).toEqual({ enabled: false });
   });
 });

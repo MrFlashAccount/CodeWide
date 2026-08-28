@@ -22,11 +22,10 @@ export function planThreadOpenSync(
   forceRepair: boolean,
 ): ThreadOpenSyncPlan {
   if (!hasCachedThread) return "snapshot-import";
-  // A forced repair is the ordered-journal integrity boundary. A plain
-  // history page can be a locally indexed rollout slice whose mutable head has
-  // not reached the terminal record yet, so it cannot satisfy that contract.
-  // Only thread/resume joins authoritative thread metadata with a coherent
-  // bounded page and may replace/repair the resident head.
+  // A forced repair is the ordered-journal integrity boundary. The caller may
+  // satisfy it from the indexed terminal head when the resident thread and its
+  // terminal witness are available; live or cold heads still require an App
+  // Server snapshot. Both paths replace/repair the resident head atomically.
   if (forceRepair) return "snapshot-import";
   return refreshCursor !== null ? "cursor-catch-up" : "local";
 }
@@ -36,6 +35,16 @@ export function threadOpenNeedsCursorCatchUp(
   unresolvedDeliveredReceipt: boolean,
 ): boolean {
   return plan === "cursor-catch-up" || (plan === "local" && unresolvedDeliveredReceipt);
+}
+
+/**
+ * A resident thread needs only a bounded authoritative head refresh that can
+ * preserve its local metadata shell. A cold miss uses the companion-owned
+ * indexed window read instead. Neither path resumes the App Server session;
+ * mutation delivery owns lazy activation when a turn is actually started.
+ */
+export function shouldUseBoundedThreadWindowRead(hasCachedThread: boolean): boolean {
+  return hasCachedThread;
 }
 
 /**
@@ -64,7 +73,10 @@ export async function collectThreadCursorDelta(
     const anchorIndex = afterTurnId === null
       ? -1
       : page.data.findIndex((turn) => turn.id === afterTurnId);
-    const candidates = anchorIndex < 0 ? page.data : page.data.slice(0, anchorIndex);
+    // Include the anchor itself. A sparse completion can have the same stable
+    // turn/item ids as the later authoritative final answer; excluding it
+    // would make that final content impossible to reconcile.
+    const candidates = anchorIndex < 0 ? page.data : page.data.slice(0, anchorIndex + 1);
     for (const turn of candidates) {
       if (seenTurnIds.has(turn.id)) continue;
       seenTurnIds.add(turn.id);
@@ -103,11 +115,14 @@ export function latestSealedTurnId(turns: readonly Turn[]): string | null {
 /**
  * A cursor is a promise that every earlier immutable row is complete. Failed
  * and interrupted turns are terminal by definition. A nominally completed turn
- * is safe only after it contains a non-empty agent boundary; otherwise using it
- * as the cursor would make a missed final delta permanently invisible.
+ * is safe from a live projection only after it contains an explicit final
+ * answer. Authoritative history pages may seal unphased responses at
+ * the storage boundary; an unwitnessed live completion must still be repaired.
  */
 export function isStableThreadCursorTurn(turn: Turn): boolean {
   if (turn.status === "inProgress") return false;
   if (turn.status !== "completed") return true;
-  return turn.items.some((item) => item.type === "agentMessage" && item.text.trim() !== "");
+  return turn.items.some((item) => item.type === "agentMessage"
+    && item.phase === "final_answer"
+    && item.text.trim() !== "");
 }

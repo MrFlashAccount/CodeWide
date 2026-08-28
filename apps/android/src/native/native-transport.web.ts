@@ -12,9 +12,11 @@ export async function saveNativeConnectionCredentials(): Promise<void> {
 
 export type NativeConnectionConfig = {
   connectionId: string;
+  savedServerId: string;
   endpoint: string;
   tlsPinSha256: string | null;
   enabled: boolean;
+  deviceId: string | null;
 };
 export type NativeBrowserDevToolsBridge = { host: "127.0.0.1"; port: number; token: string; tracingSupported: boolean };
 export type NativeBrowserTrace = { path: string; size: number };
@@ -62,6 +64,14 @@ export type NativeDiscoveredPort = {
   defaultForwardingEnabled: boolean;
 };
 export async function listNativeConnectionConfigs(): Promise<NativeConnectionConfig[]> { return []; }
+export async function nativeCompanionHttpOrigin(_connectionId: string, endpoint: string): Promise<string> {
+  const url = new URL(endpoint);
+  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+  url.pathname = "/";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/u, "");
+}
 export async function purgeLegacyDerivedStorage(): Promise<number> { return 0; }
 export async function startNativeBrowserDevToolsBridge(): Promise<NativeBrowserDevToolsBridge> { throw new Error("Chromium DevTools are available on Android only"); }
 export function stopNativeBrowserDevToolsBridge(): void {}

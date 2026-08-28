@@ -502,7 +502,9 @@ internal class NativeFrameStore(context: Context) {
   companion object {
     // Snapshot scope now includes every model provider. Invalidate the derived
     // cursor once so upgraded clients cannot keep a previously filtered catalog.
-    private const val PROJECTION_SCHEMA_VERSION = 4
+    // Keep the current schema generation. Catalog source selection does not
+    // change the persisted row shape and must not force another cache reset.
+    private const val PROJECTION_SCHEMA_VERSION = 5
     private const val MAX_FRAMES = 10_000L
     private const val MAX_BYTES = 64L * 1024L * 1024L
     private const val MAX_TOTAL_FRAMES = 50_000L

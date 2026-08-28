@@ -1,0 +1,160 @@
+diff --git a/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt b/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt
+index 202c2e55693f15b165127c4b56ee0c485e81013e..7cae284e1de2e54a3f2b4c504348ec3f44d4c857 100644
+--- a/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt
++++ b/android/src/main/java/expo/modules/ui/icon/VectorIconLoader.kt
+@@ -7,6 +7,8 @@ import android.net.Uri
+ import android.util.Log
+ import android.util.Xml
+ import androidx.compose.ui.graphics.SolidColor
++import androidx.compose.ui.graphics.StrokeCap
++import androidx.compose.ui.graphics.StrokeJoin
+ import androidx.compose.ui.graphics.vector.ImageVector
+ import androidx.compose.ui.graphics.vector.PathParser
+ import androidx.compose.ui.unit.Dp
+@@ -298,6 +300,11 @@ class VectorIconLoader(
+     try {
+       var pathData = ""
+       var fillColor: androidx.compose.ui.graphics.Color? = null
++      var strokeColor: androidx.compose.ui.graphics.Color? = null
++      var strokeWidth = 0f
++      var strokeLineCap = StrokeCap.Butt
++      var strokeLineJoin = StrokeJoin.Miter
++      var strokeMiterLimit = 4f
+
+       for (i in 0 until parser.attributeCount) {
+         when (parser.getAttributeName(i)) {
+@@ -305,7 +312,22 @@ class VectorIconLoader(
+           "fillColor" -> {
+             fillColor = parseColor(parser.getAttributeValue(i))
+           }
+-          // Note: stroke properties, fillType, opacity not yet supported
++          "strokeColor" -> {
++            strokeColor = parseColor(parser.getAttributeValue(i))
++          }
++          "strokeWidth" -> {
++            strokeWidth = parser.getAttributeValue(i).toFloatOrNull() ?: 0f
++          }
++          "strokeLineCap" -> {
++            strokeLineCap = parseStrokeLineCap(parser.getAttributeValue(i))
++          }
++          "strokeLineJoin" -> {
++            strokeLineJoin = parseStrokeLineJoin(parser.getAttributeValue(i))
++          }
++          "strokeMiterLimit" -> {
++            strokeMiterLimit = parser.getAttributeValue(i).toFloatOrNull() ?: 4f
++          }
++          // Note: groups, clips, gradients, fillType and opacity are not yet supported.
+         }
+       }
+
+@@ -313,7 +335,12 @@ class VectorIconLoader(
+         val nodes = PathParser().parsePathString(pathData).toNodes()
+         builder.addPath(
+           pathData = nodes,
+-          fill = fillColor?.let { SolidColor(it) }
++          fill = fillColor?.takeUnless { it.alpha == 0f }?.let { SolidColor(it) },
++          stroke = strokeColor?.let { SolidColor(it) },
++          strokeLineWidth = strokeWidth,
++          strokeLineCap = strokeLineCap,
++          strokeLineJoin = strokeLineJoin,
++          strokeLineMiter = strokeMiterLimit
+         )
+       }
+     } catch (e: Exception) {
+@@ -321,6 +348,18 @@ class VectorIconLoader(
+     }
+   }
+
++  private fun parseStrokeLineCap(value: String): StrokeCap = when (value) {
++    "round" -> StrokeCap.Round
++    "square" -> StrokeCap.Square
++    else -> StrokeCap.Butt
++  }
++
++  private fun parseStrokeLineJoin(value: String): StrokeJoin = when (value) {
++    "round" -> StrokeJoin.Round
++    "bevel" -> StrokeJoin.Bevel
++    else -> StrokeJoin.Miter
++  }
++
+   /**
+    * Parse dimension string (e.g., "24dp") to Compose Dp.
+    */
+diff --git a/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt b/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
+index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..c4f09a2933e94e07acc06dd22f67aa0efb92fc28 100644
+--- a/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
++++ b/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
+@@ -1,9 +1,11 @@
+ package expo.modules.ui.menu
+
+ import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.shape.RoundedCornerShape
+ import androidx.compose.material3.DropdownMenu
+ import androidx.compose.material3.MenuDefaults
+ import androidx.compose.runtime.Composable
++import androidx.compose.ui.unit.dp
+ import expo.modules.kotlin.views.FunctionalComposableScope
+ import expo.modules.ui.UIComposableScope
+ import expo.modules.ui.ModifierRegistry
+@@ -25,7 +27,8 @@ fun FunctionalComposableScope.DropdownMenuContent(
+     DropdownMenu(
+       containerColor = props.color?.composeOrNull ?: MenuDefaults.containerColor,
+       expanded = props.expanded,
+-      onDismissRequest = onDismissRequest
++      onDismissRequest = onDismissRequest,
++      shape = props.cornerRadius?.let { RoundedCornerShape(it.dp) } ?: MenuDefaults.shape
+     ) {
+       itemsSlotView?.let {
+         with(UIComposableScope()) {
+diff --git a/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt b/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
+index 02620bb716b853d79fc29be2c4157d97e1b25c5e..6fee32134d1b08504eb04a30fe301d53058884df 100644
+--- a/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
++++ b/android/src/main/java/expo/modules/ui/menu/DropdownMenuRecords.kt
+@@ -16,5 +16,6 @@ data class DropdownMenuProps(
+   val activationMethod: ActivationMethod = ActivationMethod.SINGLE_PRESS,
+   val expanded: Boolean = false,
+   val color: Color? = null,
++  val cornerRadius: Float? = null,
+   val modifiers: ModifierList = emptyList()
+ ) : ComposeProps
+diff --git a/build/jetpack-compose/DropdownMenu/index.d.ts b/build/jetpack-compose/DropdownMenu/index.d.ts
+index 05d6909108a74317ac3117327ad19b0c9661b082..b8a195b9879a99fce7dbfee542f858cac5f6bff7 100644
+--- a/build/jetpack-compose/DropdownMenu/index.d.ts
++++ b/build/jetpack-compose/DropdownMenu/index.d.ts
+@@ -23,6 +23,11 @@ export interface DropdownMenuProps {
+      * The color of the container holding the dropdown menu items.
+      */
+     color?: ColorValue;
++    /**
++     * Corner radius of the dropdown menu container, in density-independent pixels.
++     * Uses the platform default when omitted.
++     */
++    cornerRadius?: number;
+     /**
+      * Optional styles to apply to the `DropdownMenu`.
+      */
+diff --git a/src/jetpack-compose/DropdownMenu/index.tsx b/src/jetpack-compose/DropdownMenu/index.tsx
+index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..2205a126a88dcb2883e4929c82250d52498d348a 100644
+--- a/src/jetpack-compose/DropdownMenu/index.tsx
++++ b/src/jetpack-compose/DropdownMenu/index.tsx
+@@ -42,6 +42,12 @@ export interface DropdownMenuProps {
+    */
+   color?: ColorValue;
+
++  /**
++   * Corner radius of the dropdown menu container, in density-independent pixels.
++   * Uses the platform default when omitted.
++   */
++  cornerRadius?: number;
++
+   /**
+    * Optional styles to apply to the `DropdownMenu`.
+    */
+@@ -57,6 +63,7 @@ type NativeMenuProps = {
+   expanded?: boolean;
+   onDismissRequest?: () => void;
+   color?: ColorValue;
++  cornerRadius?: number;
+   style?: StyleProp<ViewStyle>;
+   modifiers?: ModifierConfig[];
+   children?: ReactNode;

@@ -56,11 +56,16 @@ describe("document preview surfaces", () => {
 
   it("uses the Android gesture-aware horizontal scroller for wide tables", () => {
     const richMarkdown = readSource("../src/rendering/RichMarkdown.tsx");
+    const bubble = readSource("../src/rendering/Bubble.tsx");
     const documentPreview = readSource("../src/rendering/DocumentPreviewHost.tsx");
 
     expect(richMarkdown).toContain('ScrollView as GestureScrollView');
     expect(richMarkdown).toContain('Platform.OS === "android" ? GestureScrollView : ScrollView');
     expect(richMarkdown).toContain("<HorizontalScrollView");
+    expect(richMarkdown).not.toContain("<Text selectable reviewBlockPath={reviewBlockPath}");
+    expect(bubble).not.toContain("Gesture.LongPress()");
+    expect(bubble).not.toContain("onLongPress");
+    expect(bubble).not.toContain("<Pressable");
     expect(documentPreview).toContain('if (surface === "fullscreen")');
     expect(documentPreview).toContain("presentFullscreenDocument(fullscreen, request, downloadFile)");
     expect(documentPreview).toContain("<ScrollView");

@@ -16,7 +16,6 @@ import {
   View,
 } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
 
 import { useEvent } from "../react/useEvent";
 import Animated, {
@@ -28,19 +27,11 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors, radii, spacing, touchTarget } from "../theme";
+import { spacing, touchTarget } from "../theme";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { useAppDialog } from "../ui/AppDialog";
 import { useAppFullscreenOverlay, type AppFullscreenOverlayController } from "../ui/AppFullscreenOverlay";
-import { AppText as Text, AppTextInput as TextInput } from "../ui/Typography";
-import {
-  AppVoiceInputProvider,
-  reviewVoiceInputScope,
-  useAppVoiceInputRuntime,
-  useVoiceInputResource,
-  type AppVoiceInputRuntime,
-} from "../ui/VoiceInputRuntime";
-import { clampNormalizedCoordinate, serializeImageReviewAttachment, type ImagePointAnnotation } from "./image-annotations";
+import { AppText as Text } from "../ui/Typography";
 
 export type ImagePreviewItem = {
   id: string;
@@ -58,14 +49,11 @@ export type ImagePreviewRequest = ImagePreviewItem & {
 
 type PreviewSession = { items: ImagePreviewItem[]; index: number };
 type RegisteredPreviewItem = ImagePreviewItem & { sequence: number };
-type AnnotationRegistration = {
-  handler(text: string): Promise<boolean>;
-  voiceRuntime: AppVoiceInputRuntime | null;
-};
+type ImageAnnotationHandler = (item: ImagePreviewItem, onAttached: () => void) => Promise<void>;
 type PreviewController = {
   open(request: ImagePreviewRequest, fullscreen: AppFullscreenOverlayController): void;
   register(groupId: string, item: ImagePreviewItem): () => void;
-  registerAnnotationHandler(handler: (text: string) => Promise<boolean>, voiceRuntime: AppVoiceInputRuntime | null): () => void;
+  registerAnnotationHandler(handler: ImageAnnotationHandler): () => void;
 };
 
 const ImagePreviewContext = createContext<PreviewController>({
@@ -85,7 +73,7 @@ export function ImagePreviewHost({
   children: ReactNode;
 }) {
   const registryRef = useRef(new Map<string, Map<string, RegisteredPreviewItem>>());
-  const annotationRegistrationRef = useRef<AnnotationRegistration | null>(null);
+  const annotationRegistrationRef = useRef<ImageAnnotationHandler | null>(null);
   const sequenceRef = useRef(0);
   const [controller] = useState<PreviewController>(() => ({
     register(groupId, item) {
@@ -115,14 +103,13 @@ export function ImagePreviewHost({
       fullscreen.present(({ close }) => (
         <ImagePreviewSession
           initialSession={{ items, index }}
-          voiceRuntime={annotationRegistrationRef.current?.voiceRuntime ?? null}
-          getAnnotationHandler={() => annotationRegistrationRef.current?.handler ?? null}
+          getAnnotationHandler={() => annotationRegistrationRef.current}
           onClose={close}
         />
       ));
     },
-    registerAnnotationHandler(handler, voiceRuntime) {
-      const registration = { handler, voiceRuntime };
+    registerAnnotationHandler(handler) {
+      const registration = handler;
       annotationRegistrationRef.current = registration;
       return () => {
         if (annotationRegistrationRef.current !== registration) return;
@@ -140,70 +127,37 @@ export function ImagePreviewHost({
 
 function ImagePreviewSession({
   initialSession,
-  voiceRuntime,
   getAnnotationHandler,
   onClose,
 }: {
   initialSession: PreviewSession;
-  voiceRuntime: AppVoiceInputRuntime | null;
-  getAnnotationHandler(): ((text: string) => Promise<boolean>) | null;
+  getAnnotationHandler(): ImageAnnotationHandler | null;
   onClose(): void;
 }) {
   const dialog = useAppDialog();
   const [session, setSession] = useState(initialSession);
-  const [annotations, setAnnotations] = useState<Record<string, ImagePointAnnotation[]>>({});
-  const [attaching, setAttaching] = useState(false);
-  const voiceScope = voiceRuntime === null ? null : reviewVoiceInputScope(voiceRuntime);
-  const stopVoice = () => {
-    if (voiceScope === null) return;
-    const resource = voiceRuntime?.resources?.voiceInputs.get(voiceScope) ?? null;
-    if (resource?.phase !== undefined && resource.phase !== "idle") void voiceRuntime?.controller?.finish(false);
-    voiceRuntime?.controller?.unbind(voiceScope);
-  };
-  const stopVoiceOnUnmount = useEvent(stopVoice);
-  useEffect(() => () => stopVoiceOnUnmount(), [stopVoiceOnUnmount]);
-  const close = () => {
-    stopVoice();
-    onClose();
-  };
-  const annotationCount = session.items.reduce((count, item) => count + (annotations[item.id]?.length ?? 0), 0);
-  const submitAnnotations = async () => {
+  const [preparingAnnotation, setPreparingAnnotation] = useState(false);
+  const annotate = async () => {
     const annotationHandler = getAnnotationHandler();
-    if (annotationHandler === null || attaching) return;
-    const text = serializeImageReviewAttachment(session.items.map((item) => ({
-      label: item.label,
-      reference: item.reference ?? item.link ?? null,
-      annotations: annotations[item.id] ?? [],
-    })));
-    if (text === "") return;
-    setAttaching(true);
-    const attached = await annotationHandler(text).catch((cause: unknown) => {
-      dialog.alert("Could not attach review", cause instanceof Error ? cause.message : "Review upload failed");
-      return false;
+    const item = session.items[session.index];
+    if (annotationHandler === null || item === undefined || preparingAnnotation) return;
+    setPreparingAnnotation(true);
+    await annotationHandler(item, onClose).catch((cause: unknown) => {
+      dialog.alert("Could not annotate image", cause instanceof Error ? cause.message : "Image could not be opened in QuickDraw");
     });
-    setAttaching(false);
-    if (attached) {
-      setAnnotations({});
-      close();
-    }
+    setPreparingAnnotation(false);
   };
-  const preview = (
+  return (
     <GestureHandlerRootView style={styles.overlay}>
       <ImageViewer
         session={session}
-        annotations={annotations}
-        annotationCount={annotationCount}
-        annotationSubmitting={attaching}
+        annotationPreparing={preparingAnnotation}
         onChangeIndex={(index) => setSession((current) => ({ ...current, index }))}
-        onChangeAnnotations={(itemId, points) => setAnnotations((current) => ({ ...current, [itemId]: points }))}
-        onClose={close}
-        onSubmitAnnotations={submitAnnotations}
+        onClose={onClose}
+        {...(getAnnotationHandler() === null ? {} : { onAnnotate: () => void annotate() })}
       />
     </GestureHandlerRootView>
   );
-  return voiceRuntime === null
-    ? preview
-    : <AppVoiceInputProvider runtime={voiceRuntime}>{preview}</AppVoiceInputProvider>;
 }
 
 export function ImagePreviewGroup({ id, children }: { id: string; children: ReactNode }) {
@@ -222,13 +176,12 @@ export function useImagePreviewGroup(): string | null {
   return useContext(ImagePreviewGroupContext);
 }
 
-export function useImagePreviewAnnotationHandler(handler: (text: string) => Promise<boolean>): void {
+export function useImagePreviewAnnotationHandler(handler: ImageAnnotationHandler): void {
   const { registerAnnotationHandler } = useContext(ImagePreviewContext);
-  const voiceRuntime = useAppVoiceInputRuntime();
   const handleAnnotation = useEvent(handler);
   useEffect(
-    () => registerAnnotationHandler((text) => handleAnnotation(text), voiceRuntime),
-    [handleAnnotation, registerAnnotationHandler, voiceRuntime],
+    () => registerAnnotationHandler((item, onAttached) => handleAnnotation(item, onAttached)),
+    [handleAnnotation, registerAnnotationHandler],
   );
 }
 
@@ -246,67 +199,34 @@ export function useRegisterImagePreviewItem(groupId: string | null, item: ImageP
 
 function ImageViewer({
   session,
-  annotations,
-  annotationCount,
-  annotationSubmitting,
+  annotationPreparing,
   onChangeIndex,
-  onChangeAnnotations,
   onClose,
-  onSubmitAnnotations,
+  onAnnotate,
 }: {
   session: PreviewSession;
-  annotations: Record<string, ImagePointAnnotation[]>;
-  annotationCount: number;
-  annotationSubmitting: boolean;
+  annotationPreparing: boolean;
   onChangeIndex(index: number): void;
-  onChangeAnnotations(itemId: string, points: ImagePointAnnotation[]): void;
   onClose(): void;
-  onSubmitAnnotations?(): void;
+  onAnnotate?(): void;
 }) {
   const insets = useSafeAreaInsets();
-  const voiceRuntime = useAppVoiceInputRuntime();
-  const voiceScope = voiceRuntime === null ? null : reviewVoiceInputScope(voiceRuntime);
-  const voiceResource = useVoiceInputResource(voiceRuntime, voiceScope);
-  const voicePhase = voiceResource?.phase ?? "idle";
   const item = session.items[session.index];
-  const [annotating, setAnnotating] = useState(false);
-  const [pendingPoint, setPendingPoint] = useState<{ x: number; y: number } | null>(null);
-  const [caption, setCaption] = useState("");
   if (item === undefined) return null;
-  const points = annotations[item.id] ?? [];
   const imageActions: ActionMenuItem[] = [
     ...(item.download === null || item.download === undefined ? [] : [{ id: "download", label: "Download", icon: "download-outline" as const }]),
     ...(item.link === null || item.link === undefined || item.link === item.source.uri ? [] : [{ id: "open", label: "Open link", icon: "open-outline" as const }]),
   ];
-  const savePoint = () => {
-    const text = caption.trim();
-    if (pendingPoint === null || text === "" || voicePhase !== "idle") return;
-    onChangeAnnotations(item.id, [...points, {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      x: pendingPoint.x,
-      y: pendingPoint.y,
-      text,
-    }]);
-    setPendingPoint(null);
-    setCaption("");
-  };
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}> 
       <ZoomableImage
         key={item.id}
         item={item}
-        points={points}
-        pendingPoint={pendingPoint}
-        annotating={annotating}
         canGoPrevious={session.index > 0}
         canGoNext={session.index < session.items.length - 1}
         onPrevious={() => onChangeIndex(session.index - 1)}
         onNext={() => onChangeIndex(session.index + 1)}
         onClose={onClose}
-        onCreatePoint={(point) => {
-          setPendingPoint(point);
-          setCaption("");
-        }}
       />
       <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top + spacing.xs }]}> 
         <Pressable accessibilityRole="button" accessibilityLabel="Close image" onPress={onClose} style={styles.roundButton}>
@@ -331,104 +251,39 @@ function ImageViewer({
               </Pressable>
             </ActionMenu>
           )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={annotating ? "Stop annotating image" : "Annotate image"}
-            onPress={() => setAnnotating((current) => !current)}
-            style={[styles.roundButton, annotating && styles.activeButton]}
-          >
-            <Ionicons name="pin-outline" size={19} color={annotating ? "#0b0b0b" : "#ffffff"} />
-          </Pressable>
-        </View>
-      </View>
-      {points.length > 0 && (
-        <View style={[styles.annotationStrip, { bottom: insets.bottom + spacing.lg }]}> 
-          <View style={styles.annotationSummary}>
-            <Ionicons name="pin" size={16} color={colors.accent} />
-            <Text numberOfLines={1} style={styles.annotationSummaryText}>{points.length} · {points.at(-1)?.text ?? `${annotationCount} total`}</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Remove last annotation"
-            onPress={() => onChangeAnnotations(item.id, points.slice(0, -1))}
-            style={styles.smallButton}
-          >
-            <Ionicons name="arrow-undo" size={17} color="#ffffff" />
-          </Pressable>
-          {onSubmitAnnotations !== undefined && (
-            <Pressable accessibilityRole="button" accessibilityLabel="Attach image review" disabled={annotationSubmitting} onPress={onSubmitAnnotations} style={[styles.submitButton, annotationSubmitting && styles.disabled]}>
-              {annotationSubmitting
-                ? <ActivityIndicator size="small" color="#0b0b0b" />
-                : <Ionicons name="attach" size={18} color="#0b0b0b" />}
-              <Text style={styles.submitText}>Attach review</Text>
+          {onAnnotate !== undefined && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Annotate image in QuickDraw"
+              disabled={annotationPreparing}
+              onPress={onAnnotate}
+              style={[styles.roundButton, annotationPreparing && styles.disabled]}
+            >
+              {annotationPreparing
+                ? <ActivityIndicator size="small" color="#ffffff" />
+                : <Ionicons name="brush-outline" size={20} color="#ffffff" />}
             </Pressable>
           )}
         </View>
-      )}
-      {annotating && pendingPoint === null && (
-        <View pointerEvents="none" style={[styles.annotationHint, { bottom: insets.bottom + (points.length > 0 ? 82 : 24) }]}> 
-          <Text style={styles.annotationHintText}>Tap the image to place a point</Text>
-        </View>
-      )}
-      {pendingPoint !== null && (
-        <KeyboardStickyView
-          offset={{ closed: -Math.max(insets.bottom, spacing.sm), opened: -spacing.sm }}
-          style={styles.captionEditorSticky}
-        >
-        <View style={styles.captionEditor}> 
-          <TextInput
-            autoFocus
-            voiceInput
-            {...(voiceScope === null ? {} : { voiceScope })}
-            value={caption}
-            onChangeText={setCaption}
-            onSubmitEditing={savePoint}
-            returnKeyType="done"
-            placeholder="What should change here?"
-            placeholderTextColor="#8f8f8f"
-            style={styles.captionInput}
-          />
-          <Pressable accessibilityRole="button" accessibilityLabel="Cancel annotation" onPress={() => {
-            if (voicePhase !== "idle") void voiceRuntime?.controller?.finish(false);
-            setPendingPoint(null);
-          }} style={styles.smallButton}>
-            <Ionicons name="close" size={19} color="#ffffff" />
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Save annotation" disabled={caption.trim() === "" || voicePhase !== "idle"} onPress={savePoint} style={[styles.captionSave, (caption.trim() === "" || voicePhase !== "idle") && styles.disabled]}>
-            <Ionicons name="checkmark" size={20} color="#0b0b0b" />
-          </Pressable>
-        </View>
-        {voiceResource?.error !== null && voiceResource?.error !== undefined && (
-          <Text style={styles.captionVoiceError}>{voiceResource.error}</Text>
-        )}
-        </KeyboardStickyView>
-      )}
+      </View>
     </View>
   );
 }
 
 function ZoomableImage({
   item,
-  points,
-  pendingPoint,
-  annotating,
   canGoPrevious,
   canGoNext,
   onPrevious,
   onNext,
   onClose,
-  onCreatePoint,
 }: {
   item: ImagePreviewItem;
-  points: ImagePointAnnotation[];
-  pendingPoint: { x: number; y: number } | null;
-  annotating: boolean;
   canGoPrevious: boolean;
   canGoNext: boolean;
   onPrevious(): void;
   onNext(): void;
   onClose(): void;
-  onCreatePoint(point: { x: number; y: number }): void;
 }) {
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [intrinsic, setIntrinsic] = useState({ width: 1, height: 1 });
@@ -551,18 +406,7 @@ function ZoomableImage({
     }
   });
 
-  const annotationTap = Gesture.Tap().numberOfTaps(1).maxDistance(8).runOnJS(true).onEnd((event, success) => {
-    if (!success || !annotating) return;
-    const localX = (event.x - viewport.width / 2 - translateX.get()) / scale.get() + fit.width / 2;
-    const localY = (event.y - viewport.height / 2 - translateY.get()) / scale.get() + fit.height / 2;
-    if (localX < 0 || localY < 0 || localX > fit.width || localY > fit.height) return;
-    onCreatePoint({
-      x: clampNormalizedCoordinate(localX / fit.width),
-      y: clampNormalizedCoordinate(localY / fit.height),
-    });
-  });
-
-  const gestures = Gesture.Simultaneous(pan, pinch, Gesture.Exclusive(doubleTap, annotationTap));
+  const gestures = Gesture.Simultaneous(pan, pinch, doubleTap);
   const imageStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: translateX.get() + pageOffset.get() },
@@ -613,25 +457,6 @@ function ZoomableImage({
               }}
               onError={() => setDecodeState("error")}
             />
-            {points.map((point, index) => (
-              <View
-                key={point.id}
-                accessible
-                accessibilityLabel={`Annotation ${index + 1}: ${point.text}`}
-                style={[styles.pin, { left: `${point.x * 100}%`, top: `${point.y * 100}%` }]}
-              >
-                <Text style={styles.pinText}>{index + 1}</Text>
-              </View>
-            ))}
-            {pendingPoint !== null && (
-              <View
-                accessible
-                accessibilityLabel="New annotation point"
-                style={[styles.pin, styles.pendingPin, { left: `${pendingPoint.x * 100}%`, top: `${pendingPoint.y * 100}%` }]}
-              >
-                <Text style={styles.pinText}>{points.length + 1}</Text>
-              </View>
-            )}
           </Animated.View>
         </View>
       </GestureDetector>
@@ -662,24 +487,7 @@ const styles = StyleSheet.create({
   topBarActions: { flexDirection: "row", gap: spacing.xs },
   roundButton: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, backgroundColor: "rgba(36,36,36,0.9)", alignItems: "center", justifyContent: "center" },
   imageMenuAnchor: { width: touchTarget, height: touchTarget },
-  activeButton: { backgroundColor: colors.accent, borderWidth: 1, borderColor: "rgba(255,255,255,0.72)" },
   counterPill: { minHeight: 30, borderRadius: 16, backgroundColor: "rgba(36,36,36,0.82)", paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
   counterText: { color: "#ffffff", fontSize: 12, fontWeight: "600" },
-  pin: { position: "absolute", width: 30, height: 30, marginLeft: -15, marginTop: -15, borderRadius: 15, borderWidth: 2, borderColor: "#ffffff", backgroundColor: colors.accent, alignItems: "center", justifyContent: "center", elevation: 4 },
-  pinText: { color: "#0b0b0b", fontSize: 12, fontWeight: "800" },
-  pendingPin: { borderStyle: "dashed", transform: [{ scale: 1.08 }] },
-  annotationHint: { position: "absolute", alignSelf: "center", borderRadius: 18, backgroundColor: "rgba(36,36,36,0.9)", paddingHorizontal: 14, paddingVertical: 9 },
-  annotationHintText: { color: "#ffffff", fontSize: 12, fontWeight: "600" },
-  annotationStrip: { position: "absolute", left: spacing.sm, right: spacing.sm, minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.large, backgroundColor: "rgba(28,28,28,0.96)", padding: spacing.xs },
-  annotationSummary: { minWidth: 0, flex: 1, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs },
-  annotationSummaryText: { minWidth: 0, flexShrink: 1, color: "#ffffff", fontSize: 12 },
-  smallButton: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, backgroundColor: "#303030", alignItems: "center", justifyContent: "center" },
-  submitButton: { minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: touchTarget / 2, backgroundColor: colors.accent, paddingHorizontal: 14 },
-  submitText: { color: "#0b0b0b", fontSize: 12, fontWeight: "700" },
-  captionEditorSticky: { position: "absolute", left: 0, right: 0, bottom: 0 },
-  captionEditor: { marginHorizontal: spacing.sm, minHeight: touchTarget + spacing.sm, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.large, backgroundColor: "#1c1c1c", padding: spacing.xs },
-  captionInput: { minWidth: 0, flex: 1, minHeight: touchTarget, borderRadius: touchTarget / 2, backgroundColor: "#292929", color: "#ffffff", paddingHorizontal: 14, paddingVertical: spacing.xs, fontSize: 14 },
-  captionVoiceError: { marginHorizontal: spacing.lg, marginTop: spacing.xxs, color: colors.red, fontSize: 12 },
-  captionSave: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center" },
   disabled: { opacity: 0.4 },
 });

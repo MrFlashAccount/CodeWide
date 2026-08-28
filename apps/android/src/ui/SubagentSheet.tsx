@@ -5,10 +5,8 @@ import { materializeThreadDetails, type ThreadDetailDatabase } from "../data/thr
 import { applyThreadSummaryMetadata } from "../data/thread-chat-projection";
 import { projectSubagentConversation, subagentsForThread } from "../data/subagent-projection";
 import type { StoredThreadSummary } from "../data/thread-summary-types";
-import type { ThreadWindow } from "../data/use-remote-workspace";
 import { useThreadChatWindow } from "../data/use-thread-chat-window";
 import { useEvent } from "../react/useEvent";
-import { useAsyncResource } from "../rendering/async-resource-store";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 import { SubagentPendingDetail, SubagentWorkspace } from "./SubagentWorkspace";
 
@@ -26,7 +24,6 @@ export function SubagentSheet({
   parentThread,
   summaries,
   threadDetails,
-  onReadThread,
   initialThreadId = null,
   renderThread,
   onClose,
@@ -35,8 +32,7 @@ export function SubagentSheet({
   parentThreadId: string;
   parentThread: Thread | null;
   summaries: readonly StoredThreadSummary[];
-  threadDetails: ThreadDetailDatabase | null;
-  onReadThread(connectionId: string, threadId: string): Promise<ThreadWindow | null>;
+  threadDetails: ThreadDetailDatabase;
   initialThreadId?: string | null;
   renderThread(view: SubagentThreadView): ReactNode;
   onClose(): void;
@@ -89,9 +85,7 @@ export function SubagentSheet({
               summary={selected}
               compact={compact}
               threadDetails={threadDetails}
-              onReadThread={onReadThread}
               onBack={resetSelection}
-              onClose={close}
               onOpenSubagent={openById}
               renderThread={renderThread}
             />
@@ -108,9 +102,7 @@ function SubagentConversationDetail({
   summary,
   compact,
   threadDetails,
-  onReadThread,
   onBack,
-  onClose,
   onOpenSubagent,
   renderThread,
 }: {
@@ -118,10 +110,8 @@ function SubagentConversationDetail({
   parentThread: Thread | null;
   summary: StoredThreadSummary;
   compact: boolean;
-  threadDetails: ThreadDetailDatabase | null;
-  onReadThread(connectionId: string, threadId: string): Promise<ThreadWindow | null>;
+  threadDetails: ThreadDetailDatabase;
   onBack(): void;
-  onClose(): void;
   onOpenSubagent(threadId: string): void;
   renderThread(view: SubagentThreadView): ReactNode;
 }) {
@@ -134,28 +124,12 @@ function SubagentConversationDetail({
   const detailRows = detailWindow === null
     ? []
     : [...detailWindow.turnRows, ...detailWindow.detailRows, ...detailWindow.liveRows];
-  const materializedThread = threadDetails === null
-    ? null
-    : materializeThreadDetails(detailRows, threadDetails.sessionId)
-        .find((snapshot) => snapshot.connectionId === connectionId && snapshot.thread.id === threadId)?.thread ?? null;
-  const remoteThreadResource = useAsyncResource<ThreadWindow | null>(
-    materializedThread !== null ? null : `subagent-thread:${connectionId}:${threadId}`,
-    threadId,
-    async () => await onReadThread(connectionId, threadId),
-  );
-  const thread = applyThreadSummaryMetadata(materializedThread ?? remoteThreadResource.value?.thread ?? null, summary);
+  const materializedThread = materializeThreadDetails(detailRows, threadDetails.sessionId)
+    .find((snapshot) => snapshot.connectionId === connectionId && snapshot.thread.id === threadId)?.thread ?? null;
+  const thread = applyThreadSummaryMetadata(materializedThread, summary);
   const conversation = thread === null ? null : projectSubagentConversation(thread, parentThread);
   if (conversation === null) {
-    return (
-      <SubagentPendingDetail
-        summary={summary}
-        compact={compact}
-        loading={remoteThreadResource.status === "loading"}
-        error={remoteThreadResource.status === "error" ? remoteThreadResource.error : null}
-        onBack={onBack}
-        onClose={onClose}
-      />
-    );
+    throw new Error(`Subagent conversation ${threadId} did not materialize from its ready window`);
   }
   return renderThread({
     summary,

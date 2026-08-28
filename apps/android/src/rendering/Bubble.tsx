@@ -27,6 +27,11 @@ export function Bubble({
   errorResetKey?: string;
   children: ReactNode;
 }) {
+  const surfaceStyle = [
+    styles.surface,
+    variant === "agent" ? styles.agentSurface : styles.userSurface,
+    variant === "agent" && fill ? styles.agentSurfaceFill : null,
+  ];
   return (
     <RecoverableRenderBoundary
       scope="bubble"
@@ -34,16 +39,7 @@ export function Bubble({
       {...(errorContext === undefined ? {} : { context: errorContext })}
       resetKey={errorResetKey ?? `${variant}:${testID ?? "bubble"}`}
     >
-    <View
-      testID={testID}
-      style={[
-        styles.surface,
-        variant === "agent" ? styles.agentSurface : styles.userSurface,
-        variant === "agent" && fill ? styles.agentSurfaceFill : null,
-      ]}
-    >
-      {children}
-    </View>
+      <View testID={testID} style={surfaceStyle}>{children}</View>
     </RecoverableRenderBoundary>
   );
 }
@@ -59,6 +55,7 @@ const styles = StyleSheet.create({
   },
   agentSurface: {
     maxWidth: "88%",
+    flexShrink: 1,
     alignSelf: "flex-start",
     paddingHorizontal: 10,
     paddingTop: 7,

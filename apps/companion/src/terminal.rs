@@ -38,6 +38,7 @@ const TERMINAL_REPLAY_CLOSE_CODE: u16 = 4004;
 #[serde(rename_all = "camelCase")]
 pub struct TerminalQuery {
     pub cwd: Option<String>,
+    pub thread_id: Option<String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
     pub session_id: Option<String>,
@@ -49,6 +50,10 @@ pub struct TerminalQuery {
 pub enum TerminalError {
     InvalidSize,
     InvalidCwd,
+    InvalidThread,
+    ThreadNotFound,
+    ThreadResolutionFailed { reason: String },
+    SessionThreadMismatch,
     InvalidSession,
     SessionNotFound,
     SessionOwnedByAnotherDevice,
@@ -61,12 +66,17 @@ impl TerminalError {
     #[must_use]
     pub const fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidSize | Self::InvalidCwd | Self::InvalidSession => StatusCode::BAD_REQUEST,
-            Self::SessionNotFound => StatusCode::NOT_FOUND,
+            Self::InvalidSize | Self::InvalidCwd | Self::InvalidThread | Self::InvalidSession => {
+                StatusCode::BAD_REQUEST
+            }
+            Self::ThreadNotFound | Self::SessionNotFound => StatusCode::NOT_FOUND,
             Self::SessionOwnedByAnotherDevice => StatusCode::FORBIDDEN,
             Self::SessionLimitReached => StatusCode::TOO_MANY_REQUESTS,
+            Self::SessionThreadMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             Self::ReplayUnavailable => StatusCode::CONFLICT,
-            Self::SpawnFailed { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::ThreadResolutionFailed { .. } | Self::SpawnFailed { .. } => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         }
     }
 
@@ -75,6 +85,10 @@ impl TerminalError {
         match self {
             Self::InvalidSize => "terminal_size_invalid",
             Self::InvalidCwd => "terminal_cwd_invalid",
+            Self::InvalidThread => "terminal_thread_invalid",
+            Self::ThreadNotFound => "terminal_thread_not_found",
+            Self::ThreadResolutionFailed { .. } => "terminal_thread_resolution_failed",
+            Self::SessionThreadMismatch => "terminal_session_thread_mismatch",
             Self::InvalidSession => "terminal_session_invalid",
             Self::SessionNotFound => "terminal_session_not_found",
             Self::SessionOwnedByAnotherDevice => "terminal_session_owner_mismatch",
@@ -90,6 +104,12 @@ impl TerminalError {
             reason: error.to_string(),
         }
     }
+
+    pub fn thread_resolution_failed(error: impl fmt::Display) -> Self {
+        Self::ThreadResolutionFailed {
+            reason: error.to_string(),
+        }
+    }
 }
 
 impl fmt::Display for TerminalError {
@@ -97,6 +117,14 @@ impl fmt::Display for TerminalError {
         match self {
             Self::InvalidSize => formatter.write_str("terminal size is invalid"),
             Self::InvalidCwd => formatter.write_str("terminal working directory is invalid"),
+            Self::InvalidThread => formatter.write_str("terminal thread id is invalid"),
+            Self::ThreadNotFound => formatter.write_str("terminal thread was not found"),
+            Self::ThreadResolutionFailed { reason } => {
+                write!(formatter, "terminal thread resolution failed: {reason}")
+            }
+            Self::SessionThreadMismatch => {
+                formatter.write_str("terminal session belongs to another thread")
+            }
             Self::InvalidSession => formatter.write_str("terminal session id is invalid"),
             Self::SessionNotFound => formatter.write_str("terminal session was not found"),
             Self::SessionOwnedByAnotherDevice => {
@@ -205,6 +233,7 @@ struct TerminalRegistryInner {
 pub struct LiveTerminal {
     id: String,
     owner: String,
+    thread_id: Option<String>,
     commands: std_mpsc::SyncSender<WriterCommand>,
     output: broadcast::Sender<ReplayChunk>,
     state: watch::Sender<TerminalState>,
@@ -281,6 +310,7 @@ impl TerminalRegistry {
         owner: &str,
         query: &TerminalQuery,
         authorization: Option<TerminalAuthorization>,
+        spawn: impl FnOnce() -> Result<TerminalSession, TerminalError>,
     ) -> Result<Arc<LiveTerminal>, TerminalError> {
         let session_id = query
             .session_id
@@ -292,6 +322,9 @@ impl TerminalRegistry {
             if existing.owner != owner {
                 return Err(TerminalError::SessionOwnedByAnotherDevice);
             }
+            if existing.thread_id != query.thread_id {
+                return Err(TerminalError::SessionThreadMismatch);
+            }
             if !existing.exited.load(Ordering::Acquire) {
                 existing.resize(validate_size(query.cols, query.rows)?)?;
             }
@@ -302,14 +335,23 @@ impl TerminalRegistry {
         }
 
         let permit = self.legacy_permit()?;
-        let session = TerminalSession::spawn(query)?;
-        let live = LiveTerminal::start(session_id.to_owned(), owner.to_owned(), session, permit);
+        let session = spawn()?;
+        let live = LiveTerminal::start(
+            session_id.to_owned(),
+            owner.to_owned(),
+            query.thread_id.clone(),
+            session,
+            permit,
+        );
         {
             let mut sessions = lock(&self.inner.sessions);
             if let Some(existing) = sessions.get(session_id) {
                 live.close();
                 if existing.owner != owner {
                     return Err(TerminalError::SessionOwnedByAnotherDevice);
+                }
+                if existing.thread_id != query.thread_id {
+                    return Err(TerminalError::SessionThreadMismatch);
                 }
                 return Ok(Arc::clone(existing));
             }
@@ -364,6 +406,7 @@ impl LiveTerminal {
     fn start(
         id: String,
         owner: String,
+        thread_id: Option<String>,
         session: TerminalSession,
         permit: OwnedSemaphorePermit,
     ) -> Arc<Self> {
@@ -373,6 +416,7 @@ impl LiveTerminal {
         let terminal = Arc::new(Self {
             id,
             owner,
+            thread_id,
             commands,
             output,
             state,

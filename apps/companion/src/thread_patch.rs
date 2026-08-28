@@ -49,7 +49,8 @@ pub fn compile_thread_patch(payload: &Value) -> Option<Value> {
         "turn/started" => operation("turnStarted"),
         "turn/completed" => operation("turnCompleted"),
         "model/rerouted" => operation("modelRerouted"),
-        "item/started" | "item/completed" => operation("itemUpsert"),
+        "item/started" => with_string(operation("itemUpsert"), "itemPhase", "started"),
+        "item/completed" => with_string(operation("itemUpsert"), "itemPhase", "completed"),
         "item/agentMessage/delta" => {
             with_string(operation("itemTextDelta"), "itemType", "agentMessage")
         }
@@ -308,6 +309,24 @@ mod tests {
     fn ignores_notifications_that_do_not_change_a_thread_projection() {
         let payload = json!({"method": "account/updated", "params": {}});
         assert_eq!(attach_thread_patch(payload.clone()), payload);
+    }
+
+    #[test]
+    fn preserves_item_start_and_completion_as_projection_lifecycle_phases() {
+        for (method, expected) in [("item/started", "started"), ("item/completed", "completed")] {
+            let projected = attach_thread_patch(json!({
+                "method": method,
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "item": {"type": "contextCompaction", "id": "compaction"}
+                }
+            }));
+            assert_eq!(
+                projected[THREAD_PATCH_FIELD]["operation"]["itemPhase"],
+                expected
+            );
+        }
     }
 
     #[test]

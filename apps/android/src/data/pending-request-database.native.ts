@@ -1,6 +1,7 @@
 import type { SyncServerRequest } from "@codewide/sync-client";
 import type { Collection } from "@tanstack/react-db";
 
+import { cloneProtocolValue } from "./clone-protocol-value";
 import { createPersistentCollectionModel } from "./persistent-collection.native";
 import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import type { PendingServerRequest } from "./pending-request-types";
@@ -67,7 +68,7 @@ export function createPendingRequestDatabase(): PendingRequestDatabase {
           requestKey,
           requestId: request.id,
           method: request.method,
-          params: structuredClone(request.params),
+          params: cloneProtocolValue(request.params),
           state: previous?.state ?? "pending",
           createdAt: previous?.createdAt ?? now,
         };

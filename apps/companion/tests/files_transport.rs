@@ -53,7 +53,10 @@ async fn scoped_file_transport_matches_v1_safety_and_resume_contract()
         .observe_preview_path(&reported_preview_root.join("render.png"))
         .await;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
         store.clone(),
@@ -101,7 +104,10 @@ async fn managed_attachments_are_scoped_by_thread_and_share_cas_blobs()
         .await?,
     );
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::new(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
         store.clone(),

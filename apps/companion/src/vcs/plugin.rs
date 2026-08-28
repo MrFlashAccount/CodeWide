@@ -310,6 +310,10 @@ pub async fn changes(
     Ok(snapshot)
 }
 
+#[expect(
+    clippy::suspicious_operation_groupings,
+    reason = "VcsDiff.file_id intentionally corresponds to VcsFile.id"
+)]
 pub async fn diff(
     plugin: &VcsPluginConfig,
     workspace: &Path,

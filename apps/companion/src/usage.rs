@@ -280,7 +280,7 @@ impl LiveUsageProjector {
             .map_err(StoreError::from)
     }
 
-    fn load(&mut self, thread_id: &str) -> Result<PersistedThreadUsage, StoreError> {
+    fn load(&self, thread_id: &str) -> Result<PersistedThreadUsage, StoreError> {
         if let Some(state) = self.threads.get(thread_id) {
             return Ok(state.clone());
         }

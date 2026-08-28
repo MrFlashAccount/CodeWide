@@ -93,4 +93,17 @@ describe("CodeWide effect ownership", () => {
     expect(screen).toContain("const goalResource = useThreadGoalRow(resources, goalResourceId);");
     expect(screen).toContain("const tunnelResource = useTunnelRow(resources, tunnelResourceId);");
   });
+
+  it("keeps active-thread selection below the workspace shell and out of the sidebar list", () => {
+    const shell = screen.slice(
+      screen.indexOf("function CodeWideWorkspaceScreen"),
+      screen.indexOf("function CodeWideWorkspaceContent"),
+    );
+    expect(shell).toContain("createThreadNavigationModel");
+    expect(shell).not.toContain("useSelector(");
+    expect(screen).toContain("function ThreadSidebar(");
+    expect(screen).toContain("function SelectableThreadRow(");
+    expect(screen).toContain("navigation.selection$.id.get() === selectionKey");
+    expect(screen).not.toContain("extraData={`${activeThreadId");
+  });
 });

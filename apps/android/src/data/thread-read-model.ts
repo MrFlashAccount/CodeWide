@@ -7,6 +7,8 @@ export type CompanionThreadResumeResponse = ThreadResumeResponse & {
   codewideReadModelVersion?: number;
 };
 
+export type CompanionThreadWindowResponse = CompanionThreadResumeResponse;
+
 /**
  * Accepts the companion-owned chronological recovery window without touching
  * a stale client copy. Older read-model contracts are deliberately rejected:
@@ -24,6 +26,27 @@ export function materializeResumedThread(
     throw new Error(`Companion recovery window omitted turn ${missingPageTurn.id}`);
   }
   return response.thread;
+}
+
+export function materializeAuthoritativeThreadWindow(
+  response: CompanionThreadWindowResponse,
+  cached: Thread,
+): Thread {
+  const thread = materializeResumedThread(response);
+  const authoritativeFullItems = new Map(
+    thread.turns
+      .filter(({ itemsView }) => itemsView === "full")
+      .map(({ id, items }) => [id, items] as const),
+  );
+  const projected = preserveProjectedTurnMetadata(thread, cached);
+  if (authoritativeFullItems.size === 0) return projected;
+  return {
+    ...projected,
+    turns: projected.turns.map((turn) => {
+      const items = authoritativeFullItems.get(turn.id);
+      return items === undefined ? turn : { ...turn, items };
+    }),
+  };
 }
 
 export function materializeReadOnlyThreadWindow(

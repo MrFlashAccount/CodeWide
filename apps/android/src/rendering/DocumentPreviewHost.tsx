@@ -36,7 +36,7 @@ import { useImagePreview } from "./ImagePreviewHost";
 import { materializePrivateAsset } from "./private-asset";
 import { RichMarkdown, RichMarkdownTextScaleProvider } from "./RichMarkdown";
 import type { ContentReviewTarget } from "./content-review";
-import { ContentReviewComposer } from "./ContentReviewHost";
+import { ContentReviewComments, ContentReviewComposer } from "./ContentReviewHost";
 import { RichContentWidthProvider } from "./RichContentLayout";
 import { useEphemeralAsyncResource } from "./async-resource-store";
 import { useDocumentViewerPreferences } from "./use-document-viewer-preferences";
@@ -484,7 +484,12 @@ function FullscreenDocumentPreview({
           </View>
         </ScrollView>
       )}
-      {markdownReviewTarget !== undefined && <ContentReviewComposer targetId={markdownReviewTarget.id} />}
+      {markdownReviewTarget !== undefined && (
+        <>
+          <ContentReviewComments targetId={markdownReviewTarget.id} presentation="overlay" />
+          <ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />
+        </>
+      )}
     </View>
   );
 }
@@ -558,6 +563,11 @@ function DocumentHeader({
 }) {
   const actions: ActionMenuItem[] = [
     ...(onDownload === undefined ? [] : [{ id: "download", label: "Download", icon: "download-outline" as const }]),
+    ...(textScale === undefined ? [] : [
+      { id: "text-smaller", section: "Text size", label: "Smaller", icon: "remove" as const, disabled: textScale <= 0.8 || onDecreaseText === undefined },
+      { id: "text-reset", section: "Text size", label: `Reset to 100% (${Math.round(textScale * 100)}%)`, icon: "refresh" as const, disabled: onResetText === undefined },
+      { id: "text-larger", section: "Text size", label: "Larger", icon: "add" as const, disabled: textScale >= 1.4 || onIncreaseText === undefined },
+    ]),
     ...(layoutMode === undefined ? [] : [
       { id: "layout-reading", label: "Reading width", icon: "contract-outline" as const, selected: layoutMode === "reading" },
       { id: "layout-wide", label: "Full width", icon: "expand-outline" as const, selected: layoutMode === "wide" },
@@ -565,17 +575,12 @@ function DocumentHeader({
   ];
   const onSelect = (id: string) => {
     if (id === "download") onDownload?.();
+    else if (id === "text-smaller") onDecreaseText?.();
+    else if (id === "text-reset") onResetText?.();
+    else if (id === "text-larger") onIncreaseText?.();
     else if (id === "layout-reading") onLayoutModeChange?.("reading");
     else if (id === "layout-wide") onLayoutModeChange?.("wide");
   };
-  const textScaleControl = textScale === undefined ? undefined : (
-    <DocumentTextScaleControl
-      value={textScale}
-      {...(onDecreaseText === undefined ? {} : { onDecrease: onDecreaseText })}
-      {...(onResetText === undefined ? {} : { onReset: onResetText })}
-      {...(onIncreaseText === undefined ? {} : { onIncrease: onIncreaseText })}
-    />
-  );
   return (
     <View style={styles.header}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back from document preview" onPress={close} style={styles.iconButton}>
@@ -583,11 +588,10 @@ function DocumentHeader({
       </Pressable>
       <Ionicons name={icon} size={20} color={colors.textMuted} />
       <Text numberOfLines={1} ellipsizeMode="middle" style={styles.title}>{title}</Text>
-      {(actions.length > 0 || textScaleControl !== undefined) && (
+      {actions.length > 0 && (
         <ActionMenu
           accessibilityLabel={`Document actions for ${title}`}
           actions={actions}
-          controls={textScaleControl}
           onSelect={onSelect}
         >
           <Pressable accessibilityRole="button" accessibilityLabel={`Document actions for ${title}`} style={styles.iconButton}>
@@ -595,56 +599,6 @@ function DocumentHeader({
           </Pressable>
         </ActionMenu>
       )}
-    </View>
-  );
-}
-
-function DocumentTextScaleControl({
-  value,
-  onDecrease,
-  onReset,
-  onIncrease,
-}: {
-  value: number;
-  onDecrease?(): void;
-  onReset?(): void;
-  onIncrease?(): void;
-}) {
-  const decreaseDisabled = value <= 0.8 || onDecrease === undefined;
-  const increaseDisabled = value >= 1.4 || onIncrease === undefined;
-  return (
-    <View accessibilityRole="adjustable" accessibilityLabel="Document text size" style={styles.textScaleMenuItem}>
-      <Ionicons name="text-outline" size={18} color={colors.textMuted} />
-      <Text style={styles.textScaleMenuLabel}>Text size</Text>
-      <View style={styles.textScaleStepper}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Decrease document text size"
-          disabled={decreaseDisabled}
-          onPress={onDecrease}
-          style={({ pressed }) => [styles.textScaleStepButton, decreaseDisabled && styles.textScaleStepDisabled, pressed && styles.textScaleStepPressed]}
-        >
-          <Ionicons name="remove" size={17} color={colors.text} />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Reset document text size"
-          accessibilityHint="Resets text size to 100 percent"
-          onPress={onReset}
-          style={({ pressed }) => [styles.textScaleValueButton, pressed && styles.textScaleStepPressed]}
-        >
-          <Text numberOfLines={1} style={styles.textScaleValue}>{Math.round(value * 100)}%</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Increase document text size"
-          disabled={increaseDisabled}
-          onPress={onIncrease}
-          style={({ pressed }) => [styles.textScaleStepButton, increaseDisabled && styles.textScaleStepDisabled, pressed && styles.textScaleStepPressed]}
-        >
-          <Ionicons name="add" size={17} color={colors.text} />
-        </Pressable>
-      </View>
     </View>
   );
 }
@@ -697,14 +651,6 @@ const styles = StyleSheet.create({
   header: { width: "100%", minWidth: 0, minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
   title: { minWidth: 0, flex: 1, color: colors.text, fontSize: 17, lineHeight: 22, fontWeight: "700" },
   iconButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  textScaleMenuItem: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm },
-  textScaleMenuLabel: { flex: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 20, fontFamily: "RobotoFlex-Medium" },
-  textScaleStepper: { height: 36, flexDirection: "row", alignItems: "stretch", overflow: "hidden", borderRadius: 12, backgroundColor: colors.border, gap: 1 },
-  textScaleStepButton: { width: 38, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh },
-  textScaleValueButton: { minWidth: 58, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xs, backgroundColor: colors.surfaceContainerHigh },
-  textScaleValue: { color: colors.text, fontSize: 13, lineHeight: 18, fontFamily: "RobotoFlex-Medium", fontVariant: ["tabular-nums"] },
-  textScaleStepDisabled: { opacity: 0.35 },
-  textScaleStepPressed: { backgroundColor: colors.surfaceContainerHighest },
   center: { flex: 1, minHeight: 180, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   secondary: { color: colors.textMuted },
   error: { maxWidth: 480, color: colors.red, textAlign: "center" },

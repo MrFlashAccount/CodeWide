@@ -20,6 +20,7 @@ import {
   reportGlobalError,
 } from "../src/ui/global-error-store";
 import { HeroUIRoot } from "../src/ui/HeroUIRoot";
+import { AppLockGate } from "../src/ui/AppLockGate";
 
 installGlobalErrorHandler();
 try {
@@ -85,8 +86,10 @@ function RootApplication() {
         <SafeAreaProvider>
           <HeroUIRoot>
             <PerformanceExperimentProvider>
-              <StatusBar style="light" />
-              <Stack screenOptions={{ headerShown: false }} />
+              <AppLockGate>
+                <StatusBar style="light" />
+                <Stack screenOptions={{ headerShown: false }} />
+              </AppLockGate>
             </PerformanceExperimentProvider>
           </HeroUIRoot>
         </SafeAreaProvider>

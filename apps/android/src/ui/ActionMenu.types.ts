@@ -1,6 +1,13 @@
 import type Ionicons from "@expo/vector-icons/Ionicons";
-import type { ComponentProps, ReactElement, ReactNode } from "react";
-import type { GestureResponderEvent, StyleProp, ViewStyle } from "react-native";
+import type { ComponentProps, ReactElement } from "react";
+import type {
+  GestureResponderEvent,
+  ImageSourcePropType,
+  StyleProp,
+  ViewStyle,
+} from "react-native";
+
+export type ActionMenuIconName = ComponentProps<typeof Ionicons>["name"];
 
 type ActionMenuTriggerElement = ReactElement<{
   accessibilityLabel?: string;
@@ -13,20 +20,21 @@ export type ActionMenuItem = {
   section?: string;
   label: string;
   description?: string;
-  icon?: ComponentProps<typeof Ionicons>["name"];
+  icon?: ActionMenuIconName | ImageSourcePropType;
   disabled?: boolean;
   destructive?: boolean;
   selected?: boolean;
+  keepOpen?: boolean;
 };
 
 export type ActionMenuProps = {
   accessibilityLabel: string;
   actions: readonly ActionMenuItem[];
-  controls?: ReactNode;
   children: ActionMenuTriggerElement;
   trigger?: "press" | "long-press";
   placement?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
+  menuWidth?: number;
   style?: StyleProp<ViewStyle>;
   onOpenChange?(open: boolean): void;
   onSelect(id: string): void;

@@ -296,12 +296,11 @@ describe("MultiConnectionSupervisor", () => {
     expect(sockets.every((socket) => socket.sent
       .filter((message) => message.type === "rpc")
       .map((message) => ((message.request as Record<string, unknown>).params as Record<string, unknown>).archived)
-      .join(",") === "false,true,false,true")).toBe(true);
+      .join(",") === "false,true")).toBe(true);
     expect(sockets.every((socket) => socket.sent
       .filter((message) => message.type === "rpc")
       .map((message) => ((message.request as Record<string, unknown>).params as Record<string, unknown>).sourceKinds)
-      .map((sourceKinds) => sourceKinds === undefined ? "interactive" : JSON.stringify(sourceKinds))
-      .join(",") === 'interactive,interactive,["subAgent"],["subAgent"]')).toBe(true);
+      .every((sourceKinds) => sourceKinds === undefined))).toBe(true);
     expect(sockets.every((socket) => socket.sent
       .filter((message) => message.type === "rpc")
       .every((message) => ((message.request as Record<string, unknown>).params as Record<string, unknown>).useStateDbOnly === true)
@@ -430,7 +429,15 @@ describe("MultiConnectionSupervisor", () => {
     await cache.applySnapshot("server", [{ thread: thread("thread-1"), archived: false }], 4);
     const event = {
       cursor: 5,
-      payload: { method: "thread/status/changed", params: { threadId: "thread-1", status: { type: "idle" } } },
+      payload: {
+        method: "thread/status/changed",
+        params: { threadId: "thread-1", status: { type: "idle" } },
+        codewideThreadPatch: {
+          version: 1,
+          threadId: "thread-1",
+          operation: { kind: "threadStatus", status: { type: "idle" } },
+        },
+      },
     };
     await cache.applyEvent("server", event);
     await cache.applyEvent("server", event);

@@ -15,6 +15,7 @@ describe("live event render priority", () => {
   it.each([
     "turn/started",
     "turn/completed",
+    "thread/tokenUsage/updated",
     "item/completed",
     "item/commandExecution/requestApproval",
     "mcpServer/elicitation/request",

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isThreadLifecycleActive,
-  reconcileThreadLifecyclePresentation,
+  pendingDeliveryMayOwnTurn,
   staleTurnLifecycleId,
 } from "../src/data/thread-lifecycle";
 
@@ -14,13 +14,19 @@ describe("thread lifecycle presentation", () => {
     expect(isThreadLifecycleActive(undefined)).toBe(false);
   });
 
-  it("atomically closes a stale live head when the thread is already idle", () => {
+  it("queues behind a direct delivery before live lifecycle catches up", () => {
+    expect(pendingDeliveryMayOwnTurn("queued")).toBe(true);
+    expect(pendingDeliveryMayOwnTurn("sending")).toBe(true);
+    expect(pendingDeliveryMayOwnTurn("companionAccepted")).toBe(true);
+    expect(pendingDeliveryMayOwnTurn("appServerAccepted")).toBe(true);
+    expect(pendingDeliveryMayOwnTurn("uncertain")).toBe(true);
+    expect(pendingDeliveryMayOwnTurn("failed")).toBe(false);
+  });
+
+  it("detects a stale live head without inventing terminal TURN state", () => {
     const value = thread("idle", "inProgress");
 
     expect(staleTurnLifecycleId(value)).toBe("turn");
-    const projected = reconcileThreadLifecyclePresentation(value);
-
-    expect(projected.turns[0]?.status).toBe("completed");
     expect(value.turns[0]?.status).toBe("inProgress");
   });
 
@@ -30,20 +36,14 @@ describe("thread lifecycle presentation", () => {
 
     expect(staleTurnLifecycleId(active)).toBeNull();
     expect(staleTurnLifecycleId(unknown)).toBeNull();
-    expect(reconcileThreadLifecyclePresentation(active)).toBe(active);
-    expect(reconcileThreadLifecyclePresentation(unknown)).toBe(unknown);
   });
 
-  it("projects a system-error head as failed", () => {
-    expect(reconcileThreadLifecyclePresentation(thread("systemError", "inProgress")).turns[0]?.status).toBe("failed");
-  });
-
-  it("leaves no stale live partition behind on a terminal thread", () => {
+  it("selects the newest stale head for canonical repair", () => {
     const value = thread("idle", "inProgress");
     value.turns.push({ ...value.turns[0]!, id: "newer-turn" });
 
-    expect(reconcileThreadLifecyclePresentation(value).turns.map(({ status }) => status)).toEqual(["completed", "completed"]);
     expect(staleTurnLifecycleId(value)).toBe("newer-turn");
+    expect(value.turns.map(({ status }) => status)).toEqual(["inProgress", "inProgress"]);
   });
 });
 

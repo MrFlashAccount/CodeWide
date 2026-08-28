@@ -1,5 +1,4 @@
 import {
-  legacyThreadProjectionPatch,
   threadProjectionNeedsAuthoritativeRepair,
   threadProjectionPatchFromEvent,
   type SyncEvent,
@@ -29,8 +28,7 @@ export function streamRepairThreadIds(
 ): string[] {
   const patchesByThread = new Map<string, ThreadProjectionPatchV1[]>();
   for (const event of events) {
-    const patch = threadProjectionPatchFromEvent(event.payload)
-      ?? legacyThreadProjectionPatch(event.payload);
+    const patch = threadProjectionPatchFromEvent(event.payload);
     if (patch === null) continue;
     const patches = patchesByThread.get(patch.threadId) ?? [];
     patches.push(patch);
@@ -61,15 +59,8 @@ function terminalProjectionRequiresRepair(
     if (turnId === null) return true;
     const previous = before.turns.find((candidate) => candidate.id === turnId);
     const projected = after.turns.find((candidate) => candidate.id === turnId);
-    if (projected === undefined || projected.status === "inProgress") return true;
-    // A completed envelope without a non-empty agent boundary cannot prove
-    // that all text deltas reached the read model. Repair before ACK so this
-    // incomplete row never becomes an immutable cursor anchor.
-    if (projected.status === "completed" && !isStableThreadCursorTurn(projected)) return true;
-    // An already-loaded live turn was built from the same ordered replay
-    // journal. Completion finalizes that accumulated value; a bounded server
-    // replacement is unnecessary unless the companion supplied a positive
-    // content witness that the projection does not satisfy.
+    if (projected === undefined || !isStableThreadCursorTurn(projected)) return true;
+
     const terminal = asRecord(patch.operation.terminalProjection);
     const agentMessage = asRecord(terminal?.agentMessage);
     if (terminal?.version === 1
@@ -86,7 +77,8 @@ function terminalProjectionRequiresRepair(
       };
       if (!terminalProjectionMatches(after, proof)) return true;
     } else if (previous === undefined && (!Array.isArray(turn?.items) || turn.items.length === 0)) {
-      // A cold sparse completion cannot reconstruct a turn by itself.
+      // A cold sparse completion has neither a resident delta chain nor a
+      // positive content witness. Only this case needs a canonical head read.
       return true;
     }
   }

@@ -33,17 +33,27 @@ describe("failed message retry", () => {
     expect(screen).toContain("style={[styles.turnFooter, styles.turnFooterEnd]}");
   });
 
-  it("does not describe an App Server accepted command as still sending", () => {
-    expect(screen).toContain('const delivered = item.status === "delivered";');
-    expect(screen).toContain('? "Sent"');
-    expect(screen).toContain('styles.turnStatusCompleted');
+  it("does not describe transport acceptance as canonical delivery", () => {
+    expect(screen).not.toContain('const delivered = item.status === "delivered";');
+    expect(screen).not.toContain('? "Sent"');
+    expect(screen).toContain('? "Checking delivery"');
+    expect(screen).toContain('? "Running"');
+    expect(screen).toContain(': "Accepted by Companion"');
+    expect(screen).toContain('? "Sending to Companion"');
+    expect(screen).toContain('`Sent · ${formatClockTime(rawTurn.startedAt)}`');
   });
 
-  it("refreshes the authoritative thread after companion delivery acceptance", () => {
-    expect(workspace).toContain("hasAcceptedPendingDelivery(");
-    expect(workspace).toContain("await workspaceActions.repairThreadProjection(connectionId, threadId)");
-    expect(workspace).toContain("Accepted message receipt repair returned no thread");
-    expect(workspace).toContain("await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread])");
+  it("repairs companion delivery acceptance without blocking live lifecycle projection", () => {
+    const repairStart = workspace.indexOf("for (const threadId of deliveredReceiptThreads)");
+    const repairEnd = workspace.indexOf("for (const rootThreadId of subagentRoots)", repairStart);
+    const repairSource = workspace.slice(repairStart, repairEnd);
+    expect(workspace).toContain("hasAppServerAcceptedPendingDelivery(");
+    expect(repairStart).toBeGreaterThanOrEqual(0);
+    expect(repairEnd).toBeGreaterThan(repairStart);
+    expect(repairSource).toContain("void workspaceActions.repairThreadProjection(connectionId, threadId)");
+    expect(repairSource).not.toContain("const repaired = await workspaceActions.repairThreadProjection(connectionId, threadId)");
+    expect(repairSource).toContain("Accepted message receipt repair returned no thread");
+    expect(repairSource).toContain("await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread])");
   });
 
   it("keeps delivery state on optimistic user messages and turn metadata under the agent message", () => {

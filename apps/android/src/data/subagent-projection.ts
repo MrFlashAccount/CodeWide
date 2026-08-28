@@ -1,5 +1,6 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 
+import { projectCodexVisibleTurn } from "./codex-contextual-user-message";
 import type { StoredThreadSummary } from "./thread-summary-types";
 
 export type SubagentConversationProjection = {
@@ -95,7 +96,7 @@ export function subagentOwnTurns(thread: Thread): Turn[] {
  * material as if the user had written it.
  */
 export function projectSubagentConversation(thread: Thread, parentThread: Thread | null): SubagentConversationProjection {
-  const ownTurns = subagentOwnTurns(thread).map(stripInjectedInput).filter((turn) => (
+  const ownTurns = subagentOwnTurns(thread).map(projectCodexVisibleTurn).map(stripInjectedInput).filter((turn) => (
     turn.items.length > 0 || turn.status === "inProgress"
   ));
   const delegationPrompt = delegationPromptFromParent(parentThread, thread.id);
@@ -185,7 +186,6 @@ function isInjectedBootstrapText(value: string): boolean {
   return text.startsWith("<recommended_plugins>")
     || text.startsWith("# AGENTS.md instructions")
     || text.startsWith("<AGENTS.md>")
-    || text.startsWith("<environment_context>")
     || text.startsWith("<skills_instructions>")
     || text.startsWith("<permissions instructions>")
     || text.startsWith("<apps_instructions>")

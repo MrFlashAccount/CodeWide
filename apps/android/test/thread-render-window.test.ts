@@ -4,10 +4,11 @@ import { isAgentMessageStillStreaming, LIVE_ACTIVITY_WINDOW, selectTurnRenderWin
 import { turnProjectionTopologyRevision } from "../src/rendering/turn-projection-cache";
 
 type FakeItem = {
-  type: "userMessage" | "agentMessage" | "commandExecution" | "reasoning";
+  type: "userMessage" | "agentMessage" | "commandExecution" | "reasoning" | "contextCompaction";
   id: string;
   text?: string;
   phase?: "commentary" | "final_answer" | null;
+  codewidePreTurn?: boolean;
 };
 
 function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgress") {
@@ -21,6 +22,36 @@ function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgres
 }
 
 describe("thread render window", () => {
+  it("projects every item before the canonical user message as pre-turn lifecycle", () => {
+    const items: FakeItem[] = [
+      { type: "contextCompaction", id: "compaction" },
+      { type: "commandExecution", id: "preflight" },
+      { type: "userMessage", id: "user" },
+      { type: "commandExecution", id: "tool" },
+      { type: "agentMessage", id: "agent" },
+    ];
+
+    const active = selectTurnRenderWindow(turn(items));
+    expect(active.preTurnActivityIndexes).toEqual([0, 1]);
+    expect(active.liveActivityIndexes).toEqual([3, 4]);
+    expect(active.collapsedActivityIndexes).toEqual([]);
+
+    const completed = selectTurnRenderWindow(turn(items, "completed"));
+    expect(completed.preTurnActivityIndexes).toEqual([0, 1]);
+    expect(completed.collapsedActivityIndexes).toEqual([3]);
+  });
+
+  it("keeps projected pre-turn state outside activity when canonical ordering moves it after the user", () => {
+    const window = selectTurnRenderWindow(turn([
+      { type: "userMessage", id: "user" },
+      { type: "commandExecution", id: "preflight", codewidePreTurn: true },
+      { type: "commandExecution", id: "tool" },
+    ]));
+
+    expect(window.preTurnActivityIndexes).toEqual([1]);
+    expect(window.liveActivityIndexes).toEqual([2]);
+  });
+
   it("invalidates a component-local empty agent boundary when history fills its final text", () => {
     const empty = turn([
       { type: "userMessage", id: "user" },

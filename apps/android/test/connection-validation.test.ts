@@ -32,12 +32,23 @@ describe("connection input validation", () => {
       emoji: " 🏠 ",
       endpoint: "wss://codex.example.test",
       token: "a".repeat(43),
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     })).toEqual({
       displayName: "Home",
       emoji: "🏠",
       endpoint: "wss://codex.example.test/v1/sync",
       token: "a".repeat(43),
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     });
+  });
+
+  it("rejects every profile without a companion identity pin", () => {
+    expect(() => validateConnectionInput({
+      displayName: "Unpinned ingress",
+      emoji: "🔒",
+      endpoint: "wss://legacy.example.test",
+      token: "a".repeat(43),
+    })).toThrow("TLS pin");
   });
 
   it.each([
@@ -52,6 +63,7 @@ describe("connection input validation", () => {
       emoji: "🏠",
       endpoint,
       token: "a".repeat(43),
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     })).toThrow();
   });
 
@@ -66,6 +78,7 @@ describe("connection input validation", () => {
       emoji: "🧪",
       endpoint,
       token: "a".repeat(43),
+      tlsPinSha256: `sha256/${"A".repeat(43)}=`,
     }).endpoint).toBe(endpoint);
   });
 

@@ -9,7 +9,8 @@ type MetadataProjectionCacheEntry = {
 
 const metadataProjectionCache = new WeakMap<Thread, MetadataProjectionCacheEntry>();
 
-/** Metadata is a mutable event projection; sealed turn content is not. */
+/** Presentation metadata may enrich a loaded chat, but lifecycle belongs to
+ * the authoritative detail projection and is never copied from the list row. */
 export function applyThreadSummaryMetadata(thread: Thread, summary: StoredThreadSummary | null): Thread;
 export function applyThreadSummaryMetadata(thread: Thread | null, summary: StoredThreadSummary | null): Thread | null;
 export function applyThreadSummaryMetadata(thread: Thread | null, summary: StoredThreadSummary | null): Thread | null {
@@ -26,7 +27,6 @@ export function applyThreadSummaryMetadata(thread: Thread | null, summary: Store
     cwd: summary.cwd,
     updatedAt: summary.updatedAt,
     recencyAt: summary.recencyAt,
-    status: summary.status,
     parentThreadId: summary.parentThreadId,
     agentNickname: summary.agentNickname ?? null,
     agentRole: summary.agentRole ?? null,
@@ -41,16 +41,7 @@ function threadMetadataMatchesSummary(thread: Thread, summary: StoredThreadSumma
     && thread.cwd === summary.cwd
     && thread.updatedAt === summary.updatedAt
     && thread.recencyAt === summary.recencyAt
-    && sameThreadStatus(thread.status, summary.status)
     && thread.parentThreadId === summary.parentThreadId
     && thread.agentNickname === (summary.agentNickname ?? null)
     && thread.agentRole === (summary.agentRole ?? null);
-}
-
-function sameThreadStatus(left: Thread["status"], right: Thread["status"]): boolean {
-  if (left === right) return true;
-  if (left.type !== right.type) return false;
-  if (left.type !== "active" || right.type !== "active") return true;
-  return left.activeFlags.length === right.activeFlags.length
-    && left.activeFlags.every((flag, index) => flag === right.activeFlags[index]);
 }

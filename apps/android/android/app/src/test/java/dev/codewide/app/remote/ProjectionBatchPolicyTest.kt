@@ -9,6 +9,7 @@ class ProjectionBatchPolicyTest {
   fun flushesLifecycleBoundariesBeforeTheBatchIsFull() {
     assertTrue(ProjectionBatchPolicy.shouldFlushImmediately("turn/completed"))
     assertTrue(ProjectionBatchPolicy.shouldFlushImmediately("thread/status/changed"))
+    assertTrue(ProjectionBatchPolicy.shouldFlushImmediately("thread/tokenUsage/updated"))
     assertTrue(ProjectionBatchPolicy.shouldFlushImmediately("item/tool/requestUserInput"))
   }
 

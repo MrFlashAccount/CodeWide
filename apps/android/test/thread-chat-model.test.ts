@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createThreadChatModel,
@@ -74,6 +74,51 @@ describe("Legend thread chat model", () => {
     expect(resource.window$.peek().turnRowIds).toEqual(["turn-1"]);
   });
 
+  it("revalidates a resident window once for each explicit chat opening", async () => {
+    const model = createThreadChatModel();
+    const firstRequest = { ...request, openGeneration: 1 };
+    let loads = 0;
+    const initial = model.resource(firstRequest, async () => {
+      loads += 1;
+      const generation = model.startWindow(firstRequest);
+      model.commitWindow(firstRequest, generation, loaded([row("turn-1", 1)], firstRequest));
+    });
+    await initial.ready$.peek();
+
+    let finishSecond!: () => void;
+    const secondFinished = new Promise<void>((resolve) => { finishSecond = resolve; });
+    const secondRequest = { ...request, openGeneration: 2 };
+    const reopened = model.resource(secondRequest, async () => {
+      loads += 1;
+      const generation = model.startWindow(secondRequest);
+      model.commitWindow(secondRequest, generation, loaded([row("turn-1", 1)], secondRequest));
+      finishSecond();
+    });
+    await secondFinished;
+
+    expect(reopened.ready$).toBe(initial.ready$);
+    expect(loads).toBe(2);
+    expect(reopened.window$.peek().requestKey).toBe(threadChatRequestKey(secondRequest));
+  });
+
+  it("does not let a superseded backend refresh clear the active opening indicator", () => {
+    const model = createThreadChatModel();
+    const firstRequest = { ...request, openGeneration: 1 };
+    const firstGeneration = model.startWindow(firstRequest);
+    model.setBackendRefreshing(firstRequest, firstGeneration, true);
+    expect(model.window$(request.connectionId, request.threadId).peek().backendRefreshing).toBe(true);
+
+    const secondRequest = { ...request, openGeneration: 2 };
+    const secondGeneration = model.startWindow(secondRequest);
+    model.setBackendRefreshing(secondRequest, secondGeneration, true);
+    model.setBackendRefreshing(firstRequest, firstGeneration, false);
+    expect(model.window$(request.connectionId, request.threadId).peek().backendRefreshing).toBe(true);
+
+    model.setBackendRefreshing(secondRequest, secondGeneration, false);
+    expect(model.window$(request.connectionId, request.threadId).peek().backendRefreshing).toBe(false);
+    model.close();
+  });
+
   it("publishes a neighbouring range without creating another resource", async () => {
     const model = createThreadChatModel();
     const initial = model.resource(request, async () => {
@@ -124,6 +169,26 @@ describe("Legend thread chat model", () => {
     });
   });
 
+  it("keeps an initial load failure stable until an explicit reopen", async () => {
+    const model = createThreadChatModel();
+    const failedLoader = vi.fn(async () => { throw new Error("cold load failed"); });
+    const initial = model.resource(request, failedLoader);
+    const initialPromise = initial.ready$.peek();
+
+    await expect(initialPromise).rejects.toThrow("cold load failed");
+    const repeatedRender = model.resource(request, failedLoader);
+    expect(repeatedRender.ready$).toBe(initial.ready$);
+    expect(failedLoader).toHaveBeenCalledTimes(1);
+
+    const reopenedRequest = { ...request, openGeneration: 1 };
+    const reopenedLoader = vi.fn(async () => undefined);
+    const reopened = model.resource(reopenedRequest, reopenedLoader);
+    const reopenedPromise = reopened.ready$.peek();
+    await expect(reopenedPromise).resolves.toBe(true);
+    expect(Object.is(reopenedPromise, initialPromise)).toBe(false);
+    expect(reopenedLoader).toHaveBeenCalledTimes(1);
+  });
+
   it("structurally shares an equivalent SQLite revalidation", () => {
     const model = createThreadChatModel();
     const rows = [row("turn-1", 1, { turnMetadata: { tokenUsage: { inputTokens: 1, cachedInputTokens: 0, outputTokens: 2 } } })];
@@ -161,6 +226,40 @@ describe("Legend thread chat model", () => {
     expect(nextSnapshot.turnRowIds).toBe(previousSnapshot.turnRowIds);
     expect(nextFirst).not.toBe(previousFirst);
     expect(nextSecond).toBe(previousSecond);
+  });
+
+  it("publishes one initial window and coalesces navigation-time repairs until first draw", () => {
+    const model = createThreadChatModel();
+    const initialRows = [row("turn-1", 1)];
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, loaded(initialRows));
+    const initialSnapshot = model.window$(request.connectionId, request.threadId).peek();
+
+    model.beginPresentation(request.connectionId, request.threadId);
+    const repairedRows = [row("turn-1", 1, { lastOpenedAt: 10 })];
+    expect(model.commitWindow(request, generation, loaded(repairedRows))).toBe(true);
+    const streamedRows = [row("turn-1", 1, { lastOpenedAt: 20 })];
+    model.publishChanges([{ type: "update", value: streamedRows[0] }]);
+    model.refreshThread(request.connectionId, request.threadId, streamedRows);
+
+    expect(model.window$(request.connectionId, request.threadId).peek()).toBe(initialSnapshot);
+
+    model.finishPresentation(request.connectionId, request.threadId);
+    const presented = model.window$(request.connectionId, request.threadId).peek();
+    expect(presented.revision).toBeGreaterThan(initialSnapshot.revision);
+    expect(model.readRows(presented.turnRowIds)[0]?.lastOpenedAt).toBe(20);
+  });
+
+  it("does not hold the first usable window behind the presentation barrier", () => {
+    const model = createThreadChatModel();
+    model.beginPresentation(request.connectionId, request.threadId);
+    const generation = model.startWindow(request);
+
+    expect(model.commitWindow(request, generation, loaded([row("turn-1", 1)]))).toBe(true);
+    expect(model.window$(request.connectionId, request.threadId).peek()).toMatchObject({
+      status: "ready",
+      turnRowIds: ["turn-1"],
+    });
   });
 
   it("keeps the latest initial window promise authoritative when the request changes", async () => {
@@ -302,7 +401,7 @@ describe("Legend thread chat model", () => {
     expect(evicted).toEqual(["connection/thread-0"]);
   });
 
-  it("keeps mounted consumers and evicts each window on release", () => {
+  it("keeps mounted consumers and evicts each window after release settles", async () => {
     const evicted: string[] = [];
     const model = createThreadChatModel({
       onEvictWindow: (connectionId, threadId) => evicted.push(`${connectionId}/${threadId}`),
@@ -314,12 +413,37 @@ describe("Legend thread chat model", () => {
 
     expect(evicted).toEqual([]);
     releaseFirst();
+    await Promise.resolve();
     expect(evicted).toEqual(["connection/thread-0"]);
     releaseSecond();
+    await Promise.resolve();
     expect(evicted).toEqual(["connection/thread-0", "connection/thread-1"]);
   });
 
-  it("does not evict a newly observed conversation while releasing the previous one", () => {
+  it("preserves one window across a same-thread responsive owner handoff", async () => {
+    const evicted: string[] = [];
+    const model = createThreadChatModel({
+      onEvictWindow: (connectionId, threadId) => evicted.push(`${connectionId}/${threadId}`),
+    });
+    const releaseMobile = model.retainWindow(request.connectionId, request.threadId);
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, loaded([row("turn-1", 1)]));
+    const window = model.window$(request.connectionId, request.threadId);
+
+    releaseMobile();
+    const releaseDesktop = model.retainWindow(request.connectionId, request.threadId);
+    await Promise.resolve();
+
+    expect(evicted).toEqual([]);
+    expect(model.window$(request.connectionId, request.threadId)).toBe(window);
+    expect(window.peek().turnRowIds).toEqual(["turn-1"]);
+
+    releaseDesktop();
+    await Promise.resolve();
+    expect(evicted).toEqual(["connection/thread"]);
+  });
+
+  it("does not evict a newly observed conversation while releasing the previous one", async () => {
     const evicted: string[] = [];
     const model = createThreadChatModel({
       onEvictWindow: (connectionId, threadId) => evicted.push(`${connectionId}/${threadId}`),
@@ -329,12 +453,13 @@ describe("Legend thread chat model", () => {
     const nextWindow = model.window$("connection", "thread-1");
 
     releasePrevious();
+    await Promise.resolve();
 
     expect(evicted).toEqual(["connection/thread-0"]);
     expect(model.window$("connection", "thread-1")).toBe(nextWindow);
   });
 
-  it("drops resident row objects when the last consumer releases", () => {
+  it("drops resident row objects when the last consumer release settles", async () => {
     const model = createThreadChatModel();
     const release = model.retainWindow(request.connectionId, request.threadId);
     const rows = [row("turn-1", 1), row("turn-2", 2)];
@@ -343,6 +468,7 @@ describe("Legend thread chat model", () => {
 
     expect(model.residentRowCount()).toBe(2);
     release();
+    await Promise.resolve();
     expect(model.residentRowCount()).toBe(0);
   });
 });

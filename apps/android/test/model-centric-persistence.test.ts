@@ -35,6 +35,16 @@ describe("model-centric persistence boundary", () => {
     expect(screen).not.toContain("useRetainedReadyRows");
   });
 
+  it("publishes composer state through a key-scoped Legend resource", () => {
+    const database = readFileSync(new URL("thread-ui-state-database.native.ts", dataDirectory), "utf8");
+    const hook = readFileSync(new URL("use-thread-ui-state.ts", dataDirectory), "utf8");
+    expect(database).toContain("row$(connectionId: string, threadId: string)");
+    expect(database).toContain("collection.subscribeChanges");
+    expect(hook).toContain("database.row$(connectionId, threadId).get()");
+    expect(hook).not.toContain("useLiveQuery");
+    expect(hook).not.toContain("createLiveQueryCollection");
+  });
+
   it("keeps old stores behind one-shot read-only migration boundaries", () => {
     const legacyStore = readFileSync(new URL("legacy-remote-store.native.ts", dataDirectory), "utf8");
     const uiState = readFileSync(new URL("thread-ui-state-database.native.ts", dataDirectory), "utf8");

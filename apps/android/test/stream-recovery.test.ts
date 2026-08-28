@@ -41,7 +41,7 @@ describe("stream recovery", () => {
     expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after }]]))).toEqual([]);
   });
 
-  it("finalizes an already-loaded turn from the ordered journal without a server read", () => {
+  it("repairs an unwitnessed completion even when commentary was already loaded", () => {
     const value = thread();
     const completed = { ...value.turns[0]!, status: "completed", completedAt: 2 };
     const events = [syncEvent("turn/completed", { turn: completed }, {
@@ -51,7 +51,7 @@ describe("stream recovery", () => {
 
     const after = structuredClone(value);
     after.turns[0] = completed;
-    expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after }]]))).toEqual([]);
+    expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after }]]))).toEqual(["thread"]);
   });
 
   it("repairs a cold sparse terminal event that cannot reconstruct its turn", () => {
@@ -78,6 +78,31 @@ describe("stream recovery", () => {
     after.turns[0] = completed;
 
     expect(streamRepairThreadIds(events, new Map([["thread", { before: value, after }]]))).toEqual(["thread"]);
+  });
+
+  it("does not reread a terminal turn whose ordered projection satisfies its content witness", () => {
+    const before = thread();
+    const completed = structuredClone(before.turns[0]!);
+    completed.status = "completed";
+    completed.completedAt = 2;
+    const agent = completed.items[0] as Extract<Thread["turns"][number]["items"][number], { type: "agentMessage" }>;
+    agent.phase = "final_answer";
+    const events = [syncEvent("turn/completed", { turn: completed }, {
+      kind: "turnCompleted",
+      turn: completed,
+      terminalProjection: {
+        version: 1,
+        turnId: "turn",
+        agentMessage: {
+          utf8Bytes: 5,
+          sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        },
+      },
+    })];
+    const after = structuredClone(before);
+    after.turns[0] = completed;
+
+    expect(streamRepairThreadIds(events, new Map([["thread", { before, after }]]))).toEqual([]);
   });
 
   it("verifies the authoritative terminal text against the companion hash", () => {

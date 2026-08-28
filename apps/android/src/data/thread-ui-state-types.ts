@@ -10,7 +10,21 @@ export type StoredComposerPreferences = {
   sendMode: "start" | "queue" | "steer";
 };
 
-export type StoredDraftAttachment = RemoteFileAttachment;
+export type QuickdrawDraftState = {
+  kind: "quickdraw";
+  mode: "drawing" | "image-annotation";
+  snapshot: Record<string, unknown>;
+  revision: number;
+};
+
+/**
+ * Composer-only metadata lives with the durable draft, but is stripped before
+ * the remote attachment is sent. This keeps a drawing editable until Send
+ * without teaching the sync protocol about Quickdraw documents.
+ */
+export type StoredDraftAttachment = RemoteFileAttachment & {
+  editor?: QuickdrawDraftState;
+};
 
 export type ThreadUiStateRow = {
   id: string;

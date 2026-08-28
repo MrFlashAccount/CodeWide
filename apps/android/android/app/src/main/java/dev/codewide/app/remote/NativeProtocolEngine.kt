@@ -363,6 +363,8 @@ internal class NativeProtocolEngine(
       .put("sortDirection", "desc")
       .put("archived", archived)
       .put("modelProviders", JSONArray())
+      // Keep interactive catalog hydration on Codex's queryable metadata path.
+      // JSONL scan-and-repair is maintenance work and must not block recovery.
       .put("useStateDbOnly", true)
     rpc("thread/list", params, SNAPSHOT_RPC_TIMEOUT_MS) { result ->
       result.fold(

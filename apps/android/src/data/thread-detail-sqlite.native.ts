@@ -1,16 +1,17 @@
 import type { ThreadDetailRow } from "./thread-detail-projection";
 import { getUiCacheFileDiagnostics, getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import { incrementMetric, recordSqliteSubsetLoad, recordTiming } from "./operational-metrics";
-import { readLegacyPersistedRows } from "./legacy-persistence-migration.native";
 
 const TABLE = "codewide_thread_details";
+const INVALIDATIONS_TABLE = "codewide_thread_detail_invalidations";
 const META_TABLE = "__tanstack_db_sqlite_meta";
-const BOOTSTRAP_TABLE = "__tanstack_db_sqlite_bootstrap";
 const CACHE_META_TABLE = "codewide_thread_detail_cache_meta";
 const RUNTIME_ID = "thread-details-v2";
-const LEGACY_BOOTSTRAP_ID = `tanstack-persistence:${RUNTIME_ID}:v1`;
-const PURGE_LEGACY_PENDING_MIGRATION_ID = "purge-persisted-pending:v1";
-const SCHEMA_VERSION = 1;
+// Version 4 clears caches written while direct delivery receipts could replace
+// off-window canonical turns sharing the same stable client-id key. Transcript
+// rows are reconstructable from Companion; pending commands remain in the
+// native ledger and are reconciled after the clean tail is installed.
+const SCHEMA_VERSION = 4;
 const CHECKPOINT_DELAY_MS = 250;
 const CHECKPOINT_ATTEMPTS = 3;
 // History is a reconstructable FIFO cache, not an LRU. Let it grow to 2 GiB,
@@ -30,7 +31,14 @@ export type ThreadDetailChange =
 export type ThreadDetailSqliteControls = {
   begin(options?: { immediate?: boolean }): void;
   write(change: ThreadDetailChange): void;
+  rollback(): void;
   commit(options?: { durable?: boolean }): Promise<void>;
+};
+
+export type ThreadDetailInvalidation = {
+  connectionId: string;
+  threadId: string;
+  cursor: number;
 };
 
 export type ThreadDetailWindowQuery = {
@@ -106,6 +114,9 @@ export type ThreadDetailSqlite = ThreadDetailSqliteControls & {
   }): Promise<ThreadDetailWindowRows>;
   loadAuthoritativeFacts(connectionId: string, threadId: string, incomingTurnIds: readonly string[]): Promise<ThreadDetailRow[]>;
   loadPrependFacts(connectionId: string, threadId: string, historyEpoch: number, turnIds: readonly string[]): Promise<ThreadDetailRow[]>;
+  loadInvalidations(): Promise<ThreadDetailInvalidation[]>;
+  upsertInvalidations(rows: readonly ThreadDetailInvalidation[]): Promise<void>;
+  clearInvalidation(connectionId: string, threadId: string, throughCursor: number): Promise<void>;
 };
 
 /**
@@ -264,6 +275,12 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
       const key = change.type === "delete" ? change.key : change.value.id;
       currentChanges.set(key, change);
     },
+    rollback() {
+      // Rollback is deliberately idempotent. A caller may be recovering from
+      // a synchronous commit callback failure after commit already released
+      // the staging map.
+      currentChanges = null;
+    },
     commit(options = {}) {
       const changes = currentChanges;
       if (changes === null) throw new Error("Thread detail SQLite transaction is not open");
@@ -318,11 +335,11 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
           `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "sealed" = 1 AND "kind" IN ('turnMeta', 'activity') AND "ordinal" >= ? AND "ordinal" <= ?`,
           [connectionId, threadId, historyEpoch, Math.min(...ordinals), Math.max(...ordinals)],
         );
-        const liveRows = (await executeRows(
+        const liveRows = await executeRows(
           executor,
           `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "sealed" = 0 AND ("kind" = 'pending' OR "history_epoch" = ?)`,
           [connectionId, threadId, historyEpoch],
-        )).filter(isResidentLiveRow);
+        );
         return { turnRows, detailRows, liveRows };
       });
       recordSqliteSubsetLoad(result.turnRows.length + result.detailRows.length + result.liveRows.length, performance.now() - startedAt);
@@ -399,6 +416,41 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
       ]);
       return deduplicateRows([...families, ...(minimum === null ? [] : [minimum])]);
     },
+    async loadInvalidations() {
+      await ensurePrepared();
+      await flushPending();
+      return extractRows(await database.execute(
+        `SELECT "connection_id", "thread_id", "cursor" FROM "${INVALIDATIONS_TABLE}"`,
+      )).flatMap((row) => (
+        typeof row.connection_id === "string"
+          && typeof row.thread_id === "string"
+          && typeof row.cursor === "number"
+          ? [{ connectionId: row.connection_id, threadId: row.thread_id, cursor: row.cursor }]
+          : []
+      ));
+    },
+    async upsertInvalidations(rows) {
+      if (rows.length === 0) return;
+      await ensurePrepared();
+      await flushPending();
+      await database.transaction(async (executor) => {
+        for (const row of rows) {
+          await executor.execute(
+            `INSERT INTO "${INVALIDATIONS_TABLE}" ("connection_id", "thread_id", "cursor") VALUES (?, ?, ?) `
+            + `ON CONFLICT("connection_id", "thread_id") DO UPDATE SET "cursor" = MAX("cursor", excluded."cursor")`,
+            [row.connectionId, row.threadId, row.cursor],
+          );
+        }
+      });
+    },
+    async clearInvalidation(connectionId, threadId, throughCursor) {
+      await ensurePrepared();
+      await flushPending();
+      await database.execute(
+        `DELETE FROM "${INVALIDATIONS_TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "cursor" <= ?`,
+        [connectionId, threadId, throughCursor],
+      );
+    },
   };
 }
 
@@ -406,11 +458,6 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
   return await database.transaction(async (executor) => {
     await executor.execute(
       `CREATE TABLE IF NOT EXISTS "${META_TABLE}" ("runtime_id" TEXT PRIMARY KEY NOT NULL, "schema_version" INTEGER NOT NULL)`,
-    );
-    await executor.execute(
-      `CREATE TABLE IF NOT EXISTS "${BOOTSTRAP_TABLE}" (`
-      + `"runtime_id" TEXT NOT NULL, "bootstrap_id" TEXT NOT NULL, `
-      + `PRIMARY KEY ("runtime_id", "bootstrap_id"))`,
     );
     await executor.execute(
       `CREATE TABLE IF NOT EXISTS "${TABLE}" (`
@@ -421,71 +468,33 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_0" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "sealed", "kind", "ordinal")`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_1" ON "${TABLE}" ("connection_id", "thread_id", "turn_id")`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_2" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "kind", "ordinal")`);
-    await prepareHistoryCacheAccounting(executor);
-    const bootstrap = await executor.execute(
-      `SELECT 1 AS "present" FROM "${BOOTSTRAP_TABLE}" WHERE "runtime_id" = ? AND "bootstrap_id" = ?`,
-      [RUNTIME_ID, LEGACY_BOOTSTRAP_ID],
+    await executor.execute(
+      `CREATE TABLE IF NOT EXISTS "${INVALIDATIONS_TABLE}" (`
+      + `"connection_id" TEXT NOT NULL, "thread_id" TEXT NOT NULL, "cursor" REAL NOT NULL, `
+      + `PRIMARY KEY ("connection_id", "thread_id"))`,
     );
-    if (extractRows(bootstrap).length === 0) {
-      const count = await executor.execute(`SELECT COUNT(*) AS "row_count" FROM "${TABLE}"`);
-      if (extractRows(count)[0]?.row_count === 0) {
-        const legacyRows = await readLegacyPersistedRows<ThreadDetailRow>(executor, RUNTIME_ID);
-        for (const candidate of legacyRows) {
-          const row = normalizeLegacyThreadDetailRow(candidate);
-          if (row !== null) await persistChange(executor, { type: "insert", value: row });
-        }
-      }
-      await executor.execute(
-        `INSERT INTO "${BOOTSTRAP_TABLE}" ("runtime_id", "bootstrap_id") VALUES (?, ?)`,
-        [RUNTIME_ID, LEGACY_BOOTSTRAP_ID],
-      );
+    // The previous generic Persistent Collection had a separate ownership and
+    // publication runtime. Its rows are reconstructable from the native
+    // journal snapshot, so remove that storage instead of importing it.
+    await executor.execute(`DROP TABLE IF EXISTS "codewide_thread_invalidations"`);
+    await prepareHistoryCacheAccounting(executor);
+    const storedVersion = numericSqliteValue(extractRows(await executor.execute(
+      `SELECT "schema_version" FROM "${META_TABLE}" WHERE "runtime_id" = ?`,
+      [RUNTIME_ID],
+    ))[0]?.schema_version);
+    if (storedVersion !== null && storedVersion !== SCHEMA_VERSION) {
+      // The transcript cache is reconstructable. A schema change drops the old
+      // model instead of importing or normalizing obsolete ownership rules.
+      await executor.execute(`DELETE FROM "${TABLE}"`);
+      await executor.execute(`DELETE FROM "${CACHE_META_TABLE}"`);
     }
-    // Purge every optimistic row written by older builds exactly once. Queue
-    // and delivery state are reconstructed from Kotlin's authoritative outbox,
-    // so no pending projection belongs in the durable UI-history cache.
-    const migratedPendingRowsRemoved = await purgeLegacyPendingRowsOnce(executor);
-    // Keep the narrower invariant after the one-shot migration: a downgrade or
-    // interrupted rollout may still reintroduce direct-delivery projections.
-    const staleDeliveryRowsRemoved = migratedPendingRowsRemoved
-      + await deletePersistedDeliveryProjections(executor);
     const rotation = await rotateHistoryCache(executor);
     await executor.execute(
       `INSERT INTO "${META_TABLE}" ("runtime_id", "schema_version") VALUES (?, ?) ON CONFLICT("runtime_id") DO UPDATE SET "schema_version" = excluded."schema_version"`,
       [RUNTIME_ID, SCHEMA_VERSION],
     );
-    return { staleDeliveryRowsRemoved, ...rotation };
+    return { staleDeliveryRowsRemoved: 0, ...rotation };
   });
-}
-
-function normalizeLegacyThreadDetailRow(value: unknown): ThreadDetailRow | null {
-  if (typeof value !== "object" || value === null) return null;
-  const row = value as Partial<ThreadDetailRow>;
-  if (typeof row.id !== "string"
-    || !["thread", "turn", "turnMeta", "activity", "pending"].includes(row.kind ?? "")
-    || typeof row.connectionId !== "string"
-    || typeof row.remoteThreadId !== "string"
-    || !(row.remoteTurnId === null || typeof row.remoteTurnId === "string")) return null;
-  const kind = row.kind as ThreadDetailRow["kind"];
-  const historyCursor = row.historyCursor === null || typeof row.historyCursor === "string" ? row.historyCursor : undefined;
-  return {
-    ...row,
-    id: row.id,
-    kind,
-    connectionId: row.connectionId,
-    remoteThreadId: row.remoteThreadId,
-    remoteTurnId: row.remoteTurnId,
-    historyEpoch: Number.isFinite(row.historyEpoch) ? row.historyEpoch as number : 0,
-    ...(historyCursor === undefined ? {} : { historyCursor }),
-    ordinal: Number.isFinite(row.ordinal) ? row.ordinal as number : kind === "thread" ? -1 : 0,
-    sessionId: typeof row.sessionId === "string" ? row.sessionId : null,
-    lastOpenedAt: Number.isFinite(row.lastOpenedAt) ? row.lastOpenedAt as number : 0,
-    sealed: typeof row.sealed === "boolean" ? row.sealed : kind !== "pending",
-    thread: typeof row.thread === "object" && row.thread !== null ? row.thread : null,
-    turn: typeof row.turn === "object" && row.turn !== null ? row.turn : null,
-    turnMetadata: typeof row.turnMetadata === "object" && row.turnMetadata !== null ? row.turnMetadata : null,
-    activityItems: Array.isArray(row.activityItems) ? row.activityItems : null,
-    pending: typeof row.pending === "object" && row.pending !== null ? row.pending : null,
-  };
 }
 
 async function persistChange(executor: Executor, change: ThreadDetailChange): Promise<void> {
@@ -494,12 +503,6 @@ async function persistChange(executor: Executor, change: ThreadDetailChange): Pr
     return;
   }
   const row = change.value;
-  if (row.kind === "pending" && row.pending?.presentation === "delivery") {
-    // Defense in depth: direct-delivery presentation is reconstructed from the
-    // native outbox and must never become a second durable source of truth.
-    await executor.execute(`DELETE FROM "${TABLE}" WHERE "__key" = ?`, [storageKey(row.id)]);
-    return;
-  }
   const params: SqliteValue[] = [
     storageKey(row.id),
     JSON.stringify(row),
@@ -513,7 +516,10 @@ async function persistChange(executor: Executor, change: ThreadDetailChange): Pr
   ];
   await executor.execute(
     `INSERT INTO "${TABLE}" ("__key", "__payload", "connection_id", "thread_id", "turn_id", "history_epoch", "kind", "ordinal", "sealed") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) `
-    + `ON CONFLICT("__key") DO UPDATE SET "__payload" = excluded."__payload", "connection_id" = excluded."connection_id", "thread_id" = excluded."thread_id", "turn_id" = excluded."turn_id", "history_epoch" = excluded."history_epoch", "kind" = excluded."kind", "ordinal" = excluded."ordinal", "sealed" = excluded."sealed"`,
+    + `ON CONFLICT("__key") DO UPDATE SET "__payload" = excluded."__payload", "connection_id" = excluded."connection_id", "thread_id" = excluded."thread_id", "turn_id" = excluded."turn_id", "history_epoch" = excluded."history_epoch", "kind" = excluded."kind", "ordinal" = excluded."ordinal", "sealed" = excluded."sealed"`
+    // A pending mirror may claim an empty key, but can never replace a
+    // canonical turn that is merely outside the in-memory resident window.
+    + (row.kind === "pending" ? ` WHERE "${TABLE}"."kind" != 'turn'` : ""),
     params,
   );
 }
@@ -660,51 +666,8 @@ function parseResolvedWindowRows(rows: readonly Record<string, SqliteValue>[]): 
     earliestSealedOrdinal: numericSqliteValue(metadata?.earliest_ordinal),
     turnRows: rows.filter(({ bucket }) => bucket === "turn").map(parsePayload),
     detailRows: rows.filter(({ bucket }) => bucket === "detail").map(parsePayload),
-    liveRows: rows.filter(({ bucket }) => bucket === "live").map(parsePayload).filter(isResidentLiveRow),
+    liveRows: rows.filter(({ bucket }) => bucket === "live").map(parsePayload),
   };
-}
-
-function isResidentLiveRow(row: ThreadDetailRow): boolean {
-  return row.kind !== "pending" || row.pending?.presentation !== "delivery";
-}
-
-async function deletePersistedDeliveryProjections(executor: Executor): Promise<number> {
-  const pendingRows = extractRows(await executor.execute(
-    `SELECT "__key", "__payload" FROM "${TABLE}" WHERE "kind" = 'pending'`,
-  ));
-  let removed = 0;
-  for (const candidate of pendingRows) {
-    const payload = candidate.__payload;
-    const key = candidate.__key;
-    if (typeof payload !== "string" || typeof key !== "string") continue;
-    let row: ThreadDetailRow;
-    try {
-      row = JSON.parse(payload) as ThreadDetailRow;
-    } catch {
-      continue;
-    }
-    if (row.kind !== "pending" || row.pending?.presentation !== "delivery") continue;
-    await executor.execute(`DELETE FROM "${TABLE}" WHERE "__key" = ?`, [key]);
-    removed += 1;
-  }
-  return removed;
-}
-
-async function purgeLegacyPendingRowsOnce(executor: Executor): Promise<number> {
-  const migration = await executor.execute(
-    `SELECT 1 AS "present" FROM "${BOOTSTRAP_TABLE}" WHERE "runtime_id" = ? AND "bootstrap_id" = ?`,
-    [RUNTIME_ID, PURGE_LEGACY_PENDING_MIGRATION_ID],
-  );
-  if (extractRows(migration).length > 0) return 0;
-  const count = numericSqliteValue(extractRows(await executor.execute(
-    `SELECT COUNT(*) AS "row_count" FROM "${TABLE}" WHERE "kind" = 'pending'`,
-  ))[0]?.row_count) ?? 0;
-  await executor.execute(`DELETE FROM "${TABLE}" WHERE "kind" = 'pending'`);
-  await executor.execute(
-    `INSERT INTO "${BOOTSTRAP_TABLE}" ("runtime_id", "bootstrap_id") VALUES (?, ?)`,
-    [RUNTIME_ID, PURGE_LEGACY_PENDING_MIGRATION_ID],
-  );
-  return count;
 }
 
 export async function rotateHistoryCache(executor: Executor, limits: {

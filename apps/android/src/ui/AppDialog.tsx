@@ -32,7 +32,7 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
   return (
     <AppDialogContext.Provider value={controller}>
       {children}
-      <AppDialogSurface isOpen={state.isOpen} request={state.request} onDismiss={dismiss} onAction={handleAction} />
+      {state.isOpen && <AppDialogSurface isOpen request={state.request} onDismiss={dismiss} onAction={handleAction} />}
     </AppDialogContext.Provider>
   );
 }

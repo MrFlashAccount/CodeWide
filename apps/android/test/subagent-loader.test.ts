@@ -1,21 +1,22 @@
-import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { RpcClient } from "@codewide/sync-client";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadSubagentDescendants, subagentActivityRootThreadId } from "../src/data/subagent-loader";
 
-function thread(id: string, parentThreadId: string): Thread {
+function indexedThread(id: string, parentThreadId: string, archived = false) {
   return {
     id,
     parentThreadId,
-    name: id,
-    preview: "",
     cwd: "/repo",
+    createdAt: 1,
     updatedAt: 1,
-    status: { type: "idle" },
-    ephemeral: false,
-    turns: [],
-  } as Thread;
+    modelProvider: "openai",
+    cliVersion: "0.147.0",
+    source: { subagent: { thread_spawn: { parent_thread_id: parentThreadId } } },
+    agentNickname: id,
+    agentRole: "worker",
+    archived,
+  };
 }
 
 describe("subagent descendant loading", () => {
@@ -33,13 +34,14 @@ describe("subagent descendant loading", () => {
     })).toBeNull();
   });
 
-  it("loads every active and archived page with the ancestor filter", async () => {
-    const rpc = vi.fn(async (_method: string, params: unknown) => {
-      const input = params as { archived: boolean; cursor: string | null };
-      if (!input.archived && input.cursor === null) return { data: [thread("active-1", "root")], nextCursor: "next" };
-      if (!input.archived) return { data: [thread("active-2", "active-1")], nextCursor: null };
-      return { data: [thread("archived", "root")], nextCursor: null };
-    });
+  it("loads the descendant tree from one local parent-index RPC", async () => {
+    const rpc = vi.fn(async () => ({
+      threads: [
+        indexedThread("active-1", "root"),
+        indexedThread("active-2", "active-1"),
+        indexedThread("archived", "root", true),
+      ],
+    }));
     const session = { rpc } as unknown as RpcClient;
 
     const snapshots = await loadSubagentDescendants(session, "root");
@@ -49,7 +51,7 @@ describe("subagent descendant loading", () => {
       ["active-2", false],
       ["archived", true],
     ]);
-    expect(rpc).toHaveBeenCalledTimes(3);
-    expect(rpc.mock.calls[0]?.[1]).toMatchObject({ ancestorThreadId: "root", useStateDbOnly: false });
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("companion/threadSubagents/read", { threadId: "root" });
   });
 });

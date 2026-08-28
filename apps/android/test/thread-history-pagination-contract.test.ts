@@ -15,8 +15,7 @@ const remoteWorkspace = readFileSync(new URL("../src/data/use-remote-workspace.t
 describe("thread history pagination contract", () => {
   it("pulls one SQLite range only when the list crosses an edge", () => {
     expect(historyController).toContain("const loadedLocally = await context.pullRange(direction)");
-    expect(historyController).toContain("if (loadedLocally || direction !== \"older\" || state.nextCursor === null)");
-    expect(historyController).toContain("const page = await context.loadOlderTurns(");
+    expect(historyController).not.toContain("loadOlderTurns");
     expect(historyController).not.toContain("while (");
     expect(historyController).not.toContain("for (");
     expect(detailDatabase).toContain("async pullRange(connectionId, threadId, direction)");
@@ -33,6 +32,8 @@ describe("thread history pagination contract", () => {
     expect(detailDatabase).toContain('"chat.optimistic.reconciliation_stalled"');
     expect(historyController).toContain("inFlightRef.current[direction]");
     expect(detailDatabase).toContain('const pullKey = `${scope}\\u0000${direction}`');
+    expect(detailDatabase).toContain("await remoteLoader.loadOlder(");
+    expect(detailDatabase).toContain("return await pullStoredRange()");
   });
 
   it("leaves scroll position to MVCP while paging and follows only the authoritative tail", () => {
@@ -51,10 +52,10 @@ describe("thread history pagination contract", () => {
     expect(remoteWorkspace).toContain("const persisted = await threadDetails.prependTurns(");
     expect(remoteWorkspace).toContain('if (!persisted.accepted) throw new Error("Backend history page was not persisted")');
     expect(remoteWorkspace).not.toContain("threadDetails?.prependTurns(");
-    expect(historyController).toContain('if (!page.acceptedHistory) throw new Error("Backend history page was not persisted")');
-    expect(historyController.indexOf("if (!page.acceptedHistory)")).toBeLessThan(
-      historyController.indexOf("context.putState({ ...current, nextCursor: page.nextCursor"),
+    expect(detailDatabase.indexOf("await remoteLoader.loadOlder(")).toBeLessThan(
+      detailDatabase.lastIndexOf("return await pullStoredRange()"),
     );
+    expect(historyController).not.toContain("acceptedHistory");
   });
 
   it("keeps SQLite residency bounded and derives one atomic ready surface", () => {
@@ -104,18 +105,18 @@ describe("thread history pagination contract", () => {
   });
 
   it("preserves optimistic pending rows across an in-flight window installation", () => {
-    const loader = detailDatabase.slice(
+    const installer = detailDatabase.slice(
+      detailDatabase.indexOf("const installStoredWindow ="),
       detailDatabase.indexOf("const loadWindow = async"),
-      detailDatabase.indexOf("const database: ThreadDetailDatabase"),
     );
 
-    expect(loader).toContain("composeInitialRangeRows(");
-    expect(loader).toContain("mergePendingTimelineOverlays(");
-    expect(loader).toContain("const membership = rangeMembership(rows, loaded.historyEpoch)");
-    expect(loader).not.toContain("mergeResidentThreadRows(");
-    expect(loader.indexOf("composeInitialRangeRows(")).toBeLessThan(loader.indexOf("const membership = rangeMembership"));
-    expect(loader.indexOf("mergePendingTimelineOverlays(")).toBeLessThan(loader.indexOf("source.replaceThreadLoaded"));
-    expect(loader.indexOf("if (!committed) return")).toBeLessThan(loader.indexOf("source.replaceThreadLoaded"));
+    expect(installer).toContain("composeInitialRangeRows(");
+    expect(installer).toContain("mergePendingTimelineOverlays(");
+    expect(installer).toContain("const membership = rangeMembership(rows, loaded.historyEpoch)");
+    expect(installer).not.toContain("mergeResidentThreadRows(");
+    expect(installer.indexOf("composeInitialRangeRows(")).toBeLessThan(installer.indexOf("const membership = rangeMembership"));
+    expect(installer.indexOf("mergePendingTimelineOverlays(")).toBeLessThan(installer.indexOf("source.replaceThreadLoaded"));
+    expect(installer.indexOf("if (!committed) return")).toBeLessThan(installer.indexOf("source.replaceThreadLoaded"));
   });
 
   it("gives overlapping optimistic mutations independent rollback ownership", () => {
@@ -129,36 +130,33 @@ describe("thread history pagination contract", () => {
     expect(staging).toContain("complete()");
   });
 
-  it("does not restart hydration when live activity only changes summary recency", () => {
-    const hydrationKey = screen.slice(
-      screen.indexOf("const hydrationTaskKey"),
-      screen.indexOf("const staleLifecycleTurnId"),
-    );
-
-    expect(hydrationKey).toContain("historyResourceId");
-    expect(hydrationKey).not.toContain("recencyAt");
-    expect(hydrationKey).not.toContain("updatedAt");
+  it("keeps hydration in the stable model resource", () => {
+    expect(screen).not.toContain("const hydrationTaskKey");
+    expect(screen).not.toContain("active-thread-hydration");
+    expect(detailDatabase).toContain("setRemoteLoader(loader)");
+    expect(detailDatabase).toContain("await loader.hydrateWindow(");
+    expect(detailDatabase).toContain("void hydrateAndInstall().catch(");
+    expect(remoteWorkspace).toContain("details.setRemoteLoader({");
   });
 
   it("keeps authoritative refresh out of cached navigation readiness", () => {
     expect(screen).not.toContain("threadSnapshotReady: remoteThread !== null");
     expect(screen).not.toContain("activeConversationNavigationReady");
-    expect(screen).toContain('cachedSnapshotAvailable ? "background-updating" : "initial-loading"');
     expect(screen).toContain("const historyRestoreReady = !threadLoadBlocksPresentation(chatSnapshot.status)");
-    expect(screen).toContain("const hydrationTaskKey = !connectionAvailable || !historyRestoreReady");
+    expect(screen).not.toContain("const hydrationTaskKey");
   });
 
   it("binds pagination state and cancellation to the active history epoch", () => {
     expect(screen).toContain("historyResourceRaw?.historyEpoch === historyEpoch");
-    expect(screen).toContain("thread-hydration:${historyResourceId}:${threadOpenGeneration}:${historyEpoch}");
+    expect(screen).not.toContain("thread-hydration:");
     expect(historyController).toContain("state.historyEpoch !== context.historyEpoch");
-    expect(historyController).toContain("state.nextCursor ?? null,");
-    expect(historyController).toContain("state.historyEpoch,");
+    expect(historyController).toContain("const cursor = context.readHistoryCursor()");
+    expect(historyController).toContain("const nextCursor = context.readHistoryCursor()");
     expect(detailDatabase).toContain("historyEpoch !== expectedHistoryEpoch");
     expect(screen).toContain("nextCursor: chatDatabase.historyCursor(connectionId, threadId)");
     expect(detailDatabase).toContain("historyCursor(connectionId, threadId)");
-    expect(detailDatabase).toContain("meta.historyCursor !== nextCursor");
-    expect(historyController).toContain("state.nextCursor === null");
+    expect(detailDatabase).toContain("meta.historyCursor !== input.historyCursor.value");
+    expect(historyController).toContain("nextCursor === null");
   });
 
   it("proves cursor-page novelty against durable SQLite instead of the partial hot source", () => {
@@ -176,8 +174,9 @@ describe("thread history pagination contract", () => {
     expect(detailSqlite).toContain('ORDER BY "ordinal" ${direction === "asc" ? "ASC" : "DESC"}');
     expect(prepend.indexOf("loadDurablePrependRows")).toBeLessThan(prepend.indexOf("projectPrependedTurnOrdinals"));
     expect(prepend).toContain("source.set(row.id, row)");
-    expect(prepend).toContain("activityKey(connectionId, threadId, turn.id)");
-    expect(prepend.indexOf("controls.commit({ durable: true })")).toBeLessThan(prepend.indexOf("composeExpandedRangeRows("));
+    expect(prepend).toContain("await commitThreadProjection({");
+    expect(detailDatabase).toContain("activityKey(input.connectionId, input.threadId, turn.id)");
+    expect(prepend.indexOf("await commitThreadProjection({")).toBeLessThan(prepend.indexOf("composeExpandedRangeRows("));
   });
 
   it("anchors authoritative pages in durable SQLite before projecting their epoch", () => {

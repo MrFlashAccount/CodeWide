@@ -38,11 +38,23 @@ export async function pickUploadFile(): Promise<SelectedUpload | null> {
 }
 
 export function createTextUpload(name: string, mimeType: string, source: string): SelectedUpload {
-  const safeName = name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "attachment.txt";
+  const safeName = safeUploadName(name, "attachment.txt");
   const file = new File(Paths.cache, `codewide-${Date.now().toString(36)}-${safeName}`);
   file.create({ overwrite: true, intermediates: true });
   file.write(source);
   return { name: safeName, size: file.size, mimeType, native: file };
+}
+
+export function createBinaryUpload(name: string, mimeType: string, source: Uint8Array): SelectedUpload {
+  const safeName = safeUploadName(name, "attachment.bin");
+  const file = new File(Paths.cache, `codewide-${Date.now().toString(36)}-${safeName}`);
+  file.create({ overwrite: true, intermediates: true });
+  file.write(source);
+  return { name: safeName, size: file.size, mimeType, native: file };
+}
+
+function safeUploadName(name: string, fallback: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || fallback;
 }
 
 export async function pickDownloadDirectory(): Promise<SelectedDirectory> {

@@ -27,6 +27,7 @@ async fn corrupt_derived_resource_index_is_quarantined_and_rebuilt()
     let _service = ResourceService::open(
         &path,
         Arc::new(SessionCatalog::scan(directory.path())),
+        Arc::new(IndexStore::open(directory.path().join("index.redb"))?),
         files,
     )?;
     assert!(path.is_file());

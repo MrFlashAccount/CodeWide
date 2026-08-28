@@ -1,9 +1,14 @@
 import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { describe, expect, it } from "vitest";
 
-import { collectThreadCursorDelta, latestSealedTurnId, planThreadOpenSync, threadOpenNeedsCursorCatchUp } from "../src/data/thread-cursor-sync";
+import { collectThreadCursorDelta, latestSealedTurnId, planThreadOpenSync, shouldUseBoundedThreadWindowRead, threadOpenNeedsCursorCatchUp } from "../src/data/thread-cursor-sync";
 
 describe("thread cursor sync", () => {
+  it("uses the existing shell only for a cached bounded head repair", () => {
+    expect(shouldUseBoundedThreadWindowRead(true)).toBe(true);
+    expect(shouldUseBoundedThreadWindowRead(false)).toBe(false);
+  });
+
   it("opens a healthy known thread locally and reserves imports for missing state", () => {
     expect(planThreadOpenSync(true, null, false)).toBe("local");
     expect(planThreadOpenSync(true, 42, false)).toBe("cursor-catch-up");
@@ -26,7 +31,7 @@ describe("thread cursor sync", () => {
     ]);
 
     await expect(collectThreadCursorDelta("b", async (cursor) => pages.get(cursor)!)).resolves.toEqual({
-      turns: [turn("c"), turn("d")],
+      turns: [turn("b"), turn("c"), turn("d")],
       historyCursor: "older",
       anchorFound: true,
     });
@@ -74,6 +79,22 @@ describe("thread cursor sync", () => {
     ])).toBe("stable");
     expect(latestSealedTurnId([{ ...turn("incomplete"), items: [] }])).toBeNull();
     expect(latestSealedTurnId([turn("interrupted", "interrupted", false)])).toBe("interrupted");
+  });
+
+  it("does not treat non-empty commentary as a final cursor boundary", () => {
+    const commentary = turn("commentary");
+    const agent = commentary.items[0] as Extract<Turn["items"][number], { type: "agentMessage" }>;
+    agent.phase = "commentary";
+
+    expect(latestSealedTurnId([turn("stable"), commentary])).toBe("stable");
+  });
+
+  it("does not trust an unphased live completion as a stable cursor", () => {
+    const unphased = turn("unphased");
+    const agent = unphased.items[0] as Extract<Turn["items"][number], { type: "agentMessage" }>;
+    agent.phase = null;
+
+    expect(latestSealedTurnId([unphased])).toBeNull();
   });
 });
 

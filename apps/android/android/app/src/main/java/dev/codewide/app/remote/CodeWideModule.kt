@@ -41,7 +41,6 @@ import kotlin.concurrent.thread
 import kotlin.math.sqrt
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.CertificatePinner
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -176,14 +175,14 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       validateEndpoint(endpoint)
       require(pairingToken.length in 32..512) { "Pairing token is invalid" }
       require(deviceName.length in 1..80 && !deviceName.any { it.code < 32 || it.code == 127 }) { "Device name is invalid" }
-      if (tlsPinSha256 != null) {
-        require(Regex("^sha256/[A-Za-z0-9+/]{43}=$").matches(tlsPinSha256)) { "TLS certificate pin is invalid" }
-        require(URI(endpoint).scheme == "wss") { "TLS certificate pin requires WSS" }
-      }
-      val claimUrl = endpoint
+      val identityPin = requireNotNull(tlsPinSha256) { "Secure pairing requires a Companion identity pin" }
+      PinnedTls.requireTransport(endpoint, identityPin)
+      val innerClaimUrl = endpoint
         .replaceFirst("wss://", "https://")
         .replaceFirst("ws://", "http://")
         .replace("/v1/sync", "/v1/auth")
+      val bootstrap = InnerTlsTransport.bootstrap(endpoint, identityPin)
+      val claimUrl = InnerTlsTransport.url(bootstrap, innerClaimUrl)
       val publicKeySpki = DeviceKeyStore.publicKeySpki()
       val requestBody = JSONObject()
         .put("action", "register")
@@ -194,11 +193,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         .toString()
         .toRequestBody(JSON_MEDIA_TYPE)
       val request = Request.Builder().url(claimUrl).post(requestBody).build()
-      val client = if (tlsPinSha256 == null) pairingHttpClient else {
-        pairingHttpClient.newBuilder()
-          .certificatePinner(CertificatePinner.Builder().add(request.url.host, tlsPinSha256).build())
-          .build()
-      }
+      val client = InnerTlsTransport.client(pairingHttpClient, bootstrap)
       client.newCall(request).enqueue(object : Callback {
         override fun onFailure(call: Call, error: IOException) {
           promise.reject("PAIRING_NETWORK_FAILED", "Secure pairing connection failed", error)
@@ -234,17 +229,32 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   @ReactMethod
   fun saveConnectionCredentials(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, promise: Promise) {
+    saveConnectionCredentials(connectionId, endpoint, token, tlsPinSha256, enabled, null, promise)
+  }
+
+  @ReactMethod
+  fun saveConnectionCredentialsV2(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, deviceId: String, promise: Promise) {
+    saveConnectionCredentials(connectionId, endpoint, token, tlsPinSha256, enabled, deviceId, promise)
+  }
+
+  private fun saveConnectionCredentials(connectionId: String, endpoint: String, token: String?, tlsPinSha256: String?, enabled: Boolean, deviceId: String?, promise: Promise) {
     try {
       validateEndpoint(endpoint)
       require(connectionId.isNotBlank()) { "Connection id is required" }
       val store = NativeSessionCredentialsStore(context)
-      val capability = token?.takeIf { it.isNotBlank() } ?: store.get(connectionId)?.token
+      val existing = store.get(connectionId)
+      val capability = token?.takeIf { it.isNotBlank() } ?: existing?.token
       require(capability != null && capability.length in 32..512) { "Capability token is invalid" }
-      if (tlsPinSha256 != null) {
-        require(Regex("^sha256/[A-Za-z0-9+/]{43}=$").matches(tlsPinSha256)) { "TLS certificate pin is invalid" }
-        require(URI(endpoint).scheme == "wss") { "TLS certificate pin requires WSS" }
-      }
-      store.upsert(StoredNativeSession(connectionId, endpoint, capability, tlsPinSha256, enabled))
+      PinnedTls.requireTransport(endpoint, tlsPinSha256)
+      store.upsert(mergeNativeSessionCredentials(
+        existing,
+        connectionId,
+        endpoint,
+        capability,
+        tlsPinSha256,
+        enabled,
+        deviceId,
+      ))
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("SAVE_CONNECTION_FAILED", "Could not persist native connection credentials", error)
@@ -258,9 +268,11 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       NativeSessionCredentialsStore(context).list().forEach { saved ->
         result.pushMap(Arguments.createMap().apply {
           putString("connectionId", saved.id)
+          putString("savedServerId", saved.id)
           putString("endpoint", saved.endpoint)
-          if (saved.tlsPinSha256 == null) putNull("tlsPinSha256") else putString("tlsPinSha256", saved.tlsPinSha256)
+          putString("tlsPinSha256", saved.innerTlsPinSha256)
           putBoolean("enabled", saved.enabled)
+          putString("deviceId", saved.deviceId)
         })
       }
       promise.resolve(result)
@@ -365,7 +377,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       val saved = NativeSessionCredentialsStore(context).get(connectionId)
         ?: throw IllegalStateException("Saved native credentials are missing")
       require(saved.enabled) { "Connection is disabled" }
-      SessionCredentialClient.mint(pairingHttpClient, saved.endpoint, saved.token, saved.tlsPinSha256) { result ->
+      SessionCredentialClient.mint(pairingHttpClient, saved) { result ->
         result.fold(
           onSuccess = { credential ->
             promise.resolve(Arguments.createMap().apply {
@@ -378,6 +390,17 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       }
     } catch (error: Throwable) {
       promise.reject("SESSION_INPUT_INVALID", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun companionHttpOrigin(connectionId: String, promise: Promise) {
+    try {
+      require(connectionId.isNotBlank()) { "Connection id is required" }
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      promise.resolve(service.companionHttpOrigin(connectionId))
+    } catch (error: Throwable) {
+      promise.reject("COMPANION_HTTP_PROXY_FAILED", "Could not open the pinned companion HTTP transport", error)
     }
   }
 

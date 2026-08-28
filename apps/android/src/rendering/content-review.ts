@@ -22,7 +22,12 @@ export type MermaidReviewAnchor = {
   y: number;
 };
 
-export type ContentReviewAnchor = TextReviewAnchor | MermaidReviewAnchor;
+export type ResponseReviewAnchor = {
+  kind: "response";
+  target: ContentReviewTarget;
+};
+
+export type ContentReviewAnchor = TextReviewAnchor | MermaidReviewAnchor | ResponseReviewAnchor;
 
 export type ContentReviewComment = {
   id: string;
@@ -80,6 +85,12 @@ export function serializeContentReviewAttachment(comments: readonly ContentRevie
       lines.push(`### Comment ${ordinal} · selected text`, "");
       lines.push(`Block: \`${escapeInlineCode(anchor.blockPath)}\` · rendered offsets ${anchor.start}–${anchor.end}`, "");
       lines.push(...quoteMarkdown(anchor.quote), "");
+      lines.push(comment.body.trim(), "");
+      return;
+    }
+    if (anchor.kind === "response") {
+      lines.push(`### Comment ${ordinal} · whole response`, "");
+      lines.push("Scope: **entire response**", "");
       lines.push(comment.body.trim(), "");
       return;
     }

@@ -43,4 +43,51 @@ describe("thread projection store", () => {
     await expect(store.applyEvents("server", [])).rejects.toThrow("detail persistence failed");
     expect(summaryApplied).toBe(false);
   });
+
+  it("does not publish terminal summary state before the detail checkpoint resolves", async () => {
+    let resolveCheckpoint!: () => void;
+    const checkpoint = new Promise<void>((resolve) => { resolveCheckpoint = resolve; });
+    let summaryApplied = false;
+    const store = createThreadProjectionStore({
+      details: {
+        async applySnapshot() {},
+        async applyEvents() { return { checkpoint, threads: new Map() }; },
+      },
+      summaries: {
+        async applySnapshot() {},
+        async applyEvents() { summaryApplied = true; },
+      },
+    });
+
+    const applying = store.applyEvents("server", []);
+    await Promise.resolve();
+    expect(summaryApplied).toBe(false);
+    resolveCheckpoint();
+    await applying;
+    expect(summaryApplied).toBe(true);
+  });
+
+  it("repairs the detail projection before publishing its terminal summary", async () => {
+    const order: string[] = [];
+    const store = createThreadProjectionStore({
+      details: {
+        async applySnapshot() {},
+        async applyEvents() {
+          order.push("detail");
+          return { checkpoint: Promise.resolve().then(() => { order.push("checkpoint"); }), threads: new Map() };
+        },
+      },
+      async reconcileBeforeSummary(_connectionId, _events, projected) {
+        order.push("repair");
+        return projected;
+      },
+      summaries: {
+        async applySnapshot() {},
+        async applyEvents() { order.push("summary"); },
+      },
+    });
+
+    await store.applyEvents("server", []);
+    expect(order).toEqual(["detail", "checkpoint", "repair", "summary"]);
+  });
 });

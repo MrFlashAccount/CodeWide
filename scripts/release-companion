@@ -1,0 +1,111 @@
+#!/bin/sh
+set -eu
+
+printf '%s\n' 'This complete Companion release may take 3-10 minutes. AI agents: do not report or poll intermediate progress; wait silently for the final result.'
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+INSTALL_ROOT="$HOME/.local/lib/codewide"
+PLUGIN_ROOT="$INSTALL_ROOT/plugins"
+UNIT_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+TMP_ROOT=${TMPDIR:-/tmp}
+BACKUP_DIR=
+DEPLOYMENT_STARTED=0
+SERVICE_WAS_ACTIVE=0
+
+backup_target() {
+  source_path=$1
+  backup_name=$2
+  if [ -e "$source_path" ]; then
+    cp -p -- "$source_path" "$BACKUP_DIR/$backup_name"
+  else
+    : >"$BACKUP_DIR/$backup_name.missing"
+  fi
+}
+
+restore_target() {
+  backup_name=$1
+  target_path=$2
+  mode=$3
+  if [ -f "$BACKUP_DIR/$backup_name" ]; then
+    install -D -m "$mode" "$BACKUP_DIR/$backup_name" "$target_path"
+  elif [ -f "$BACKUP_DIR/$backup_name.missing" ]; then
+    rm -f -- "$target_path"
+  fi
+}
+
+cleanup_backup() {
+  [ -n "$BACKUP_DIR" ] || return 0
+  case "$BACKUP_DIR" in
+    "$TMP_ROOT"/codewide-companion-release.*) rm -rf -- "$BACKUP_DIR" ;;
+    *) printf '%s\n' "Refusing to remove unexpected backup directory: $BACKUP_DIR" >&2 ;;
+  esac
+}
+
+finish_release() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_STARTED" -eq 1 ]; then
+    printf '%s\n' 'Companion release failed after installation started; restoring the previous installation.' >&2
+    systemctl --user stop codewide-companion.service 2>/dev/null || true
+    restore_target companion "$INSTALL_ROOT/codewide-companion" 0755
+    restore_target vcs-git "$PLUGIN_ROOT/codewide-vcs-git" 0755
+    restore_target memory-watch "$INSTALL_ROOT/codewide-companion-memory-watch" 0755
+    restore_target unit "$UNIT_ROOT/codewide-companion.service" 0644
+    restore_target memory-watch-unit "$UNIT_ROOT/codewide-companion-memory-watch.service" 0644
+    restore_target memory-watch-timer "$UNIT_ROOT/codewide-companion-memory-watch.timer" 0644
+    systemctl --user daemon-reload
+    if [ "$SERVICE_WAS_ACTIVE" -eq 1 ]; then
+      systemctl --user restart codewide-companion.service || true
+    fi
+  fi
+  cleanup_backup
+  exit "$status"
+}
+
+trap finish_release EXIT
+trap 'exit 130' HUP INT TERM
+
+cd "$REPO_ROOT"
+
+printf '%s\n' 'release-companion: validating source'
+git diff --check -- \
+  Cargo.toml \
+  Cargo.lock \
+  clippy.toml \
+  apps/companion \
+  scripts/build-companion.sh \
+  scripts/release-companion
+cargo fmt --all -- --check
+CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+
+printf '%s\n' 'release-companion: building optimized binaries'
+./scripts/build-companion.sh
+
+BACKUP_DIR=$(mktemp -d "$TMP_ROOT/codewide-companion-release.XXXXXX")
+if systemctl --user is-active --quiet codewide-companion.service; then
+  SERVICE_WAS_ACTIVE=1
+fi
+backup_target "$INSTALL_ROOT/codewide-companion" companion
+backup_target "$PLUGIN_ROOT/codewide-vcs-git" vcs-git
+backup_target "$INSTALL_ROOT/codewide-companion-memory-watch" memory-watch
+backup_target "$UNIT_ROOT/codewide-companion.service" unit
+backup_target "$UNIT_ROOT/codewide-companion-memory-watch.service" memory-watch-unit
+backup_target "$UNIT_ROOT/codewide-companion-memory-watch.timer" memory-watch-timer
+
+printf '%s\n' 'release-companion: installing and verifying'
+DEPLOYMENT_STARTED=1
+./apps/companion/deploy/install.sh
+./apps/companion/deploy/verify.sh
+DEPLOYMENT_STARTED=0
+
+SOURCE_REVISION=$(git rev-parse HEAD)
+SOURCE_DIRTY=false
+if [ -n "$(git status --porcelain)" ]; then
+  SOURCE_DIRTY=true
+fi
+BINARY_SHA256=$(sha256sum "$INSTALL_ROOT/codewide-companion" | cut -d ' ' -f 1)
+MAIN_PID=$(systemctl --user show codewide-companion.service -p MainPID --value)
+RESTARTS=$(systemctl --user show codewide-companion.service -p NRestarts --value)
+
+printf '%s\n' "{\"release\":\"companion\",\"status\":\"published\",\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\",\"mainPid\":$MAIN_PID,\"restartCount\":$RESTARTS}"

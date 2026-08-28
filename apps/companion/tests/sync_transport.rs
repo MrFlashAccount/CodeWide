@@ -31,6 +31,144 @@ const EXTERNAL_THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
 type ClientSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
+async fn read_only_rpcs_complete_out_of_order_without_head_of_line_blocking()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let fake = tokio::spawn(run_out_of_order_app_server(socket_path.clone()));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {"id": "slow", "method": "thread/list", "params": {}}
+        }),
+    )
+    .await?;
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {"id": "fast", "method": "config/read", "params": {}}
+        }),
+    )
+    .await?;
+
+    let first = receive_type(&mut client, "rpc").await?;
+    let second = receive_type(&mut client, "rpc").await?;
+    assert_eq!(first["response"]["id"], "fast");
+    assert_eq!(second["response"]["id"], "slow");
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn mutations_on_different_threads_do_not_share_a_lane()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let fake = tokio::spawn(run_out_of_order_thread_mutation_app_server(
+        socket_path.clone(),
+    ));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    for (id, thread_id) in [("slow", "thread-a"), ("fast", "thread-b")] {
+        send_json(
+            &mut client,
+            &json!({
+                "type": "rpc",
+                "request": {
+                    "id": id,
+                    "method": "thread/name/set",
+                    "params": {"threadId": thread_id, "name": id}
+                }
+            }),
+        )
+        .await?;
+    }
+
+    let first = timeout(Duration::from_secs(2), receive_type(&mut client, "rpc")).await??;
+    let second = timeout(Duration::from_secs(2), receive_type(&mut client, "rpc")).await??;
+    assert_eq!(first["response"]["id"], "fast");
+    assert_eq!(second["response"]["id"], "slow");
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn observer_attachment_resumes_without_loading_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_idle_thread_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "observe-thread",
+                "method": "companion/thread/observe",
+                "params": {"threadId": EXTERNAL_THREAD_ID}
+            }
+        }),
+    )
+    .await?;
+
+    let response = receive_type(&mut client, "rpc").await?;
+    assert_eq!(response["response"]["id"], "observe-thread");
+    assert_eq!(response["response"]["result"]["observing"], true);
+    assert_eq!(observed_rx.recv().await.as_deref(), Some("thread/resume"));
+    assert!(
+        timeout(Duration::from_millis(100), observed_rx.recv())
+            .await
+            .is_err(),
+        "observer attachment must not read a thread window"
+    );
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn resume_uses_upstream_page_when_the_rollout_head_is_still_active()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
@@ -57,7 +195,10 @@ async fn resume_uses_upstream_page_when_the_rollout_head_is_still_active()
     let upstream = UpstreamHandle::spawn(socket_path);
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
     let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
@@ -109,6 +250,176 @@ async fn resume_uses_upstream_page_when_the_rollout_head_is_still_active()
 }
 
 #[tokio::test]
+async fn bounded_window_read_refreshes_the_mutable_head_without_resuming()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let sessions = directory.path().join("sessions/2026/08/17");
+    std::fs::create_dir_all(&sessions)?;
+    let path = sessions.join(format!(
+        "rollout-2026-08-17T00-00-00-{EXTERNAL_THREAD_ID}.jsonl"
+    ));
+    let mut rollout = std::fs::File::create(path)?;
+    let stale_turn = r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"old-turn","started_at":10}}"#;
+    writeln!(rollout, "{stale_turn}")?;
+    rollout.sync_all()?;
+
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_external_thread_app_server(
+        socket_path.clone(),
+        observed,
+    ));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "read-window",
+                "method": "companion/threadWindow/read",
+                "params": {
+                    "threadId": EXTERNAL_THREAD_ID,
+                    "initialTurnsPage": {
+                        "limit": 6,
+                        "sortDirection": "desc",
+                        "itemsView": "summary"
+                    }
+                }
+            }
+        }),
+    )
+    .await?;
+    let response = receive_type(&mut client, "rpc").await?;
+    assert_eq!(response["response"]["id"], "read-window");
+    assert!(
+        response["response"].get("error").is_none(),
+        "unexpected window read error: {response}"
+    );
+    assert_eq!(
+        response["response"]["result"]["thread"]["turns"][0]["id"],
+        "new-turn"
+    );
+    assert_eq!(
+        response["response"]["result"]["thread"]["turns"][0]["itemsView"],
+        "full"
+    );
+    assert_eq!(
+        response["response"]["result"]["thread"]["turns"][0]["items"][1]["type"],
+        "commandExecution"
+    );
+    assert_eq!(
+        response["response"]["result"]["thread"]["turns"][0]["items"][3]["clientId"],
+        "desktop-client"
+    );
+    assert_eq!(
+        response["response"]["result"]["thread"]["turns"][0]["items"][3]["content"][0]["text"],
+        "desktop follow-up"
+    );
+    assert_eq!(observed_rx.recv().await.as_deref(), Some("thread/read"));
+    assert_eq!(
+        observed_rx.recv().await.as_deref(),
+        Some("thread/turns/list")
+    );
+    assert!(
+        timeout(Duration::from_millis(100), observed_rx.recv())
+            .await
+            .is_err(),
+        "indexed window read must not request an upstream summary page or resume the thread"
+    );
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn cold_window_read_serves_completed_history_from_the_index()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let sessions = directory.path().join("sessions/2026/08/17");
+    std::fs::create_dir_all(&sessions)?;
+    let path = sessions.join(format!(
+        "rollout-2026-08-17T00-00-00-{EXTERNAL_THREAD_ID}.jsonl"
+    ));
+    let mut rollout = std::fs::File::create(path)?;
+    for line in [
+        r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"indexed-turn","started_at":10}}"#,
+        r#"{"type":"event_msg","payload":{"type":"user_message","message":"indexed question","client_id":"indexed-client"}}"#,
+        r#"{"type":"event_msg","payload":{"type":"agent_message","message":"indexed answer","phase":"final_answer"}}"#,
+        r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"indexed-turn","completed_at":11,"duration_ms":1000}}"#,
+    ] {
+        writeln!(rollout, "{line}")?;
+    }
+    rollout.sync_all()?;
+
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_idle_thread_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "cold-indexed-window",
+                "method": "companion/threadWindow/read",
+                "params": {
+                    "threadId": EXTERNAL_THREAD_ID,
+                    "initialTurnsPage": {
+                        "limit": 6,
+                        "sortDirection": "desc",
+                        "itemsView": "summary"
+                    }
+                }
+            }
+        }),
+    )
+    .await?;
+    let response = receive_type(&mut client, "rpc").await?;
+    assert_eq!(
+        response["response"]["result"]["thread"]["turns"][0]["id"],
+        "indexed-turn"
+    );
+    assert_eq!(
+        response["response"]["result"]["thread"]["turns"][0]["items"][1]["text"],
+        "indexed answer"
+    );
+    assert_eq!(observed_rx.recv().await.as_deref(), Some("thread/read"));
+    assert!(
+        timeout(Duration::from_millis(100), observed_rx.recv())
+            .await
+            .is_err(),
+        "a completed indexed window must not request upstream turns or resume"
+    );
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn sync_auth_rpc_replay_and_read_only_mutation_gate() -> Result<(), Box<dyn std::error::Error>>
 {
     let directory = tempfile::tempdir()?;
@@ -125,7 +436,7 @@ async fn sync_auth_rpc_replay_and_read_only_mutation_gate() -> Result<(), Box<dy
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
     let catalog = SessionCatalog::scan(directory.path());
-    let history = HistoryService::new(Arc::new(catalog));
+    let history = HistoryService::new(Arc::new(catalog), store.clone());
     let sync = SyncHub::new(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
     let url = format!("ws://{address}/v1/sync");
@@ -214,6 +525,116 @@ async fn sync_auth_rpc_replay_and_read_only_mutation_gate() -> Result<(), Box<dy
     Ok(())
 }
 
+#[tokio::test]
+async fn user_messages_from_an_active_turn_and_another_desktop_thread_survive_reconnect()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (notifications, notification_rx) = mpsc::channel(8);
+    let (observed, mut observed_rx) = mpsc::channel(8);
+    let fake = tokio::spawn(run_fake_app_server(
+        socket_path.clone(),
+        notification_rx,
+        observed,
+    ));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::new(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store.clone(), sync).await?;
+    let url = format!("ws://{address}/v1/sync");
+    let (mut phone, _) = connect_client(&url, None).await?;
+
+    send_json(
+        &mut phone,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "observe-current",
+                "method": "companion/thread/observe",
+                "params": {"threadId": "current-thread"}
+            }
+        }),
+    )
+    .await?;
+    let observed_response = receive_type(&mut phone, "rpc").await?;
+    assert_eq!(observed_response["response"]["result"]["observing"], true);
+    assert_eq!(observed_rx.recv().await.as_deref(), Some("thread/resume"));
+
+    for (item_id, client_id, text) in [
+        ("current-user-1", "android-first", "Test"),
+        ("current-user-2", "android-second", "Test2"),
+    ] {
+        notifications
+            .send(user_message_completed(
+                "current-thread",
+                "active-turn",
+                item_id,
+                client_id,
+                text,
+            ))
+            .await?;
+        let event = receive_type(&mut phone, "event").await?;
+        assert_eq!(event["payload"]["params"]["item"]["clientId"], client_id);
+        assert_eq!(
+            event["payload"]["params"]["item"]["content"][0]["text"],
+            text
+        );
+        assert_eq!(
+            event["payload"]["codewideThreadPatch"]["threadId"],
+            "current-thread"
+        );
+        assert_eq!(
+            event["payload"]["codewideThreadPatch"]["operation"]["kind"],
+            "itemUpsert"
+        );
+    }
+    assert_eq!(store.replay_head()?, 2);
+    phone.close(None).await?;
+
+    notifications
+        .send(user_message_completed(
+            "other-thread",
+            "desktop-turn",
+            "desktop-user",
+            "desktop-client",
+            "Desktop follow-up",
+        ))
+        .await?;
+    timeout(Duration::from_secs(2), async {
+        while store.replay_head().ok() != Some(3) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+
+    let (mut reconnected, hello) = connect_replay_client(&url, 2).await?;
+    assert_eq!(hello["headCursor"], 3);
+    let replayed = receive_type(&mut reconnected, "event").await?;
+    assert_eq!(replayed["cursor"], 3);
+    assert_eq!(
+        replayed["payload"]["codewideThreadPatch"]["threadId"],
+        "other-thread"
+    );
+    assert_eq!(
+        replayed["payload"]["params"]["item"]["content"][0]["text"],
+        "Desktop follow-up"
+    );
+    assert_eq!(
+        receive_type(&mut reconnected, "caughtUp").await?["cursor"],
+        3
+    );
+
+    reconnected.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
 async fn verify_account_rate_limits_read(
     client: &mut ClientSocket,
     observed: &mut mpsc::Receiver<String>,
@@ -252,7 +673,10 @@ async fn active_sync_forwards_mutations_and_pumps_durable_queue()
     let upstream = UpstreamHandle::spawn(socket_path);
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
     let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
@@ -281,12 +705,6 @@ async fn active_sync_forwards_mutations_and_pumps_durable_queue()
     assert_eq!(
         receive_type(&mut client, "rpc").await?["response"]["id"],
         "queue-put"
-    );
-    assert_eq!(
-        timeout(Duration::from_secs(2), observed_rx.recv())
-            .await?
-            .ok_or("observation channel closed")?,
-        "thread/turns/list"
     );
     assert_eq!(
         timeout(Duration::from_secs(2), observed_rx.recv())
@@ -344,7 +762,10 @@ async fn first_message_materializes_an_empty_new_thread() -> Result<(), Box<dyn 
     let upstream = UpstreamHandle::spawn(socket_path);
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
     let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
@@ -374,12 +795,6 @@ async fn first_message_materializes_an_empty_new_thread() -> Result<(), Box<dyn 
     assert_eq!(
         receive_type(&mut client, "rpc").await?["response"]["id"],
         "queue-first-message"
-    );
-    assert_eq!(
-        timeout(Duration::from_secs(2), observed_rx.recv())
-            .await?
-            .ok_or("empty thread history check missing")?,
-        "thread/turns/list"
     );
     assert_eq!(
         timeout(Duration::from_secs(2), observed_rx.recv())
@@ -417,21 +832,98 @@ async fn first_message_materializes_an_empty_new_thread() -> Result<(), Box<dyn 
 }
 
 #[tokio::test]
-async fn completed_turn_immediately_releases_a_queued_message()
+async fn queued_messages_reach_app_server_in_order_without_history_reconciliation()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let socket_path = directory.path().join("app-server.sock");
-    let (release, release_rx) = mpsc::channel(1);
     let (observed, mut observed_rx) = mpsc::channel(16);
-    let fake = tokio::spawn(run_blocked_queue_app_server(
-        socket_path.clone(),
-        release_rx,
-        observed,
-    ));
+    let fake = tokio::spawn(run_ordered_queue_app_server(socket_path.clone(), observed));
     let upstream = UpstreamHandle::spawn(socket_path);
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    for command_id in ["first-message", "second-message"] {
+        send_json(
+            &mut client,
+            &json!({
+                "type": "rpc",
+                "request": {
+                    "id": format!("queue-{command_id}"),
+                    "method": "companion/queue/put",
+                    "params": {"command": {
+                        "commandId": command_id,
+                        "remoteThreadId": "thread-1",
+                        "method": "turn/start",
+                        "params": {
+                            "threadId": "thread-1",
+                            "clientUserMessageId": command_id,
+                            "input": [{"type": "text", "text": command_id, "text_elements": []}]
+                        }
+                    }}
+                }
+            }),
+        )
+        .await?;
+        let _ = receive_type(&mut client, "rpc").await?;
+    }
+    assert_eq!(
+        timeout(Duration::from_millis(250), observed_rx.recv())
+            .await?
+            .ok_or("first queued turn was not forwarded")?,
+        "first-message"
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(2), observed_rx.recv())
+            .await?
+            .ok_or("second queued turn was not forwarded")?,
+        "second-message"
+    );
+    assert!(
+        timeout(Duration::from_millis(100), observed_rx.recv())
+            .await
+            .is_err(),
+        "the outbox must not read App Server history"
+    );
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_queue_waits_for_the_indexed_active_turn_to_complete()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let sessions = directory.path().join("sessions/2026/08/17");
+    std::fs::create_dir_all(&sessions)?;
+    let path = sessions.join(format!(
+        "rollout-2026-08-17T00-00-00-{EXTERNAL_THREAD_ID}.jsonl"
+    ));
+    let mut rollout = std::fs::File::create(path)?;
+    writeln!(
+        rollout,
+        r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"active-turn","started_at":10}}}}"#
+    )?;
+    rollout.sync_all()?;
+
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(8);
+    let fake = tokio::spawn(run_ordered_queue_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
     let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
@@ -441,16 +933,17 @@ async fn completed_turn_immediately_releases_a_queued_message()
         &json!({
             "type": "rpc",
             "request": {
-                "id": "queue-put",
+                "id": "queue-next-turn",
                 "method": "companion/queue/put",
                 "params": {"command": {
-                    "commandId": "message-after-active-turn",
-                    "remoteThreadId": "thread-1",
+                    "commandId": "next-turn",
+                    "remoteThreadId": EXTERNAL_THREAD_ID,
                     "method": "turn/start",
+                    "presentation": "queue",
                     "params": {
-                        "threadId": "thread-1",
-                        "clientUserMessageId": "message-after-active-turn",
-                        "input": [{"type": "text", "text": "next", "text_elements": []}]
+                        "threadId": EXTERNAL_THREAD_ID,
+                        "clientUserMessageId": "next-turn",
+                        "input": [{"type": "text", "text": "after", "text_elements": []}]
                     }
                 }}
             }
@@ -458,23 +951,130 @@ async fn completed_turn_immediately_releases_a_queued_message()
     )
     .await?;
     let _ = receive_type(&mut client, "rpc").await?;
+    let queued = receive_type(&mut client, "event").await?;
+    assert_eq!(queued["payload"]["method"], "companion/queue/changed");
+    assert_eq!(
+        queued["payload"]["params"]["data"][0]["commandId"],
+        "next-turn"
+    );
+    assert_eq!(queued["payload"]["params"]["data"][0]["state"], "queued");
+    assert!(
+        timeout(Duration::from_millis(300), observed_rx.recv())
+            .await
+            .is_err(),
+        "an explicit queue item must not become a steer while the indexed head is active"
+    );
+
+    writeln!(
+        rollout,
+        r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"active-turn","completed_at":11,"duration_ms":1000}}}}"#
+    )?;
+    rollout.sync_all()?;
     assert_eq!(
         timeout(Duration::from_secs(2), observed_rx.recv())
             .await?
-            .ok_or("initial queue reconciliation missing")?,
-        "thread/turns/list"
+            .ok_or("queued turn was not released after completion")?,
+        "next-turn"
     );
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    release.send(()).await?;
-
-    timeout(Duration::from_millis(250), async {
+    timeout(Duration::from_secs(2), async {
         loop {
-            if observed_rx.recv().await.as_deref() == Some("turn/start") {
+            let event = receive_type(&mut client, "event").await?;
+            if event["payload"]["method"] == "companion/queue/changed"
+                && event["payload"]["params"]["data"][0]["state"] == "delivered"
+            {
                 return Ok::<(), Box<dyn std::error::Error>>(());
             }
         }
     })
     .await??;
+
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn queued_message_rehydrates_missing_thread_before_one_safe_retry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, mut observed_rx) = mpsc::channel(8);
+    let fake = tokio::spawn(run_missing_thread_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store.clone(), sync).await?;
+    let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
+
+    send_json(
+        &mut client,
+        &json!({
+            "type": "rpc",
+            "request": {
+                "id": "queue-missing-thread",
+                "method": "companion/queue/put",
+                "params": {"command": {
+                    "commandId": "message-after-reconnect",
+                    "remoteThreadId": "thread-1",
+                    "method": "turn/start",
+                    "params": {
+                        "threadId": "thread-1",
+                        "clientUserMessageId": "message-after-reconnect",
+                        "input": [{"type": "text", "text": "continue", "text_elements": []}]
+                    }
+                }}
+            }
+        }),
+    )
+    .await?;
+    let _ = receive_type(&mut client, "rpc").await?;
+
+    let first = timeout(Duration::from_secs(2), observed_rx.recv())
+        .await?
+        .ok_or("initial turn/start missing")?;
+    let resume = timeout(Duration::from_secs(2), observed_rx.recv())
+        .await?
+        .ok_or("thread/resume missing")?;
+    let retry = timeout(Duration::from_secs(2), observed_rx.recv())
+        .await?
+        .ok_or("retried turn/start missing")?;
+    assert_eq!(first["method"], "turn/start");
+    assert_eq!(resume["method"], "thread/resume");
+    assert_eq!(
+        resume["params"],
+        json!({"threadId": "thread-1", "excludeTurns": true})
+    );
+    assert_eq!(retry["method"], "turn/start");
+    assert_eq!(retry["params"], first["params"]);
+
+    timeout(Duration::from_secs(2), async {
+        loop {
+            if store
+                .outbox_list(Some("thread-1"))
+                .ok()
+                .and_then(|commands| commands.first().cloned())
+                .is_some_and(|command| {
+                    command.state == codewide_companion::store::OutboxState::Delivered
+                })
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    assert!(
+        timeout(Duration::from_millis(200), observed_rx.recv())
+            .await
+            .is_err(),
+        "only the conclusively rejected start may be retried"
+    );
 
     client.close(None).await?;
     server_task.abort();
@@ -496,7 +1096,10 @@ async fn durable_queue_prepares_remote_files_and_broadcasts_delivery()
     let upstream = UpstreamHandle::spawn(socket_path);
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let files = Arc::new(
         FileService::open(
             HashMap::from([("attachments".into(), attachment_root)]),
@@ -570,12 +1173,6 @@ async fn durable_queue_prepares_remote_files_and_broadcasts_delivery()
         receive_type(&mut client, "rpc").await?["response"]["id"],
         "queue-image"
     );
-    assert_eq!(
-        timeout(Duration::from_secs(2), observed_rx.recv())
-            .await?
-            .ok_or("read missing")?["method"],
-        "thread/turns/list"
-    );
     let start = timeout(Duration::from_secs(2), observed_rx.recv())
         .await?
         .ok_or("turn start missing")?;
@@ -616,7 +1213,10 @@ async fn direct_turn_retry_returns_the_existing_turn_without_duplicate_send()
     let upstream = UpstreamHandle::spawn(socket_path);
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store, sync).await?;
     let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
@@ -662,7 +1262,7 @@ async fn direct_turn_retry_returns_the_existing_turn_without_duplicate_send()
 }
 
 #[tokio::test]
-async fn ambiguous_turn_delivery_reconciles_without_duplicate_send()
+async fn ambiguous_turn_delivery_never_reads_or_repeats_upstream()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let socket_path = directory.path().join("app-server.sock");
@@ -671,7 +1271,10 @@ async fn ambiguous_turn_delivery_reconciles_without_duplicate_send()
     let upstream = UpstreamHandle::spawn(socket_path);
     wait_for_live(&upstream).await?;
     let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
-    let history = HistoryService::new(Arc::new(SessionCatalog::scan(directory.path())));
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
     let sync = SyncHub::with_mutations(upstream, store.clone(), history);
     let (address, server_task) = start_server(store.clone(), sync).await?;
     let (mut client, _) = connect_client(&format!("ws://{address}/v1/sync"), None).await?;
@@ -697,17 +1300,11 @@ async fn ambiguous_turn_delivery_reconciles_without_duplicate_send()
     )
     .await?;
     let _ = receive_type(&mut client, "rpc").await?;
-    let mut methods = Vec::new();
-    for _ in 0..3 {
-        methods.push(
-            timeout(Duration::from_secs(4), observed_rx.recv())
-                .await?
-                .ok_or("observation channel closed")?,
-        );
-    }
     assert_eq!(
-        methods,
-        ["thread/turns/list", "turn/start", "thread/turns/list"]
+        timeout(Duration::from_secs(2), observed_rx.recv())
+            .await?
+            .ok_or("turn/start was not forwarded")?,
+        "turn/start"
     );
     timeout(Duration::from_secs(2), async {
         loop {
@@ -716,7 +1313,7 @@ async fn ambiguous_turn_delivery_reconciles_without_duplicate_send()
                 .ok()
                 .and_then(|items| items.first().cloned())
                 .is_some_and(|command| {
-                    command.state == codewide_companion::store::OutboxState::Delivered
+                    command.state == codewide_companion::store::OutboxState::Uncertain
                 })
             {
                 return;
@@ -726,7 +1323,7 @@ async fn ambiguous_turn_delivery_reconciles_without_duplicate_send()
     })
     .await?;
     assert!(
-        timeout(Duration::from_millis(500), observed_rx.recv())
+        timeout(Duration::from_millis(750), observed_rx.recv())
             .await
             .is_err()
     );
@@ -839,6 +1436,49 @@ async fn connect_client(
     Ok((socket, hello))
 }
 
+async fn connect_replay_client(
+    url: &str,
+    cursor: u64,
+) -> Result<(ClientSocket, Value), Box<dyn std::error::Error>> {
+    let mut request = url.into_client_request()?;
+    request.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
+    );
+    let (mut socket, _response) = connect_async(request).await?;
+    send_json(
+        &mut socket,
+        &json!({"type": "hello", "protocolVersion": 1, "cursor": cursor}),
+    )
+    .await?;
+    let hello = receive_type(&mut socket, "hello").await?;
+    assert_eq!(hello["snapshotRequired"], false);
+    assert_eq!(receive_type(&mut socket, "status").await?["status"], "live");
+    Ok((socket, hello))
+}
+
+fn user_message_completed(
+    thread_id: &str,
+    turn_id: &str,
+    item_id: &str,
+    client_id: &str,
+    text: &str,
+) -> Value {
+    json!({
+        "method": "item/completed",
+        "params": {
+            "threadId": thread_id,
+            "turnId": turn_id,
+            "item": {
+                "type": "userMessage",
+                "id": item_id,
+                "clientId": client_id,
+                "content": [{"type": "text", "text": text, "text_elements": []}]
+            }
+        }
+    })
+}
+
 async fn receive_type<S>(
     socket: &mut WebSocketStream<S>,
     expected_type: &str,
@@ -906,6 +1546,15 @@ async fn run_external_thread_app_server(
             .unwrap_or_default();
         observed.send(method.to_owned()).await?;
         let result = match method {
+            "thread/read" => json!({
+                "thread": {
+                    "id": EXTERNAL_THREAD_ID,
+                    "name": "External thread",
+                    "recencyAt": 10,
+                    "status": {"type": "active", "activeFlags": []},
+                    "turns": []
+                }
+            }),
             "thread/resume" => json!({
                 "thread": {
                     "id": EXTERNAL_THREAD_ID,
@@ -919,17 +1568,39 @@ async fn run_external_thread_app_server(
                 "approvalPolicy": "never",
                 "sandbox": {"type": "dangerFullAccess"}
             }),
+            "thread/turns/list"
+                if request.pointer("/params/itemsView").and_then(Value::as_str) == Some("full") =>
+            {
+                json!({
+                    "data": [{
+                        "id": "new-turn",
+                        "status": "inProgress",
+                        "startedAt": 10,
+                        "completedAt": null,
+                        "itemsView": "full",
+                        "items": [
+                            {"type": "userMessage", "id": "user-new", "content": [{"type": "text", "text": "new question"}]},
+                            {"type": "commandExecution", "id": "command-new", "command": "pnpm test", "status": "completed", "aggregatedOutput": "passed"},
+                            {"type": "agentMessage", "id": "agent-new", "text": "working", "phase": null},
+                            {"type": "userMessage", "id": "user-desktop-follow-up", "clientId": "desktop-client", "content": [{"type": "text", "text": "desktop follow-up"}]}
+                        ]
+                    }],
+                    "nextCursor": null,
+                    "backwardsCursor": null
+                })
+            }
             "thread/turns/list" => json!({
                 "data": [{
                     "id": "new-turn",
-                    "status": "completed",
+                    "status": "inProgress",
                     "startedAt": 10,
-                    "completedAt": 11,
+                    "completedAt": null,
                     "itemsView": "summary",
                     "items": [
                         {"type": "userMessage", "id": "user-new", "content": [{"type": "text", "text": "new question"}]},
-                        {"type": "agentMessage", "id": "agent-new", "text": "new answer", "phase": "final_answer"}
-                    ]
+                        {"type": "agentMessage", "id": "agent-new", "text": "working", "phase": null}
+                    ],
+                    "codewide": {"activity": {"count": 1, "kinds": ["commandExecution"]}}
                 }],
                 "nextCursor": null,
                 "backwardsCursor": null
@@ -941,6 +1612,101 @@ async fn run_external_thread_app_server(
             &json!({"id": request["id"].clone(), "result": result}),
         )
         .await?;
+    }
+    Ok(())
+}
+
+async fn run_idle_thread_app_server(
+    socket_path: PathBuf,
+    observed: mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    while let Some(frame) = socket.next().await {
+        let Message::Text(raw) = frame? else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        observed.send(method.to_owned()).await?;
+        let result = if method == "thread/read" {
+            json!({
+                "thread": {
+                    "id": EXTERNAL_THREAD_ID,
+                    "name": "Indexed thread",
+                    "recencyAt": 10,
+                    "status": {"type": "idle"},
+                    "turns": []
+                }
+            })
+        } else {
+            json!({})
+        };
+        send_value(
+            &mut socket,
+            &json!({"id": request["id"].clone(), "result": result}),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn run_out_of_order_app_server(
+    socket_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    let mut slow_id = None;
+    while let Some(frame) = socket.next().await {
+        let Message::Text(raw) = frame? else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        let id = request.get("id").cloned().unwrap_or(Value::Null);
+        match request.get("method").and_then(Value::as_str) {
+            Some("thread/list") => slow_id = Some(id),
+            Some("config/read") => {
+                send_value(&mut socket, &json!({"id": id, "result": {"fast": true}})).await?;
+                let id = slow_id
+                    .take()
+                    .ok_or("slow request was not forwarded first")?;
+                send_value(&mut socket, &json!({"id": id, "result": {"data": []}})).await?;
+            }
+            _ => send_value(&mut socket, &json!({"id": id, "result": {}})).await?,
+        }
+    }
+    Ok(())
+}
+
+async fn run_out_of_order_thread_mutation_app_server(
+    socket_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    let mut slow_id = None;
+    while let Some(frame) = socket.next().await {
+        let Message::Text(raw) = frame? else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        let id = request.get("id").cloned().unwrap_or(Value::Null);
+        match request.pointer("/params/threadId").and_then(Value::as_str) {
+            Some("thread-a") => slow_id = Some(id),
+            Some("thread-b") => {
+                send_value(&mut socket, &json!({"id": id, "result": {}})).await?;
+                let id = slow_id
+                    .take()
+                    .ok_or("thread-a mutation was not forwarded first")?;
+                send_value(&mut socket, &json!({"id": id, "result": {}})).await?;
+            }
+            _ => send_value(&mut socket, &json!({"id": id, "result": {}})).await?,
+        }
     }
     Ok(())
 }
@@ -987,6 +1753,14 @@ async fn run_fake_app_server(
                 let id = request.get("id").cloned().unwrap_or(Value::Null);
                 let result = if method == Some("thread/turns/list") {
                     json!({"data": [], "nextCursor": null})
+                } else if method == Some("thread/resume") {
+                    json!({
+                        "thread": {
+                            "id": request.pointer("/params/threadId").and_then(Value::as_str).unwrap_or("current-thread"),
+                            "status": {"type": "active", "activeFlags": []},
+                            "turns": []
+                        }
+                    })
                 } else if method == Some("turn/start") {
                     json!({"turn": {"id": "turn-1", "status": "inProgress", "items": []}})
                 } else {
@@ -1035,61 +1809,88 @@ async fn run_empty_new_thread_app_server(
     Ok(())
 }
 
-async fn run_blocked_queue_app_server(
+async fn run_ordered_queue_app_server(
     socket_path: PathBuf,
-    mut release: mpsc::Receiver<()>,
     observed: mpsc::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = UnixListener::bind(socket_path)?;
     let (stream, _) = listener.accept().await?;
     let mut socket = accept_initialized(stream).await?;
-    let mut active = true;
-    loop {
-        tokio::select! {
-            signal = release.recv() => {
-                let Some(()) = signal else { return Ok(()); };
-                active = false;
-                send_value(
-                    &mut socket,
-                    &json!({
-                        "method": "turn/completed",
-                        "params": {
-                            "threadId": "thread-1",
-                            "turn": {"id": "active-turn", "status": "completed", "items": []}
-                        }
-                    }),
+    while let Some(frame) = socket.next().await {
+        let frame = frame?;
+        let Message::Text(raw) = frame else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if method == "turn/start" {
+            observed
+                .send(
+                    request
+                        .pointer("/params/clientUserMessageId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
                 )
                 .await?;
-            }
-            frame = socket.next() => {
-                let Some(frame) = frame else { return Ok(()); };
-                let frame = frame?;
-                let Message::Text(raw) = frame else { continue; };
-                let request: Value = serde_json::from_str(&raw)?;
-                let method = request
-                    .get("method")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                observed.send(method.to_owned()).await?;
-                let result = match method {
-                    "thread/turns/list" if active => json!({
-                        "data": [{"id": "active-turn", "status": "inProgress", "items": []}],
-                        "nextCursor": null
-                    }),
-                    "thread/turns/list" => json!({"data": [], "nextCursor": null}),
-                    "turn/start" => json!({
-                        "turn": {"id": "queued-turn", "status": "inProgress", "items": []}
-                    }),
-                    _ => json!({}),
-                };
-                send_value(
-                    &mut socket,
-                    &json!({"id": request["id"].clone(), "result": result}),
-                )
-                .await?;
-            }
+        } else {
+            observed.send(method.to_owned()).await?;
         }
+        send_value(
+            &mut socket,
+            &json!({
+                "id": request["id"].clone(),
+                "result": {"turn": {"id": format!("turn-{method}"), "status": "inProgress", "items": []}}
+            }),
+        )
+        .await?;
     }
+    Ok(())
+}
+
+async fn run_missing_thread_app_server(
+    socket_path: PathBuf,
+    observed: mpsc::Sender<Value>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let listener = UnixListener::bind(socket_path)?;
+    let (stream, _) = listener.accept().await?;
+    let mut socket = accept_initialized(stream).await?;
+    let mut loaded = false;
+    while let Some(frame) = socket.next().await {
+        let frame = frame?;
+        let Message::Text(raw) = frame else {
+            continue;
+        };
+        let request: Value = serde_json::from_str(&raw)?;
+        observed.send(request.clone()).await?;
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let response = match method {
+            "turn/start" if !loaded => json!({
+                "id": request["id"].clone(),
+                "error": {"code": -32600, "message": "thread not found: thread-1"}
+            }),
+            "thread/resume" => {
+                loaded = true;
+                json!({
+                    "id": request["id"].clone(),
+                    "result": {"thread": {"id": "thread-1", "turns": []}}
+                })
+            }
+            "turn/start" => json!({
+                "id": request["id"].clone(),
+                "result": {"turn": {"id": "continued-turn", "status": "inProgress", "items": []}}
+            }),
+            _ => json!({"id": request["id"].clone(), "result": {}}),
+        };
+        send_value(&mut socket, &response).await?;
+    }
+    Ok(())
 }
 
 async fn run_remote_file_app_server(
@@ -1177,32 +1978,12 @@ async fn run_ambiguous_app_server(
     let listener = UnixListener::bind(socket_path)?;
     let (stream, _) = listener.accept().await?;
     let mut first = accept_initialized(stream).await?;
-    let read = receive_value(&mut first).await?;
-    observed.send(method_of(&read)).await?;
-    send_value(
-        &mut first,
-        &json!({"id": read["id"], "result": {"data": [], "nextCursor": null}}),
-    )
-    .await?;
     let start = receive_value(&mut first).await?;
     observed.send(method_of(&start)).await?;
     drop(first);
 
     let (stream, _) = listener.accept().await?;
     let mut second = accept_initialized(stream).await?;
-    let reconcile = receive_value(&mut second).await?;
-    observed.send(method_of(&reconcile)).await?;
-    send_value(
-        &mut second,
-        &json!({
-            "id": reconcile["id"],
-            "result": {
-                "data": [{"id": "turn-1", "status": "completed", "items": [{"type": "userMessage", "clientId": "ambiguous-1"}]}],
-                "nextCursor": null
-            }
-        }),
-    )
-    .await?;
     while let Some(frame) = second.next().await {
         let frame = frame?;
         if let Message::Text(raw) = frame {
