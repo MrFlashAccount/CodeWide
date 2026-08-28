@@ -124,6 +124,8 @@ pub enum Query {
     WorkspaceInspect { path: String },
     #[serde(rename = "queue.list", rename_all = "camelCase")]
     QueueList { thread_id: Option<Id> },
+    #[serde(rename = "operation.get", rename_all = "camelCase")]
+    OperationGet { operation_id: OperationId },
     #[serde(rename = "accounts.list")]
     AccountsList,
 }
@@ -396,12 +398,55 @@ pub enum QueryResult {
     WorkspaceInspect { support: Option<WorkspaceSupport> },
     #[serde(rename = "queue.list")]
     QueueList { items: Vec<QueueItem> },
+    #[serde(rename = "operation.get", rename_all = "camelCase")]
+    OperationGet {
+        operation_id: OperationId,
+        receipt: Box<OperationReceipt>,
+    },
     #[serde(rename = "accounts.list", rename_all = "camelCase")]
     AccountsList {
         active_profile_id: Option<Id>,
         profiles: Vec<AccountProfile>,
         all_exhausted: bool,
     },
+}
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum OperationReceipt {
+    Admitted {
+        accepted_at: Timestamp,
+    },
+    Completed {
+        accepted_at: Timestamp,
+        result: CommandResult,
+    },
+    Failed {
+        accepted_at: Timestamp,
+        error: V2Error,
+    },
+    Indeterminate {
+        accepted_at: Timestamp,
+        error: V2Error,
+    },
+    Expired {
+        accepted_at: Timestamp,
+        terminal: OperationTerminal,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationTerminal {
+    Completed,
+    Failed,
+    Indeterminate,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -631,7 +676,7 @@ impl<'de> Deserialize<'de> for V2Error {
 #[serde(rename_all = "camelCase")]
 pub enum ReinitializeReason {
     QueueOverflow,
-    SnapshotTooLarge,
+    UpstreamUnavailable,
     UpstreamGenerationChanged,
     SnapshotFailed,
     SourceGap,

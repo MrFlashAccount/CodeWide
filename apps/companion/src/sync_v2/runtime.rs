@@ -27,7 +27,7 @@ use super::{
     scalar::{Id, U64},
     source::{
         CoordinatorEvent, CoordinatorReceiver, CoordinatorRecvError, ReceivedCoordinatorEvent,
-        SemanticSource, ensure_generation,
+        SemanticSource, SourceInvalidationReason, ensure_generation,
     },
     wire::{close, recv_frame, send},
 };
@@ -248,6 +248,24 @@ impl SyncV2Runtime {
                         close(&mut socket, 1008, "invalid_open_intent").await;
                         return;
                     }
+                    let available = tokio::time::timeout(
+                        self.source_deadline,
+                        self.source.wait_until_available(),
+                    )
+                    .await;
+                    if !matches!(available, Ok(Ok(()))) {
+                        let epoch_id = random_id("epoch");
+                        let _ = self
+                            .send_frame(
+                                &mut socket,
+                                &ServerFrame::Reinitialize {
+                                    epoch_id,
+                                    reason: ReinitializeReason::UpstreamUnavailable,
+                                },
+                            )
+                            .await;
+                        continue;
+                    }
                     let generation = self.source.generation();
                     let epoch_id = random_id("epoch");
                     let mut generation_changes = self.source.subscribe_generation();
@@ -287,7 +305,7 @@ impl SyncV2Runtime {
                             self.reinitialize(
                                 &mut socket,
                                 &mut epoch,
-                                ReinitializeReason::SnapshotFailed,
+                                self.initialization_failure_reason(),
                             )
                             .await;
                             continue;
@@ -297,7 +315,7 @@ impl SyncV2Runtime {
                             self.reinitialize(
                                 &mut socket,
                                 &mut epoch,
-                                ReinitializeReason::SnapshotFailed,
+                                self.initialization_failure_reason(),
                             )
                             .await;
                             continue;
@@ -320,7 +338,7 @@ impl SyncV2Runtime {
                             self.reinitialize(
                                 &mut socket,
                                 &mut epoch,
-                                ReinitializeReason::SnapshotFailed,
+                                self.initialization_failure_reason(),
                             )
                             .await;
                             continue;
@@ -330,7 +348,7 @@ impl SyncV2Runtime {
                             self.reinitialize(
                                 &mut socket,
                                 &mut epoch,
-                                ReinitializeReason::SnapshotFailed,
+                                self.initialization_failure_reason(),
                             )
                             .await;
                             continue;
@@ -411,15 +429,6 @@ impl SyncV2Runtime {
                             continue;
                         }
                     };
-                    if encoded.len() > self.limits.snapshot_max_bytes as usize {
-                        self.reinitialize(
-                            &mut socket,
-                            &mut epoch,
-                            ReinitializeReason::SnapshotTooLarge,
-                        )
-                        .await;
-                        continue;
-                    }
                     if !self
                         .context_is_current(&context, &lifecycle, lifecycle_revision)
                         .await
@@ -705,6 +714,14 @@ impl SyncV2Runtime {
         self.cleanup(epoch).await;
     }
 
+    fn initialization_failure_reason(&self) -> ReinitializeReason {
+        if self.source.is_available() {
+            ReinitializeReason::SnapshotFailed
+        } else {
+            ReinitializeReason::UpstreamUnavailable
+        }
+    }
+
     async fn cleanup(&self, epoch: &mut ConnectionEpoch) {
         let _ =
             tokio::time::timeout(self.source_deadline, self.source.remove_intent(&epoch.id)).await;
@@ -770,8 +787,14 @@ fn ingest_event(
         CoordinatorEvent::RoutingInvalidated {
             generation,
             recipient_ids,
+            reason,
         } if generation == epoch.generation && recipient_ids.contains(recipient_id) => {
-            Err(ReinitializeReason::SourceGap)
+            Err(match reason {
+                SourceInvalidationReason::SourceGap => ReinitializeReason::SourceGap,
+                SourceInvalidationReason::UpstreamUnavailable => {
+                    ReinitializeReason::UpstreamUnavailable
+                }
+            })
         }
         CoordinatorEvent::Change {
             generation,

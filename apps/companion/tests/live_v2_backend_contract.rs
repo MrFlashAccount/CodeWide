@@ -50,6 +50,7 @@ enum ObserverEvent {
         request_id: String,
         thread_id: String,
     },
+    Disconnect,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -85,9 +86,11 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
     let mut first = connect_live(&url, "observer-device-a").await?;
     let mut second = connect_live(&url, "observer-device-b").await?;
     let mut disjoint = connect_live(&url, "observer-device-c").await?;
+    let mut catalog_client = connect_live(&url, "observer-device-catalog").await?;
     open_live_thread(&mut first, "shared-thread").await?;
     open_live_thread(&mut second, "shared-thread").await?;
     open_live_thread(&mut disjoint, "other-thread").await?;
+    open_live_catalog(&mut catalog_client, 10).await?;
 
     event_tx
         .send(ObserverEvent::ThreadChanged("shared-thread".into()))
@@ -99,11 +102,25 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
             return Err(format!("Observer change had wrong routed thread: {change}").into());
         }
     }
+    let catalog_change = receive(&mut catalog_client).await?;
+    if catalog_change.pointer("/change/thread/id") != Some(&json!("shared-thread")) {
+        return Err(format!("catalog client missed Observer change: {catalog_change}").into());
+    }
     if timeout(Duration::from_millis(200), receive(&mut disjoint))
         .await
         .is_ok()
     {
         return Err("disjoint device received another thread's Observer event".into());
+    }
+
+    event_tx
+        .send(ObserverEvent::ThreadChanged("external-thread".into()))
+        .await?;
+    let discovered = receive(&mut catalog_client).await?;
+    if discovered.pointer("/change/thread/id") != Some(&json!("external-thread")) {
+        return Err(
+            format!("external Observer thread was not catalog-routed: {discovered}").into(),
+        );
     }
 
     event_tx
@@ -155,9 +172,56 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
         );
     }
 
+    event_tx
+        .send(ObserverEvent::ApprovalOpened {
+            request_id: "approval-lost".into(),
+            thread_id: "shared-thread".into(),
+        })
+        .await?;
+    let opened = receive(&mut first).await?;
+    if opened.pointer("/change/request/id") != Some(&json!("approval-lost")) {
+        return Err(format!("disconnect fixture missed pending request: {opened}").into());
+    }
+    event_tx.send(ObserverEvent::Disconnect).await?;
+    let mut saw_source_lost = false;
+    let disconnected = loop {
+        let frame = receive(&mut first).await?;
+        if frame.pointer("/change/reason") == Some(&json!("sourceLost")) {
+            saw_source_lost = true;
+        }
+        if frame["type"] == "reinitialize" {
+            break frame;
+        }
+    };
+    if !saw_source_lost || disconnected["reason"] != "upstreamUnavailable" {
+        return Err(
+            format!("upstream loss was not explicit and fail-closed: {disconnected}").into(),
+        );
+    }
+    let catalog_disconnected = receive(&mut catalog_client).await?;
+    require_type(&catalog_disconnected, "reinitialize")?;
+    if catalog_disconnected["reason"] != "upstreamUnavailable" {
+        return Err(format!("catalog epoch survived upstream loss: {catalog_disconnected}").into());
+    }
+    let reconnected_snapshot = open_live_thread_snapshot(&mut first, "shared-thread").await?;
+    if reconnected_snapshot["pendingRequests"] != json!([]) {
+        return Err(format!("source-lost request reappeared: {reconnected_snapshot}").into());
+    }
+    open_live_catalog(&mut catalog_client, 10).await?;
+
+    event_tx
+        .send(ObserverEvent::ThreadChanged("unreadable-thread".into()))
+        .await?;
+    let invalidated = receive(&mut catalog_client).await?;
+    require_type(&invalidated, "reinitialize")?;
+    if invalidated["reason"] != "sourceGap" {
+        return Err(format!("normalization failure did not fail closed: {invalidated}").into());
+    }
+
     first.close(None).await?;
     second.close(None).await?;
     disjoint.close(None).await?;
+    catalog_client.close(None).await?;
     recovered.close(None).await?;
     server_task.abort();
     fake_app_server.abort();
@@ -356,10 +420,12 @@ async fn run_v2_authoritative_refresh_scenarios(
     eprintln!("stage=v2_initial_external_turn token={initial_message}");
     start_turn(observer, primary_thread_id, &initial_message).await?;
     let initial_watermark = control.wait_for_turn_text(&initial_message).await?;
-    control.wait_for_turn_completed(primary_thread_id).await?;
+    control
+        .wait_for_turn_completed(primary_thread_id, &initial_message)
+        .await?;
     reconnecting.wait_for_turn_text(&initial_message).await?;
     reconnecting
-        .wait_for_turn_completed(primary_thread_id)
+        .wait_for_turn_completed(primary_thread_id, &initial_message)
         .await?;
 
     eprintln!("stage=v2_two_client_authoritative_snapshot");
@@ -385,7 +451,9 @@ async fn run_v2_authoritative_refresh_scenarios(
     if missed_watermark <= initial_watermark {
         return Err("V2 live watermark did not advance for a later external turn".into());
     }
-    control.wait_for_turn_completed(primary_thread_id).await?;
+    control
+        .wait_for_turn_completed(primary_thread_id, &missed_message)
+        .await?;
     reconnecting = V2LiveClient::connect(url, "live-v2-reconnecting").await?;
     let refreshed = reconnecting.open(Some(primary_thread_id)).await?;
     assert_v2_snapshot_contains_completed_message(&refreshed, &initial_message)?;
@@ -406,7 +474,7 @@ async fn run_v2_authoritative_refresh_scenarios(
         reconnecting.wait_for_turn_text(&raced_message).await?;
     }
     reconnecting
-        .wait_for_turn_completed(primary_thread_id)
+        .wait_for_turn_completed(primary_thread_id, &raced_message)
         .await?;
     let history = reconnecting
         .query(json!({
@@ -484,7 +552,9 @@ async fn run_v2_authoritative_refresh_scenarios(
     let post_reconnect_message = format!("LIVE_V2_AFTER_UPSTREAM_RECONNECT_{run_id}");
     start_turn(observer, primary_thread_id, &post_reconnect_message).await?;
     control.wait_for_turn_text(&post_reconnect_message).await?;
-    control.wait_for_turn_completed(primary_thread_id).await?;
+    control
+        .wait_for_turn_completed(primary_thread_id, &post_reconnect_message)
+        .await?;
 
     eprintln!("stage=v2_archive_live_projection");
     observer_rpc(
@@ -530,7 +600,7 @@ async fn verify_v2_idempotent_turn_submit(
     let first = sender.command(&operation_id, command.clone()).await?;
     require_type(&first, "commandCompleted")?;
     control.wait_for_turn_text(&token).await?;
-    control.wait_for_turn_completed(thread_id).await?;
+    control.wait_for_turn_completed(thread_id, &token).await?;
     sender.close().await?;
 
     let mut recovered = V2LiveClient::connect(url, "live-v2-idempotent-device").await?;
@@ -585,13 +655,13 @@ async fn verify_v2_two_thread_delivery(
 
     primary_context.wait_for_turn_text(&primary_message).await?;
     primary_context
-        .wait_for_turn_completed(primary_thread_id)
+        .wait_for_turn_completed(primary_thread_id, &primary_message)
         .await?;
     secondary_context
         .wait_for_turn_text(&secondary_message)
         .await?;
     secondary_context
-        .wait_for_turn_completed(secondary_thread_id)
+        .wait_for_turn_completed(secondary_thread_id, &secondary_message)
         .await?;
     catalog_context
         .wait_for_thread_upsert(primary_thread_id)
@@ -646,6 +716,18 @@ async fn verify_v2_pagination(url: &str, thread_id: &str) -> TestResult<String> 
     eprintln!("stage=v2_history_and_catalog_pagination");
     let mut client = V2LiveClient::connect(url, "live-v2-pagination").await?;
     client.open(Some(thread_id)).await?;
+    let summary_without_rollout = client
+        .query(json!({
+            "kind": "history.page",
+            "threadId": thread_id,
+            "cursor": null,
+            "direction": "older",
+            "limit": 1,
+            "detail": "summary"
+        }))
+        .await?;
+    require_query_completed(&summary_without_rollout)?;
+    let _ = query_turn_id(&summary_without_rollout)?;
     let first = client
         .query(history_query(thread_id, None, "older"))
         .await?;
@@ -845,7 +927,7 @@ fn assert_v2_snapshot_contains_completed_message(snapshot: &Value, token: &str) 
         .iter()
         .any(|turn| turn["state"] == "completed" && value_contains_string(turn, token))
     {
-        return Err(format!("V2 snapshot omitted completed message {token}").into());
+        return Err(format!("V2 snapshot omitted completed message {token}: {snapshot}").into());
     }
     Ok(())
 }
@@ -1038,7 +1120,7 @@ impl V2LiveClient {
         Ok(watermark)
     }
 
-    async fn wait_for_turn_completed(&mut self, thread_id: &str) -> TestResult {
+    async fn wait_for_turn_completed(&mut self, thread_id: &str, token: &str) -> TestResult {
         self.wait_for_frame(|frame| {
             frame.pointer("/change/kind").and_then(Value::as_str) == Some("turnUpserted")
                 && frame
@@ -1046,6 +1128,7 @@ impl V2LiveClient {
                     .and_then(Value::as_str)
                     == Some(thread_id)
                 && frame.pointer("/change/turn/state").and_then(Value::as_str) == Some("completed")
+                && value_contains_string(frame.pointer("/change").unwrap_or(&Value::Null), token)
         })
         .await?;
         Ok(())
@@ -1090,7 +1173,7 @@ impl V2LiveClient {
         let frame = self
             .wait_for_frame(|frame| frame["type"] == "reinitialize")
             .await?;
-        if frame["reason"] != "upstreamGenerationChanged" {
+        if frame["reason"] != "upstreamUnavailable" {
             return Err(format!("unexpected V2 reinitialize reason: {frame}").into());
         }
         Ok(())
@@ -1164,6 +1247,34 @@ async fn open_live(socket: &mut ClientSocket) -> TestResult {
     require_type(&receive(socket).await?, "live")
 }
 
+async fn open_live_catalog(socket: &mut ClientSocket, active_limit: u16) -> TestResult {
+    send(
+        socket,
+        json!({
+            "type": "open",
+            "version": 2,
+            "intent": {
+                "catalog": {"activeLimit": active_limit, "archivedLimit": 0},
+                "currentThread": null
+            }
+        }),
+    )
+    .await?;
+    let snapshot = receive(socket).await?;
+    require_type(&snapshot, "snapshot")?;
+    send(
+        socket,
+        json!({
+            "type": "snapshotCommitted",
+            "epochId": snapshot["epochId"],
+            "revision": snapshot["revision"],
+            "watermark": snapshot["watermark"]
+        }),
+    )
+    .await?;
+    require_type(&receive(socket).await?, "live")
+}
+
 async fn open_live_thread(socket: &mut ClientSocket, thread_id: &str) -> TestResult {
     let _ = open_live_thread_snapshot(socket, thread_id).await?;
     Ok(())
@@ -1205,59 +1316,75 @@ async fn run_observer_app_server(
     listener: UnixListener,
     mut events: mpsc::Receiver<ObserverEvent>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let (stream, _) = listener.accept().await?;
-    let mut socket = accept_async(stream).await?;
-    let initialize = receive_upstream(&mut socket).await?;
-    socket
-        .send(Message::Text(
-            json!({"id": initialize["id"], "result": {}})
-                .to_string()
-                .into(),
-        ))
-        .await?;
-    let initialized = receive_upstream(&mut socket).await?;
-    if initialized["method"] != "initialized" {
-        return Err("App Server initialized notification was missing".into());
-    }
-
     loop {
-        tokio::select! {
-            Some(event) = events.recv() => {
-                let payload = match event {
-                    ObserverEvent::ThreadChanged(thread_id) => json!({
-                        "method": "thread/name/updated",
-                        "params": {"threadId": thread_id}
-                    }),
-                    ObserverEvent::ApprovalOpened { request_id, thread_id } => json!({
-                        "id": request_id,
-                        "method": "item/commandExecution/requestApproval",
-                        "params": {
-                            "threadId": thread_id,
-                            "turnId": "observer-turn",
-                            "reason": "approval"
+        let (stream, _) = listener.accept().await?;
+        let mut socket = accept_async(stream).await?;
+        let initialize = receive_upstream(&mut socket).await?;
+        socket
+            .send(Message::Text(
+                json!({"id": initialize["id"], "result": {}})
+                    .to_string()
+                    .into(),
+            ))
+            .await?;
+        let initialized = receive_upstream(&mut socket).await?;
+        if initialized["method"] != "initialized" {
+            return Err("App Server initialized notification was missing".into());
+        }
+
+        loop {
+            tokio::select! {
+                event = events.recv() => {
+                    let Some(event) = event else { return Ok(()); };
+                    let payload = match event {
+                        ObserverEvent::ThreadChanged(thread_id) => json!({
+                            "method": "thread/name/updated",
+                            "params": {"threadId": thread_id}
+                        }),
+                        ObserverEvent::ApprovalOpened { request_id, thread_id } => json!({
+                            "id": request_id,
+                            "method": "item/commandExecution/requestApproval",
+                            "params": {
+                                "threadId": thread_id,
+                                "turnId": "observer-turn",
+                                "reason": "approval"
+                            }
+                        }),
+                        ObserverEvent::Disconnect => {
+                            socket.close(None).await?;
+                            break;
                         }
-                    }),
-                };
-                socket.send(Message::Text(payload.to_string().into())).await?;
-            }
-            frame = socket.next() => {
-                let Some(frame) = frame else { return Ok(()); };
-                let request: Value = serde_json::from_str(frame?.into_text()?.as_str())?;
-                let Some(id) = request.get("id").cloned() else { continue; };
-                if request.get("method").is_none() {
-                    continue;
+                    };
+                    socket.send(Message::Text(payload.to_string().into())).await?;
                 }
-                let method = request["method"].as_str().unwrap_or_default();
-                let thread_id = request.pointer("/params/threadId")
-                    .and_then(Value::as_str)
-                    .unwrap_or("shared-thread");
-                let result = match method {
-                    "thread/read" => json!({"thread": observer_thread(thread_id)}),
-                    "thread/turns/list" => json!({"data": [], "nextCursor": null}),
-                    "thread/resume" | "thread/unsubscribe" => json!({}),
-                    _ => return Err(format!("unexpected production adapter method: {method}").into()),
-                };
-                socket.send(Message::Text(json!({"id": id, "result": result}).to_string().into())).await?;
+                frame = socket.next() => {
+                    let Some(frame) = frame else { break; };
+                    let request: Value = serde_json::from_str(frame?.into_text()?.as_str())?;
+                    let Some(id) = request.get("id").cloned() else { continue; };
+                    if request.get("method").is_none() {
+                        continue;
+                    }
+                    let method = request["method"].as_str().unwrap_or_default();
+                    let thread_id = request.pointer("/params/threadId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("shared-thread");
+                    if method == "thread/read" && thread_id == "unreadable-thread" {
+                        socket.send(Message::Text(json!({
+                            "id": id,
+                            "error": {"code": -32000, "message": "unreadable test thread"}
+                        }).to_string().into())).await?;
+                        continue;
+                    }
+                    let result = match method {
+                        "thread/read" => json!({"thread": observer_thread(thread_id)}),
+                        "thread/list" | "thread/turns/list" => {
+                            json!({"data": [], "nextCursor": null})
+                        }
+                        "thread/resume" | "thread/unsubscribe" => json!({}),
+                        _ => return Err(format!("unexpected production adapter method: {method}").into()),
+                    };
+                    socket.send(Message::Text(json!({"id": id, "result": result}).to_string().into())).await?;
+                }
             }
         }
     }

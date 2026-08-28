@@ -414,6 +414,31 @@ async fn epochs_isolate_clients_reinitialize_and_replay_commands() -> Result<(),
     assert_eq!(receive(&mut first).await?["type"], "commandCompleted");
     assert_eq!(source.executions.load(Ordering::SeqCst), 1);
     send(
+        &mut first,
+        json!({
+            "type": "query",
+            "requestId": "operation-receipt",
+            "query": {"kind": "operation.get", "operationId": "stable-operation"}
+        }),
+    )
+    .await?;
+    let receipt = receive(&mut first).await?;
+    assert_eq!(receipt["type"], "queryCompleted");
+    assert_eq!(receipt["result"]["kind"], "operation.get");
+    assert_eq!(receipt["result"]["receipt"]["state"], "completed");
+    send(
+        &mut second,
+        json!({
+            "type": "query",
+            "requestId": "cross-context-operation-receipt",
+            "query": {"kind": "operation.get", "operationId": "stable-operation"}
+        }),
+    )
+    .await?;
+    let missing_receipt = receive(&mut second).await?;
+    assert_eq!(missing_receipt["type"], "queryFailed");
+    assert_eq!(missing_receipt["error"]["code"], "notFound");
+    send(
         &mut second,
         json!({
             "type": "command",

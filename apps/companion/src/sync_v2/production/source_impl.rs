@@ -20,6 +20,23 @@ impl SemanticSource for UpstreamSemanticSource {
         &self.coordinator
     }
 
+    fn is_available(&self) -> bool {
+        self.upstream.status() == ConnectionStatus::Live
+    }
+
+    async fn wait_until_available(&self) -> Result<(), V2Error> {
+        let mut status = self.upstream.subscribe_status();
+        loop {
+            if *status.borrow() == ConnectionStatus::Live {
+                return Ok(());
+            }
+            status
+                .changed()
+                .await
+                .map_err(|_| V2Error::source_unavailable("upstream availability channel closed"))?;
+        }
+    }
+
     async fn purge_context(&self, context: &AuthenticatedContextKey) -> Result<(), V2Error> {
         self.purge_context_state(context).await;
         Ok(())
@@ -277,6 +294,7 @@ impl SemanticSource for UpstreamSemanticSource {
                 }
                 Ok(QueryResult::QueueList { items })
             }
+            Query::OperationGet { .. } => Err(V2Error::invalid_query()),
             Query::AccountsList => {
                 let accounts =
                     self.services.accounts.as_ref().ok_or_else(|| {

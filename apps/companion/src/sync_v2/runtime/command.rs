@@ -262,12 +262,7 @@ impl SyncV2Runtime {
                         }
                     }
                     Ok(execution) => match execution {
-                        CommandExecution::Completed(result)
-                            if result.kind() == command_kind
-                                && serialized_len(&result).is_some_and(|bytes| {
-                                    bytes <= self.limits.snapshot_max_bytes as usize
-                                }) =>
-                        {
+                        CommandExecution::Completed(result) if result.kind() == command_kind => {
                             if self
                                 .ledger
                                 .complete(context, &operation_id, result.clone())
@@ -351,8 +346,4 @@ impl SyncV2Runtime {
         locks.insert(key, Arc::downgrade(&lock));
         lock
     }
-}
-
-fn serialized_len(value: &impl serde::Serialize) -> Option<usize> {
-    serde_json::to_vec(value).ok().map(|encoded| encoded.len())
 }

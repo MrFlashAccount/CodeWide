@@ -135,6 +135,33 @@ fn exact_context_routing_isolated_and_ambiguous_routing_invalidates() {
 }
 
 #[test]
+fn upstream_unavailability_is_preserved_as_a_distinct_invalidation_reason() {
+    let coordinator = SubscriptionCoordinator::default();
+    let recipient = id("recipient");
+    let events = coordinator.register(
+        recipient.clone(),
+        11,
+        context("device"),
+        intent(0, None),
+        SnapshotLimits::default(),
+    );
+    coordinator.invalidate_generation_for(11, SourceInvalidationReason::UpstreamUnavailable);
+    let CoordinatorEvent::RoutingInvalidated {
+        generation,
+        recipient_ids,
+        reason,
+    } = events
+        .try_recv_event()
+        .unwrap_or_else(|error| panic!("missing invalidation: {error:?}"))
+    else {
+        panic!("expected upstream invalidation");
+    };
+    assert_eq!(generation, 11);
+    assert_eq!(recipient_ids.as_ref(), &HashSet::from([recipient]));
+    assert_eq!(reason, SourceInvalidationReason::UpstreamUnavailable);
+}
+
+#[test]
 fn catalog_window_emits_outside_scope_and_current_thread_stays_coherent() {
     let coordinator = SubscriptionCoordinator::default();
     let recipient = id("recipient");

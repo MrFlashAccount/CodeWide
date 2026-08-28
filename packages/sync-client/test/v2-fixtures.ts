@@ -98,7 +98,7 @@ export function snapshot(overrides: {
     currentThread: overrides.currentThread ?? null,
     pendingRequests: [],
     includedTail: overrides.includedTail ?? [],
-    limits: { catalogPerPartitionMax: 100, turnWindowMax: 36, historyPageMax: 100, queueMaxEvents: 2_048, queueMaxBytes: 4_194_304, snapshotMaxBytes: 8_388_608 },
+    limits: { catalogPerPartitionMax: 100, turnWindowMax: 36, historyPageMax: 100, queueMaxEvents: 2_048, queueMaxBytes: 4_194_304 },
   };
 }
 

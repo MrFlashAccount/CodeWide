@@ -65,7 +65,14 @@ pub enum CoordinatorEvent {
     RoutingInvalidated {
         generation: u64,
         recipient_ids: Arc<HashSet<Id>>,
+        reason: SourceInvalidationReason,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceInvalidationReason {
+    SourceGap,
+    UpstreamUnavailable,
 }
 
 #[derive(Clone)]
@@ -483,6 +490,7 @@ impl SubscriptionCoordinator {
             self.dispatch(CoordinatorEvent::RoutingInvalidated {
                 generation,
                 recipient_ids: Arc::new(affected),
+                reason: SourceInvalidationReason::SourceGap,
             });
             return;
         }
@@ -630,6 +638,10 @@ impl SubscriptionCoordinator {
     }
 
     pub fn invalidate_generation(&self, generation: u64) {
+        self.invalidate_generation_for(generation, SourceInvalidationReason::SourceGap);
+    }
+
+    pub fn invalidate_generation_for(&self, generation: u64, reason: SourceInvalidationReason) {
         let recipients = self
             .recipients
             .lock()
@@ -642,6 +654,7 @@ impl SubscriptionCoordinator {
             self.dispatch(CoordinatorEvent::RoutingInvalidated {
                 generation,
                 recipient_ids: Arc::new(recipients),
+                reason,
             });
         }
     }
@@ -659,6 +672,7 @@ impl SubscriptionCoordinator {
             self.dispatch(CoordinatorEvent::RoutingInvalidated {
                 generation: 0,
                 recipient_ids: Arc::new(recipient_ids.clone()),
+                reason: SourceInvalidationReason::SourceGap,
             });
         }
         for recipient_id in recipient_ids {
@@ -689,6 +703,14 @@ pub trait SemanticSource: Send + Sync {
     fn generation(&self) -> u64;
     fn subscribe_generation(&self) -> watch::Receiver<u64>;
     fn coordinator(&self) -> &SubscriptionCoordinator;
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    async fn wait_until_available(&self) -> Result<(), V2Error> {
+        Ok(())
+    }
 
     async fn purge_context(&self, context: &AuthenticatedContextKey) -> Result<(), V2Error>;
 

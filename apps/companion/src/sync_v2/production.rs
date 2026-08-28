@@ -42,8 +42,8 @@ use super::{
     },
     scalar::{Id, OperationId, Timestamp, U64},
     source::{
-        AudienceSelector, CommandExecution, SemanticSource, SnapshotData, SubscriptionCoordinator,
-        capabilities, ensure_generation,
+        AudienceSelector, CommandExecution, SemanticSource, SnapshotData, SourceInvalidationReason,
+        SubscriptionCoordinator, capabilities, ensure_generation,
     },
 };
 
@@ -124,16 +124,29 @@ impl UpstreamSemanticSource {
         tokio::spawn(async move {
             let mut status = source.upstream.subscribe_status();
             let mut previous = *generation_tx.borrow();
+            let mut previous_status = *status.borrow();
             loop {
                 if status.changed().await.is_err() {
                     break;
                 }
-                if *status.borrow() != ConnectionStatus::Live {
+                let current_status = *status.borrow();
+                if current_status == previous_status {
+                    continue;
+                }
+                previous_status = current_status;
+                if current_status != ConnectionStatus::Live {
+                    let generation = source.generation();
+                    source.close_pending_source_lost(generation).await;
+                    source.clear_generation_witnesses();
+                    source.coordinator.invalidate_generation_for(
+                        generation,
+                        SourceInvalidationReason::UpstreamUnavailable,
+                    );
                     continue;
                 }
                 let generation = source.upstream.generation();
                 if generation != previous {
-                    source.pending.write().await.clear();
+                    source.close_pending_source_lost(previous).await;
                     source.clear_generation_witnesses();
                     previous = generation;
                     // The generation watch is the single authoritative signal
@@ -144,6 +157,39 @@ impl UpstreamSemanticSource {
                 }
             }
         });
+    }
+
+    async fn close_pending_source_lost(&self, generation: u64) {
+        let pending = {
+            let mut pending = self.pending.write().await;
+            std::mem::take(&mut *pending)
+        };
+        for owned in pending.into_values() {
+            let request_id = pending_id(&owned.request).clone();
+            let thread_id = pending_thread_id(&owned.request).cloned();
+            let mut audiences = owned.delivered_to;
+            if let Some(thread_id) = &thread_id {
+                audiences.extend(self.authorized_contexts(thread_id, generation));
+            }
+            for context in audiences {
+                let selector = thread_id.as_ref().map_or_else(
+                    || AudienceSelector::ExactContext(context.clone()),
+                    |thread_id| AudienceSelector::CurrentThread {
+                        context: context.clone(),
+                        thread_id: thread_id.clone(),
+                    },
+                );
+                self.coordinator.publish(
+                    generation,
+                    selector,
+                    ProjectionChange::PendingRequestClosed {
+                        request_id: request_id.clone(),
+                        generation: U64::new(generation),
+                        reason: PendingCloseReason::SourceLost,
+                    },
+                );
+            }
+        }
     }
 
     fn clear_generation_witnesses(&self) {
@@ -441,7 +487,16 @@ impl UpstreamSemanticSource {
             .as_ref()
             .map(HistoryCursor::internal_v1_cursor)
             .transpose()?;
-        let result = self.history.try_turns_page("thread/turns/list", &json!({"threadId": thread_id.as_str(), "cursor": internal_cursor, "limit": limit, "sortDirection": "desc", "itemsView": "summary"})).await.ok_or_else(|| V2Error::source_unavailable("bounded rollout history is unavailable"))?.map_err(|error| V2Error::source_unavailable(error.to_string()))?;
+        let local = self.history.try_turns_page("thread/turns/list", &json!({"threadId": thread_id.as_str(), "cursor": internal_cursor, "limit": limit, "sortDirection": "desc", "itemsView": "summary"})).await;
+        let result = match local {
+            Some(Ok(result)) => result,
+            Some(Err(_)) | None if cursor.is_none() => {
+                return self
+                    .live_history_page(context, thread_id, None, direction, limit, detail)
+                    .await;
+            }
+            Some(Err(_)) | None => return Err(stale_cursor()),
+        };
         let source_turns = result
             .get("data")
             .and_then(Value::as_array)

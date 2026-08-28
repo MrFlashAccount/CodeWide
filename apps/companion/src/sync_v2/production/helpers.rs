@@ -47,7 +47,7 @@ pub(super) fn query_scope(query: &Query) -> &'static str {
         Query::ThreadResources { .. } | Query::ProjectsList | Query::WorkspaceInspect { .. } => {
             "files.download.workspace"
         }
-        Query::QueueList { .. } => "turns.start",
+        Query::QueueList { .. } | Query::OperationGet { .. } => "turns.start",
         Query::AccountsList => "processes.manage",
     }
 }

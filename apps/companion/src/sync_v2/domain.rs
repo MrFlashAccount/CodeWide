@@ -309,7 +309,6 @@ pub struct SnapshotLimits {
     pub history_page_max: u16,
     pub queue_max_events: u32,
     pub queue_max_bytes: u32,
-    pub snapshot_max_bytes: u32,
 }
 
 impl Default for SnapshotLimits {
@@ -320,7 +319,6 @@ impl Default for SnapshotLimits {
             history_page_max: 100,
             queue_max_events: 2_048,
             queue_max_bytes: 4 * 1024 * 1024,
-            snapshot_max_bytes: 8 * 1024 * 1024,
         }
     }
 }

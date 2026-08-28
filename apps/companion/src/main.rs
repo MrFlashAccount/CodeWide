@@ -914,12 +914,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         .map(|directory| directory.join("content-cache"));
     let token = read_administrator_token(&options.token_file).await?;
     let app_server_socket = options.app_server_socket.clone();
-    let v2_upstream = (options.sync_v2_mode == SyncV2Mode::Canary).then(|| {
-        UpstreamHandle::spawn_with_message_limit(
-            options.app_server_socket.clone(),
-            codewide_companion::sync_v2::V2_UPSTREAM_MAX_MESSAGE_BYTES,
-        )
-    });
+    let sync_v2_enabled = options.sync_v2_mode == SyncV2Mode::Canary;
     let upstream = UpstreamHandle::spawn(options.app_server_socket);
     let store = Arc::new(IndexStore::open(options.state_path.clone())?);
     let codex_home = options.codex_home.unwrap_or_else(default_codex_home);
@@ -1087,7 +1082,13 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             .unwrap_or_else(|| state_directory.join("identity")),
     )?;
     let sync_v2_tls_pin = identity.public().tls_pin_sha256.clone();
-    let sync_v2 = v2_upstream
+    let sync_v2 = sync_v2_enabled
+        .then(|| {
+            UpstreamHandle::spawn_with_message_limit(
+                app_server_socket.clone(),
+                codewide_companion::sync_v2::V2_UPSTREAM_MAX_MESSAGE_BYTES,
+            )
+        })
         .map(|upstream| {
             let source = UpstreamSemanticSource::new(
                 upstream,

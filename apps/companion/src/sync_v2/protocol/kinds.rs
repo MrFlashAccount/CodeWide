@@ -11,6 +11,7 @@ pub const QUERY_KINDS: &[&str] = &[
     "projects.list",
     "workspace.inspect",
     "queue.list",
+    "operation.get",
     "accounts.list",
 ];
 pub const COMMAND_KINDS: &[&str] = &[
@@ -42,6 +43,7 @@ impl Query {
             Self::ProjectsList => "projects.list",
             Self::WorkspaceInspect { .. } => "workspace.inspect",
             Self::QueueList { .. } => "queue.list",
+            Self::OperationGet { .. } => "operation.get",
             Self::AccountsList => "accounts.list",
         }
     }
@@ -80,6 +82,7 @@ impl QueryResult {
             Self::ProjectsList { .. } => "projects.list",
             Self::WorkspaceInspect { .. } => "workspace.inspect",
             Self::QueueList { .. } => "queue.list",
+            Self::OperationGet { .. } => "operation.get",
             Self::AccountsList { .. } => "accounts.list",
         }
     }

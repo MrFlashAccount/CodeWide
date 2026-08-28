@@ -24,7 +24,7 @@ pub use source::{
     SubscriptionCoordinator,
 };
 
-pub const V2_UPSTREAM_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+pub const V2_UPSTREAM_MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub enum SyncV2Mode {

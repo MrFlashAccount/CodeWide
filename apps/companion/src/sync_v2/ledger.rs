@@ -9,7 +9,7 @@ use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 use super::{
     auth_context::AuthenticatedContextKey,
     canonical,
-    protocol::{Command, CommandResult, V2Error},
+    protocol::{Command, CommandResult, OperationReceipt, OperationTerminal, V2Error},
     scalar::{OperationId, ScalarError, Timestamp},
 };
 
@@ -131,7 +131,31 @@ impl OperationLedger {
             let retained_identity = metadata
                 .get(INSTALLATION_IDENTITY_KEY)?
                 .map(|value| value.value().to_owned());
-            if retained_identity.as_deref() != Some(installation_identity) {
+            if retained_identity.as_deref() == Some(installation_identity) {
+                let now = Timestamp::now();
+                let recovered = operations
+                    .iter()?
+                    .filter_map(Result::ok)
+                    .filter_map(|(key, value)| {
+                        let mut record =
+                            serde_json::from_slice::<OperationRecord>(value.value()).ok()?;
+                        if !matches!(record.state, OperationState::Admitted) {
+                            return None;
+                        }
+                        record.terminal_at = Some(now.clone());
+                        record.state = OperationState::Indeterminate {
+                            error: V2Error::operation_indeterminate(
+                                "command admission survived restart without a proven terminal outcome",
+                            ),
+                        };
+                        Some((key.value().to_owned(), record))
+                    })
+                    .collect::<Vec<_>>();
+                for (key, record) in recovered {
+                    let encoded = serde_json::to_vec(&record)?;
+                    operations.insert(key.as_str(), encoded.as_slice())?;
+                }
+            } else {
                 let keys = operations
                     .iter()?
                     .filter_map(Result::ok)
@@ -222,6 +246,45 @@ impl OperationLedger {
         };
         write.commit()?;
         Ok(admission)
+    }
+
+    pub fn receipt(
+        &self,
+        context_key: &AuthenticatedContextKey,
+        operation_id: &OperationId,
+    ) -> Result<Option<OperationReceipt>, LedgerError> {
+        let key = ledger_key(context_key, operation_id);
+        let read = self.database.begin_read()?;
+        let table = read.open_table(OPERATIONS)?;
+        let record = table
+            .get(key.as_str())?
+            .map(|value| serde_json::from_slice::<OperationRecord>(value.value()))
+            .transpose()?;
+        Ok(record.map(|record| match record.state {
+            OperationState::Admitted => OperationReceipt::Admitted {
+                accepted_at: record.accepted_at,
+            },
+            OperationState::Completed { result } => OperationReceipt::Completed {
+                accepted_at: record.accepted_at,
+                result,
+            },
+            OperationState::Failed { error } => OperationReceipt::Failed {
+                accepted_at: record.accepted_at,
+                error,
+            },
+            OperationState::Indeterminate { error } => OperationReceipt::Indeterminate {
+                accepted_at: record.accepted_at,
+                error,
+            },
+            OperationState::Tombstone { terminal } => OperationReceipt::Expired {
+                accepted_at: record.accepted_at,
+                terminal: match terminal {
+                    TombstoneTerminal::Completed => OperationTerminal::Completed,
+                    TombstoneTerminal::Failed => OperationTerminal::Failed,
+                    TombstoneTerminal::Indeterminate => OperationTerminal::Indeterminate,
+                },
+            },
+        }))
     }
 
     pub fn complete(
@@ -504,7 +567,7 @@ mod tests {
     use super::*;
     use crate::sync_v2::{
         domain::{ApprovalPolicy, Sandbox, ThreadSettings},
-        protocol::{Command, CommandResult},
+        protocol::{Command, CommandResult, OperationReceipt},
         scalar::Id,
     };
 
@@ -566,6 +629,38 @@ mod tests {
         assert!(matches!(
             ledger.admit(&context, &id, &command).unwrap(),
             Admission::Admitted { .. }
+        ));
+    }
+
+    #[test]
+    fn admitted_receipt_is_queryable_and_becomes_indeterminate_after_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("ledger.redb");
+        let id = OperationId::new("orphaned-operation").unwrap();
+        let context = context("device-a");
+        let command = Command::ThreadDelete {
+            thread_id: Id::new("thread").unwrap(),
+        };
+        {
+            let ledger = OperationLedger::open(&path).unwrap();
+            assert!(matches!(
+                ledger.admit(&context, &id, &command).unwrap(),
+                Admission::New { .. }
+            ));
+            assert!(matches!(
+                ledger.receipt(&context, &id).unwrap(),
+                Some(OperationReceipt::Admitted { .. })
+            ));
+        }
+
+        let reopened = OperationLedger::open(&path).unwrap();
+        assert!(matches!(
+            reopened.receipt(&context, &id).unwrap(),
+            Some(OperationReceipt::Indeterminate { .. })
+        ));
+        assert!(matches!(
+            reopened.admit(&context, &id, &command).unwrap(),
+            Admission::Indeterminate { .. }
         ));
     }
 
