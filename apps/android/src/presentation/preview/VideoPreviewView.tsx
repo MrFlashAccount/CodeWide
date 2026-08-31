@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-export type VideoPreviewViewProps = {
+export interface VideoPreviewViewProps {
   children: ReactNode;
   title: string;
-};
+}
 
 /** Protocol-neutral fullscreen frame. Playback and private-file access stay in
  * the injected platform capability instead of leaking into presentation. */

@@ -7,14 +7,14 @@ import type {
 import type { SavedServer } from "../../domain/savedServer";
 import { savedServerId } from "../../domain/ids";
 
-type NativeConnectionConfig = {
+interface NativeConnectionConfig {
   connectionId: string;
   enabled: boolean;
   endpoint: string;
   savedServerId?: string;
-};
+}
 
-type NativeSavedServerBridge = {
+interface NativeSavedServerBridge {
   claimPairing(
     savedServerId: string,
     endpoint: string,
@@ -43,7 +43,7 @@ type NativeSavedServerBridge = {
   ): Promise<void>;
   setConnectionEnabled(connectionId: string, enabled: boolean): Promise<void>;
   wakeSocket(connectionId: string): void;
-};
+}
 
 /** Adapter over the sole generation-neutral native saved-server catalog. */
 export function createSavedServerRepository(): SavedServerRepository {

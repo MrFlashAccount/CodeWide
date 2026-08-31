@@ -5,10 +5,10 @@ import {
   type AuthenticatedTransportLease,
 } from "../../../native/authenticated-transport-lease.web";
 
-export type SharedConnectionLease = {
+export interface SharedConnectionLease {
   lease: AuthenticatedTransportLease;
   syncTransport: SyncV2TransportLease;
-};
+}
 
 export async function acquireSharedConnectionLease(
   savedServerId: string,

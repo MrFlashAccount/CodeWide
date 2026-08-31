@@ -1,38 +1,25 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActionButtonView } from "../../../presentation/actions/ActionButtonView";
 
 import type { Action } from "./action";
 import { useActionRunner } from "./ActionRunner";
+import { useEvent } from "../../../react/useEvent";
 
-export function ActionPressable({ action }: { action: Action }): React.JSX.Element {
+interface ActionPressableProps {
+  action: Action;
+}
+
+export function ActionPressable({ action }: ActionPressableProps): React.JSX.Element {
   const runner = useActionRunner();
   const pending = runner.active === action.id;
   const failure = runner.failures[action.id];
+  const run = useEvent(() => runner.run(action));
   return (
-    <View>
-      <Pressable
-        accessibilityLabel={action.label}
-        accessibilityRole="button"
-        accessibilityState={{ busy: pending, disabled: action.disabled === true || pending }}
-        disabled={action.disabled === true || pending}
-        onPress={() => {
-          runner.run(action);
-        }}
-      >
-        {pending ? (
-          <ActivityIndicator accessibilityLabel={`${action.label} in progress`} />
-        ) : (
-          <Text>{action.label}</Text>
-        )}
-      </Pressable>
-      {failure === undefined ? null : (
-        <Text accessibilityLiveRegion="polite" style={styles.error}>
-          {failure}
-        </Text>
-      )}
-    </View>
+    <ActionButtonView
+      disabled={action.disabled === true || pending}
+      {...(failure === undefined ? {} : { error: failure })}
+      label={action.label}
+      onPress={run}
+      pending={pending}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  error: { color: "#ff8b8b", marginTop: 4 },
-});

@@ -4,30 +4,61 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { restartApplication } from "./applicationRestart";
 import { selectUiGeneration } from "./uiGenerationResource";
 import type { UiGeneration } from "./uiGeneration";
+import { useEvent } from "../react/useEvent";
 
-export function UiGenerationControl({ current }: { current: UiGeneration }): React.JSX.Element {
+interface UiGenerationControlProps {
+  current: UiGeneration;
+}
+
+interface UiGenerationOptionProps {
+  busy: boolean;
+  current: UiGeneration;
+  generation: UiGeneration;
+  onSelect(generation: UiGeneration): Promise<void>;
+}
+
+export function UiGenerationControl({ current }: UiGenerationControlProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
-  const select = async (generation: UiGeneration): Promise<void> => {
+  const select = useEvent(async (generation: UiGeneration): Promise<void> => {
     if (busy || generation === current) return;
     setBusy(true);
     await selectUiGeneration(generation);
     await restartApplication();
-  };
+  });
   return (
     <View style={styles.row} accessibilityLabel="UI generation selector">
       {(["legacy", "v2"] as const).map((generation) => (
-        <Pressable
+        <UiGenerationOption
+          busy={busy}
+          current={current}
+          generation={generation}
           key={generation}
-          accessibilityLabel={`Use ${generation === "v2" ? "V2" : "legacy"} interface`}
-          accessibilityRole="button"
-          disabled={busy}
-          onPress={() => void select(generation)}
-          style={[styles.button, generation === current && styles.selected]}
-        >
-          <Text style={styles.label}>{generation === "v2" ? "V2" : "Legacy"}</Text>
-        </Pressable>
+          onSelect={select}
+        />
       ))}
     </View>
+  );
+}
+
+function UiGenerationOption({
+  busy,
+  current,
+  generation,
+  onSelect,
+}: UiGenerationOptionProps): React.JSX.Element {
+  const select = useEvent(() => {
+    onSelect(generation).catch(() => undefined);
+  });
+  return (
+    <Pressable
+      accessibilityLabel={`Use ${generation === "v2" ? "V2" : "legacy"} interface`}
+      accessibilityRole="button"
+      disabled={busy}
+      onPress={select}
+      style={[styles.button, generation === current && styles.selected]}
+    >
+      <Text style={styles.label}>{generation === "v2" ? "V2" : "Legacy"}</Text>
+    </Pressable>
   );
 }
 

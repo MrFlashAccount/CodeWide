@@ -1,4 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
+import { useEvent } from "../../../../../../src/react/useEvent";
 import { qualifiedThread } from "../../../../../../src/v2/domain/qualifiedThread";
 import {
   requireSavedServerRouteParam,
@@ -13,10 +14,8 @@ export default function ThreadRoute(): React.JSX.Element {
     requireSavedServerRouteParam(params.savedServerId),
     requireThreadRouteParam(params.threadId),
   );
-  return (
-    <ConversationScreen
-      onOpenResource={(resourceName) => router.push(threadResourceDestination(owner, resourceName))}
-      owner={owner}
-    />
+  const openResource = useEvent((resourceName: Parameters<typeof threadResourceDestination>[1]) =>
+    router.push(threadResourceDestination(owner, resourceName)),
   );
+  return <ConversationScreen onOpenResource={openResource} owner={owner} />;
 }

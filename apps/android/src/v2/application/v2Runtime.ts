@@ -47,6 +47,22 @@ export interface RuntimeSessionProvider extends CommandSessionProvider {
   }>;
 }
 
+interface V2RuntimeInput {
+  correlations: CommandCorrelationStore;
+  correlationId(): string;
+  deletions: V2SavedServerDeletionStore;
+  now(): number;
+  operationId(): string;
+  operations: V2OperationStore;
+  portTransport: PortTransport;
+  projections: V2ProjectionStore;
+  repository: SavedServerRepository;
+  savedServerId(): SavedServerId;
+  sessions: RuntimeSessionProvider;
+  terminalTransport: TerminalTransport;
+  voiceTransport: VoiceTransport;
+}
+
 export class V2Runtime {
   readonly savedServers: SavedServersResource;
   readonly selection = new ServerSelectionResource();
@@ -64,21 +80,7 @@ export class V2Runtime {
   readonly #portTransport: PortTransport;
   readonly #now: () => number;
 
-  constructor(input: {
-    deletions: V2SavedServerDeletionStore;
-    correlations: CommandCorrelationStore;
-    operations: V2OperationStore;
-    projections: V2ProjectionStore;
-    correlationId(): string;
-    now(): number;
-    operationId(): string;
-    repository: SavedServerRepository;
-    savedServerId(): SavedServerId;
-    sessions: RuntimeSessionProvider;
-    terminalTransport: TerminalTransport;
-    voiceTransport: VoiceTransport;
-    portTransport: PortTransport;
-  }) {
+  constructor(input: V2RuntimeInput) {
     this.#repository = input.repository;
     this.#deletions = input.deletions;
     this.#operations = input.operations;

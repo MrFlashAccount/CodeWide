@@ -5,15 +5,15 @@ import { Text } from "react-native";
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
-import { ResourceListView } from "../../ui/resources/ResourceListView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+import { ResourceListView } from "../../../presentation/resources/ResourceListView";
 import { portDestination } from "../navigation/routeDestinations";
 
-export function PortsScreen({
-  savedServerId,
-}: {
+interface PortsScreenProps {
   savedServerId: SavedServerId;
-}): React.JSX.Element {
+}
+
+export function PortsScreen({ savedServerId }: PortsScreenProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const [resource] = useState(() => runtime.ports(savedServerId));
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);

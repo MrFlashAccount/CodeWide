@@ -1,14 +1,14 @@
 import type { ReactNode } from "react";
 import { Text } from "react-native";
 
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
-import { SettingsView } from "../../ui/settings/SettingsView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+import { SettingsView } from "../../../presentation/settings/SettingsView";
 
-export function SettingsScreen({
-  generationControl,
-}: {
+interface SettingsScreenProps {
   generationControl: ReactNode;
-}): React.JSX.Element {
+}
+
+export function SettingsScreen({ generationControl }: SettingsScreenProps): React.JSX.Element {
   return (
     <WorkspaceView title="Settings">
       <SettingsView>

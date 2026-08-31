@@ -1,16 +1,16 @@
 import type { SavedServer } from "../../domain/savedServer";
 
-export type SavedServerConnection = {
+export interface SavedServerConnection {
   enabled: boolean;
   endpoint: string;
   id: SavedServer["id"];
-};
+}
 
-export type PairSavedServerInput = {
+export interface PairSavedServerInput {
   endpoint: string;
   pairingToken: string;
   tlsPinSha256: string;
-};
+}
 
 export interface SavedServerRepository {
   close(): void;

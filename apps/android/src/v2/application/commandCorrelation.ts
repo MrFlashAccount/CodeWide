@@ -12,7 +12,7 @@ export type CommandCorrelationState =
   | "indeterminate"
   | "notCreated";
 
-export type CommandCorrelation = {
+export interface CommandCorrelation {
   correlationId: string;
   operationId: string;
   savedServerId: SavedServerId;
@@ -21,7 +21,7 @@ export type CommandCorrelation = {
   state: CommandCorrelationState;
   createdAtMs: number;
   updatedAtMs: number;
-};
+}
 
 export type CommandCorrelationScope = Pick<
   CommandCorrelation,

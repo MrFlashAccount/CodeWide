@@ -9,6 +9,7 @@
   "entry": [
     "app/**/*.tsx",
     "src/boot/**/*.{ts,tsx}",
+    "src/presentation/**/*.{ts,tsx}",
     "src/v2/**/*.{ts,tsx}",
     "src/v2/infrastructure/connection/sharedConnectionAdapter.native.ts",
     "src/v2/infrastructure/connection/sharedConnectionAdapter.web.ts",
@@ -21,6 +22,7 @@
   "project": [
     "app/**/*.{ts,tsx}",
     "src/boot/**/*.{ts,tsx}",
+    "src/presentation/**/*.{ts,tsx}",
     "!app/_layout.tsx",
     "!app/index.tsx",
     "!app/legacy/**",

@@ -6,6 +6,8 @@ const V2_ENVIRONMENT_BOUNDARY_FILES = ["src/v2/infrastructure/config/readEnviron
 const V2_CAPABILITY_CONSUMER_FILES = [
   "app/**/*.ts",
   "app/**/*.tsx",
+  "src/presentation/**/*.ts",
+  "src/presentation/**/*.tsx",
   "src/v2/application/**/*.ts",
   "src/v2/application/**/*.tsx",
   "src/v2/features/**/*.ts",
@@ -18,6 +20,8 @@ const V2_OWNED_FILES = [
   "app/**/*.tsx",
   "src/boot/**/*.ts",
   "src/boot/**/*.tsx",
+  "src/presentation/**/*.ts",
+  "src/presentation/**/*.tsx",
   "src/v2/**/*.ts",
   "src/v2/**/*.tsx",
 ];
@@ -87,6 +91,7 @@ export default {
   ],
   jsPlugins: [
     ...base.jsPlugins,
+    { name: "codewide-v2", specifier: "./oxlint.v2.plugin.mjs" },
     { name: "expo", specifier: "eslint-plugin-expo" },
     { name: "react-native", specifier: "@react-native/eslint-plugin" },
   ],
@@ -165,7 +170,6 @@ export default {
         "react-doctor/jsx-no-constructed-context-values": "off",
         "react-doctor/jsx-no-jsx-as-prop": "off",
         "react-doctor/jsx-no-new-array-as-prop": "off",
-        "react-doctor/jsx-no-new-function-as-prop": "off",
         "react-doctor/jsx-no-new-object-as-prop": "off",
         "react-doctor/only-export-components": "off",
         "typescript/method-signature-style": "off",
@@ -192,10 +196,12 @@ export default {
   ],
   rules: {
     ...base.rules,
+    "codewide-v2/no-inline-object-parameter-types": "error",
     "expo/no-dynamic-env-var": "error",
     "expo/no-env-var-destructuring": "error",
     "max-params": ["error", { max: 4 }],
     "react-native/no-deep-imports": "error",
     "react-native/platform-colors": "error",
+    "typescript/consistent-type-definitions": ["error", "interface"],
   },
 };

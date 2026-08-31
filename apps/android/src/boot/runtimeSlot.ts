@@ -1,4 +1,6 @@
-export type ApplicationRuntimeHandle = { stop(): Promise<void> | void };
+export interface ApplicationRuntimeHandle {
+  stop(): Promise<void> | void;
+}
 
 let active: { generation: "legacy" | "v2"; handle: ApplicationRuntimeHandle } | null = null;
 

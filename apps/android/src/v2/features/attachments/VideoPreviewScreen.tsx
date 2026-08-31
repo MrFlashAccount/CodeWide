@@ -3,16 +3,16 @@ import type { ComponentType } from "react";
 import { VideoPreviewView } from "../../../presentation/preview/VideoPreviewView";
 import type { VideoPlaybackSource, VideoPreviewRouteModel } from "./videoPreview";
 
-export type VideoPlayerCapabilityProps = {
+export interface VideoPlayerCapabilityProps {
   autoplay: boolean;
   source: VideoPlaybackSource;
   title: string;
-};
+}
 
-export type VideoPreviewScreenProps = {
+export interface VideoPreviewScreenProps {
   model: VideoPreviewRouteModel;
   Player: ComponentType<VideoPlayerCapabilityProps>;
-};
+}
 
 export function VideoPreviewScreen({ model, Player }: VideoPreviewScreenProps): React.JSX.Element {
   return (

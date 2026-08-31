@@ -1,14 +1,16 @@
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ConversationScreen } from "../conversation/ConversationScreen";
 
-export function AgentThreadScreen({
-  onOpenResource,
-  owner,
-}: {
+interface AgentThreadScreenProps {
   onOpenResource(
     resourceName: "agents" | "attachments" | "changes" | "terminal",
   ): void | Promise<void>;
   owner: QualifiedThread;
-}): React.JSX.Element {
+}
+
+export function AgentThreadScreen({
+  onOpenResource,
+  owner,
+}: AgentThreadScreenProps): React.JSX.Element {
   return <ConversationScreen onOpenResource={onOpenResource} owner={owner} />;
 }

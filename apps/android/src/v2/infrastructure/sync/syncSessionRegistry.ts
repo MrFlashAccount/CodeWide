@@ -8,12 +8,12 @@ import {
 
 import { ProjectionResource } from "../../application/resources/projectionResource";
 
-type Entry = {
+interface Entry {
   currentThreadId: string | null;
   release(): Promise<void>;
   resource: ProjectionResource;
   session: SyncV2Session;
-};
+}
 
 export type SyncSessionFactory = (
   savedServerId: string,

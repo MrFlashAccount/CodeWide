@@ -4,9 +4,9 @@ import { Text } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
 import { serverDestination } from "../navigation/routeDestinations";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
-import { ServerRailView } from "../../ui/navigation/ServerRailView";
-import { ActionPressable } from "../../ui/actions/ActionPressable";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+import { ServerPickerView } from "../../../presentation/navigation/ServerPickerView";
+import { useEvent } from "../../../react/useEvent";
 
 export function ServerListScreen(): React.JSX.Element {
   const runtime = useV2Runtime();
@@ -15,22 +15,19 @@ export function ServerListScreen(): React.JSX.Element {
     runtime.savedServers.snapshot,
     runtime.savedServers.snapshot,
   );
+  const addServer = useEvent(() => router.push("/settings/servers/new"));
+  const openServer = useEvent((id: string) => {
+    const server = servers.value.find((candidate) => candidate.id === id);
+    if (server !== undefined) router.push(serverDestination(server.id));
+  });
   return (
     <WorkspaceView
       subtitle={<Text style={{ color: "#58c7ff" }}>All saved servers</Text>}
       title="CodeWide V2"
     >
-      <ActionPressable
-        action={{
-          id: "add-server",
-          label: "Add server",
-          run: () => router.push("/settings/servers/new"),
-        }}
-      />
-      <ServerRailView
-        onOpen={(id) => {
-          router.push(serverDestination(id as (typeof servers.value)[number]["id"]));
-        }}
+      <ServerPickerView
+        onAdd={addServer}
+        onOpen={openServer}
         rows={servers.value.map((server) => ({
           id: server.id,
           emoji: server.emoji,

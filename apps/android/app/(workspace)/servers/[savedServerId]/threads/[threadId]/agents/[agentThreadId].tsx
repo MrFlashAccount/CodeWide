@@ -1,5 +1,6 @@
 import { router, useLocalSearchParams } from "expo-router";
 
+import { useEvent } from "../../../../../../../src/react/useEvent";
 import { AgentThreadScreen } from "../../../../../../../src/v2/features/agents/AgentThreadScreen";
 import {
   requireSavedServerRouteParam,
@@ -17,10 +18,8 @@ export default function AgentThreadRoute(): React.JSX.Element {
     requireSavedServerRouteParam(params.savedServerId),
     requireThreadRouteParam(params.agentThreadId),
   );
-  return (
-    <AgentThreadScreen
-      onOpenResource={(resourceName) => router.push(threadResourceDestination(owner, resourceName))}
-      owner={owner}
-    />
+  const openResource = useEvent((resourceName: Parameters<typeof threadResourceDestination>[1]) =>
+    router.push(threadResourceDestination(owner, resourceName)),
   );
+  return <AgentThreadScreen onOpenResource={openResource} owner={owner} />;
 }

@@ -4,7 +4,7 @@ import { StyleSheet, Text, TextInput, View } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
 import { serverDestination } from "../navigation/routeDestinations";
 
 export function NewSavedServerScreen(): React.JSX.Element {

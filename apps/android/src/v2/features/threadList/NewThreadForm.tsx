@@ -7,15 +7,17 @@ import type { CommandSettlement } from "../../application/commandCorrelation";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { SavedServerId } from "../../domain/ids";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+
+interface NewThreadFormProps {
+  onThreadCreated(threadId: string): void;
+  savedServerId: SavedServerId;
+}
 
 export function NewThreadForm({
   onThreadCreated,
   savedServerId,
-}: {
-  onThreadCreated(threadId: string): void;
-  savedServerId: SavedServerId;
-}): React.JSX.Element {
+}: NewThreadFormProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const [workspace, setWorkspace] = useState("");
   const [message, setMessage] = useState("");
@@ -79,14 +81,14 @@ export function NewThreadForm({
     !locallyLocked &&
     !activationLocked &&
     !terminalBlocked;
-  const editWorkspace = (value: string): void => {
+  const editWorkspace = useEvent((value: string): void => {
     setWorkspace(value);
     setTerminalBlocked(false);
-  };
-  const editMessage = (value: string): void => {
+  });
+  const editMessage = useEvent((value: string): void => {
     setMessage(value);
     setTerminalBlocked(false);
-  };
+  });
   return (
     <WorkspaceView title="New thread">
       <View style={styles.form}>

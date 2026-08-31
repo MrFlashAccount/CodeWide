@@ -5,8 +5,8 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { useV2Runtime } from "../../V2Application";
 import { threadId, type SavedServerId } from "../../domain/ids";
 import { qualifiedThread } from "../../domain/qualifiedThread";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
-import { ThreadListView } from "../../ui/navigation/ThreadListView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+import { ThreadListView } from "../../../presentation/navigation/ThreadListView";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
 import {
@@ -16,12 +16,17 @@ import {
   serverSettingsDestination,
   threadDestination,
 } from "../navigation/routeDestinations";
+import { useEvent } from "../../../react/useEvent";
 
-export function ThreadListScreen({
-  savedServerId,
-}: {
+interface ThreadListScreenProps {
   savedServerId: SavedServerId;
-}): React.JSX.Element {
+}
+
+interface ProjectedThreadListProps extends ThreadListScreenProps {
+  resource: ProjectionResource;
+}
+
+export function ThreadListScreen({ savedServerId }: ThreadListScreenProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.projection(savedServerId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -38,13 +43,13 @@ export function ThreadListScreen({
 function ProjectedThreadList({
   resource,
   savedServerId,
-}: {
-  resource: ProjectionResource;
-  savedServerId: SavedServerId;
-}): React.JSX.Element {
+}: ProjectedThreadListProps): React.JSX.Element {
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
   const projection = snapshot.value.projections.live ?? snapshot.value.projections.retained;
   const retained = snapshot.value.projections.live === null;
+  const openThread = useEvent((id: string) => {
+    router.push(threadDestination(qualifiedThread(savedServerId, threadId(id))));
+  });
   return (
     <WorkspaceView
       subtitle={
@@ -85,17 +90,22 @@ function ProjectedThreadList({
         />
       </View>
       <ThreadListView
-        onOpen={(id) => {
-          router.push(threadDestination(qualifiedThread(savedServerId, threadId(id))));
-        }}
+        onOpen={openThread}
         rows={(projection?.catalog ?? []).map(({ thread }) => ({
           id: thread.id,
+          preview: thread.workspace,
           title: thread.title ?? "Untitled thread",
           state: thread.state,
-          updatedAt: thread.updatedAt,
+          updatedAt: formatThreadTime(thread.updatedAt),
           retained,
         }))}
       />
     </WorkspaceView>
   );
+}
+
+function formatThreadTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "";
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }

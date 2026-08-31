@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const inputs = ["app", "src/boot"];
+const inputs = ["app", "src/boot", "src/presentation"];
 
 if (existsSync("src/v2")) {
   inputs.push("src/v2");
@@ -40,7 +40,9 @@ for (const requiredLeaseCall of [
   "releaseAuthenticatedTransportLease",
 ]) {
   if (!terminalManager.includes(requiredLeaseCall)) {
-    throw new Error(`V2 Terminal does not use the service-owned opaque lease: ${requiredLeaseCall}`);
+    throw new Error(
+      `V2 Terminal does not use the service-owned opaque lease: ${requiredLeaseCall}`,
+    );
   }
 }
 
@@ -56,14 +58,17 @@ for (const forbiddenRawAccess of [
   "WebSocket",
 ]) {
   if (connectionAdapter.includes(forbiddenRawAccess)) {
-    throw new Error(`V2 connection adapter exposes raw connection authority: ${forbiddenRawAccess}`);
+    throw new Error(
+      `V2 connection adapter exposes raw connection authority: ${forbiddenRawAccess}`,
+    );
   }
 }
 
 const routeFiles = spawnSync("rg", ["--files", "app"], { encoding: "utf8" });
 if (routeFiles.status !== 0) throw new Error("Could not enumerate Android routes");
 for (const routeFile of routeFiles.stdout.trim().split("\n")) {
-  if (routeFile.includes("[connectionId]")) throw new Error(`Stale V2 route identity: ${routeFile}`);
+  if (routeFile.includes("[connectionId]"))
+    throw new Error(`Stale V2 route identity: ${routeFile}`);
 }
 
 const v2Database = readFileSync("src/v2/infrastructure/persistence/v2Database.native.ts", "utf8");

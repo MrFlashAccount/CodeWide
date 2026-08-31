@@ -3,14 +3,16 @@ import { Text, View } from "react-native";
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
-import { ResourceListView } from "../../ui/resources/ResourceListView";
+import { ResourceListView } from "../../../presentation/resources/ResourceListView";
 import { V2QueryBoundary } from "../shared/V2QueryBoundary";
+
+interface AccountSettingsScreenProps {
+  savedServerId: SavedServerId;
+}
 
 export function AccountSettingsScreen({
   savedServerId,
-}: {
-  savedServerId: SavedServerId;
-}): React.JSX.Element {
+}: AccountSettingsScreenProps): React.JSX.Element {
   const runtime = useV2Runtime();
   return (
     <V2QueryBoundary

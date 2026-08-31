@@ -18,27 +18,27 @@ const MAX_LABEL_LENGTH = 1024;
 const MAX_MEDIA_TYPE_LENGTH = 256;
 const MAX_SOURCE_URI_LENGTH = 8192;
 
-export type VideoPlaybackSource = {
+export interface VideoPlaybackSource {
   uri: string;
-};
+}
 
-export type VideoPreviewRouteModel = {
+export interface VideoPreviewRouteModel {
   attachmentId: string;
   mediaType: string;
   name: string;
   savedServerId: string;
   source: VideoPlaybackSource;
   threadId: string;
-};
+}
 
-export type VideoPreviewRouteInput = {
+export interface VideoPreviewRouteInput {
   attachmentId?: string | readonly string[];
   mediaType?: string | readonly string[];
   name?: string | readonly string[];
   savedServerId?: string | readonly string[];
   sourceUri?: string | readonly string[];
   threadId?: string | readonly string[];
-};
+}
 
 export type VideoPreviewRouteResult =
   | { model: VideoPreviewRouteModel; ok: true }
@@ -59,14 +59,14 @@ export function parseVideoPreviewRoute(input: VideoPreviewRouteInput): VideoPrev
   return invalid === null ? validRoute(fields) : { message: invalid, ok: false };
 }
 
-type RouteFields = {
+interface RouteFields {
   attachmentId: string | null;
   mediaType: string | null;
   name: string | null;
   savedServerId: string | null;
   sourceUri: string | null;
   threadId: string | null;
-};
+}
 
 function readRouteFields(input: VideoPreviewRouteInput): RouteFields {
   return {

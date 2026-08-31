@@ -5,20 +5,15 @@ import { threadId } from "../../domain/ids";
 import { qualifiedThread } from "../../domain/qualifiedThread";
 import { threadDestination } from "../navigation/routeDestinations";
 import { NewThreadForm } from "./NewThreadForm";
+import { useEvent } from "../../../react/useEvent";
 
-export function NewThreadScreen({
-  savedServerId,
-}: {
+interface NewThreadScreenProps {
   savedServerId: SavedServerId;
-}): React.JSX.Element {
-  return (
-    <NewThreadForm
-      onThreadCreated={(createdThreadId) => {
-        router.replace(
-          threadDestination(qualifiedThread(savedServerId, threadId(createdThreadId))),
-        );
-      }}
-      savedServerId={savedServerId}
-    />
-  );
+}
+
+export function NewThreadScreen({ savedServerId }: NewThreadScreenProps): React.JSX.Element {
+  const openThread = useEvent((createdThreadId: string) => {
+    router.replace(threadDestination(qualifiedThread(savedServerId, threadId(createdThreadId))));
+  });
+  return <NewThreadForm onThreadCreated={openThread} savedServerId={savedServerId} />;
 }

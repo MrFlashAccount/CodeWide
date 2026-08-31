@@ -2,11 +2,11 @@ import { createContext, useContext, useState, type PropsWithChildren } from "rea
 
 import type { Action } from "./action";
 
-type ActionRunnerValue = {
+interface ActionRunnerValue {
   active: string | null;
   failures: Readonly<Record<string, string>>;
   run(action: Action): void;
-};
+}
 
 const Context = createContext<ActionRunnerValue>({
   active: null,

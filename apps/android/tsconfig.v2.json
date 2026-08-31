@@ -18,10 +18,18 @@
     "app/**/*.tsx",
     "src/boot/**/*.ts",
     "src/boot/**/*.tsx",
+    "src/presentation/**/*.ts",
+    "src/presentation/**/*.tsx",
     "src/v2/**/*.ts",
     "src/v2/**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ],
-  "exclude": ["app/_layout.tsx", "app/index.tsx", "app/legacy.tsx", "app/pair.tsx", "app/thread.tsx"]
+  "exclude": [
+    "app/_layout.tsx",
+    "app/index.tsx",
+    "app/legacy.tsx",
+    "app/pair.tsx",
+    "app/thread.tsx"
+  ]
 }

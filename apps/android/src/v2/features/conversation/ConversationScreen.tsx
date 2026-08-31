@@ -7,9 +7,9 @@ import type { CommandSettlement } from "../../application/commandCorrelation";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
-import { ConversationView } from "../../ui/conversation/ConversationView";
-import { TimelineView } from "../../ui/conversation/TimelineView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+import { ConversationView } from "../../../presentation/conversation/ConversationView";
+import { TimelineView } from "../../../presentation/conversation/TimelineView";
 import { ChatComposer } from "../composer/ChatComposer";
 import { VoiceInputControl } from "./VoiceInputControl";
 import { timelineDisplayModel } from "./timelineDisplayModel";
@@ -17,13 +17,19 @@ import { ActionPressable } from "../../ui/actions/ActionPressable";
 
 type ThreadResourceName = "agents" | "attachments" | "changes" | "terminal";
 
+interface ConversationScreenProps {
+  onOpenResource(resourceName: ThreadResourceName): void | Promise<void>;
+  owner: QualifiedThread;
+}
+
+interface ProjectedConversationProps extends ConversationScreenProps {
+  resource: ProjectionResource;
+}
+
 export function ConversationScreen({
   onOpenResource,
   owner,
-}: {
-  onOpenResource(resourceName: ThreadResourceName): void | Promise<void>;
-  owner: QualifiedThread;
-}): React.JSX.Element {
+}: ConversationScreenProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.projection(owner.savedServerId, owner.threadId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -43,11 +49,7 @@ function ProjectedConversation({
   onOpenResource,
   owner,
   resource,
-}: {
-  onOpenResource(resourceName: ThreadResourceName): void | Promise<void>;
-  owner: QualifiedThread;
-  resource: ProjectionResource;
-}): React.JSX.Element {
+}: ProjectedConversationProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
   const projection = snapshot.value.projections.live ?? snapshot.value.projections.retained;
@@ -110,6 +112,55 @@ function ProjectedConversation({
   const locallyLocked =
     lockedActivation !== null &&
     correlations.isLocked(lockedActivation.correlationId, lockedActivation.operationId);
+  const editComposer = useEvent(() => {
+    setTerminalBlocked(false);
+    setComposerError(null);
+  });
+  const submitMessage = useEvent(async (text: string): Promise<boolean> => {
+    setComposerError(null);
+    const settlement = await runtime.commands
+      .executeCorrelated(
+        {
+          savedServerId: owner.savedServerId,
+          surface: "threadComposer",
+          threadId: owner.threadId,
+        },
+        {
+          input: [{ kind: "text", text }],
+          intent: "chat",
+          kind: "turn.submit",
+          settings: null,
+          threadId: owner.threadId,
+          workspace: null,
+        },
+      )
+      .catch(() => null);
+    if (settlement === null) {
+      setComposerError("Action failed. Try again.");
+      return false;
+    }
+    if (settlement.kind === "notCreated") {
+      setTerminalBlocked(false);
+      setComposerError(settlement.failure.message);
+      return false;
+    }
+    if (settlement.kind === "durableUnsettled") {
+      correlations.retainLock(settlement);
+      setLockedActivation({
+        correlationId: settlement.correlationId,
+        operationId: settlement.operationId,
+      });
+      setComposerError(settlement.failure.message);
+      return false;
+    }
+    if (!completedCurrentTurn(settlement.frame, owner.threadId)) {
+      setTerminalBlocked(true);
+      setComposerError(composerTerminalMessage(settlement.frame));
+      return false;
+    }
+    setTerminalBlocked(false);
+    return true;
+  });
   return (
     <WorkspaceView
       subtitle={
@@ -144,55 +195,8 @@ function ProjectedConversation({
           disabled={snapshot.value.state !== "live"}
           error={composerError}
           locked={locallyLocked}
-          onEdit={() => {
-            setTerminalBlocked(false);
-            setComposerError(null);
-          }}
-          onSubmit={async (text) => {
-            setComposerError(null);
-            const settlement = await runtime.commands
-              .executeCorrelated(
-                {
-                  savedServerId: owner.savedServerId,
-                  surface: "threadComposer",
-                  threadId: owner.threadId,
-                },
-                {
-                  input: [{ kind: "text", text }],
-                  intent: "chat",
-                  kind: "turn.submit",
-                  settings: null,
-                  threadId: owner.threadId,
-                  workspace: null,
-                },
-              )
-              .catch(() => null);
-            if (settlement === null) {
-              setComposerError("Action failed. Try again.");
-              return false;
-            }
-            if (settlement.kind === "notCreated") {
-              setTerminalBlocked(false);
-              setComposerError(settlement.failure.message);
-              return false;
-            }
-            if (settlement.kind === "durableUnsettled") {
-              correlations.retainLock(settlement);
-              setLockedActivation({
-                correlationId: settlement.correlationId,
-                operationId: settlement.operationId,
-              });
-              setComposerError(settlement.failure.message);
-              return false;
-            }
-            if (!completedCurrentTurn(settlement.frame, owner.threadId)) {
-              setTerminalBlocked(true);
-              setComposerError(composerTerminalMessage(settlement.frame));
-              return false;
-            }
-            setTerminalBlocked(false);
-            return true;
-          }}
+          onEdit={editComposer}
+          onSubmit={submitMessage}
           retryBlocked={terminalBlocked}
           onTextChange={setComposerText}
           text={composerText}

@@ -135,6 +135,10 @@ describe("V2 feature surfaces", () => {
       new URL("../src/v2/features/composer/ChatComposer.tsx", import.meta.url),
       "utf8",
     );
+    const composerView = readFileSync(
+      new URL("../src/presentation/input/ComposerView.tsx", import.meta.url),
+      "utf8",
+    );
     const correlations = readFileSync(
       new URL("../src/v2/application/resources/commandCorrelationResource.ts", import.meta.url),
       "utf8",
@@ -142,9 +146,12 @@ describe("V2 feature surfaces", () => {
     expect(newThread).toContain("setActivationLocked(true)");
     expect(newThread).toContain('accessibilityLiveRegion="polite"');
     expect(newThread).toContain("editable={!activationLocked && !locallyLocked}");
-    expect(composer).toContain("accessibilityState={{");
-    expect(composer).toContain("busy: sending");
-    expect(composer).toContain('accessibilityLiveRegion="polite"');
+    expect(composer).toContain("<ComposerView");
+    expect(composer).toContain("pending={sending}");
+    expect(composerView).toContain(
+      "accessibilityState={{ busy: pending, disabled: sendDisabled }}",
+    );
+    expect(composerView).toContain('accessibilityLiveRegion="polite"');
     expect(correlations).toContain("this.#commands.subscribe");
     expect(correlations).toContain("#onSettlement");
     expect(newThread).toContain("correlations.retainLock");

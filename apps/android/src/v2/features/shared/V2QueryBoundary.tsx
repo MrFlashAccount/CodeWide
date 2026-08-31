@@ -5,19 +5,27 @@ import { ActivityIndicator, Text } from "react-native";
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import type { QueryResource } from "../../application/resources/queryResource";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+
+interface V2QueryBoundaryProps {
+  children(result: V2QueryResult, refresh: () => Promise<void>): ReactNode;
+  query: V2Query;
+  savedServerId: SavedServerId;
+  title: string;
+}
+
+interface LoadedQueryProps {
+  children(result: V2QueryResult, refresh: () => Promise<void>): ReactNode;
+  resource: QueryResource;
+  title: string;
+}
 
 export function V2QueryBoundary({
   children,
   query,
   savedServerId,
   title,
-}: {
-  children(result: V2QueryResult, refresh: () => Promise<void>): ReactNode;
-  query: V2Query;
-  savedServerId: SavedServerId;
-  title: string;
-}): React.JSX.Element {
+}: V2QueryBoundaryProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.query(savedServerId, query));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -35,15 +43,7 @@ export function V2QueryBoundary({
   );
 }
 
-function LoadedQuery({
-  children,
-  resource,
-  title,
-}: {
-  children(result: V2QueryResult, refresh: () => Promise<void>): ReactNode;
-  resource: QueryResource;
-  title: string;
-}): React.JSX.Element {
+function LoadedQuery({ children, resource, title }: LoadedQueryProps): React.JSX.Element {
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
   return (
     <WorkspaceView title={title}>

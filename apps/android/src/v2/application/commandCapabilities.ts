@@ -19,7 +19,7 @@ import type {
   CommandSettlement,
 } from "./commandCorrelation";
 
-export type CommandSessionProvider = {
+export interface CommandSessionProvider {
   open(savedServerId: string): Promise<{
     session: {
       command(operationId: string, command: V2Command): Promise<V2CommandTerminalFrame>;
@@ -29,7 +29,15 @@ export type CommandSessionProvider = {
       state: string;
     };
   }>;
-};
+}
+
+interface CommandCapabilitiesInput {
+  correlationId(): string;
+  correlations: CommandCorrelationStore;
+  now(): number;
+  operationId(): string;
+  sessions: CommandSessionProvider;
+}
 
 export class CommandCapabilities {
   readonly #sessions: CommandSessionProvider;
@@ -39,13 +47,7 @@ export class CommandCapabilities {
   readonly #now: () => number;
   readonly #active = new Map<string, Promise<CommandSettlement>>();
 
-  constructor(input: {
-    correlationId(): string;
-    correlations: CommandCorrelationStore;
-    now(): number;
-    operationId(): string;
-    sessions: CommandSessionProvider;
-  }) {
+  constructor(input: CommandCapabilitiesInput) {
     this.#sessions = input.sessions;
     this.#operationId = input.operationId;
     this.#correlationId = input.correlationId;

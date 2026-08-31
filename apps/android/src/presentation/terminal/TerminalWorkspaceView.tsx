@@ -1,0 +1,103 @@
+import type { ReactNode } from "react";
+import { ScrollView, StyleSheet, TextInput, View } from "react-native";
+
+import { colors, radii, spacing } from "../../theme";
+import { ProductText } from "../text/ProductText";
+
+interface TerminalWorkspaceViewProps {
+  input: string;
+  live: boolean;
+  onInputChange(value: string): void;
+  onSubmit(): void;
+  openControl: ReactNode;
+  output: string;
+  state: string;
+}
+
+export function TerminalWorkspaceView({
+  input,
+  live,
+  onInputChange,
+  onSubmit,
+  openControl,
+  output,
+  state,
+}: TerminalWorkspaceViewProps): React.JSX.Element {
+  return (
+    <View style={styles.root}>
+      <View style={styles.toolbar}>
+        <View style={[styles.dot, live ? styles.dotLive : styles.dotIdle]} />
+        <ProductText style={styles.tab} weight="semibold">
+          Terminal
+        </ProductText>
+        <ProductText style={styles.state} tone="muted">
+          {state}
+        </ProductText>
+        {openControl}
+      </View>
+      <ScrollView accessibilityLabel="Terminal output" style={styles.output}>
+        <ProductText selectable style={styles.terminalText}>
+          {output === "" ? "Terminal output will appear here." : output}
+        </ProductText>
+      </ScrollView>
+      <View style={styles.inputRow}>
+        <ProductText style={styles.prompt} tone="success">
+          ›
+        </ProductText>
+        <TextInput
+          accessibilityLabel="Terminal input"
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={live}
+          onChangeText={onInputChange}
+          onSubmitEditing={onSubmit}
+          placeholder="Enter a command"
+          placeholderTextColor={colors.textDim}
+          returnKeyType="send"
+          style={styles.input}
+          value={input}
+        />
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  dot: { borderRadius: 4, height: 8, width: 8 },
+  dotIdle: { backgroundColor: colors.textDim },
+  dotLive: { backgroundColor: colors.green },
+  input: {
+    color: colors.text,
+    flex: 1,
+    fontFamily: "monospace",
+    fontSize: 13,
+    minHeight: 46,
+    minWidth: 0,
+    paddingVertical: spacing.xs,
+  },
+  inputRow: {
+    alignItems: "center",
+    backgroundColor: colors.code,
+    borderColor: colors.border,
+    borderRadius: radii.small,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: spacing.xs,
+    margin: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  output: { backgroundColor: colors.code, flex: 1, padding: spacing.sm },
+  prompt: { fontFamily: "monospace", fontSize: 18, lineHeight: 22 },
+  root: { backgroundColor: colors.code, flex: 1, minHeight: 0 },
+  state: { fontSize: 11, marginLeft: "auto", textTransform: "capitalize" },
+  tab: { fontSize: 13, lineHeight: 18 },
+  terminalText: { color: "#D7FBD7", fontFamily: "monospace", fontSize: 13, lineHeight: 19 },
+  toolbar: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: 52,
+    paddingHorizontal: spacing.sm,
+  },
+});

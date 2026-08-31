@@ -8,10 +8,10 @@ import {
   type AuthenticatedTransportLease,
 } from "../../../native/authenticated-transport-lease.native";
 
-export type SharedConnectionLease = {
+export interface SharedConnectionLease {
   lease: AuthenticatedTransportLease;
   syncTransport: SyncV2TransportLease;
-};
+}
 
 /** Narrows the shared opaque lease to the argument-free Sync capability. */
 export async function acquireSharedConnectionLease(

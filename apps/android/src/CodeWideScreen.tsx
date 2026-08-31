@@ -99,6 +99,11 @@ import { usePerformanceExperiment, usePerformanceExperiments } from "./data/perf
 import { beginNavigationFrameTrace, endNavigationFrameTrace } from "./native/performance-metrics";
 import { humanPairingError } from "./data/pairing-error";
 import { resolveNewThreadRoute } from "./data/new-thread-routing";
+import { UiGenerationControl } from "./boot/UiGenerationControl";
+import {
+  subscribeUiGeneration,
+  uiGenerationSnapshot,
+} from "./boot/uiGenerationResource";
 import type { NewChatWorkspaceMode, WorkspaceSupport } from "./data/workspace-creation";
 import {
   createNativePortForwardId,
@@ -10061,6 +10066,11 @@ function ConnectionSettings({
   onRemoveAccountProfile?(connectionId: string, profileId: string): Promise<AccountPoolSnapshot>;
 }) {
   const appLock = useAppLockSettings();
+  const uiGeneration = useSyncExternalStore(
+    subscribeUiGeneration,
+    uiGenerationSnapshot,
+    uiGenerationSnapshot,
+  );
   const [appLockSaving, setAppLockSaving] = useState(false);
   const [appLockError, setAppLockError] = useState<string | null>(null);
   const changeAppLock = async (enabled: boolean) => {
@@ -10107,6 +10117,25 @@ function ConnectionSettings({
                 {appLockError !== null && <Text style={styles.errorText}>{appLockError}</Text>}
               </View>
             )}
+            <View style={styles.settingsSection} testID="ui-generation-setting">
+              <Text style={styles.settingsSectionTitle}>Interface</Text>
+              <View style={styles.securitySettingRow}>
+                <View style={styles.securitySettingIcon}>
+                  <Ionicons name="layers-outline" size={21} color={colors.textMuted} />
+                </View>
+                <View style={styles.controlOptionText}>
+                  <Text style={styles.menuActionTitle}>Interface generation</Text>
+                  <Text style={styles.menuActionSubtitle}>
+                    Switch between Legacy and V2. The app restarts after selection.
+                  </Text>
+                </View>
+              </View>
+              {uiGeneration.status === "ready" ? (
+                <UiGenerationControl current={uiGeneration.generation} />
+              ) : (
+                <ActivityIndicator accessibilityLabel="Loading interface generation" color={colors.textMuted} size="small" />
+              )}
+            </View>
             {connections.length === 0 && <Text style={styles.emptyText}>No saved servers</Text>}
             {connections.map((connection) => (
               <ConnectionRowEditor

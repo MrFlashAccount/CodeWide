@@ -6,7 +6,9 @@ import type {
 } from "../commandCorrelation";
 import { ObservableResource } from "./resource";
 
-type RetainedLock = { operationId: string };
+interface RetainedLock {
+  operationId: string;
+}
 
 /** Content-free projection of unresolved activations for one feature scope. */
 export class CommandCorrelationResource extends ObservableResource<CommandCorrelation[]> {

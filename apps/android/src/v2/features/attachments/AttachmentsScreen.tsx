@@ -1,10 +1,14 @@
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
-import { ResourceListView } from "../../ui/resources/ResourceListView";
+import { ResourceListView } from "../../../presentation/resources/ResourceListView";
 import { V2QueryBoundary } from "../shared/V2QueryBoundary";
 import { formatBytes } from "./attachmentDisplay";
 
-export function AttachmentsScreen({ owner }: { owner: QualifiedThread }): React.JSX.Element {
+interface AttachmentsScreenProps {
+  owner: QualifiedThread;
+}
+
+export function AttachmentsScreen({ owner }: AttachmentsScreenProps): React.JSX.Element {
   return (
     <V2QueryBoundary
       query={{ kind: "thread.resources", scope: "session", threadId: owner.threadId }}

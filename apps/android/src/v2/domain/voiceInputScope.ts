@@ -1,1 +1,4 @@
-export type VoiceInputScope = { id: string; kind: "composer" | "review" | "generic" };
+export interface VoiceInputScope {
+  id: string;
+  kind: "composer" | "review" | "generic";
+}

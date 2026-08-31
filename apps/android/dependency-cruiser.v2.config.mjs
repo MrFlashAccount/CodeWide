@@ -28,11 +28,12 @@ const config = {
     {
       name: "v2-routes-do-not-import-legacy",
       severity: "error",
-      comment: "V2 routes compose V2 features and cannot reach into legacy Android source.",
+      comment:
+        "V2 routes compose V2 features and cannot reach into legacy Android source. The exact shared react/useEvent.ts callback primitive is runtime-neutral and required by the repository callback contract.",
       from: {
         path: "^app/(?!_layout[.]tsx$|index[.]tsx$|legacy[.]tsx$|pair[.]tsx$|thread[.]tsx$)",
       },
-      to: { path: "^src/(?!(?:boot|v2)(?:/|$))" },
+      to: { path: "^src/(?!(?:boot|v2)(?:/|$)|react/useEvent[.]ts$)" },
     },
     {
       name: "v2-domain-is-runtime-neutral",
@@ -63,6 +64,16 @@ const config = {
         "Reusable V2 UI receives props and capabilities and cannot own application or I/O layers.",
       from: { path: "^src/v2/ui/" },
       to: { path: "^(?:app/|src/v2/(?:application|features|infrastructure)/)" },
+    },
+    {
+      name: "shared-presentation-is-runtime-neutral",
+      severity: "error",
+      comment:
+        "Shared presentation receives display props and capabilities and cannot depend on either application generation or I/O.",
+      from: { path: "^src/presentation/" },
+      to: {
+        path: "^(?:app/|src/(?:boot|data|native|v2)/|node_modules/(?:@op-engineering/op-sqlite|expo-(?:crypto|file-system|linking|secure-store|sqlite))(?:/|$))",
+      },
     },
     {
       name: "v2-infrastructure-does-not-depend-on-presentation",

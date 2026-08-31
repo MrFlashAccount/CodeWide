@@ -1,4 +1,4 @@
-export type V2PublicFailure = {
+export interface V2PublicFailure {
   code:
     | "offline"
     | "notFound"
@@ -9,4 +9,4 @@ export type V2PublicFailure = {
     | "durableUnsettled";
   message: string;
   retryable: boolean;
-};
+}

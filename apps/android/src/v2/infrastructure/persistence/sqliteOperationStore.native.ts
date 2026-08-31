@@ -15,10 +15,10 @@ const UNAPPROVED_CONTEXT_TABLE = "codewide_sync_v2_operations_by_context";
 const LEGACY_TABLE = "codewide_sync_v2_operations";
 const DURABLE_CREATE_LOG = "CodeWide Sync V2 durable operation committed";
 
-export type DurableCreateObservation = {
+export interface DurableCreateObservation {
   commandKind: V2Command["kind"];
   operationId: string;
-};
+}
 
 /** Durable operation identities partitioned by stable saved-server id. */
 export function createNativeSyncV2OperationStore(): V2OperationStore {

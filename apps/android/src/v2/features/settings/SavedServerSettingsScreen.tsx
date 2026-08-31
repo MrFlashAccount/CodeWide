@@ -4,15 +4,17 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+
+interface SavedServerSettingsScreenProps {
+  onDeleted(): void | Promise<void>;
+  savedServerId: SavedServerId;
+}
 
 export function SavedServerSettingsScreen({
   onDeleted,
   savedServerId,
-}: {
-  onDeleted(): void | Promise<void>;
-  savedServerId: SavedServerId;
-}): React.JSX.Element {
+}: SavedServerSettingsScreenProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const [resource] = useState(() => runtime.savedServerConnection(savedServerId));
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);

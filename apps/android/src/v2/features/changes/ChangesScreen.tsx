@@ -1,9 +1,13 @@
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ActionPressable } from "../../ui/actions/ActionPressable";
-import { ResourceListView } from "../../ui/resources/ResourceListView";
+import { ResourceListView } from "../../../presentation/resources/ResourceListView";
 import { V2QueryBoundary } from "../shared/V2QueryBoundary";
 
-export function ChangesScreen({ owner }: { owner: QualifiedThread }): React.JSX.Element {
+interface ChangesScreenProps {
+  owner: QualifiedThread;
+}
+
+export function ChangesScreen({ owner }: ChangesScreenProps): React.JSX.Element {
   return (
     <V2QueryBoundary
       query={{ kind: "thread.resources", scope: "session", threadId: owner.threadId }}

@@ -12,21 +12,21 @@ import type {
 } from "../../application/ports/voiceTransport";
 import { acquireSharedConnectionLease } from "../connection/sharedConnectionAdapter.native";
 
-type NativeVoiceCapture = {
+interface NativeVoiceCapture {
   start(captureId: string): Promise<{ numChannels: number; sampleRate: number }>;
   stop(): void;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
-};
+}
 
-type NativeCaptureEvent = {
+interface NativeCaptureEvent {
   captureId: string;
   data?: string;
   numChannels?: number;
   sampleRate?: number;
   samplesPerChannel?: number;
   type: "batch" | "stopped";
-};
+}
 
 const EVENT = "codewideV2VoiceCapture";
 

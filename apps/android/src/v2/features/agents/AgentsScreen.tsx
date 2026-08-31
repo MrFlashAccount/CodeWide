@@ -5,11 +5,19 @@ import { ActivityIndicator, Text } from "react-native";
 import { useV2Runtime } from "../../V2Application";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
-import { WorkspaceView } from "../../ui/layouts/WorkspaceView";
-import { ResourceListView } from "../../ui/resources/ResourceListView";
+import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+import { ResourceListView } from "../../../presentation/resources/ResourceListView";
 import { agentDestination } from "../navigation/routeDestinations";
 
-export function AgentsScreen({ owner }: { owner: QualifiedThread }): React.JSX.Element {
+interface AgentsScreenProps {
+  owner: QualifiedThread;
+}
+
+interface ProjectedAgentsProps extends AgentsScreenProps {
+  resource: ProjectionResource;
+}
+
+export function AgentsScreen({ owner }: AgentsScreenProps): React.JSX.Element {
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.projection(owner.savedServerId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -23,13 +31,7 @@ export function AgentsScreen({ owner }: { owner: QualifiedThread }): React.JSX.E
   return <ProjectedAgents owner={owner} resource={opened.value} />;
 }
 
-function ProjectedAgents({
-  owner,
-  resource,
-}: {
-  owner: QualifiedThread;
-  resource: ProjectionResource;
-}): React.JSX.Element {
+function ProjectedAgents({ owner, resource }: ProjectedAgentsProps): React.JSX.Element {
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
   const projection = snapshot.value.projections.live ?? snapshot.value.projections.retained;
   const agents = (projection?.catalog ?? []).filter(

@@ -1,7 +1,18 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEvent } from "../../react/useEvent";
 
 export type VoiceCaptureState = "idle" | "starting" | "recording" | "finishing" | "retry" | "error";
+
+interface VoiceCaptureControlsProps {
+  disabled: boolean;
+  message: string | null;
+  onCancel(): Promise<void>;
+  onFailure(): void;
+  onFinish(): Promise<void>;
+  onStart(): Promise<void>;
+  state: VoiceCaptureState;
+}
 
 /** Protocol-neutral Voice controls; callers own audio, authority, and transcript state. */
 export function VoiceCaptureControls({
@@ -12,17 +23,9 @@ export function VoiceCaptureControls({
   onFinish,
   onStart,
   state,
-}: {
-  disabled: boolean;
-  message: string | null;
-  onCancel(): Promise<void>;
-  onFailure(): void;
-  onFinish(): Promise<void>;
-  onStart(): Promise<void>;
-  state: VoiceCaptureState;
-}): React.JSX.Element {
+}: VoiceCaptureControlsProps): React.JSX.Element {
   const [pending, setPending] = useState(false);
-  const run = (action: () => Promise<void>): void => {
+  const run = useEvent((action: () => Promise<void>): void => {
     if (pending) return;
     setPending(true);
     void action().then(
@@ -32,7 +35,10 @@ export function VoiceCaptureControls({
         setPending(false);
       },
     );
-  };
+  });
+  const cancel = useEvent(() => run(onCancel));
+  const finish = useEvent(() => run(onFinish));
+  const start = useEvent(() => run(onStart));
   const recording = state === "recording" || state === "finishing";
   return (
     <View style={styles.root}>
@@ -43,17 +49,19 @@ export function VoiceCaptureControls({
             accessibilityRole="button"
             accessibilityState={{ busy: pending || state === "finishing", disabled: pending }}
             disabled={pending}
-            onPress={() => void run(onFinish)}
+            onPress={finish}
             style={styles.finish}
           >
-            <Text style={styles.label}>{state === "finishing" ? "Finishing voice…" : "Finish voice"}</Text>
+            <Text style={styles.label}>
+              {state === "finishing" ? "Finishing voice…" : "Finish voice"}
+            </Text>
           </Pressable>
           <Pressable
             accessibilityLabel="Cancel V2 voice input"
             accessibilityRole="button"
             accessibilityState={{ busy: pending, disabled: pending }}
             disabled={pending}
-            onPress={() => void run(onCancel)}
+            onPress={cancel}
             style={styles.cancel}
           >
             <Text style={styles.label}>Cancel voice</Text>
@@ -63,16 +71,24 @@ export function VoiceCaptureControls({
         <Pressable
           accessibilityLabel="Start V2 voice input"
           accessibilityRole="button"
-          accessibilityState={{ busy: pending || state === "starting", disabled: disabled || pending }}
+          accessibilityState={{
+            busy: pending || state === "starting",
+            disabled: disabled || pending,
+          }}
           disabled={disabled || pending}
-          onPress={() => void run(onStart)}
+          onPress={start}
           style={[styles.start, (disabled || pending) && styles.disabled]}
         >
-          <Text style={styles.label}>{state === "starting" ? "Starting voice…" : "Voice input"}</Text>
+          <Text style={styles.label}>
+            {state === "starting" ? "Starting voice…" : "Voice input"}
+          </Text>
         </Pressable>
       )}
       {message === null ? null : (
-        <Text accessibilityLiveRegion="polite" style={state === "error" ? styles.error : styles.status}>
+        <Text
+          accessibilityLiveRegion="polite"
+          style={state === "error" ? styles.error : styles.status}
+        >
           {message}
         </Text>
       )}
@@ -81,12 +97,34 @@ export function VoiceCaptureControls({
 }
 
 const styles = StyleSheet.create({
-  cancel: { backgroundColor: "#3f3f46", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11 },
+  cancel: {
+    backgroundColor: "#3f3f46",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
   disabled: { opacity: 0.5 },
   error: { color: "#ff8b8b" },
-  finish: { backgroundColor: "#0369a1", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11 },
+  finish: {
+    backgroundColor: "#0369a1",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
   label: { color: "#fafafa", fontWeight: "700" },
-  root: { alignItems: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
-  start: { backgroundColor: "#14532d", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11 },
+  root: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+  },
+  start: {
+    backgroundColor: "#14532d",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
   status: { color: "#e4e4e7", flexBasis: "100%" },
 });

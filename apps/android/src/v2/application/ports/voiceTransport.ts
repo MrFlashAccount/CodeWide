@@ -10,17 +10,19 @@ export type VoiceTransportEvent =
   | { type: "cancelled" }
   | { type: "error" };
 
-export type VoiceSessionHandle = {
+export interface VoiceSessionHandle {
   cancel(): Promise<void>;
   finish(): Promise<void>;
-};
+}
+
+export interface VoiceTransportStartInput {
+  audience: SavedServerId;
+  onEvent(event: VoiceTransportEvent): void;
+  scope: VoiceInputScope;
+  sourceGeneration: V2U64;
+  thread: QualifiedThread | null;
+}
 
 export interface VoiceTransport {
-  start(input: {
-    audience: SavedServerId;
-    onEvent(event: VoiceTransportEvent): void;
-    scope: VoiceInputScope;
-    sourceGeneration: V2U64;
-    thread: QualifiedThread | null;
-  }): Promise<VoiceSessionHandle>;
+  start(input: VoiceTransportStartInput): Promise<VoiceSessionHandle>;
 }

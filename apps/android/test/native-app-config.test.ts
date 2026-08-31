@@ -695,6 +695,9 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('import Constants from "expo-constants"');
     expect(screen).toContain('Version {Constants.expoConfig?.version ?? "unknown"}');
     expect(screen).toContain("settingsVersion: { color: colors.textDim");
+    expect(screen).toContain('testID="ui-generation-setting"');
+    expect(screen).toContain("<UiGenerationControl current={uiGeneration.generation} />");
+    expect(screen).toContain("Switch between Legacy and V2. The app restarts after selection.");
     expect(appPackage.dependencies.uniwind).toBe("1.10.1");
     expect(rootLayout).toContain("<HeroUIRoot>");
     expect(heroUiRoot).toContain('from "heroui-native/provider-raw"');
