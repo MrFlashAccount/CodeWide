@@ -1,0 +1,27 @@
+{
+  "extends": ["expo/tsconfig.base", "@sergeigarin/hygene/tsconfig.base.json"],
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "DOM"],
+    "jsx": "react-jsx",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "noPropertyAccessFromIndexSignature": false,
+    "customConditions": ["react-native"],
+    "moduleSuffixes": [".native", ""],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/boot/**/*.ts",
+    "src/boot/**/*.tsx",
+    "src/v2/**/*.ts",
+    "src/v2/**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  "exclude": ["app/_layout.tsx", "app/index.tsx", "app/legacy.tsx", "app/pair.tsx", "app/thread.tsx"]
+}

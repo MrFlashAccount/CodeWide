@@ -11,3 +11,5 @@ export * from "./transport";
 export * from "./validate-client";
 export * from "./aggregate";
 export * from "./deletion-store";
+export * from "./terminal";
+export * from "./voice";

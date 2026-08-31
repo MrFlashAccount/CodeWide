@@ -165,6 +165,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   @ReactMethod
   fun claimPairing(
+    savedServerId: String,
     endpoint: String,
     pairingToken: String,
     deviceName: String,
@@ -172,6 +173,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     promise: Promise
   ) {
     try {
+      require(savedServerId.isNotBlank()) { "Saved server id is required" }
       validateEndpoint(endpoint)
       require(pairingToken.length in 32..512) { "Pairing token is invalid" }
       require(deviceName.length in 1..80 && !deviceName.any { it.code < 32 || it.code == 127 }) { "Device name is invalid" }
@@ -181,19 +183,18 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         .replaceFirst("wss://", "https://")
         .replaceFirst("ws://", "http://")
         .replace("/v1/sync", "/v1/auth")
-      val bootstrap = InnerTlsTransport.bootstrap(endpoint, identityPin)
-      val claimUrl = InnerTlsTransport.url(bootstrap, innerClaimUrl)
-      val publicKeySpki = DeviceKeyStore.publicKeySpki()
+      val claimUrl = InnerTlsTransport.url(endpoint, innerClaimUrl)
+      val publicKeySpki = DeviceKeyStore.publicKeySpki(savedServerId)
       val requestBody = JSONObject()
         .put("action", "register")
         .put("pairingToken", pairingToken)
         .put("deviceName", deviceName)
         .put("publicKeySpki", publicKeySpki)
-        .put("proof", DeviceKeyStore.signPairingClaim(pairingToken, deviceName, publicKeySpki))
+        .put("proof", DeviceKeyStore.signPairingClaim(savedServerId, pairingToken, deviceName, publicKeySpki))
         .toString()
         .toRequestBody(JSON_MEDIA_TYPE)
       val request = Request.Builder().url(claimUrl).post(requestBody).build()
-      val client = InnerTlsTransport.client(pairingHttpClient, bootstrap)
+      val client = InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin)
       client.newCall(request).enqueue(object : Callback {
         override fun onFailure(call: Call, error: IOException) {
           promise.reject("PAIRING_NETWORK_FAILED", "Secure pairing connection failed", error)
@@ -281,6 +282,23 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
+  /** Generation-neutral catalog surface: no endpoint, credential, pin, device id, or tunnel state. */
+  @ReactMethod
+  fun listSavedServerSummaries(promise: Promise) {
+    try {
+      val result = Arguments.createArray()
+      NativeSessionCredentialsStore(context).list().forEach { saved ->
+        result.pushMap(Arguments.createMap().apply {
+          putString("savedServerId", saved.id)
+          putBoolean("enabled", saved.enabled)
+        })
+      }
+      promise.resolve(result)
+    } catch (error: Throwable) {
+      promise.reject("LIST_SAVED_SERVERS_FAILED", "Could not read saved server catalog", error)
+    }
+  }
+
   @ReactMethod
   fun purgeLegacyDerivedStorage(promise: Promise) {
     try {
@@ -322,6 +340,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       if (service != null) service.close(connectionId)
       else {
         NativeSessionCredentialsStore(context).remove(connectionId)
+        DeviceKeyStore.delete(connectionId)
         NativeFrameStore(context).deleteConnection(connectionId)
         val store = NativeCommandStore(context)
         try { store.deleteConnection(connectionId) } finally { store.close() }
@@ -402,6 +421,63 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     } catch (error: Throwable) {
       promise.reject("COMPANION_HTTP_PROXY_FAILED", "Could not open the pinned companion HTTP transport", error)
     }
+  }
+
+  @ReactMethod
+  fun acquireAuthenticatedTransportLease(savedServerId: String, promise: Promise) {
+    try {
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      promise.resolve(service.acquireAuthenticatedTransportLease(savedServerId))
+    } catch (error: Throwable) {
+      promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "Could not acquire the authenticated transport lease", error)
+    }
+  }
+
+  @ReactMethod
+  fun openAuthenticatedDuplex(leaseHandle: String, channelId: String, purpose: String, promise: Promise) {
+    try {
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      service.openAuthenticatedDuplex(leaseHandle, channelId, purpose)
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("AUTHENTICATED_CHANNEL_UNAVAILABLE", "Could not open the authenticated channel", error)
+    }
+  }
+
+  @ReactMethod
+  fun sendAuthenticatedDuplex(leaseHandle: String, channelId: String, data: String, promise: Promise) {
+    try {
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      service.sendAuthenticatedDuplex(leaseHandle, channelId, data)
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("AUTHENTICATED_CHANNEL_SEND_FAILED", "Could not send through the authenticated channel", error)
+    }
+  }
+
+  @ReactMethod
+  fun closeAuthenticatedDuplex(leaseHandle: String, channelId: String, code: Double, reason: String) {
+    CodexConnectionService.instance?.closeAuthenticatedDuplex(leaseHandle, channelId, code.toInt(), reason)
+  }
+
+  @ReactMethod
+  fun authenticatedRequest(leaseHandle: String, purpose: String, input: String, promise: Promise) {
+    try {
+      val service = CodexConnectionService.instance ?: error("Connection service is not running")
+      service.authenticatedRequest(leaseHandle, purpose, input) { result ->
+        result.fold(
+          onSuccess = promise::resolve,
+          onFailure = { promise.reject("AUTHENTICATED_REQUEST_FAILED", "Authenticated request failed", it) },
+        )
+      }
+    } catch (error: Throwable) {
+      promise.reject("AUTHENTICATED_REQUEST_FAILED", "Authenticated request failed", error)
+    }
+  }
+
+  @ReactMethod
+  fun releaseAuthenticatedTransportLease(leaseHandle: String) {
+    CodexConnectionService.instance?.releaseAuthenticatedTransportLease(leaseHandle)
   }
 
   @ReactMethod
@@ -1168,6 +1244,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     const val AUDIO_EVENT = "CodeWideAudioEvent"
     const val PORT_FORWARD_EVENT = "CodeWidePortForwardEvent"
     const val TERMINAL_EVENT = "CodeWideTerminalEvent"
+    const val AUTHENTICATED_TRANSPORT_EVENT = "CodeWideAuthenticatedTransportEvent"
     // Native capture frames are intentionally smaller than network batches.
     // A 250 ms first frame makes a normal tap-to-stop recording observable
     // without turning each callback into its own remote request; JavaScript
@@ -1240,6 +1317,16 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           if (!reactContext.hasActiveReactInstance()) return@runOnUiQueueThread
           reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit(TERMINAL_EVENT, data)
+        }
+      }
+    }
+
+    fun emitAuthenticatedTransportEvent(data: String) {
+      contexts.forEach { reactContext ->
+        reactContext.runOnUiQueueThread {
+          if (!reactContext.hasActiveReactInstance()) return@runOnUiQueueThread
+          reactContext.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit(AUTHENTICATED_TRANSPORT_EVENT, data)
         }
       }
     }

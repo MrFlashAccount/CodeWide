@@ -38,6 +38,7 @@ class CodexConnectionService : Service() {
   private lateinit var portForwardManager: NativePortForwardManager
   private lateinit var terminalSessionManager: NativeTerminalSessionManager
   private lateinit var companionHttpProxy: NativeCompanionHttpProxy
+  private lateinit var authenticatedTransportLeases: AuthenticatedTransportLeaseRegistry
   private lateinit var connectivityManager: ConnectivityManager
   private val handler = Handler(Looper.getMainLooper())
   private val journalThread = HandlerThread("CodeWideJournal")
@@ -75,7 +76,6 @@ class CodexConnectionService : Service() {
 
   override fun onCreate() {
     super.onCreate()
-    instance = this
     journalThread.start()
     journalHandler = Handler(journalThread.looper)
     frameStore = NativeFrameStore(this)
@@ -84,6 +84,12 @@ class CodexConnectionService : Service() {
     portForwardManager = NativePortForwardManager(this, credentialsStore, httpClient)
     terminalSessionManager = NativeTerminalSessionManager(credentialsStore, credentialHttpClient, httpClient, cacheDir)
     companionHttpProxy = NativeCompanionHttpProxy(credentialsStore)
+    authenticatedTransportLeases = AuthenticatedTransportLeaseRegistry(
+      credentialsStore,
+      credentialHttpClient,
+      httpClient,
+      CodeWideModule::emitAuthenticatedTransportEvent,
+    )
     connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     activeDefaultNetwork = connectivityManager.activeNetwork
     createNotificationChannel()
@@ -94,6 +100,9 @@ class CodexConnectionService : Service() {
       open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256)
     }
     portForwardManager.restore()
+    // Publish only a fully initialized service. The volatile write also makes
+    // every initialized store visible to React Native wake calls on its thread.
+    instance = this
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -112,6 +121,7 @@ class CodexConnectionService : Service() {
     sessions.clear()
     portForwardManager.close()
     terminalSessionManager.destroy()
+    authenticatedTransportLeases.closeAll()
     companionHttpProxy.close()
     runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
     activeDefaultNetwork = null
@@ -143,6 +153,30 @@ class CodexConnectionService : Service() {
   }
 
   fun companionHttpOrigin(connectionId: String): String = companionHttpProxy.origin(connectionId)
+
+  internal fun acquireAuthenticatedTransportLease(savedServerId: String): String =
+    authenticatedTransportLeases.acquire(savedServerId)
+
+  internal fun openAuthenticatedDuplex(handle: String, channelId: String, purpose: String) =
+    authenticatedTransportLeases.openDuplex(handle, channelId, purpose)
+
+  internal fun openAuthenticatedDuplex(
+    handle: String,
+    channelId: String,
+    purpose: String,
+    observer: (AuthenticatedDuplexEvent) -> Unit,
+  ) = authenticatedTransportLeases.openDuplex(handle, channelId, purpose, observer)
+
+  internal fun sendAuthenticatedDuplex(handle: String, channelId: String, data: String) =
+    authenticatedTransportLeases.send(handle, channelId, data)
+
+  internal fun closeAuthenticatedDuplex(handle: String, channelId: String, code: Int, reason: String) =
+    authenticatedTransportLeases.closeChannel(handle, channelId, code, reason)
+
+  internal fun authenticatedRequest(handle: String, purpose: String, input: String, completion: (Result<String>) -> Unit) =
+    authenticatedTransportLeases.request(handle, purpose, input, completion)
+
+  internal fun releaseAuthenticatedTransportLease(handle: String) = authenticatedTransportLeases.release(handle)
 
   fun acknowledgeThrough(connectionId: String, projectionCursor: Long) {
     journalHandler.post { frameStore.acknowledgeThrough(connectionId, projectionCursor) }
@@ -288,8 +322,10 @@ class CodexConnectionService : Service() {
   }
 
   fun close(connectionId: String) {
+    authenticatedTransportLeases.closeSavedServer(connectionId)
     sessions.remove(connectionId)?.close("connection_disabled")
     credentialsStore.remove(connectionId)
+    DeviceKeyStore.delete(connectionId)
     frameStore.deleteConnection(connectionId)
     commandStore.deleteConnection(connectionId)
     portForwardManager.removeConnection(connectionId)
@@ -299,6 +335,7 @@ class CodexConnectionService : Service() {
   }
 
   fun suspend(connectionId: String) {
+    authenticatedTransportLeases.closeSavedServer(connectionId)
     sessions.remove(connectionId)?.close("connection_disabled")
     portForwardManager.suspendConnection(connectionId)
     terminalSessionManager.closeConnection(connectionId)

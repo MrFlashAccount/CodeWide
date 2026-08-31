@@ -1,0 +1,31 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "babel": false,
+  "dependency-cruiser": false,
+  "eslint": false,
+  "expo": false,
+  "metro": false,
+  "typescript": false,
+  "entry": [
+    "app/**/*.tsx",
+    "src/boot/**/*.{ts,tsx}",
+    "src/v2/**/*.{ts,tsx}",
+    "src/v2/infrastructure/connection/sharedConnectionAdapter.native.ts",
+    "src/v2/infrastructure/connection/sharedConnectionAdapter.web.ts",
+    "!app/_layout.tsx",
+    "!app/index.tsx",
+    "!app/legacy/**",
+    "!app/pair.tsx",
+    "!app/thread.tsx"
+  ],
+  "project": [
+    "app/**/*.{ts,tsx}",
+    "src/boot/**/*.{ts,tsx}",
+    "!app/_layout.tsx",
+    "!app/index.tsx",
+    "!app/legacy/**",
+    "!app/pair.tsx",
+    "!app/thread.tsx",
+    "src/v2/**/*.{ts,tsx}"
+  ]
+}

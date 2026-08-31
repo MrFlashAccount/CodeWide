@@ -30,6 +30,7 @@ internal object SessionCredentialClient {
     mintWithClient(
       InnerTlsTransport.client(baseClient, saved),
       InnerTlsTransport.url(saved, saved.endpoint),
+      saved.id,
       saved.token,
       callback,
     )
@@ -38,6 +39,7 @@ internal object SessionCredentialClient {
   private fun mintWithClient(
     client: OkHttpClient,
     endpoint: String,
+    savedServerId: String,
     capabilityToken: String,
     callback: (Result<MintedSessionCredential>) -> Unit,
   ) {
@@ -65,7 +67,7 @@ internal object SessionCredentialClient {
               val body = JSONObject(it.body?.string().orEmpty())
               val challengeId = body.getString("challengeId")
               val challenge = body.getString("challenge")
-              val signature = DeviceKeyStore.signChallenge(challenge)
+              val signature = DeviceKeyStore.signChallenge(savedServerId, challenge)
               mintProvenSession(client, "$origin/v1/auth", capabilityToken, challengeId, signature, callback)
             } catch (error: Throwable) {
               callback(Result.failure(error))

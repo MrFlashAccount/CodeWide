@@ -586,6 +586,12 @@ impl SyncHub {
         }
     }
 
+    /// Returns the internal transcription service for the closed V2 Voice adapter.
+    #[must_use]
+    pub(crate) fn v2_dictation(&self) -> Option<Arc<DictationService>> {
+        self.dictation()
+    }
+
     fn files(&self) -> Option<Arc<FileService>> {
         match self.files.read() {
             Ok(slot) => slot.clone(),

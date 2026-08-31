@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Android V2 active architecture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d10;
+        --panel: #14181d;
+        --panel-2: #1a2027;
+        --line: #303945;
+        --text: #f2f5f7;
+        --muted: #a5b0bc;
+        --green: #41d17d;
+        --orange: #f0a04b;
+        --red: #ff6b6b;
+        --blue: #65a8ff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.5 system-ui, sans-serif;
+      }
+      main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 72px; }
+      h1 { margin: 0 0 8px; font-size: clamp(32px, 5vw, 54px); line-height: 1.05; }
+      h2 { margin: 0 0 16px; font-size: 24px; }
+      h3 { margin: 0 0 8px; font-size: 18px; }
+      p { margin: 8px 0; }
+      code { color: #c8dcff; }
+      .lead { color: var(--muted); max-width: 760px; font-size: 18px; }
+      .badge {
+        display: inline-block;
+        margin-bottom: 18px;
+        padding: 5px 10px;
+        border: 1px solid #286b46;
+        border-radius: 999px;
+        color: var(--green);
+        font-weight: 700;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+      }
+      section {
+        margin-top: 28px;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+      }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+      .card { padding: 16px; border-radius: 12px; background: var(--panel-2); }
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(130px, 1fr));
+        gap: 10px;
+        overflow-x: auto;
+      }
+      .node {
+        position: relative;
+        min-width: 130px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel-2);
+      }
+      .node:not(:last-child)::after {
+        content: "→";
+        position: absolute;
+        right: -10px;
+        top: 50%;
+        z-index: 1;
+        color: var(--blue);
+        transform: translate(50%, -50%);
+      }
+      .rule { border-left: 3px solid var(--blue); padding-left: 12px; }
+      .ok { color: var(--green); }
+      .excluded { color: var(--orange); }
+      .danger { color: var(--red); }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { padding: 11px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+      th { color: var(--muted); font-size: 13px; text-transform: uppercase; }
+      ul, ol { margin: 10px 0 0; padding-left: 22px; }
+      li + li { margin-top: 6px; }
+      footer { margin-top: 28px; color: var(--muted); }
+      @media (max-width: 760px) {
+        main { width: min(100% - 20px, 1120px); padding-top: 24px; }
+        section { padding: 18px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="badge">Current implementation</span>
+      <h1>Android V2 active architecture</h1>
+      <p class="lead">
+        This document describes the code that is active now: Expo Router screens, strict server
+        projection, durable commands, exact correlation, and the authenticated Companion transport.
+      </p>
+
+      <section>
+        <h2>System boundary</h2>
+        <div class="flow" aria-label="V2 request and data flow">
+          <div class="node"><strong>Expo routes</strong><br /><code>[savedServerId]</code>, <code>[threadId]</code></div>
+          <div class="node"><strong>Feature screens</strong><br />Render projection and intent</div>
+          <div class="node"><strong>V2 application</strong><br />Resources and commands</div>
+          <div class="node"><strong>Sync client</strong><br />Operation store and protocol</div>
+          <div class="node"><strong>Companion</strong><br />Authenticated lease and authority</div>
+          <div class="node"><strong>App Server</strong><br />Observer and thread execution</div>
+        </div>
+        <p class="rule">
+          Terminal, files, media, ports, changes, and messages are application resources. They use
+          the shared authenticated transport lease; they do not own independent network authority.
+        </p>
+      </section>
+
+      <section>
+        <h2>Route ownership</h2>
+        <table>
+          <thead><tr><th>Route identity</th><th>Meaning</th><th>Owner</th></tr></thead>
+          <tbody>
+            <tr><td><code>savedServerId</code></td><td>One saved server connection</td><td>Server and account screens</td></tr>
+            <tr><td><code>threadId</code></td><td>One authoritative server thread</td><td>Conversation and thread resources</td></tr>
+            <tr><td><code>profileId</code></td><td>One port profile within a saved server</td><td>Port profile screen</td></tr>
+          </tbody>
+        </table>
+        <p>V1 and V2 share saved credentials and transport security, but V2 owns its own routes, state, and protocol behavior.</p>
+      </section>
+
+      <section>
+        <h2>Strict projection</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Render authority</h3>
+            <p>Conversation content comes from the server projection. A locally invented turn is never inserted into the timeline.</p>
+          </div>
+          <div class="card">
+            <h3>Reconnect</h3>
+            <p>Resources reopen the authenticated session, refresh the bounded snapshot, and resume live updates.</p>
+          </div>
+          <div class="card">
+            <h3>Ordering</h3>
+            <p>Refresh generations prevent an older overlapping response from replacing newer authority.</p>
+          </div>
+          <div class="card">
+            <h3>Recovery</h3>
+            <p>Subscription retry remains active through long outages and refreshes after a live subscription is restored.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Durable command rule</h2>
+        <ol>
+          <li>The UI acquires a local activation lock before command allocation.</li>
+          <li>The operation store commits the command and its stable operation id.</li>
+          <li><strong>The store commit is the only retry boundary.</strong></li>
+          <li>Post-commit observers are diagnostics only; their failure cannot reject or duplicate the committed command.</li>
+          <li>The client rechecks the live transport lease and epoch immediately before transition and send.</li>
+          <li>Reconnect or process restart continues recovery with the same operation id.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Exact correlation and settlement</h2>
+        <p>
+          Correlation is content-free and scoped by saved server, surface, and optional thread. A
+          lock is released only by an authoritative typed settlement with the same correlation id
+          and operation id.
+        </p>
+        <table>
+          <thead><tr><th>Settlement</th><th>UI behavior</th><th>Retry authority</th></tr></thead>
+          <tbody>
+            <tr><td><code>notCreated</code></td><td>Unlock and show a bounded retry message</td><td class="ok">Retry allowed</td></tr>
+            <tr><td><code>durableUnsettled</code></td><td>Keep the active draft locked; after remount show separate unresolved status without attaching it to the fresh draft</td><td class="excluded">Retry blocked for that activation</td></tr>
+            <tr><td>Matching completed operation</td><td>Clear the draft and navigate or remain on the authoritative thread</td><td class="ok">Settled</td></tr>
+            <tr><td>Failed, expired, indeterminate, or mismatched completion</td><td>Keep the draft and require an explicit edit before a new activation</td><td class="excluded">Immediate duplicate blocked</td></tr>
+          </tbody>
+        </table>
+        <p class="rule">List absence is not proof of non-creation. A terminal-looking state without an exact receipt remains durable and unsettled.</p>
+      </section>
+
+      <section>
+        <h2>Security and test boundary</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Production</h3>
+            <p>V2 uses the same secure saved-server identity and authenticated shared transport as the rest of the app.</p>
+          </div>
+          <div class="card">
+            <h3>Emulator faulting</h3>
+            <p>Fault control exists only in a Cargo-feature-gated Companion build and requires authentication. Android production has no E2E control hook.</p>
+          </div>
+          <div class="card">
+            <h3>Lease ownership</h3>
+            <p>Requests are registered and released within bounded race-safe ownership. Reinitialization moves authority without parallel client projection ownership.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Implemented UI surfaces</h2>
+        <p>
+          Server list and pairing, confirmed saved-server deletion, thread list, new thread,
+          conversation with Voice input, model/settings controls, attachments, changes, image and
+          video preview, terminal, ports, and agents use the V2 route and runtime boundaries.
+        </p>
+        <h3>Explicit exclusions</h3>
+        <ul>
+          <li class="excluded">Physical-device Voice capture/cancel, Terminal interruption, and deletion-across-restart proof remain user-run follow-up evidence.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Verification contract</h2>
+        <ul>
+          <li>Sync-client and Companion unit and integration suites.</li>
+          <li>Strict TypeScript, OXLint, OXFMT, dependency, KNIP, Kotlin, Rustfmt, Clippy, and security gates.</li>
+          <li>Rendered New Thread and Conversation tests for pending, rejection, typed completion, indeterminate, expired, and failed outcomes.</li>
+          <li>Six-scenario Appium emulator E2E with causal event ordering and screen/video evidence.</li>
+        </ul>
+        <p>
+          The executable suite is <code>scripts/test-android-e2e</code>. Detailed architecture is
+          also maintained in <code>docs/android-v2-client-architecture.md</code>.
+        </p>
+      </section>
+
+      <footer>Android V2 · active code and verified boundaries</footer>
+    </main>
+  </body>
+</html>

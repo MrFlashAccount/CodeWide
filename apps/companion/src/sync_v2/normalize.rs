@@ -541,14 +541,16 @@ fn thread_settings(value: &Value) -> Result<ThreadSettings, V2Error> {
         Some("untrusted") => ApprovalPolicy::Untrusted,
         _ => return Err(V2Error::source_unavailable("unrecognized approval setting")),
     };
-    let sandbox = match value
-        .pointer("/sandbox/type")
-        .or_else(|| value.get("sandbox"))
-        .and_then(Value::as_str)
-    {
-        Some("read-only") => Sandbox::ReadOnly,
-        Some("workspace-write") => Sandbox::WorkspaceWrite,
-        Some("danger-full-access") => Sandbox::Unrestricted,
+    let sandbox = match (
+        value.pointer("/sandbox/type").and_then(Value::as_str),
+        value.get("sandbox").and_then(Value::as_str),
+    ) {
+        (Some("read-only" | "readOnly"), _) | (None, Some("read-only")) => Sandbox::ReadOnly,
+        (Some("workspace-write" | "workspaceWrite"), _) | (None, Some("workspace-write")) => {
+            Sandbox::WorkspaceWrite
+        }
+        (Some("danger-full-access" | "dangerFullAccess"), _)
+        | (None, Some("danger-full-access")) => Sandbox::Unrestricted,
         _ => return Err(V2Error::source_unavailable("unrecognized sandbox setting")),
     };
     Ok(ThreadSettings {
@@ -706,7 +708,7 @@ mod tests {
             "model": "gpt-5.6",
             "reasoningEffort": "high",
             "approvalPolicy": "never",
-            "sandbox": {"type": "danger-full-access"}
+            "sandbox": {"type": "dangerFullAccess"}
         });
         let summary = thread_summary_from_response(&response)
             .unwrap_or_else(|error| panic!("response settings should normalize: {error:?}"));

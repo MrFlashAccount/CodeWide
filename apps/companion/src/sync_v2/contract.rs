@@ -1,14 +1,56 @@
 //! Runtime validators compiled directly from the executable V2 contract.
 
-use std::sync::LazyLock;
+use std::{collections::HashMap, sync::LazyLock};
 
 use jsonschema::Validator;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 const CONTRACT: &str = include_str!("../../contract/v2.json");
 
-static CLIENT: LazyLock<Validator> = LazyLock::new(|| validator("clientFrame"));
-static SERVER: LazyLock<Validator> = LazyLock::new(|| validator("serverFrame"));
+const RUNTIME_DEFINITIONS: &[&str] = &[
+    "clientFrame",
+    "serverFrame",
+    "query",
+    "command",
+    "action",
+    "queryResult",
+    "commandResult",
+    "actionResult",
+    "operationReceipt",
+    "inputBlock",
+    "item",
+    "pendingRequest",
+    "projectionChange",
+    "threadUpdate",
+    "queueMutation",
+    "accountChange",
+    "requestResolution",
+    "v2Error",
+    "fileLocation",
+    "previewLocation",
+    "contentLocation",
+    "mediaMaterializeRequest",
+    "mediaMaterializeResponse",
+    "portDescriptor",
+    "portsResponse",
+    "tunnelCreateRequest",
+    "tunnelCreateResponse",
+    "terminalClientRecord",
+    "terminalServerRecord",
+    "voiceInputScope",
+    "voiceClientRecord",
+    "voiceServerRecord",
+    "transportError",
+];
+
+static DEFINITIONS: LazyLock<HashMap<&'static str, Validator>> = LazyLock::new(|| {
+    RUNTIME_DEFINITIONS
+        .iter()
+        .copied()
+        .map(|definition| (definition, validator(definition)))
+        .collect()
+});
 
 #[expect(
     clippy::panic,
@@ -26,12 +68,38 @@ fn validator(definition: &str) -> Validator {
 
 #[must_use]
 pub fn valid_client(value: &Value) -> bool {
-    CLIENT.is_valid(value)
+    valid_definition("clientFrame", value)
 }
 
 #[must_use]
 pub fn valid_server(value: &Value) -> bool {
-    SERVER.is_valid(value)
+    valid_definition("serverFrame", value)
+}
+
+#[must_use]
+pub(crate) fn valid_definition(definition: &str, value: &Value) -> bool {
+    DEFINITIONS
+        .get(definition)
+        .is_some_and(|validator| validator.is_valid(value))
+}
+
+pub(crate) fn parse_definition<T: DeserializeOwned>(definition: &str, text: &str) -> Result<T, ()> {
+    let value: Value = serde_json::from_str(text).map_err(|_| ())?;
+    if !valid_definition(definition, &value) {
+        return Err(());
+    }
+    serde_json::from_value(value).map_err(|_| ())
+}
+
+pub(crate) fn serialize_definition<T: Serialize>(
+    definition: &str,
+    value: &T,
+) -> Result<String, ()> {
+    let value = serde_json::to_value(value).map_err(|_| ())?;
+    if !valid_definition(definition, &value) {
+        return Err(());
+    }
+    serde_json::to_string(&value).map_err(|_| ())
 }
 
 #[cfg(test)]

@@ -2,8 +2,8 @@
   "expo": {
     "name": "CodeWide",
     "slug": "codewide",
-    "version": "0.2.94",
-    "runtimeVersion": "0.2.94-native-107",
+    "version": "0.2.96",
+    "runtimeVersion": "0.2.96-native-109",
     "updates": {
       "enabled": true,
       "url": "https://updates.example.invalid/api/updates",
@@ -48,7 +48,7 @@
     ],
     "android": {
       "package": "dev.codexremote.app",
-      "versionCode": 107,
+      "versionCode": 109,
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
@@ -59,7 +59,7 @@
         "monochromeImage": "./assets/monochrome-icon.png",
         "backgroundColor": "#101011"
       },
-      "predictiveBackGestureEnabled": true
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "bundler": "metro",

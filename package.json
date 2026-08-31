@@ -4,24 +4,6 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "packageManager": "pnpm@10.14.0",
-  "engines": {
-    "node": ">=24"
-  },
-  "pnpm": {
-    "overrides": {
-      "uuid@<11.1.1": "11.1.1"
-    },
-    "patchedDependencies": {
-      "@legendapp/list@3.3.5": "patches/@legendapp__list@3.3.5.patch",
-      "expo-asset@57.0.9": "patches/expo-asset@57.0.9.patch",
-      "heroui-native@1.0.8": "patches/heroui-native@1.0.8.patch",
-      "expo-libghostty@0.8.1": "patches/expo-libghostty@0.8.1.patch",
-      "expo-file-system@57.0.2": "patches/expo-file-system@57.0.2.patch",
-      "@expo/ui@57.0.9": "patches/@expo__ui@57.0.9.patch",
-      "@quickdrawjs/react-native@0.2.0": "patches/@quickdrawjs__react-native@0.2.0.patch"
-    }
-  },
   "scripts": {
     "build": "pnpm -r build && pnpm build:companion",
     "typecheck": "pnpm typecheck:scripts && pnpm -r typecheck",
@@ -36,7 +18,10 @@
     "brand:generate": "node scripts/generate-codewide-assets.mjs",
     "soak:sync": "tsx scripts/soak-sync.ts",
     "test:android-device": "tsx scripts/android-device-gate.ts",
+    "test:android:e2e": "./scripts/test-android-e2e",
     "android:gradle": "sh scripts/android-gradle.sh",
+    "validate:sync:v2": "pnpm --filter @codewide/sync-client contract:check && pnpm exec vitest run packages/sync-client/test/v2-*.test.ts && cargo test -p codewide-companion sync_v2::conformance --lib && cargo test -p codewide-companion --test v2_contract && cargo test -p codewide-companion --test v2_live_transport",
+    "validate:android:v2": "pnpm validate:sync:v2 && pnpm exec vitest run apps/android/test/authenticated-transport-lease.test.ts apps/android/test/sync-v2-lifecycle.test.ts apps/android/test/sync-v2-session-registry.test.ts apps/android/test/v2-feature-surfaces.test.ts apps/android/test/v2-command-correlation.test.ts apps/android/test/v2-command-correlation-resource.test.ts apps/android/test/v2-e2e-fault-isolation.test.ts apps/android/test/sync-v2-native-stores.test.ts && pnpm --filter @codewide/android test:v2:render && pnpm --filter @codewide/android validate:v2 && sh ./scripts/android-gradle.sh :app:compileDebugKotlin :app:testDebugUnitTest --tests 'dev.codewide.app.remote.AuthenticatedTransportLeaseTest' --tests 'dev.codewide.app.remote.SyncV2ContractGeneratedTest' --tests 'dev.codewide.app.remote.V2TerminalFrameCodecTest' --tests 'dev.codewide.app.remote.V2VoiceRecorderLeaseTest'",
     "dev:android": "sh scripts/android-fast-refresh.sh",
     "ota:publish": "tsx scripts/release-android.ts ota",
     "ota:publish:raw": "tsx scripts/publish-android-ota.ts",
@@ -45,15 +30,44 @@
     "test:ota": "python3 scripts/test-ota-server.py",
     "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",
-    "release:gate": "pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
+    "release:gate": "pnpm validate:sync:v2 && pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
     "test:watch": "vitest",
     "protocol:generate": "codex app-server generate-ts --experimental --out packages/codex-protocol/src/generated/0.147.0 && codex app-server generate-json-schema --experimental --out packages/codex-protocol/schema/0.147.0"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
     "@types/node": "^24.0.0",
+    "@types/ws": "8.18.1",
+    "appium": "3.7.0",
     "tsx": "^4.20.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "webdriverio": "9.31.4",
+    "ws": "8.21.3"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "pnpm": {
+    "packageExtensions": {
+      "dependency-cruiser@18.2.0": {
+        "dependencies": {
+          "typescript": "6.0.3"
+        }
+      }
+    },
+    "overrides": {
+      "uuid@<11.1.1": "11.1.1"
+    },
+    "patchedDependencies": {
+      "@legendapp/list@3.3.5": "patches/@legendapp__list@3.3.5.patch",
+      "expo-asset@57.0.9": "patches/expo-asset@57.0.9.patch",
+      "heroui-native@1.0.8": "patches/heroui-native@1.0.8.patch",
+      "expo-libghostty@0.8.1": "patches/expo-libghostty@0.8.1.patch",
+      "expo-file-system@57.0.2": "patches/expo-file-system@57.0.2.patch",
+      "@expo/ui@57.0.9": "patches/@expo__ui@57.0.9.patch",
+      "@quickdrawjs/react-native@0.2.0": "patches/@quickdrawjs__react-native@0.2.0.patch"
+    }
   }
 }

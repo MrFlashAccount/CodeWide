@@ -543,7 +543,7 @@ const styles = StyleSheet.create({
   footnote: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 5 },
   footnoteMarker: { color: colors.accent, fontSize: 10, lineHeight: 15 },
   footnoteBody: { minWidth: 0, flex: 1, gap: 3 },
-  codeContainer: { minWidth: 0, maxWidth: "100%", backgroundColor: colors.code, borderRadius: radii.small, borderWidth: 1, borderColor: colors.border, padding: 7, gap: 4 },
+  codeContainer: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", backgroundColor: colors.code, borderRadius: radii.small, borderWidth: 1, borderColor: colors.border, padding: 7, gap: 4 },
   codeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   codeLanguage: { color: colors.textDim, fontSize: 9, textTransform: "uppercase" },
   copyHint: { color: colors.textDim, fontSize: 9 },

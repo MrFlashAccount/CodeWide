@@ -23,16 +23,17 @@ use super::{
     domain::SnapshotLimits,
     epoch::{ConnectionEpoch, EpochPhase, QueueError},
     ledger::{LedgerError, OperationLedger},
-    protocol::{ClientFrame, ReinitializeReason, ServerFrame, V2Error},
+    protocol::{ClientFrame, ReinitializeReason, ServerFrame},
     scalar::{Id, U64},
     source::{
         CoordinatorEvent, CoordinatorReceiver, CoordinatorRecvError, ReceivedCoordinatorEvent,
-        SemanticSource, SourceInvalidationReason, ensure_generation,
+        SemanticSource, SourceInvalidationReason,
     },
-    wire::{close, recv_frame, send},
+    wire::{close, recv_frame},
 };
 
 mod command;
+mod control;
 mod query;
 
 const DEFAULT_SOURCE_DEADLINE: Duration = Duration::from_secs(15);
@@ -49,6 +50,9 @@ pub struct SyncV2Runtime {
     context_lifecycles:
         Arc<tokio::sync::Mutex<HashMap<AuthenticatedContextKey, Arc<ContextLifecycle>>>>,
     operation_locks: Arc<tokio::sync::Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
+    live_epoch_contexts: Arc<tokio::sync::Mutex<HashMap<Id, AuthenticatedContextKey>>>,
+    #[cfg(feature = "e2e-command-fault")]
+    e2e_command_fault: Arc<super::e2e_fault::E2ECommandFaultControl>,
 }
 
 struct ContextLifecycle {
@@ -92,6 +96,9 @@ impl SyncV2Runtime {
             blocked_contexts: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
             context_lifecycles: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             operation_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            live_epoch_contexts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            #[cfg(feature = "e2e-command-fault")]
+            e2e_command_fault: Arc::new(super::e2e_fault::E2ECommandFaultControl::default()),
         })
     }
 
@@ -106,6 +113,41 @@ impl SyncV2Runtime {
         self.source_deadline = source;
         self.send_deadline = send;
         self
+    }
+
+    #[cfg(feature = "e2e-command-fault")]
+    /// Arms the deterministic command fault used by the isolated E2E harness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when another non-terminal E2E command fault is already armed.
+    pub async fn arm_e2e_command_fault(
+        &self,
+        fault_id: String,
+    ) -> Result<super::E2ECommandFaultStatus, &'static str> {
+        self.e2e_command_fault.arm(fault_id).await
+    }
+
+    #[cfg(feature = "e2e-command-fault")]
+    pub async fn e2e_command_fault_status(
+        &self,
+        fault_id: &str,
+    ) -> Option<super::E2ECommandFaultStatus> {
+        self.e2e_command_fault.status(fault_id).await
+    }
+
+    #[cfg(feature = "e2e-command-fault")]
+    pub async fn release_e2e_command_fault(
+        &self,
+        fault_id: &str,
+    ) -> Option<super::E2ECommandFaultStatus> {
+        self.e2e_command_fault.release(fault_id).await
+    }
+
+    /// Returns the current upstream generation used by generation-bound resources.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.source.generation()
     }
 
     /// Purges retained state for a revoked authenticated device context.
@@ -299,7 +341,6 @@ impl SyncV2Runtime {
                         Ok(Err(error)) => {
                             warn!(
                                 code = ?error.code,
-                                internal_reason = %error.message,
                                 "Sync V2 intent installation failed"
                             );
                             self.reinitialize(
@@ -332,7 +373,6 @@ impl SyncV2Runtime {
                         Ok(Err(error)) => {
                             warn!(
                                 code = ?error.code,
-                                internal_reason = %error.message,
                                 "Sync V2 authoritative snapshot failed"
                             );
                             self.reinitialize(
@@ -406,6 +446,7 @@ impl SyncV2Runtime {
                     );
                     let snapshot_frame = ServerFrame::Snapshot {
                         version: 2,
+                        source_generation: U64::new(generation),
                         epoch_id: epoch_id.clone(),
                         revision: commit.revision.clone(),
                         watermark: commit.watermark,
@@ -416,18 +457,15 @@ impl SyncV2Runtime {
                         included_tail,
                         limits: self.limits,
                     };
-                    let encoded = match serde_json::to_vec(&snapshot_frame) {
-                        Ok(encoded) => encoded,
-                        Err(error) => {
-                            warn!(%error, "Sync V2 snapshot serialization failed");
-                            self.reinitialize(
-                                &mut socket,
-                                &mut epoch,
-                                ReinitializeReason::SnapshotFailed,
-                            )
-                            .await;
-                            continue;
-                        }
+                    let Ok(encoded) = serde_json::to_vec(&snapshot_frame) else {
+                        warn!("Sync V2 snapshot serialization failed");
+                        self.reinitialize(
+                            &mut socket,
+                            &mut epoch,
+                            ReinitializeReason::SnapshotFailed,
+                        )
+                        .await;
+                        continue;
                     };
                     if !self
                         .context_is_current(&context, &lifecycle, lifecycle_revision)
@@ -510,16 +548,14 @@ impl SyncV2Runtime {
                 changed = lifecycle_changes.changed() => {
                     let _ = changed;
                     close(socket, 1008, "authenticated_context_revoked").await;
-                    self.source.coordinator().remove(&epoch.id);
-                    epoch.close();
+                    self.cleanup(epoch).await;
                     return false;
                 }
                 change = recv_authorization_change(authorization_changes, authorization.device_id()) => {
                     if let Some(reason) = change {
                         let _ = self.purge_context(context).await;
                         close(socket, 1008, reason).await;
-                        self.source.coordinator().remove(&epoch.id);
-                        epoch.close();
+                        self.cleanup(epoch).await;
                         return false;
                     }
                 }
@@ -546,6 +582,9 @@ impl SyncV2Runtime {
                             return false;
                         }
                         epoch.enter_live();
+                        self.mark_epoch_live(context, &epoch.id).await;
+                        #[cfg(feature = "e2e-command-fault")]
+                        self.e2e_command_fault.hold_next_live().await;
                         if self.send_frame(
                             socket,
                             &ServerFrame::Live {
@@ -566,8 +605,7 @@ impl SyncV2Runtime {
                     {
                         drop(dispatch_guard);
                         close(socket, 1008, "authenticated_context_revoked").await;
-                        self.source.coordinator().remove(&epoch.id);
-                        epoch.close();
+                        self.cleanup(epoch).await;
                         return false;
                     }
                     match event {
@@ -609,171 +647,20 @@ impl SyncV2Runtime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn handle_frame(
-        &self,
-        socket: &mut WebSocket,
-        authorization: &AuthorizationContext,
-        context: &AuthenticatedContextKey,
-        lifecycle: &ContextLifecycle,
-        lifecycle_revision: u64,
-        epoch: &mut ConnectionEpoch,
-        frame: ClientFrame,
-    ) -> bool {
-        let _dispatch_guard = lifecycle.dispatch.read().await;
-        if !self
-            .context_is_current(context, lifecycle, lifecycle_revision)
-            .await
-        {
-            close(socket, 1008, "authenticated_context_revoked").await;
-            return false;
-        }
-        match frame {
-            ClientFrame::Ping { nonce } => self
-                .send_frame(socket, &ServerFrame::Pong { nonce })
-                .await
-                .is_ok(),
-            ClientFrame::SnapshotCommitted {
-                epoch_id,
-                revision,
-                watermark,
-            } if epoch.phase == EpochPhase::AwaitingCommit => {
-                if !epoch.validates_commit(&epoch_id, &revision, watermark) {
-                    self.reinitialize(socket, epoch, ReinitializeReason::InvalidCommit)
-                        .await;
-                    return true;
-                }
-                epoch.begin_drain();
-                true
-            }
-            ClientFrame::Query { request_id, query } if epoch.phase == EpochPhase::Live => {
-                self.handle_query(socket, authorization, context, epoch, request_id, query)
-                    .await
-            }
-            ClientFrame::Command {
-                request_id,
-                operation_id,
-                command,
-            } if epoch.phase == EpochPhase::Live => {
-                self.handle_command(
-                    socket,
-                    authorization,
-                    context,
-                    epoch.generation,
-                    request_id,
-                    operation_id,
-                    command,
-                )
-                .await
-            }
-            ClientFrame::Action { request_id, action } if epoch.phase == EpochPhase::Live => {
-                let frame = match ensure_generation(self.source.as_ref(), epoch.generation) {
-                    Ok(()) => match tokio::time::timeout(
-                        self.source_deadline,
-                        self.source
-                            .resolve(action, authorization, context, epoch.generation),
-                    )
-                    .await
-                    {
-                        Ok(Ok(result)) => ServerFrame::ActionCompleted { request_id, result },
-                        Ok(Err(error)) => ServerFrame::ActionFailed { request_id, error },
-                        Err(_) => ServerFrame::ActionFailed {
-                            request_id,
-                            error: V2Error::source_unavailable("action source deadline exceeded"),
-                        },
-                    },
-                    Err(error) => ServerFrame::ActionFailed { request_id, error },
-                };
-                self.send_frame(socket, &frame).await.is_ok()
-            }
-            _ => {
-                close(socket, 1008, "frame_not_legal_in_current_state").await;
-                false
-            }
-        }
-    }
-
-    async fn reinitialize(
-        &self,
-        socket: &mut WebSocket,
-        epoch: &mut ConnectionEpoch,
-        reason: ReinitializeReason,
-    ) {
-        let epoch_id = epoch.id.clone();
-        let (queued_events, queued_bytes) = epoch.queued_usage();
-        info!(
-            epoch_id = epoch_id.as_str(),
-            ?reason,
-            queued_events,
-            queued_bytes,
-            "Sync V2 epoch reinitializing"
-        );
-        let _ = self
-            .send_frame(socket, &ServerFrame::Reinitialize { epoch_id, reason })
-            .await;
-        self.cleanup(epoch).await;
-    }
-
-    fn initialization_failure_reason(&self) -> ReinitializeReason {
-        if self.source.is_available() {
-            ReinitializeReason::SnapshotFailed
-        } else {
-            ReinitializeReason::UpstreamUnavailable
-        }
-    }
-
-    async fn cleanup(&self, epoch: &mut ConnectionEpoch) {
-        let _ =
-            tokio::time::timeout(self.source_deadline, self.source.remove_intent(&epoch.id)).await;
-        self.source.coordinator().remove(&epoch.id);
-        epoch.close();
-    }
-
-    async fn flush_changes(
-        &self,
-        socket: &mut WebSocket,
-        epoch: &mut ConnectionEpoch,
-    ) -> Result<(), ()> {
-        while let Some(change) = epoch.next_queued_change() {
-            self.send_frame(
-                socket,
-                &ServerFrame::Change {
-                    epoch_id: epoch.id.clone(),
-                    watermark: change.watermark,
-                    change: change.change,
-                },
-            )
-            .await?;
-            epoch.confirm_queued_change();
-        }
-        Ok(())
-    }
-
-    async fn send_frame(&self, socket: &mut WebSocket, frame: &ServerFrame) -> Result<(), ()> {
-        let failure = match frame {
-            ServerFrame::QueryFailed { error, .. } => Some(("queryFailed", error)),
-            ServerFrame::CommandRejected { error, .. } => Some(("commandRejected", error)),
-            ServerFrame::CommandExpired { error, .. } => Some(("commandExpired", error)),
-            ServerFrame::CommandFailed { error, .. } => Some(("commandFailed", error)),
-            ServerFrame::CommandIndeterminate { error, .. } => {
-                Some(("commandIndeterminate", error))
-            }
-            ServerFrame::ActionFailed { error, .. } => Some(("actionFailed", error)),
-            _ => None,
-        };
-        if let Some((frame_type, error)) = failure {
+    async fn mark_epoch_live(&self, context: &AuthenticatedContextKey, epoch_id: &Id) {
+        let mut epochs = self.live_epoch_contexts.lock().await;
+        let concurrent = epochs
+            .values()
+            .filter(|candidate| *candidate == context)
+            .count();
+        if concurrent > 0 {
             warn!(
-                frame_type,
-                code = ?error.code,
-                recovery = ?error.recovery,
-                internal_reason = %error.message,
-                "Sync V2 request failed"
+                epoch_id = epoch_id.as_str(),
+                concurrent_epochs = concurrent + 1,
+                "multiple Sync V2 epochs are Live for one authenticated device"
             );
         }
-        tokio::time::timeout(self.send_deadline, send(socket, frame))
-            .await
-            .map_err(|_| ())?
-            .map_err(|_| ())
+        epochs.insert(epoch_id.clone(), context.clone());
     }
 }
 

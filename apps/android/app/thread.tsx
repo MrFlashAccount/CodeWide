@@ -1,6 +1,6 @@
 import { Redirect } from "expo-router";
 
-/** Keep notification deeplinks on the one workspace/store owner. */
+/** Temporary legacy-only alias. */
 export default function ThreadRoute() {
-  return <Redirect href="/" />;
+  return <Redirect href="/legacy" />;
 }

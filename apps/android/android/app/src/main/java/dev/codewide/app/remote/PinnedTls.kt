@@ -6,6 +6,7 @@ import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.X509ExtendedKeyManager
 import javax.net.ssl.X509TrustManager
 import javax.net.SocketFactory
 import okhttp3.OkHttpClient
@@ -48,13 +49,14 @@ internal object PinnedTls {
     endpoint: String,
     pin: String,
     tunnelSocketFactory: SocketFactory,
+    keyManager: X509ExtendedKeyManager?,
   ): OkHttpClient {
     val uri = URI(endpoint)
     require(uri.scheme == "ws" || uri.scheme == "wss") { "Endpoint must use ws or wss" }
     require(PIN_PATTERN.matches(pin)) { "Inner TLS identity pin is invalid" }
     val trustManager = PinTrustManager(pin)
     val sslContext = SSLContext.getInstance("TLSv1.3")
-    sslContext.init(null, arrayOf(trustManager), null)
+    sslContext.init(keyManager?.let { arrayOf<javax.net.ssl.KeyManager>(it) }, arrayOf(trustManager), null)
     val expectedHost = requireNotNull(uri.host)
     return base.newBuilder()
       .socketFactory(tunnelSocketFactory)
@@ -68,11 +70,11 @@ internal object PinnedTls {
       .build()
   }
 
-  fun innerTlsSocketFactory(pin: String): SSLSocketFactory {
+  fun innerTlsSocketFactory(pin: String, keyManager: X509ExtendedKeyManager?): SSLSocketFactory {
     require(PIN_PATTERN.matches(pin)) { "Inner TLS identity pin is invalid" }
     val trustManager = PinTrustManager(pin)
     return Tls13SocketFactory(SSLContext.getInstance("TLSv1.3").apply {
-      init(null, arrayOf(trustManager), null)
+      init(keyManager?.let { arrayOf<javax.net.ssl.KeyManager>(it) }, arrayOf(trustManager), null)
     }.socketFactory)
   }
 

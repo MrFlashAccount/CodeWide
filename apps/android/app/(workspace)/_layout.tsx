@@ -1,5 +1,7 @@
-import { Slot } from "expo-router";
+import { Stack } from "expo-router";
 
-export default function WorkspaceLayout() {
-  return <Slot />;
+export const unstable_settings = { initialRouteName: "servers" };
+
+export default function WorkspaceLayout(): React.JSX.Element {
+  return <Stack screenOptions={{ headerShown: false }} />;
 }

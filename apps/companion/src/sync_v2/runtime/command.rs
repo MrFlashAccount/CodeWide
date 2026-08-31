@@ -93,6 +93,7 @@ impl SyncV2Runtime {
         };
         info!(
             command_kind,
+            operation_id = operation_id.as_str(),
             admission = admission_name,
             "Sync V2 command admission"
         );

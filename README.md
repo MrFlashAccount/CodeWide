@@ -477,3 +477,35 @@ App Standby and process recreation, checks the real accessibility geometry for
 and writes a mode-`0600` evidence bundle under ignored `test-results/`. An
 upgrade run additionally requires `--suite upgrade --previous-apk <old.apk>` and
 fails if the package UID or first-install identity changes.
+
+Run the complete Android-to-Observer E2E suite with one command:
+
+```sh
+pnpm test:android:e2e
+```
+
+The runner uses Appium with the pinned UiAutomator2 driver. It builds an
+isolated `dev.codexremote.app.e2e` APK, starts Metro and an isolated Companion,
+pairs through the real UI, creates a real Observer thread, sends a foreground
+message, verifies a mobile-originated turn while Android is backgrounded,
+injects another turn directly through the App Server while Android is
+backgrounded, and verifies process-death recovery. It records every scenario
+and writes videos, Appium/Metro/Companion logs, screenshots on failure, and
+`evidence.json` under `test-results/android-e2e/<run-id>/`. Open the generated
+`report.html` to play every recording inline without downloading the MP4 files.
+
+For the V2 command/reinitialize race, the runner builds only its isolated
+Companion with the non-default `e2e-command-fault` Cargo feature. It arms the
+one-shot controller through the mode-`0600` private Unix control socket, performs
+one real Appium activation, waits until the authentic SourceGap has been sent
+and the next live boundary is held, then releases it. The evidence records
+monotonic milestones and requires exactly one structured Companion admission
+with the recovered operation ID before the App Server result is accepted.
+Production Android code has no corresponding fault hook, and an ordinary
+Companion build does not contain the controller or its private routes.
+
+The command requires a running Codex App Server control socket. It uses the
+single connected emulator, or starts the first configured AVD when none is
+running. Set `CODEWIDE_E2E_SERIAL`, `CODEWIDE_E2E_AVD`, or
+`CODEWIDE_E2E_APP_SERVER_SOCKET` to select those resources explicitly. Pass
+`--skip-build` only while iterating on an already built E2E APK and Companion.

@@ -2,6 +2,7 @@ import "react-native-gesture-handler";
 
 import { useFonts } from "expo-font";
 import { Stack, type ErrorBoundaryProps } from "expo-router";
+import { useEffect, useSyncExternalStore } from "react";
 import { StatusBar } from "expo-status-bar";
 import { StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -21,6 +22,12 @@ import {
 } from "../src/ui/global-error-store";
 import { HeroUIRoot } from "../src/ui/HeroUIRoot";
 import { AppLockGate } from "../src/ui/AppLockGate";
+import {
+  loadUiGeneration,
+  subscribeUiGeneration,
+  uiGenerationSnapshot,
+} from "../src/boot/uiGenerationResource";
+import { V2Application } from "../src/v2/V2Application";
 
 installGlobalErrorHandler();
 try {
@@ -67,6 +74,12 @@ function RootApplication() {
     "RobotoFlex-Medium": require("../assets/fonts/RobotoFlex-Medium.ttf"),
     "RobotoFlex-SemiBold": require("../assets/fonts/RobotoFlex-SemiBold.ttf"),
   });
+  const generation = useSyncExternalStore(
+    subscribeUiGeneration,
+    uiGenerationSnapshot,
+    uiGenerationSnapshot,
+  );
+  useEffect(loadUiGeneration, []);
 
   if (!fontsLoaded && fontError === null) {
     return (
@@ -88,7 +101,11 @@ function RootApplication() {
             <PerformanceExperimentProvider>
               <AppLockGate>
                 <StatusBar style="light" />
-                <Stack screenOptions={{ headerShown: false }} />
+                <V2Application
+                  active={generation.status === "ready" && generation.generation === "v2"}
+                >
+                  <Stack screenOptions={{ headerShown: false }} />
+                </V2Application>
               </AppLockGate>
             </PerformanceExperimentProvider>
           </HeroUIRoot>

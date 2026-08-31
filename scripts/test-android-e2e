@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+echo "CodeWide Android E2E uses a real Observer and can take several minutes."
+echo "The runner builds Android and Companion, starts Appium, records video, and reports only meaningful progress."
+
+exec pnpm exec tsx scripts/android-e2e.ts "$@"

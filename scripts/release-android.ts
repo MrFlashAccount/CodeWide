@@ -2,7 +2,7 @@ import { createHash, createPrivateKey, createPublicKey, X509Certificate } from "
 import { constants } from "node:fs";
 import { access, chmod, copyFile, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { get as httpGet } from "node:http";
 
@@ -196,8 +196,12 @@ async function verifyApkBuild(expected: AndroidReleaseVersion): Promise<void> {
   if (release?.versionName !== expected.versionName || release.versionCode !== expected.versionCode) {
     throw new Error(`APK metadata mismatch: expected ${expected.versionName}/${expected.versionCode}, received ${release?.versionName ?? "missing"}/${release?.versionCode ?? "missing"}`);
   }
-  const apksigner = await resolveApkSigner();
-  await run(apksigner, ["verify", "--verbose", "--print-certs", apkPath]);
+  const [apksigner, javaHome] = await Promise.all([resolveApkSigner(), resolveJavaHome()]);
+  const javaBin = join(javaHome, "bin");
+  await run(apksigner, ["verify", "--verbose", "--print-certs", apkPath], {
+    JAVA_HOME: javaHome,
+    PATH: process.env.PATH === undefined ? javaBin : `${javaBin}${delimiter}${process.env.PATH}`,
+  });
 }
 
 async function archiveReleaseApk(version: AndroidReleaseVersion, sha256: string): Promise<string> {
@@ -314,7 +318,26 @@ async function resolveApkSigning(): Promise<{ storeFile: string; storePassword: 
 }
 
 async function validateApkSigning(signing: { storeFile: string; storePassword: string; keyAlias: string }): Promise<void> {
-  await run("keytool", ["-list", "-keystore", signing.storeFile, "-storepass", signing.storePassword, "-alias", signing.keyAlias], {}, false);
+  const keytool = await resolveKeytool();
+  await run(keytool, ["-list", "-keystore", signing.storeFile, "-storepass", signing.storePassword, "-alias", signing.keyAlias], {}, false);
+}
+
+async function resolveKeytool(): Promise<string> {
+  return join(await resolveJavaHome(), "bin/keytool");
+}
+
+async function resolveJavaHome(): Promise<string> {
+  const javaHomes = [
+    process.env.JAVA_HOME,
+    join(homedir(), ".gradle/jdks/eclipse_adoptium-17-amd64-linux.2"),
+    join(homedir(), "android-studio/jbr"),
+    "/opt/android-studio/jbr",
+  ];
+  for (const javaHome of javaHomes) {
+    if (javaHome === undefined || javaHome.trim() === "") continue;
+    if (await isExecutable(join(javaHome, "bin/java")) && await isExecutable(join(javaHome, "bin/keytool"))) return javaHome;
+  }
+  throw new Error("Android release JDK was not found in JAVA_HOME or the standard CodeWide JDK directories");
 }
 
 async function firstPrivateFile(candidates: Array<string | undefined>, label: string): Promise<string> {

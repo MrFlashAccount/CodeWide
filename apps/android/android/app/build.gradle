@@ -12,8 +12,8 @@ def releaseKeyAlias = System.getenv("CODEWIDE_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
 def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL") ?: "https://updates.example.invalid/api/updates"
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
-def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "107").toInteger()
-def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.94"
+def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "109").toInteger()
+def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.96"
 def nativeCodeAssetsDir = file("$buildDir/generated/nativeCodeAssets")
 def textMateGrammarDir = file("$projectRoot/node_modules/tm-grammars/grammars")
 def nativeCodeLanguageManifest = file("$projectRoot/src/rendering/native-code-languages.json")
@@ -78,7 +78,7 @@ react {
     //   The list of variants to that are debuggable. For those we're going to
     //   skip the bundling of the JS bundle and the assets. By default is just 'debug'.
     //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
-    // debuggableVariants = ["liteDebug", "prodDebug"]
+    debuggableVariants = ["debug", "e2e"]
 
     /* Bundling */
     //   A list containing the node command and its flags. Default is just 'node'.
@@ -184,6 +184,14 @@ android {
             applicationIdSuffix ".dev"
             versionNameSuffix "-dev"
             resValue "string", "app_name", "CodeWide Dev"
+        }
+        e2e {
+            initWith debug
+            signingConfig signingConfigs.debug
+            applicationIdSuffix ".e2e"
+            versionNameSuffix "-e2e"
+            resValue "string", "app_name", "CodeWide E2E"
+            matchingFallbacks = ["debug"]
         }
         release {
             // Caution! In production, you need to generate your own keystore file.

@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+  <application>
+    <!-- Debug manifests come from Metro and are intentionally unsigned. Release keeps the pinned OTA certificate. -->
+    <meta-data
+        android:name="expo.modules.updates.CODE_SIGNING_CERTIFICATE"
+        tools:node="remove" />
+    <meta-data
+        android:name="expo.modules.updates.CODE_SIGNING_METADATA"
+        tools:node="remove" />
+  </application>
+</manifest>

@@ -2,6 +2,14 @@
 
 use serde::{Deserialize, Serialize};
 
+fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 use super::scalar::{Id, Timestamp, U64};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -11,6 +19,7 @@ pub struct Attachment {
     pub name: String,
     pub media_type: String,
     pub size_bytes: U64,
+    #[serde(deserialize_with = "required_option")]
     pub download_url: Option<String>,
 }
 
@@ -76,7 +85,9 @@ pub enum Sandbox {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ThreadSettings {
+    #[serde(deserialize_with = "required_option")]
     pub model: Option<String>,
+    #[serde(deserialize_with = "required_option")]
     pub effort: Option<Effort>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox: Sandbox,
@@ -107,6 +118,7 @@ pub enum Item {
         command: String,
         cwd: String,
         status: ExecutionState,
+        #[serde(deserialize_with = "required_option")]
         exit_code: Option<i64>,
         output_preview: String,
     },
@@ -175,7 +187,9 @@ pub struct PlanStep {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ThreadSummary {
     pub id: Id,
+    #[serde(deserialize_with = "required_option")]
     pub parent_id: Option<Id>,
+    #[serde(deserialize_with = "required_option")]
     pub title: Option<String>,
     pub workspace: String,
     pub archived: bool,
@@ -183,10 +197,13 @@ pub struct ThreadSummary {
     /// Execution settings are absent from App Server `thread/list` and
     /// `thread/read` records. They are populated only when the source response
     /// carries an authoritative settings payload (for example start/resume/fork).
+    #[serde(deserialize_with = "required_option")]
     pub settings: Option<ThreadSettings>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+    #[serde(deserialize_with = "required_option")]
     pub last_activity_at: Option<Timestamp>,
+    #[serde(deserialize_with = "required_option")]
     pub head_turn_id: Option<Id>,
 }
 
@@ -197,6 +214,7 @@ pub struct TurnView {
     pub thread_id: Id,
     pub state: TurnState,
     pub created_at: Timestamp,
+    #[serde(deserialize_with = "required_option")]
     pub completed_at: Option<Timestamp>,
     pub items: Vec<Item>,
 }
@@ -206,7 +224,9 @@ pub struct TurnView {
 pub struct ThreadWindow {
     pub thread: ThreadSummary,
     pub turns: Vec<TurnView>,
+    #[serde(deserialize_with = "required_option")]
     pub older_cursor: Option<String>,
+    #[serde(deserialize_with = "required_option")]
     pub newer_cursor: Option<String>,
 }
 
@@ -236,7 +256,9 @@ pub enum PendingRequest {
     Elicitation {
         id: Id,
         generation: U64,
+        #[serde(deserialize_with = "required_option")]
         thread_id: Option<Id>,
+        #[serde(deserialize_with = "required_option")]
         turn_id: Option<Id>,
         title: String,
         fields: Vec<ElicitationField>,
@@ -281,6 +303,7 @@ pub struct ElicitationField {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CatalogAnchor {
+    #[serde(deserialize_with = "required_option")]
     pub last_activity_at: Option<Timestamp>,
     pub updated_at: Timestamp,
     pub thread_id: Id,
@@ -354,6 +377,7 @@ pub enum ProjectionChange {
         revision: String,
     },
     QueueChanged {
+        #[serde(deserialize_with = "required_option")]
         thread_id: Option<Id>,
         revision: String,
     },

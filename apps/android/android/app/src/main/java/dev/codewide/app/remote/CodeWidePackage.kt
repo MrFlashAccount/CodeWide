@@ -18,6 +18,8 @@ class CodeWidePackage : ReactPackage {
       CodexPerformanceModule(reactContext),
       ContentReviewSelectionModule(reactContext),
       LargePasteModule(reactContext),
+      V2TerminalModule(reactContext),
+      V2VoiceCaptureModule(reactContext),
     )
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =

@@ -36,12 +36,15 @@ class PinnedTlsTest {
 
   @Test
   fun `every profile route is rewritten through inner tls`() {
+    assertEquals("/v1/e2ee-tunnel", InnerTlsTransport.DATA_TUNNEL_PATH)
+    assertEquals("/v1/e2ee-bootstrap-tunnel", InnerTlsTransport.BOOTSTRAP_TUNNEL_PATH)
     val saved = StoredNativeSession(
       id = "server",
       endpoint = "ws://relay.example:8080/v1/sync",
       token = "x".repeat(32),
       tlsPinSha256 = null,
       innerTlsPinSha256 = "sha256/${"A".repeat(43)}=",
+      deviceId = "device-${"a".repeat(64)}",
     )
     assertEquals("wss://relay.example:8080/v1/sync", InnerTlsTransport.url(saved, saved.endpoint))
     assertEquals(
@@ -102,6 +105,9 @@ class PinnedTlsTest {
     assertEquals(deviceId, paired.deviceId)
     assertThrows(IllegalArgumentException::class.java) {
       mergeNativeSessionCredentials(null, "legacy", "wss://relay.example/v1/sync", "x".repeat(32), null, true)
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      mergeNativeSessionCredentials(null, "unpaired", "wss://relay.example/v1/sync", "x".repeat(32), pin, true)
     }
   }
 }

@@ -8,11 +8,11 @@ use std::{
     time::Duration,
 };
 
-use axum_server::tls_rustls::RustlsConfig;
 use base64::{Engine as _, engine::general_purpose};
 use codewide_companion::{
     auth::{DeviceRegistry, pairing_claim_message},
     catalog::SessionCatalog,
+    device_tls,
     history_service::HistoryService,
     identity::CompanionIdentity,
     server,
@@ -25,11 +25,12 @@ use futures_util::{SinkExt, StreamExt};
 use http::StatusCode;
 use p256::{
     ecdsa::{Signature, SigningKey, signature::Signer},
-    pkcs8::EncodePublicKey,
+    pkcs8::DecodePrivateKey,
 };
+use rcgen::PublicKeyData;
 use rustls::{
     ClientConfig, ClientConnection, RootCertStore,
-    pki_types::{CertificateDer, ServerName},
+    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -39,6 +40,13 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, accept_async, connect_async, tungstenite::Message};
 
 const ADMIN_TOKEN: &str = "admin-token-that-is-long-enough-for-auth-test";
+
+struct TestDeviceIdentity {
+    signing: SigningKey,
+    certificate: Vec<u8>,
+    private_key: Vec<u8>,
+    public_key_spki: String,
+}
 
 #[tokio::test]
 async fn pairing_proof_session_and_scope_gate_work_over_wire()
@@ -69,6 +77,9 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
     let public_address = public_listener.local_addr()?;
     let identity = CompanionIdentity::load_or_create(&directory.path().join("identity"))?;
     let certificate = identity.certificate_der().to_vec();
+    let bootstrap_listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    bootstrap_listener.set_nonblocking(true)?;
+    let bootstrap_address = bootstrap_listener.local_addr()?;
     let inner_listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     inner_listener.set_nonblocking(true)?;
     let inner_address = inner_listener.local_addr()?;
@@ -76,11 +87,13 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
     let control_listener = UnixListener::bind(&control_path)?;
     let routers = server::split_routers_with_registry_and_services(
         store,
-        registry,
+        registry.clone(),
         sync,
         server::CompanionServices {
             telemetry: Some(telemetry),
             transport_identity: Some(identity.public().clone()),
+            bootstrap_tls_target: Some(bootstrap_address),
+            bootstrap_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(4))),
             inner_tls_target: Some(inner_address),
             inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(16))),
             ..server::CompanionServices::default()
@@ -92,13 +105,17 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
     let control_task = tokio::spawn(async move {
         let _ = axum::serve(control_listener, routers.control).await;
     });
-    let inner_tls = RustlsConfig::from_der(
-        vec![identity.certificate_der().to_vec()],
-        identity.private_key_der().to_vec(),
-    )
-    .await?;
+    let bootstrap_tls = device_tls::bootstrap_config(&identity)?;
+    let inner_tls = device_tls::device_bound_config(&identity, registry.trusted_client_spki())?;
+    let bootstrap_task = tokio::spawn(async move {
+        let server = axum_server::from_tcp_rustls(bootstrap_listener, bootstrap_tls);
+        if let Ok(server) = server {
+            let _ = server.serve(routers.bootstrap.into_make_service()).await;
+        }
+    });
     let inner_task = tokio::spawn(async move {
-        let server = axum_server::from_tcp_rustls(inner_listener, inner_tls);
+        let server = axum_server::from_tcp(inner_listener)
+            .map(|server| server.acceptor(device_tls::DeviceTlsAcceptor::new(inner_tls)));
         if let Ok(server) = server {
             let _ = server.serve(routers.inner.into_make_service()).await;
         }
@@ -149,6 +166,21 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
             .status(),
         StatusCode::NOT_FOUND
     );
+    let device_identity = test_device_identity()?;
+    assert!(
+        tunneled_json_request(
+            public_address,
+            &certificate,
+            "/v1/e2ee-tunnel",
+            Some(&device_identity),
+            "/v1/auth",
+            None,
+            &json!({"action": "challenge"}),
+        )
+        .await
+        .is_err(),
+        "an unregistered device certificate must not complete TLS"
+    );
     let (session_token, device_id) = secure_pair_and_authorize(
         &public_client,
         &control_client,
@@ -156,8 +188,56 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
         control_base,
         public_address,
         &certificate,
+        &device_identity,
     )
     .await?;
+    assert!(
+        tunneled_json_request(
+            public_address,
+            &certificate,
+            "/v1/e2ee-tunnel",
+            None,
+            "/v1/auth",
+            None,
+            &json!({"action": "challenge"}),
+        )
+        .await
+        .is_err(),
+        "the data tunnel must require a client certificate"
+    );
+    let (bootstrap_challenge_status, _) = tunneled_json_request(
+        public_address,
+        &certificate,
+        "/v1/e2ee-bootstrap-tunnel",
+        None,
+        "/v1/auth",
+        None,
+        &json!({"action": "challenge"}),
+    )
+    .await?;
+    assert_eq!(bootstrap_challenge_status, StatusCode::FORBIDDEN);
+    let second_identity = test_device_identity()?;
+    let _ = secure_pair_and_authorize(
+        &public_client,
+        &control_client,
+        &public_base,
+        control_base,
+        public_address,
+        &certificate,
+        &second_identity,
+    )
+    .await?;
+    let (mismatched_status, _) = tunneled_json_request(
+        public_address,
+        &certificate,
+        "/v1/e2ee-tunnel",
+        Some(&second_identity),
+        "/v1/telemetry/events",
+        Some(&session_token),
+        &telemetry_batch(),
+    )
+    .await?;
+    assert_eq!(mismatched_status, StatusCode::UNAUTHORIZED);
     for path in [
         "/v1/auth",
         "/v1/sync",
@@ -183,6 +263,8 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
     let (accepted_status, accepted) = tunneled_json_request(
         public_address,
         &certificate,
+        "/v1/e2ee-tunnel",
+        Some(&device_identity),
         "/v1/telemetry/events",
         Some(&session_token),
         &telemetry_batch(),
@@ -221,7 +303,22 @@ async fn pairing_proof_session_and_scope_gate_work_over_wire()
         .send()
         .await?
         .error_for_status()?;
+    assert!(
+        tunneled_json_request(
+            public_address,
+            &certificate,
+            "/v1/e2ee-tunnel",
+            Some(&device_identity),
+            "/v1/telemetry/events",
+            Some(&session_token),
+            &telemetry_batch(),
+        )
+        .await
+        .is_err(),
+        "revocation must reject the next TLS handshake"
+    );
     public_task.abort();
+    bootstrap_task.abort();
     inner_task.abort();
     control_task.abort();
     fake.abort();
@@ -255,6 +352,7 @@ async fn secure_pair_and_authorize(
     control_base: &str,
     address: std::net::SocketAddr,
     certificate: &[u8],
+    identity: &TestDeviceIdentity,
 ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
     let pairing: Value = control_client
         .post(format!("{control_base}/v1/pairing/start"))
@@ -264,26 +362,25 @@ async fn secure_pair_and_authorize(
         .error_for_status()?
         .json()
         .await?;
-    let signing = SigningKey::from_bytes((&[11_u8; 32]).into())?;
-    let public_key = signing.verifying_key().to_public_key_der()?;
-    let public_key_spki = general_purpose::STANDARD.encode(public_key.as_bytes());
-    let proof: Signature = signing.sign(&pairing_claim_message(
+    let proof: Signature = identity.signing.sign(&pairing_claim_message(
         pairing["pairingToken"]
             .as_str()
             .ok_or("pairing token missing")?,
         "Secure Fold",
-        &public_key_spki,
+        &identity.public_key_spki,
     ));
     let (claim_status, claim) = tunneled_json_request(
         address,
         certificate,
+        "/v1/e2ee-bootstrap-tunnel",
+        None,
         "/v1/auth",
         None,
         &json!({
             "action": "register",
             "pairingToken": pairing["pairingToken"],
             "deviceName": "Secure Fold",
-            "publicKeySpki": public_key_spki,
+            "publicKeySpki": identity.public_key_spki,
             "proof": general_purpose::STANDARD.encode(proof.to_der().as_bytes())
         }),
     )
@@ -308,6 +405,8 @@ async fn secure_pair_and_authorize(
     let (challenge_status, challenge) = tunneled_json_request(
         address,
         certificate,
+        "/v1/e2ee-tunnel",
+        Some(identity),
         "/v1/auth",
         Some(device_token),
         &json!({"action": "challenge"}),
@@ -316,10 +415,12 @@ async fn secure_pair_and_authorize(
     assert_eq!(challenge_status, StatusCode::CREATED);
     let nonce = general_purpose::URL_SAFE_NO_PAD
         .decode(challenge["challenge"].as_str().ok_or("challenge missing")?)?;
-    let signature: Signature = signing.sign(&nonce);
+    let signature: Signature = identity.signing.sign(&nonce);
     let (session_status, session) = tunneled_json_request(
         address,
         certificate,
+        "/v1/e2ee-tunnel",
+        Some(identity),
         "/v1/auth",
         Some(device_token),
         &json!({
@@ -345,16 +446,23 @@ async fn secure_pair_and_authorize(
 async fn tunneled_json_request(
     address: std::net::SocketAddr,
     certificate: &[u8],
+    tunnel_path: &str,
+    identity: Option<&TestDeviceIdentity>,
     path: &str,
     bearer: Option<&str>,
     body: &Value,
 ) -> Result<(StatusCode, Value), Box<dyn std::error::Error + Send + Sync>> {
-    let (mut socket, _) = connect_async(format!("ws://{address}/v1/e2ee-tunnel")).await?;
+    let (mut socket, _) = connect_async(format!("ws://{address}{tunnel_path}")).await?;
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from(certificate.to_vec()))?;
-    let config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let builder = ClientConfig::builder().with_root_certificates(roots);
+    let config = match identity {
+        Some(identity) => builder.with_client_auth_cert(
+            vec![CertificateDer::from(identity.certificate.clone())],
+            PrivateKeyDer::try_from(identity.private_key.clone())?,
+        )?,
+        None => builder.with_no_client_auth(),
+    };
     let mut tls = ClientConnection::new(
         Arc::new(config),
         ServerName::try_from("codewide-companion")?.to_owned(),
@@ -388,6 +496,19 @@ async fn tunneled_json_request(
         }
         flush_inner_tls(&mut socket, &mut tls).await?;
     }
+}
+
+fn test_device_identity() -> Result<TestDeviceIdentity, Box<dyn std::error::Error + Send + Sync>> {
+    let key_pair = rcgen::KeyPair::generate()?;
+    let certificate = rcgen::CertificateParams::new(vec!["codewide-device".to_owned()])?
+        .self_signed(&key_pair)?;
+    let private_key = key_pair.serialize_der();
+    Ok(TestDeviceIdentity {
+        signing: SigningKey::from_pkcs8_der(&private_key)?,
+        certificate: certificate.der().to_vec(),
+        public_key_spki: general_purpose::STANDARD.encode(key_pair.subject_public_key_info()),
+        private_key,
+    })
 }
 
 fn drain_plaintext(

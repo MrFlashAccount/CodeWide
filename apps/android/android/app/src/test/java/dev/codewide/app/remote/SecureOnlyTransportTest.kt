@@ -13,6 +13,7 @@ class SecureOnlyTransportTest {
       token = "t".repeat(43),
       tlsPinSha256 = pin,
       innerTlsPinSha256 = pin,
+      deviceId = "device-${"a".repeat(64)}",
     )
 
     assertEquals(pin, saved.tlsPinSha256)

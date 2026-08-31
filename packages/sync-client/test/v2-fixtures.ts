@@ -8,7 +8,7 @@ import {
   type V2SnapshotFrame,
   type V2SocketLike,
   type V2ThreadSummary,
-} from "../src/index.js";
+} from "../src/v2/index.js";
 
 type ListenerMap = {
   open: Array<() => void>;
@@ -26,44 +26,69 @@ export class FakeV2Socket implements V2SocketLike {
   addEventListener<T extends keyof ListenerMap>(type: T, listener: ListenerMap[T][number]): void {
     (this.#listeners[type] as Array<typeof listener>).push(listener);
   }
-  open(): void { this.readyState = 1; for (const listener of this.#listeners.open) listener(); }
-  send(data: string): void { this.sent.push(JSON.parse(data) as Record<string, unknown>); }
+  open(): void {
+    this.readyState = 1;
+    for (const listener of this.#listeners.open) listener();
+  }
+  send(data: string): void {
+    this.sent.push(JSON.parse(data) as Record<string, unknown>);
+  }
   close(code?: number, reason?: string): void {
-    this.closes.push({ ...(code === undefined ? {} : { code }), ...(reason === undefined ? {} : { reason }) });
+    this.closes.push({
+      ...(code === undefined ? {} : { code }),
+      ...(reason === undefined ? {} : { reason }),
+    });
     this.readyState = 3;
     for (const listener of this.#listeners.close) listener();
   }
-  emit(frame: unknown): void { for (const listener of this.#listeners.message) listener({ data: typeof frame === "string" ? frame : JSON.stringify(frame) }); }
-  emitBinary(): void { for (const listener of this.#listeners.message) listener({ data: new Uint8Array([1]) }); }
-  listenerCount(type: keyof ListenerMap): number { return this.#listeners[type].length; }
+  emit(frame: unknown): void {
+    for (const listener of this.#listeners.message)
+      listener({ data: typeof frame === "string" ? frame : JSON.stringify(frame) });
+  }
+  emitBinary(): void {
+    for (const listener of this.#listeners.message) listener({ data: new Uint8Array([1]) });
+  }
+  emitError(): void {
+    for (const listener of this.#listeners.error) listener();
+  }
+  listenerCount(type: keyof ListenerMap): number {
+    return this.#listeners[type].length;
+  }
 }
 
-export const PIN = `sha256/${"A".repeat(43)}=`;
 export const savedServerA = v2SavedServerId("saved-server-a");
 export const savedServerB = v2SavedServerId("saved-server-b");
-export const DEVICE_A = `device-${"a".repeat(64)}`;
-export const defaultIntent = { catalog: { activeLimit: 2, archivedLimit: 1 }, currentThread: { threadId: "thread-1", turnLimit: 36 } } as const;
+export const defaultIntent = {
+  catalog: { activeLimit: 2, archivedLimit: 1 },
+  currentThread: { threadId: "thread-1", turnLimit: 36 },
+} as const;
 
 export function setup(
   projectionStore: V2ProjectionStore = new MemoryV2ProjectionStore(),
   operationStore: V2OperationStore = new MemoryV2OperationStore(),
-  deviceId = DEVICE_A,
   savedServerId = savedServerA,
 ) {
   const socket = new FakeV2Socket();
   const session = new SyncV2Session({
-    connection: { savedServerId, endpoint: "wss://example.test/v2/sync", tlsPinSha256: PIN, deviceId },
+    savedServerId,
+    transportLease: { openSync: () => socket },
     intent: defaultIntent,
     projectionStore,
     operationStore,
-    socketFactory: () => socket,
-    requestId: (() => { let value = 0; return () => `request-${++value}`; })(),
+    requestId: (() => {
+      let value = 0;
+      return () => `request-${++value}`;
+    })(),
     reconnectDelayMs: 60_000,
   });
   return { socket, session };
 }
 
-export async function makeLive(socket: FakeV2Socket, session: SyncV2Session, value = snapshot()): Promise<void> {
+export async function makeLive(
+  socket: FakeV2Socket,
+  session: SyncV2Session,
+  value = snapshot(),
+): Promise<void> {
   session.start();
   await waitFor(() => socket.listenerCount("open") > 0);
   socket.open();
@@ -73,20 +98,24 @@ export async function makeLive(socket: FakeV2Socket, session: SyncV2Session, val
   await waitFor(() => session.state === "live");
 }
 
-export function snapshot(overrides: {
-  epochId?: string;
-  revision?: string;
-  active?: V2ThreadSummary[];
-  archived?: V2ThreadSummary[];
-  currentThread?: V2SnapshotFrame["currentThread"];
-  includedTail?: V2SnapshotFrame["includedTail"];
-  watermark?: string;
-} = {}): V2SnapshotFrame {
+export function snapshot(
+  overrides: {
+    sourceGeneration?: string;
+    epochId?: string;
+    revision?: string;
+    active?: V2ThreadSummary[];
+    archived?: V2ThreadSummary[];
+    currentThread?: V2SnapshotFrame["currentThread"];
+    includedTail?: V2SnapshotFrame["includedTail"];
+    watermark?: string;
+  } = {},
+): V2SnapshotFrame {
   const active = overrides.active ?? [thread("thread-1")];
   const archived = overrides.archived ?? [];
   return {
     type: "snapshot",
     version: 2,
+    sourceGeneration: overrides.sourceGeneration ?? "1",
     epochId: overrides.epochId ?? "epoch-1",
     revision: overrides.revision ?? "sync-v2-revision:1",
     watermark: overrides.watermark ?? "0",
@@ -98,7 +127,13 @@ export function snapshot(overrides: {
     currentThread: overrides.currentThread ?? null,
     pendingRequests: [],
     includedTail: overrides.includedTail ?? [],
-    limits: { catalogPerPartitionMax: 100, turnWindowMax: 36, historyPageMax: 100, queueMaxEvents: 2_048, queueMaxBytes: 4_194_304 },
+    limits: {
+      catalogPerPartitionMax: 100,
+      turnWindowMax: 36,
+      historyPageMax: 100,
+      queueMaxEvents: 2_048,
+      queueMaxBytes: 4_194_304,
+    },
   };
 }
 

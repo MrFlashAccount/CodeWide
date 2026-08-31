@@ -6,4 +6,3 @@ export * from "./thread-metadata";
 export * from "./thread-events";
 export * from "./thread-items";
 export * from "./types";
-export * from "./v2/index";

@@ -1,5 +1,5 @@
-import { CodeWideScreen } from "../src/CodeWideScreen";
+import { RootGenerationGate } from "../src/boot/RootGenerationGate";
 
 export default function HomeRoute() {
-  return <CodeWideScreen />;
+  return <RootGenerationGate />;
 }

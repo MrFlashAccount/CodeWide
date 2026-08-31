@@ -86,7 +86,6 @@ import type { TransferAccess } from "./private-transfer";
 import { assertSecureCryptoRuntime } from "../polyfills/secure-crypto";
 import { NativeEngineSupervisor } from "../native/native-engine";
 import { acknowledgeNativeCommandReceipt, claimNativePairing, deleteNativeConnection, enqueueNativeCommand, listNativeCommands, listNativeConnectionConfigs, mintNativeSession, nativeCompanionHttpOrigin, purgeLegacyDerivedStorage, reconnectNativeConnection, retryNativeCommand, saveNativeConnectionCredentials, setNativeConnectionEnabled, wakeNativeConnection, type NativeCommandDelivery } from "../native/native-transport";
-import { createNativeSyncV2Lifecycle, type NativeSyncV2Lifecycle } from "../native/sync-v2-lifecycle";
 
 export type RemoteWorkspace = {
   native: boolean;
@@ -292,7 +291,6 @@ class WorkspaceRuntime {
   readonly accountRateLimitsInFlight = new Map<string, Promise<GetAccountRateLimitsResponse>>();
   readonly connectionAttemptStartedAt = new Map<string, number>();
   supervisor: WorkspaceSyncSupervisor | null = null;
-  syncV2Lifecycle: NativeSyncV2Lifecycle | null = null;
   voiceController: VoiceInputController | null = null;
   fileTransferController: FileTransferController | null = null;
   startPromise: Promise<void> | null = null;
@@ -510,13 +508,14 @@ function createWorkspaceActions(): WorkspaceActions {
         await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
       }
       const validated = validateConnectionInput(input);
+      const connectionId = `saved-server-${randomUUID()}`;
       const claimed = await claimNativePairing({
+        savedServerId: connectionId,
         endpoint: validated.endpoint,
         pairingToken: validated.token,
         deviceName: "CodeWide Android",
         tlsPinSha256: validated.tlsPinSha256,
       });
-      const connectionId = `saved-server-${randomUUID()}`;
       const nativeCredentials = {
         connectionId,
         endpoint: validated.endpoint,
@@ -527,7 +526,6 @@ function createWorkspaceActions(): WorkspaceActions {
       };
       try {
         await saveNativeConnectionCredentials(nativeCredentials);
-        await workspaceRuntime.syncV2Lifecycle?.reconcile(await listNativeConnectionConfigs());
         const connection = await profiles.add({ ...validated, token: claimed.capabilityToken }, connectionId);
         wakeNativeConnection(connection.id);
         await refreshConnectionProfiles();
@@ -540,7 +538,6 @@ function createWorkspaceActions(): WorkspaceActions {
         try {
           await saveNativeConnectionCredentials(nativeCredentials);
           const nativeConfigs = await listNativeConnectionConfigs();
-          await workspaceRuntime.syncV2Lifecycle?.reconcile(nativeConfigs);
           await profiles.reconcileRuntimeConfigs(nativeConfigs);
           const reconciledProfiles = await refreshConnectionProfiles();
           const recovered = reconciledProfiles.find((connection) => connection.id === connectionId);
@@ -563,8 +560,7 @@ function createWorkspaceActions(): WorkspaceActions {
         await deleteNativeConnection(connectionId);
         await requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles).delete(connectionId);
       };
-      if (workspaceRuntime.syncV2Lifecycle === null) await finalizeSavedServerDelete();
-      else await workspaceRuntime.syncV2Lifecycle.deleteSavedServer(connectionId, finalizeSavedServerDelete);
+      await finalizeSavedServerDelete();
       workspaceRuntime.httpSessions.delete(connectionId);
       workspaceRuntime.threadObserverDesired.delete(connectionId);
       workspaceRuntime.threadCatalogRefreshedAt.delete(connectionId);
@@ -580,7 +576,6 @@ function createWorkspaceActions(): WorkspaceActions {
     const setConnectionEnabled = async (connectionId: string, enabled: boolean) => {
       const profiles = requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles);
       await setNativeConnectionEnabled(connectionId, enabled);
-      await workspaceRuntime.syncV2Lifecycle?.reconcile(await listNativeConnectionConfigs());
       await profiles.setEnabled(connectionId, enabled);
       if (!enabled) workspaceRuntime.supervisor?.session(connectionId)?.stop();
       if (!enabled) workspaceRuntime.threadObserverDesired.delete(connectionId);
@@ -611,7 +606,6 @@ function createWorkspaceActions(): WorkspaceActions {
         enabled,
         ...(updated.tlsPinSha256 === undefined ? {} : { tlsPinSha256: updated.tlsPinSha256 }),
       });
-      await workspaceRuntime.syncV2Lifecycle?.reconcile(await listNativeConnectionConfigs());
       await profiles.update(connectionId, updated);
       if (enabled) wakeNativeConnection(connectionId);
       workspaceRuntime.httpSessions.delete(connectionId);
@@ -2194,11 +2188,6 @@ async function startWorkspaceRuntime(): Promise<void> {
 
     startupStage = "native credential projection";
     const nativeConfigs = await listNativeConnectionConfigs();
-    workspaceRuntime.syncV2Lifecycle?.stop();
-    workspaceRuntime.syncV2Lifecycle = createNativeSyncV2Lifecycle({
-      enabled: Constants.expoConfig?.extra?.syncV2Rollout === "canary",
-    });
-    await workspaceRuntime.syncV2Lifecycle.reconcile(nativeConfigs);
     await profiles.purgeLegacyCredentials(nativeConfigs.map((config) => config.connectionId));
     await profiles.reconcileRuntimeConfigs(nativeConfigs);
     initialProfiles = await profiles.hydrate();
@@ -2385,9 +2374,6 @@ async function startWorkspaceRuntime(): Promise<void> {
       const currentProfiles = profiles.project();
       connectionState.reconcileProfiles(currentProfiles.map(connectionStateSeed));
       supervisor.replaceConnections(currentProfiles);
-      void listNativeConnectionConfigs()
-        .then((configs) => workspaceRuntime.syncV2Lifecycle?.reconcile(configs))
-        .catch((cause: unknown) => console.warn("Sync V2 lifecycle reconcile failed", cause));
     });
     workspaceRuntime.connectionStateSubscription?.unsubscribe();
     workspaceRuntime.connectionStateSubscription = connectionState.subscribeChanges((row) => {

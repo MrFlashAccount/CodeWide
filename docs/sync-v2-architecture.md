@@ -375,11 +375,13 @@ must not be triggered by server-selection changes or remote identity changes.
   immediately. After an atomic active-marker switch, the superseded generation
   is deleted. Bounded history and outside-scope catalog cache may remain in that
   same partition under ordinary capacity policy.
-- Client and server operation retention are independent. The client deletes the
+- Client and server operation retention are independent. Recoverable client
+  rows (`created`, `sent`, and `accepted`) are retained until same-ID terminal
+  settlement and are never age-pruned. The client deletes the
   semantic command body as soon as acceptance, rejection, or expiry is durably
   recorded. Client-local result or public-error payload is kept only while
   needed for in-flight publication. The
-  client may keep minimal content-free receipt or tombstone deduplication
+  client may keep terminal minimal content-free receipt or tombstone deduplication
   metadata for at most 30 days, scoped by `savedServerId`; it contains only the
   operation id, canonical fingerprint, command kind, timestamps, and terminal
   or expired class.

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::OpenOptions,
     io::Write,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
@@ -22,6 +22,7 @@ const DEFAULT_SESSION_TTL_MS: u64 = 15 * 60 * 1_000;
 const CHALLENGE_TTL_MS: u64 = 60 * 1_000;
 const MAX_SESSIONS_PER_DEVICE: usize = 16;
 const MAX_CHALLENGES_PER_DEVICE: usize = 8;
+const REGISTRY_VERSION: u8 = 4;
 const DEVICE_SCOPES: [&str; 11] = [
     "approvals.respond",
     "files.download.workspace",
@@ -174,7 +175,31 @@ pub struct DeviceRegistry {
     path: PathBuf,
     session_ttl_ms: u64,
     state: tokio::sync::Mutex<RegistryState>,
+    trusted_client_spki: TrustedClientSpki,
     authorization_changes: tokio::sync::broadcast::Sender<AuthorizationChange>,
+}
+
+/// A synchronous, live view of device public keys trusted for mTLS handshakes.
+/// It is deliberately separate from the async registry lock because rustls
+/// certificate verification cannot await.
+#[derive(Clone, Debug, Default)]
+pub struct TrustedClientSpki(Arc<std::sync::RwLock<HashSet<String>>>);
+
+impl TrustedClientSpki {
+    #[must_use]
+    pub fn contains(&self, public_key_spki: &str) -> bool {
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(public_key_spki)
+    }
+
+    fn replace(&self, values: impl IntoIterator<Item = String>) {
+        *self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = values.into_iter().collect();
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -270,16 +295,25 @@ impl DeviceRegistry {
         path: PathBuf,
         session_ttl_ms: Option<u64>,
     ) -> Result<Self, AuthError> {
+        let mut invalidated_legacy_registry = false;
         let registry = if tokio::fs::try_exists(&path).await? {
             let raw = tokio::fs::read(&path).await?;
             let parsed: RegistryFile = serde_json::from_slice(&raw)?;
-            if !matches!(parsed.version, 1..=3) {
-                return Err(AuthError::InvalidRegistry);
+            match parsed.version {
+                REGISTRY_VERSION => parsed,
+                1..=3 => {
+                    invalidated_legacy_registry = true;
+                    RegistryFile {
+                        version: REGISTRY_VERSION,
+                        devices: Vec::new(),
+                        pairings: Vec::new(),
+                    }
+                }
+                _ => return Err(AuthError::InvalidRegistry),
             }
-            parsed
         } else {
             RegistryFile {
-                version: 3,
+                version: REGISTRY_VERSION,
                 devices: Vec::new(),
                 pairings: Vec::new(),
             }
@@ -290,10 +324,10 @@ impl DeviceRegistry {
             if !valid_id(&device.id)
                 || !valid_name(&device.name)
                 || !valid_scopes(&device.scopes)
-                || device
+                || !device
                     .public_key_spki
                     .as_deref()
-                    .is_some_and(|key| !valid_public_key(key))
+                    .is_some_and(valid_public_key)
             {
                 return Err(AuthError::InvalidRegistry);
             }
@@ -310,7 +344,13 @@ impl DeviceRegistry {
             return Err(AuthError::InvalidRegistry);
         }
         let (authorization_changes, _) = tokio::sync::broadcast::channel(64);
-        Ok(Self {
+        let trusted_client_spki = TrustedClientSpki::default();
+        trusted_client_spki.replace(
+            devices
+                .values()
+                .filter_map(|device| device.public_key_spki.clone()),
+        );
+        let opened = Self {
             admin_token,
             path,
             session_ttl_ms: ttl,
@@ -320,8 +360,14 @@ impl DeviceRegistry {
                 sessions: HashMap::new(),
                 challenges: HashMap::new(),
             }),
+            trusted_client_spki,
             authorization_changes,
-        })
+        };
+        if invalidated_legacy_registry {
+            let state = opened.state.lock().await;
+            opened.persist_locked(&state).await?;
+        }
+        Ok(opened)
     }
 
     #[must_use]
@@ -329,6 +375,11 @@ impl DeviceRegistry {
         &self,
     ) -> tokio::sync::broadcast::Receiver<AuthorizationChange> {
         self.authorization_changes.subscribe()
+    }
+
+    #[must_use]
+    pub fn trusted_client_spki(&self) -> TrustedClientSpki {
+        self.trusted_client_spki.clone()
     }
 
     pub async fn authorization_context(
@@ -461,6 +512,7 @@ impl DeviceRegistry {
             },
         );
         self.persist_locked(&state).await?;
+        self.sync_trusted_client_spki(&state);
         if existing.is_some() {
             let _ = self.authorization_changes.send(AuthorizationChange {
                 device_id: device_id.clone(),
@@ -593,12 +645,22 @@ impl DeviceRegistry {
                 .challenges
                 .retain(|_, challenge| challenge.device_id != device_id);
             self.persist_locked(&state).await?;
+            self.sync_trusted_client_spki(&state);
             let _ = self.authorization_changes.send(AuthorizationChange {
                 device_id: device_id.to_owned(),
                 reason: AuthorizationChangeReason::DeviceRevoked,
             });
         }
         Ok(removed)
+    }
+
+    fn sync_trusted_client_spki(&self, state: &RegistryState) {
+        self.trusted_client_spki.replace(
+            state
+                .devices
+                .values()
+                .filter_map(|device| device.public_key_spki.clone()),
+        );
     }
 
     /// Replaces a device's scopes and revokes existing sessions.
@@ -637,7 +699,7 @@ impl DeviceRegistry {
 
     async fn persist_locked(&self, state: &RegistryState) -> Result<(), AuthError> {
         let snapshot = RegistryFile {
-            version: 3,
+            version: REGISTRY_VERSION,
             devices: state.devices.values().cloned().collect(),
             pairings: state.pairings.values().cloned().collect(),
         };
@@ -804,7 +866,7 @@ pub fn pairing_claim_message(
     public_key_spki: &str,
 ) -> Vec<u8> {
     format!(
-        "codewide-pairing-v1\n{}\n{}\n{}",
+        "codewide-pairing-v2\n{}\n{}\n{}",
         pairing_token,
         device_name.trim(),
         public_key_spki
@@ -873,6 +935,14 @@ mod tests {
         assert!(!valid_scopes(&["root".into()]));
     }
 
+    #[test]
+    fn pairing_proof_uses_the_v2_domain_and_exact_transcript() {
+        assert_eq!(
+            pairing_claim_message("token", " Android Fold ", "public-key"),
+            b"codewide-pairing-v2\ntoken\nAndroid Fold\npublic-key"
+        );
+    }
+
     #[tokio::test]
     async fn pairing_and_signed_session_survive_registry_restart()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -909,6 +979,24 @@ mod tests {
             Err(AuthError::InvalidPairing)
         ));
         let device_bearer = format!("Bearer {}", claimed.capability_token);
+        let rejected_challenge = registry.challenge(Some(&device_bearer)).await?;
+        let rejected_message =
+            general_purpose::URL_SAFE_NO_PAD.decode(&rejected_challenge.challenge)?;
+        let wrong_signing = SigningKey::from_bytes((&[8_u8; 32]).into())?;
+        let wrong_signature: Signature = wrong_signing.sign(&rejected_message);
+        assert!(matches!(
+            registry
+                .create_session(
+                    Some(&device_bearer),
+                    SessionProof {
+                        challenge_id: rejected_challenge.challenge_id,
+                        signature: general_purpose::STANDARD
+                            .encode(wrong_signature.to_der().as_bytes()),
+                    },
+                )
+                .await,
+            Err(AuthError::DeviceKeyMismatch)
+        ));
         let challenge = registry.challenge(Some(&device_bearer)).await?;
         let message = general_purpose::URL_SAFE_NO_PAD.decode(&challenge.challenge)?;
         let signature: Signature = signing.sign(&message);
@@ -959,6 +1047,51 @@ mod tests {
             reopened.authorization_context(Some(&repaired_bearer)).await,
             Some(AuthorizationContext::Device { device_id }) if device_id == claimed.device_id
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn legacy_registry_is_invalidated_before_accepting_connections()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("devices.json");
+        let capability = "legacy-capability-token-that-is-long-enough";
+        let signing = SigningKey::from_bytes((&[9_u8; 32]).into())?;
+        let public_key = signing.verifying_key().to_public_key_der()?;
+        let public_key_spki = general_purpose::STANDARD.encode(public_key.as_bytes());
+        let now = unix_time_ms();
+        let legacy_device_id = "550e8400-e29b-41d4-a716-446655440000";
+        let registry_file = RegistryFile {
+            version: 3,
+            devices: vec![StoredDevice {
+                id: legacy_device_id.into(),
+                name: "Legacy Android".into(),
+                token_hash: token_hash(capability),
+                public_key_spki: Some(public_key_spki),
+                scopes: default_scopes(),
+                created_at: now,
+                last_seen_at: now,
+            }],
+            pairings: Vec::new(),
+        };
+        tokio::fs::write(&path, serde_json::to_vec(&registry_file)?).await?;
+
+        let registry = DeviceRegistry::open(
+            Arc::from("admin-token-that-is-long-enough-for-tests"),
+            path.clone(),
+            Some(60_000),
+        )
+        .await?;
+        assert!(
+            registry
+                .authorization_context(Some(&format!("Bearer {capability}")))
+                .await
+                .is_none()
+        );
+        let migrated: RegistryFile = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        assert_eq!(migrated.version, REGISTRY_VERSION);
+        assert!(migrated.devices.is_empty());
+        assert!(migrated.pairings.is_empty());
         Ok(())
     }
 }

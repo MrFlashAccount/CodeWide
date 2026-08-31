@@ -33,15 +33,15 @@ describe("companion transport trust boundary", () => {
     const innerTls = read("../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt");
     expect(innerTls).toContain("PinnedTls.client");
     expect(innerTls).toContain("PinnedTls.innerTlsClient");
-    for (const source of [
-      "CodeWideModule.kt",
-      "CodexConnectionService.kt",
-      "NativePortForwardManager.kt",
-      "SessionCredentialClient.kt",
-      "NativeTerminalSessionManager.kt",
-    ]) {
+    for (const [source, transportFactory] of [
+      ["CodeWideModule.kt", "InnerTlsTransport.bootstrapClient"],
+      ["CodexConnectionService.kt", "InnerTlsTransport.client"],
+      ["NativePortForwardManager.kt", "InnerTlsTransport.client"],
+      ["SessionCredentialClient.kt", "InnerTlsTransport.client"],
+      ["NativeTerminalSessionManager.kt", "InnerTlsTransport.client"],
+    ] as const) {
       const contents = read(`../android/app/src/main/java/dev/codewide/app/remote/${source}`);
-      expect(contents).toContain("InnerTlsTransport.client");
+      expect(contents).toContain(transportFactory);
       expect(contents).not.toContain("CertificatePinner.Builder()");
     }
   });
@@ -71,7 +71,7 @@ describe("companion transport trust boundary", () => {
   it("persists the authoritative paired device id and fails V2 closed when it is absent", () => {
     const credentials = read("../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt");
     expect(credentials).toContain("val deviceId: String? = null");
-    expect(credentials).toContain('put("deviceId", session.deviceId)');
+    expect(credentials).toContain('put("deviceId", requireNotNull(session.deviceId)');
     expect(credentials).toContain('Regex("^device-[a-f0-9]{64}$")');
 
     const nativeModule = read("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
@@ -81,10 +81,6 @@ describe("companion transport trust boundary", () => {
 
     const workspace = read("../src/data/use-remote-workspace.ts");
     expect(workspace).toContain("deviceId: claimed.deviceId");
-    expect(workspace).toContain("syncV2Lifecycle.deleteSavedServer(connectionId, finalizeSavedServerDelete)");
-
-    const lifecycle = read("../src/native/sync-v2-lifecycle.native.ts");
-    expect(lifecycle).toContain("config.deviceId!");
-    expect(lifecycle).toContain("/^device-[a-f0-9]{64}$/u.test(config.deviceId ?? \"\")");
+    expect(workspace).not.toContain("syncV2Lifecycle");
   });
 });

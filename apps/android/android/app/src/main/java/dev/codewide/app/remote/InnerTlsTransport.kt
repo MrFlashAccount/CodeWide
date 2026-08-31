@@ -26,7 +26,8 @@ import okio.ByteString.Companion.toByteString
 /** Routes an ordinary OkHttp TLS socket through an opaque binary WebSocket. */
 internal object InnerTlsTransport {
   const val PROTOCOL = "codewide-inner-tls-v1"
-  const val TUNNEL_PATH = "/v1/e2ee-tunnel"
+  const val DATA_TUNNEL_PATH = "/v1/e2ee-tunnel"
+  const val BOOTSTRAP_TUNNEL_PATH = "/v1/e2ee-bootstrap-tunnel"
 
   fun client(base: OkHttpClient, saved: StoredNativeSession): OkHttpClient {
     val carrier = PinnedTls.client(base, saved.endpoint, null)
@@ -34,11 +35,27 @@ internal object InnerTlsTransport {
       base,
       saved.endpoint,
       saved.innerTlsPinSha256,
-      TunnelSocketFactory(carrier, tunnelUrl(saved.endpoint)),
+      TunnelSocketFactory(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH)),
+      DeviceKeyStore.clientKeyManager(saved.id),
+    )
+  }
+
+  fun bootstrapClient(base: OkHttpClient, endpoint: String, pin: String): OkHttpClient {
+    val carrier = PinnedTls.client(base, endpoint, null)
+    return PinnedTls.innerTlsClient(
+      base,
+      endpoint,
+      pin,
+      TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH)),
+      null,
     )
   }
 
   fun url(saved: StoredNativeSession, url: String): String {
+    return url(saved.endpoint, url)
+  }
+
+  fun url(endpoint: String, url: String): String {
     val uri = URI(url)
     val scheme = when (uri.scheme) {
       "ws", "wss" -> "wss"
@@ -50,25 +67,17 @@ internal object InnerTlsTransport {
 
   fun openSocket(base: OkHttpClient, saved: StoredNativeSession, timeoutMs: Int): Socket {
     val carrier = PinnedTls.client(base, saved.endpoint, null)
-    val raw = TunnelSocket(carrier, tunnelUrl(saved.endpoint))
+    val raw = TunnelSocket(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH))
     raw.connect(InetSocketAddress(requireNotNull(URI(saved.endpoint).host), 443), timeoutMs)
-    return (PinnedTls.innerTlsSocketFactory(saved.innerTlsPinSha256)
+    return (PinnedTls.innerTlsSocketFactory(saved.innerTlsPinSha256, DeviceKeyStore.clientKeyManager(saved.id))
       .createSocket(raw, requireNotNull(URI(saved.endpoint).host), 443, true) as SSLSocket).apply {
       startHandshake()
     }
   }
 
-  fun bootstrap(endpoint: String, pin: String): StoredNativeSession = StoredNativeSession(
-    id = "pairing-bootstrap",
-    endpoint = endpoint,
-    token = "bootstrap".repeat(4),
-    tlsPinSha256 = pin,
-    innerTlsPinSha256 = pin,
-  )
-
-  private fun tunnelUrl(endpoint: String): String {
+  private fun tunnelUrl(endpoint: String, path: String): String {
     val uri = URI(endpoint)
-    return URI(uri.scheme, uri.rawAuthority, TUNNEL_PATH, null, null).toString()
+    return URI(uri.scheme, uri.rawAuthority, path, null, null).toString()
   }
 }
 
@@ -126,7 +135,9 @@ private class TunnelSocket(
         webSocket.close(1003, "binary_frames_required")
       }
 
-      override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = end()
+      override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+        end()
+      }
 
       override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
         fail(IOException("Secure tunnel failed${response?.let { " (${it.code})" }.orEmpty()}", t))

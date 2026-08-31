@@ -10,3 +10,8 @@ export interface V2SocketLike {
   addEventListener(type: "close", listener: () => void): void;
   addEventListener(type: "error", listener: () => void): void;
 }
+
+/** Bound transport capability for one saved server; authentication and routing stay with its owner. */
+export interface SyncV2TransportLease {
+  openSync(): V2SocketLike;
+}

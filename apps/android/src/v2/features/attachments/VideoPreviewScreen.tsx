@@ -1,0 +1,23 @@
+import type { ComponentType } from "react";
+
+import { VideoPreviewView } from "../../../presentation/preview/VideoPreviewView";
+import type { VideoPlaybackSource, VideoPreviewRouteModel } from "./videoPreview";
+
+export type VideoPlayerCapabilityProps = {
+  autoplay: boolean;
+  source: VideoPlaybackSource;
+  title: string;
+};
+
+export type VideoPreviewScreenProps = {
+  model: VideoPreviewRouteModel;
+  Player: ComponentType<VideoPlayerCapabilityProps>;
+};
+
+export function VideoPreviewScreen({ model, Player }: VideoPreviewScreenProps): React.JSX.Element {
+  return (
+    <VideoPreviewView title={model.name}>
+      <Player autoplay source={model.source} title={model.name} />
+    </VideoPreviewView>
+  );
+}

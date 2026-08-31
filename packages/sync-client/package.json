@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./v2": "./src/v2/index.ts"
   },
   "scripts": {
-    "contract:check": "node scripts/generate-v2-contract.mjs --check",
+    "contract:check": "node scripts/generate-v2-contract.mjs --check && node scripts/validate-v2-root-compat.mjs",
     "contract:generate": "node scripts/generate-v2-contract.mjs",
     "typecheck": "tsc --noEmit"
   },

@@ -1109,10 +1109,16 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             )
         })
         .transpose()?;
+    let token: Arc<str> = Arc::from(token);
+    let registry = Arc::new(DeviceRegistry::open(token, options.device_registry, None).await?);
+    let bootstrap_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+    bootstrap_listener.set_nonblocking(true)?;
+    let bootstrap_tls_target = bootstrap_listener.local_addr()?;
     let inner_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     inner_listener.set_nonblocking(true)?;
     let inner_tls_target = inner_listener.local_addr()?;
     let mut excluded_ports = HashSet::from([options.listen.port()]);
+    excluded_ports.insert(bootstrap_tls_target.port());
     excluded_ports.insert(inner_tls_target.port());
     let services = server::CompanionServices {
         build_shelf: configured_build_shelf()?,
@@ -1125,13 +1131,18 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         app_server_socket_path: Some(app_server_socket),
         excluded_ports,
         transport_identity: Some(identity.public().clone()),
+        bootstrap_tls_target: Some(bootstrap_tls_target),
+        bootstrap_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(16))),
         inner_tls_target: Some(inner_tls_target),
         inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
         sync_v2,
         sync_v2_mode: options.sync_v2_mode,
     };
-    let token: Arc<str> = Arc::from(token);
-    let registry = Arc::new(DeviceRegistry::open(token, options.device_registry, None).await?);
+    let bootstrap_tls = codewide_companion::device_tls::bootstrap_config(&identity)?;
+    let inner_tls = codewide_companion::device_tls::device_bound_config(
+        &identity,
+        registry.trusted_client_spki(),
+    )?;
     let routers = server::split_routers_with_registry_and_services(store, registry, sync, services);
     let control = local_control::bind(&options.control_endpoint).await?;
     info!(
@@ -1145,21 +1156,40 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let control_server =
         axum::serve(control.listener, routers.control).with_graceful_shutdown(shutdown_signal());
     let public_server = serve_public(options.listen, routers.public);
-    let inner_server = serve_inner(inner_listener, routers.inner, identity);
-    tokio::try_join!(public_server, inner_server, control_server)?;
+    let bootstrap_server = serve_inner(bootstrap_listener, routers.bootstrap, bootstrap_tls);
+    let inner_server = serve_device_inner(inner_listener, routers.inner, inner_tls);
+    tokio::try_join!(
+        public_server,
+        bootstrap_server,
+        inner_server,
+        control_server
+    )?;
     Ok(())
+}
+
+async fn serve_device_inner(
+    listener: std::net::TcpListener,
+    router: axum::Router,
+    tls: Arc<rustls::ServerConfig>,
+) -> Result<(), std::io::Error> {
+    let handle = axum_server::Handle::new();
+    let shutdown_handle = handle.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+    });
+    axum_server::from_tcp(listener)?
+        .acceptor(codewide_companion::device_tls::DeviceTlsAcceptor::new(tls))
+        .handle(handle)
+        .serve(router.into_make_service())
+        .await
 }
 
 async fn serve_inner(
     listener: std::net::TcpListener,
     router: axum::Router,
-    identity: CompanionIdentity,
+    tls: axum_server::tls_rustls::RustlsConfig,
 ) -> Result<(), std::io::Error> {
-    let tls = axum_server::tls_rustls::RustlsConfig::from_der(
-        vec![identity.certificate_der().to_vec()],
-        identity.private_key_der().to_vec(),
-    )
-    .await?;
     let handle = axum_server::Handle::new();
     let shutdown_handle = handle.clone();
     tokio::spawn(async move {

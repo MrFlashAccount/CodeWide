@@ -24,3 +24,9 @@ export type V2PersistedOperation = {
   updatedAtMs: number;
   acceptedAt: string | null;
 };
+
+/** Content-free operation status published to application observers. */
+export type V2OperationStatus = Pick<
+  V2PersistedOperation,
+  "operationId" | "commandKind" | "state" | "terminalClass" | "createdAtMs" | "updatedAtMs" | "acceptedAt"
+>;

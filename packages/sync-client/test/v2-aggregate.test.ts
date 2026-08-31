@@ -7,7 +7,7 @@ import {
   deriveV2AggregateProjection,
   removeSavedServerFromV2Selection,
   type V2SemanticSession,
-} from "../src/index.js";
+} from "../src/v2/index.js";
 import { savedServerA, savedServerB, snapshot, thread } from "./v2-fixtures.js";
 
 describe("Sync V2 one, many, and All projection", () => {

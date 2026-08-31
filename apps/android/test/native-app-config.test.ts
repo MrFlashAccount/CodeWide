@@ -55,6 +55,7 @@ const nativeProtocolEngine = readFileSync(new URL("../android/app/src/main/java/
 const projectionBatchPolicy = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/ProjectionBatchPolicy.kt", import.meta.url), "utf8");
 const sessionCredentialClient = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/SessionCredentialClient.kt", import.meta.url), "utf8");
 const deviceKeyStore = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/DeviceKeyStore.kt", import.meta.url), "utf8");
+const innerTlsTransport = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt", import.meta.url), "utf8");
 const nativeModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt", import.meta.url), "utf8");
 const nativePackage = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWidePackage.kt", import.meta.url), "utf8");
 const nativeCodeManager = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockManager.kt", import.meta.url), "utf8");
@@ -156,8 +157,8 @@ describe("checked-in Android project mirrors app config", () => {
     for (const scheme of schemes) expect(manifest).toContain(`<data android:scheme="${scheme}"/>`);
     expect(manifest).toContain('android:screenOrientation="unspecified"');
     expect(appConfig.expo.orientation).toBe("default");
-    expect(manifest).toContain('android:enableOnBackInvokedCallback="true"');
-    expect(appConfig.expo.android.predictiveBackGestureEnabled).toBe(true);
+    expect(manifest).toContain('android:enableOnBackInvokedCallback="false"');
+    expect(appConfig.expo.android.predictiveBackGestureEnabled).toBe(false);
     expect(strings).toContain(`<string name="app_name">${appConfig.expo.name}</string>`);
   });
 
@@ -366,6 +367,8 @@ describe("checked-in Android project mirrors app config", () => {
     const addConnection = voiceWorkspace.slice(addConnectionStart, addConnectionEnd);
     expect(addConnectionStart).toBeGreaterThanOrEqual(0);
     expect(addConnection.indexOf("requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles)")).toBeLessThan(addConnection.indexOf("claimNativePairing"));
+    expect(addConnection.indexOf("const connectionId = `saved-server-${randomUUID()}`")).toBeLessThan(addConnection.indexOf("claimNativePairing"));
+    expect(addConnection).toContain("savedServerId: connectionId");
     expect(addConnection).not.toContain("deleteNativeConnection(connectionId)");
     expect(addConnection).toContain("profiles.reconcileRuntimeConfigs(nativeConfigs)");
     expect(screen).toContain("localReady={remote.ready && remote.error === null}");
@@ -570,7 +573,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(sessionCredentialClient).toContain('.put("action", "challenge")');
     expect(sessionCredentialClient).toContain('.put("action", "session")');
     expect(sessionCredentialClient).toContain('getString("sessionToken")');
-    expect(sessionCredentialClient).toContain("DeviceKeyStore.signChallenge(challenge)");
+    expect(sessionCredentialClient).toContain("DeviceKeyStore.signChallenge(savedServerId, challenge)");
     expect(connectionService).toContain("if (error is SessionAuthorizationException)");
     expect(connectionService).toContain('emitTransportStatus("authRequired")');
     expect(nativeEngine).toContain('addListener("CodeWideEngineEvent"');
@@ -596,10 +599,17 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeModule).not.toContain("openJsSyncSocket");
     expect(voiceWorkspace).not.toContain("nativeJsSyncSocketFactory");
     expect(legacyRemoteStore).toContain("finalizeUnusedStatementsBeforeClosing: false");
-    expect(nativeModule).toContain("val publicKeySpki = DeviceKeyStore.publicKeySpki()");
+    expect(nativeModule).toContain("val publicKeySpki = DeviceKeyStore.publicKeySpki(savedServerId)");
     expect(nativeModule).toContain('.put("publicKeySpki", publicKeySpki)');
     expect(nativeModule).toContain('.put("action", "register")');
     expect(nativeModule).toContain('.put("proof", DeviceKeyStore.signPairingClaim(');
+    expect(deviceKeyStore).toContain("fun clientKeyManager(savedServerId: String): X509ExtendedKeyManager");
+    expect(deviceKeyStore).toContain("ConnectionKeyManager(alias, entry)");
+    expect(innerTlsTransport).toContain('DATA_TUNNEL_PATH = "/v1/e2ee-tunnel"');
+    expect(innerTlsTransport).toContain('BOOTSTRAP_TUNNEL_PATH = "/v1/e2ee-bootstrap-tunnel"');
+    expect(innerTlsTransport).toContain("DeviceKeyStore.clientKeyManager(saved.id)");
+    expect(innerTlsTransport).toContain("TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH))");
+    expect(nativeModule).toContain("InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin)");
     expect(voiceWorkspace).toContain("await listNativeCommands()");
     expect(voiceWorkspace).not.toContain("commandDeliveries");
     expect(threadDetailDatabase).toContain("reconcileNativeCommands(connectionId, threadId, deliveries)");
@@ -874,8 +884,8 @@ describe("checked-in Android project mirrors app config", () => {
     expect(voiceController).toContain("private async startAndroidFallback");
     expect(screen).not.toContain("pendingThreadSelectionsRef");
     expect(screen).toContain("&& selectedThread === null;");
-    expect(pairRoute).toContain('<Redirect href="/" />');
-    expect(threadRoute).toContain('<Redirect href="/" />');
+    expect(pairRoute).toContain('<Redirect href="/legacy" />');
+    expect(threadRoute).toContain('<Redirect href="/legacy" />');
     expect(pairRoute).not.toContain("<CodeWideScreen />");
     expect(threadRoute).not.toContain("<CodeWideScreen />");
     expect(screen).toContain("threadNavigation.current().id === null && serverThreads[0] !== undefined");
@@ -987,6 +997,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(asciiDiagramRuntime).toContain("WebAssembly.instantiate(");
     expect(asciiDiagramRuntime).toContain("window.renderSvgbob");
     expect(richMarkdown).toContain("style={[styles.tableViewport, minimumWidth > 0");
+    expect(richMarkdown).toContain('codeContainer: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch"');
     expect(richMarkdown).toContain("style={styles.tableHorizontalScroller}");
     expect(richMarkdown).not.toContain("tableVerticalScroller");
     expect(richMarkdown).not.toContain("showsVerticalScrollIndicator");

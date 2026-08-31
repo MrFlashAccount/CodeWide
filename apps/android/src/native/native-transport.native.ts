@@ -20,7 +20,7 @@ type NativeAudioEvent = PcmAudioChunk & {
 };
 
 type NativeBridge = {
-  claimPairing(endpoint: string, pairingToken: string, deviceName: string, tlsPinSha256: string): Promise<{ deviceId: string; capabilityToken: string }>;
+  claimPairing(savedServerId: string, endpoint: string, pairingToken: string, deviceName: string, tlsPinSha256: string): Promise<{ deviceId: string; capabilityToken: string }>;
   saveConnectionCredentials(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean): Promise<void>;
   saveConnectionCredentialsV2?(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean, deviceId: string): Promise<void>;
   listConnectionConfigs(): Promise<NativeConnectionConfig[]>;
@@ -172,13 +172,14 @@ const bridge = NativeModules.CodeWideNative as NativeBridge | undefined;
 const emitter = bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodeWideNative);
 
 export async function claimNativePairing(input: {
+  savedServerId: string;
   endpoint: string;
   pairingToken: string;
   deviceName: string;
   tlsPinSha256: string;
 }): Promise<{ deviceId: string; capabilityToken: string }> {
   if (bridge === undefined || Platform.OS !== "android") throw new Error("Native secure pairing is unavailable in this build");
-  const claimed = await bridge.claimPairing(input.endpoint, input.pairingToken, input.deviceName, input.tlsPinSha256);
+  const claimed = await bridge.claimPairing(input.savedServerId, input.endpoint, input.pairingToken, input.deviceName, input.tlsPinSha256);
   if (
     typeof claimed.deviceId !== "string"
     || typeof claimed.capabilityToken !== "string"

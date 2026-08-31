@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    ".expo/**",
+    "android/**",
+    "app/_layout.tsx",
+    "app/index.tsx",
+    "app/legacy/**",
+    "app/pair.tsx",
+    "app/thread.tsx",
+    "assets/**",
+    "coverage/**",
+    "dist/**",
+    "node_modules/**"
+  ]
+}

@@ -2,15 +2,19 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 
-import { v2SavedServerId } from "@codewide/sync-client";
+import { v2SavedServerId } from "@codewide/sync-client/v2";
 
-vi.mock("../src/data/ui-cache-persistence.native", () => ({
-  getUiCacheSqliteDatabase: () => { throw new Error("test must inject its SQLite database"); },
+vi.mock("../src/v2/infrastructure/persistence/v2Database.native", () => ({
+  getV2SqliteDatabase: () => {
+    throw new Error("test must inject its SQLite database");
+  },
 }));
 
-import { createNativeSyncV2OperationStoreWithDatabase } from "../src/native/sync-v2-operation-store.native";
-import { createNativeSyncV2ProjectionStoreWithDatabase } from "../src/native/sync-v2-projection-store.native";
-import { createNativeSyncV2SavedServerDeletionStoreWithDatabase } from "../src/native/sync-v2-deletion-store.native";
+import { createNativeSyncV2OperationStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteOperationStore.native";
+import { createNativeSyncV2ProjectionStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteProjectionStore.native";
+import { createNativeSyncV2SavedServerDeletionStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteSavedServerDeletionStore.native";
+import { createCommandCorrelationStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteCommandCorrelationStore.native";
+import { serializeSqliteTransactions } from "../src/v2/infrastructure/persistence/serialSqliteDatabase";
 
 const savedServerA = v2SavedServerId("saved-server-native-a");
 const savedServerB = v2SavedServerId("saved-server-native-b");
@@ -21,6 +25,84 @@ afterEach(() => {
 });
 
 describe("native Sync V2 durable stores", () => {
+  it("serializes transactions shared by independent V2 stores", async () => {
+    let active = false;
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    const database = serializeSqliteTransactions({
+      async execute() {
+        return { rows: [] };
+      },
+      async transaction<T>(operation: (executor: SqliteExecutor) => Promise<T>): Promise<T> {
+        if (active) throw new Error("native transaction slot overlapped");
+        active = true;
+        try {
+          return await operation({
+            async execute() {
+              return { rows: [] };
+            },
+          });
+        } finally {
+          active = false;
+        }
+      },
+    });
+
+    const first = database.transaction(async () => {
+      firstEntered();
+      await firstBlocked;
+      return "first";
+    });
+    await entered;
+    const second = database.transaction(async () => "second");
+    releaseFirst();
+
+    await expect(Promise.all([first, second])).resolves.toEqual(["first", "second"]);
+  });
+
+  it("persists content-free command correlation and rejects identity drift", async () => {
+    const database = memoryDatabase();
+    const first = createCommandCorrelationStoreWithDatabase(database);
+    const record = {
+      correlationId: "correlation-a",
+      operationId: "operation-a",
+      savedServerId: savedServerA,
+      surface: "threadComposer" as const,
+      threadId: "thread-a",
+      state: "allocating" as const,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    await first.begin(record);
+    await first.markDurable(record.correlationId, 2);
+
+    const restarted = createCommandCorrelationStoreWithDatabase(database);
+    expect(
+      await restarted.listUnsettled({
+        savedServerId: savedServerA,
+        surface: "threadComposer",
+        threadId: "thread-a",
+      }),
+    ).toEqual([expect.objectContaining({ operationId: "operation-a", state: "durable" })]);
+    await expect(restarted.begin({ ...record, operationId: "operation-b" })).rejects.toThrow(
+      "identity is immutable",
+    );
+    const columns = databases
+      .at(-1)!
+      .prepare("PRAGMA table_info(codewide_v2_command_correlations)")
+      .all()
+      .map((row) => Reflect.get(row, "name"));
+    expect(columns).not.toContain("command");
+    expect(columns).not.toContain("prompt");
+    expect(columns).not.toContain("fingerprint");
+  });
+
   it("survives restart, isolates saved servers, and deactivates an abandoned generation", async () => {
     const database = memoryDatabase();
     const first = createNativeSyncV2ProjectionStoreWithDatabase(database);
@@ -28,22 +110,99 @@ describe("native Sync V2 durable stores", () => {
     await first.commitSnapshot(savedServerB, snapshot("epoch-b", "thread-b"));
     await first.abandonEpoch(savedServerA, "epoch-a");
     expect(await first.active(savedServerA)).toBeNull();
+    expect((await first.retained(savedServerA))?.catalog[0]?.thread.id).toBe("thread-a");
     expect((await first.active(savedServerB))?.epochId).toBe("epoch-b");
 
     const restarted = createNativeSyncV2ProjectionStoreWithDatabase(database);
+    expect((await restarted.active(savedServerB))?.sourceGeneration).toBe("1");
     expect((await restarted.active(savedServerB))?.catalog[0]?.thread.id).toBe("thread-b");
     await restarted.commitSnapshot(savedServerA, snapshot("epoch-a2", "thread-a2"));
-    expect((await restarted.active(savedServerA))?.catalog).toEqual(expect.arrayContaining([
-      expect.objectContaining({ thread: expect.objectContaining({ id: "thread-a" }), coverage: "outsideCurrentScope" }),
-      expect.objectContaining({ thread: expect.objectContaining({ id: "thread-a2" }), coverage: "current" }),
-    ]));
+    expect((await restarted.active(savedServerA))?.catalog).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          thread: expect.objectContaining({ id: "thread-a" }),
+          coverage: "outsideCurrentScope",
+        }),
+        expect.objectContaining({
+          thread: expect.objectContaining({ id: "thread-a2" }),
+          coverage: "current",
+        }),
+      ]),
+    );
+  });
+
+  it("publishes complete content-free native store observations", async () => {
+    const database = memoryDatabase();
+    const projections = createNativeSyncV2ProjectionStoreWithDatabase(database);
+    const durableCreates: unknown[] = [];
+    const operations = createNativeSyncV2OperationStoreWithDatabase(database, (observation) => {
+      durableCreates.push(observation);
+    });
+    let projectionPublications = 0;
+    let operationPublications = 0;
+    projections.subscribe(savedServerA, () => {
+      projectionPublications += 1;
+    });
+    operations.subscribe(savedServerA, () => {
+      operationPublications += 1;
+    });
+
+    await projections.commitSnapshot(savedServerA, snapshot("epoch-a", "thread-a"));
+    await operations.create(savedServerA, "operation", {
+      kind: "thread.delete",
+      threadId: "thread-a",
+    });
+
+    expect((await projections.retained(savedServerA))?.epochId).toBe("epoch-a");
+    expect(await operations.list(savedServerA)).toEqual([
+      expect.objectContaining({
+        operationId: "operation",
+        commandKind: "thread.delete",
+        state: "created",
+      }),
+    ]);
+    expect((await operations.list(savedServerA))[0]).not.toHaveProperty("command");
+    expect(projectionPublications).toBe(1);
+    expect(operationPublications).toBe(1);
+    expect(durableCreates).toEqual([{ commandKind: "thread.delete", operationId: "operation" }]);
+    expect(durableCreates[0]).not.toHaveProperty("command");
+  });
+
+  it("isolates a throwing durable-create observer and emits only for a new row", async () => {
+    const observe = vi.fn(() => {
+      throw new Error("diagnostic sink failed");
+    });
+    const operations = createNativeSyncV2OperationStoreWithDatabase(memoryDatabase(), observe);
+    const command = { kind: "thread.delete", threadId: "thread-a" } as const;
+
+    await expect(operations.create(savedServerA, "operation-a", command)).resolves.toMatchObject({
+      operationId: "operation-a",
+      state: "created",
+    });
+    await expect(operations.create(savedServerA, "operation-a", command)).resolves.toMatchObject({
+      operationId: "operation-a",
+      state: "created",
+    });
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(await operations.get(savedServerA, "operation-a")).toMatchObject({
+      operationId: "operation-a",
+      state: "created",
+    });
   });
 
   it("serializes back-to-back native projection changes", async () => {
     const store = createNativeSyncV2ProjectionStoreWithDatabase(memoryDatabase());
     await store.commitSnapshot(savedServerA, snapshot("epoch-a", "thread-a"));
-    const first = store.applyChange(savedServerA, "epoch-a", "1", { kind: "resourcesChanged", threadId: "thread-a", revision: "resources:1" });
-    const second = store.applyChange(savedServerA, "epoch-a", "2", { kind: "accountsChanged", revision: "accounts:1" });
+    const first = store.applyChange(savedServerA, "epoch-a", "1", {
+      kind: "resourcesChanged",
+      threadId: "thread-a",
+      revision: "resources:1",
+    });
+    const second = store.applyChange(savedServerA, "epoch-a", "2", {
+      kind: "accountsChanged",
+      revision: "accounts:1",
+    });
     await Promise.all([first, second]);
     expect(await store.active(savedServerA)).toMatchObject({
       watermark: "2",
@@ -55,8 +214,12 @@ describe("native Sync V2 durable stores", () => {
   it("rolls back native publication when abandonment races the active-marker switch", async () => {
     let release!: () => void;
     let entered!: () => void;
-    const blocked = new Promise<void>((resolve) => { release = resolve; });
-    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     const database = memoryDatabase(async (sql) => {
       if (sql.startsWith("INSERT INTO codewide_sync_v2_projection_by_saved_server")) {
         entered();
@@ -65,7 +228,11 @@ describe("native Sync V2 durable stores", () => {
     });
     const store = createNativeSyncV2ProjectionStoreWithDatabase(database);
     const controller = new AbortController();
-    const commit = store.commitSnapshot(savedServerA, snapshot("epoch-a", "thread-a"), controller.signal);
+    const commit = store.commitSnapshot(
+      savedServerA,
+      snapshot("epoch-a", "thread-a"),
+      controller.signal,
+    );
     await started;
     controller.abort();
     release();
@@ -78,15 +245,34 @@ describe("native Sync V2 durable stores", () => {
     const first = createNativeSyncV2OperationStoreWithDatabase(database);
     await first.create(savedServerA, "accepted", { kind: "thread.delete", threadId: "thread" }, 0);
     await first.transition(savedServerA, "accepted", ["created"], { state: "sent" }, 0);
-    const accepted = first.transition(savedServerA, "accepted", ["sent"], { state: "accepted", acceptedAt: "2026-08-27T12:00:00Z" }, 1);
-    const terminal = first.transition(savedServerA, "accepted", ["accepted"], { state: "completed" }, 2);
+    const accepted = first.transition(
+      savedServerA,
+      "accepted",
+      ["sent"],
+      { state: "accepted", acceptedAt: "2026-08-27T12:00:00Z" },
+      1,
+    );
+    const terminal = first.transition(
+      savedServerA,
+      "accepted",
+      ["accepted"],
+      { state: "completed" },
+      2,
+    );
     await Promise.all([accepted, terminal]);
 
-    await first.create(savedServerA, "unconfirmed", { kind: "thread.delete", threadId: "thread" }, 0);
+    await first.create(
+      savedServerA,
+      "unconfirmed",
+      { kind: "thread.delete", threadId: "thread" },
+      0,
+    );
     await first.transition(savedServerA, "unconfirmed", ["created"], { state: "sent" }, 0);
     const restarted = createNativeSyncV2OperationStoreWithDatabase(database);
     expect((await restarted.get(savedServerA, "accepted"))?.state).toBe("completed");
-    expect((await restarted.recoverable(savedServerA, 1)).map(({ operationId }) => operationId)).toEqual(["unconfirmed"]);
+    expect(
+      (await restarted.recoverable(savedServerA, 1)).map(({ operationId }) => operationId),
+    ).toEqual(["unconfirmed"]);
   });
 
   it.each([
@@ -99,7 +285,14 @@ describe("native Sync V2 durable stores", () => {
     const store = createNativeSyncV2OperationStoreWithDatabase(memoryDatabase());
     await store.create(savedServerA, state, { kind: "thread.delete", threadId: "thread" }, 0);
     await store.transition(savedServerA, state, ["created"], { state: "sent" }, 0);
-    if (accepted) await store.transition(savedServerA, state, ["sent"], { state: "accepted", acceptedAt: "2026-08-27T12:00:00Z" }, 1);
+    if (accepted)
+      await store.transition(
+        savedServerA,
+        state,
+        ["sent"],
+        { state: "accepted", acceptedAt: "2026-08-27T12:00:00Z" },
+        1,
+      );
     await store.transition(savedServerA, state, [accepted ? "accepted" : "sent"], { state }, 2);
     const persisted = await store.get(savedServerA, state);
     expect(persisted?.state).toBe(state);
@@ -113,14 +306,37 @@ describe("native Sync V2 durable stores", () => {
     const store = createNativeSyncV2OperationStoreWithDatabase(database);
     await store.create(savedServerA, "terminal", { kind: "thread.delete", threadId: "thread" }, 0);
     await store.transition(savedServerA, "terminal", ["created"], { state: "sent" }, 0);
-    await expect(store.transition(savedServerA, "terminal", ["accepted"], { state: "completed" }, 1)).rejects.toThrow("rejected from sent");
-    await store.transition(savedServerA, "terminal", ["sent"], { state: "accepted", acceptedAt: "2026-08-27T12:00:00Z" }, 2);
+    await expect(
+      store.transition(savedServerA, "terminal", ["accepted"], { state: "completed" }, 1),
+    ).rejects.toThrow("rejected from sent");
+    await store.transition(
+      savedServerA,
+      "terminal",
+      ["sent"],
+      { state: "accepted", acceptedAt: "2026-08-27T12:00:00Z" },
+      2,
+    );
     await store.transition(savedServerA, "terminal", ["accepted"], { state: "completed" }, 3);
-    await expect(store.transition(savedServerA, "terminal", ["accepted"], { state: "completed" }, 4)).rejects.toThrow("rejected from completed");
-    await expect(store.transition(savedServerA, "terminal", ["accepted"], { state: "failed" }, 5)).rejects.toThrow("rejected from completed");
-    await expect(store.transition(savedServerA, "terminal", ["sent"], { state: "accepted", acceptedAt: "2026-08-27T12:00:01Z" }, 6)).rejects.toThrow("rejected from completed");
+    await expect(
+      store.transition(savedServerA, "terminal", ["accepted"], { state: "completed" }, 4),
+    ).rejects.toThrow("rejected from completed");
+    await expect(
+      store.transition(savedServerA, "terminal", ["accepted"], { state: "failed" }, 5),
+    ).rejects.toThrow("rejected from completed");
+    await expect(
+      store.transition(
+        savedServerA,
+        "terminal",
+        ["sent"],
+        { state: "accepted", acceptedAt: "2026-08-27T12:00:01Z" },
+        6,
+      ),
+    ).rejects.toThrow("rejected from completed");
     const restarted = createNativeSyncV2OperationStoreWithDatabase(database);
-    expect(await restarted.get(savedServerA, "terminal")).toMatchObject({ state: "completed", terminalClass: "completed" });
+    expect(await restarted.get(savedServerA, "terminal")).toMatchObject({
+      state: "completed",
+      terminalClass: "completed",
+    });
   });
 
   it("purges exactly one native saved-server partition", async () => {
@@ -131,7 +347,10 @@ describe("native Sync V2 durable stores", () => {
     await projections.commitSnapshot(savedServerB, snapshot("epoch-b", "thread-b"));
     await operations.create(savedServerA, "same", { kind: "thread.delete", threadId: "thread-a" });
     await operations.create(savedServerB, "same", { kind: "thread.delete", threadId: "thread-b" });
-    await Promise.all([projections.deleteSavedServer(savedServerA), operations.deleteSavedServer(savedServerA)]);
+    await Promise.all([
+      projections.deleteSavedServer(savedServerA),
+      operations.deleteSavedServer(savedServerA),
+    ]);
     expect(await projections.active(savedServerA)).toBeNull();
     expect(await operations.get(savedServerA, "same")).toBeNull();
     expect(await projections.active(savedServerB)).not.toBeNull();
@@ -153,7 +372,12 @@ describe("native Sync V2 durable stores", () => {
   it("keeps a native deletion intent through partial purge failure and completes an idempotent restart retry", async () => {
     let failProjectionPurge = false;
     const database = memoryDatabase(async (sql) => {
-      if (failProjectionPurge && sql.startsWith("DELETE FROM codewide_sync_v2_projection_by_saved_server WHERE saved_server_id")) {
+      if (
+        failProjectionPurge &&
+        sql.startsWith(
+          "DELETE FROM codewide_sync_v2_projection_by_saved_server WHERE saved_server_id",
+        )
+      ) {
         failProjectionPurge = false;
         throw new Error("injected native projection purge failure");
       }
@@ -162,7 +386,10 @@ describe("native Sync V2 durable stores", () => {
     const operations = createNativeSyncV2OperationStoreWithDatabase(database);
     const deletions = createNativeSyncV2SavedServerDeletionStoreWithDatabase(database);
     await projections.commitSnapshot(savedServerA, snapshot("epoch-a", "thread-a"));
-    await operations.create(savedServerA, "operation", { kind: "thread.delete", threadId: "thread-a" });
+    await operations.create(savedServerA, "operation", {
+      kind: "thread.delete",
+      threadId: "thread-a",
+    });
 
     await deletions.begin(savedServerA);
     failProjectionPurge = true;
@@ -198,7 +425,8 @@ function memoryDatabase(beforeExecute?: (sql: string) => Promise<void>): SqliteD
       await beforeExecute?.(sql);
       const statement = sqlite.prepare(sql);
       const values = params as readonly (string | number | null | bigint | Uint8Array)[];
-      if (/^\s*(?:SELECT|PRAGMA)/iu.test(sql)) return { rows: statement.all(...values) as Array<Record<string, SqliteValue>> };
+      if (/^\s*(?:SELECT|PRAGMA)/iu.test(sql))
+        return { rows: statement.all(...values) as Array<Record<string, SqliteValue>> };
       statement.run(...values);
       return { rows: [] };
     },
@@ -218,7 +446,10 @@ function memoryDatabase(beforeExecute?: (sql: string) => Promise<void>): SqliteD
           throw cause;
         }
       });
-      chain = run.then(() => undefined, () => undefined);
+      chain = run.then(
+        () => undefined,
+        () => undefined,
+      );
       return run;
     },
   };
@@ -228,26 +459,46 @@ function snapshot(epochId: string, threadId: string) {
   return {
     type: "snapshot" as const,
     version: 2 as const,
+    sourceGeneration: "1",
     epochId,
     revision: `sync-v2-revision:${epochId}`,
     watermark: "0",
-    scope: { active: { limit: 2, returned: 1, complete: true }, archived: { limit: 1, returned: 0, complete: true } },
-    catalog: { active: [{
-      id: threadId,
-      parentId: null,
-      title: threadId,
-      workspace: "/workspace",
-      archived: false,
-      state: "idle" as const,
-      settings: { model: null, effort: null, approvalPolicy: "onRequest" as const, sandbox: "workspaceWrite" as const },
-      createdAt: "2026-08-27T12:00:00Z",
-      updatedAt: "2026-08-27T12:00:00Z",
-      lastActivityAt: null,
-      headTurnId: null,
-    }], archived: [] },
+    scope: {
+      active: { limit: 2, returned: 1, complete: true },
+      archived: { limit: 1, returned: 0, complete: true },
+    },
+    catalog: {
+      active: [
+        {
+          id: threadId,
+          parentId: null,
+          title: threadId,
+          workspace: "/workspace",
+          archived: false,
+          state: "idle" as const,
+          settings: {
+            model: null,
+            effort: null,
+            approvalPolicy: "onRequest" as const,
+            sandbox: "workspaceWrite" as const,
+          },
+          createdAt: "2026-08-27T12:00:00Z",
+          updatedAt: "2026-08-27T12:00:00Z",
+          lastActivityAt: null,
+          headTurnId: null,
+        },
+      ],
+      archived: [],
+    },
     currentThread: null,
     pendingRequests: [],
     includedTail: [],
-    limits: { catalogPerPartitionMax: 100, turnWindowMax: 36, historyPageMax: 100, queueMaxEvents: 2_048, queueMaxBytes: 4_194_304 },
+    limits: {
+      catalogPerPartitionMax: 100,
+      turnWindowMax: 36,
+      historyPageMax: 100,
+      queueMaxEvents: 2_048,
+      queueMaxBytes: 4_194_304,
+    },
   };
 }

@@ -1,5 +1,7 @@
 import { Stack } from "expo-router";
 
-export default function ModalLayout() {
-  return <Stack screenOptions={{ headerShown: false }} />;
+const SCREEN_OPTIONS = { headerShown: false };
+
+export default function ModalLayout(): React.JSX.Element {
+  return <Stack screenOptions={SCREEN_OPTIONS} />;
 }

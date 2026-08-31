@@ -52,6 +52,7 @@ codex-schema-*/
 !.env.example
 .envrc
 .direnv/
+.orbita/
 *.key
 *.pem
 !apps/android/certs/certificate.pem
