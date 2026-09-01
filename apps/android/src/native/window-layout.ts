@@ -22,6 +22,10 @@ export function windowLayoutSnapshot(window: Readonly<{ width: number; height: n
   };
 }
 
+export function desktopThreadSidebarWidth(viewportWidth: number): number {
+  return Math.max(280, Math.min(480, Math.floor(viewportWidth * 0.32)));
+}
+
 function finitePositiveOr(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : fallback;
 }

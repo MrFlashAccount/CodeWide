@@ -53,12 +53,43 @@
         { "type": "object", "additionalProperties": false, "required": ["kind", "id", "attachment"], "properties": { "kind": { "const": "attachment" }, "id": { "$ref": "#/$defs/id" }, "attachment": { "$ref": "#/$defs/attachment" } } }
       ]
     },
+    "turnActivity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["count", "kinds"],
+      "properties": {
+        "count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "kinds": { "type": "array", "maxItems": 256, "items": { "type": "string" } }
+      }
+    },
+    "turnUsage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["inputTokens", "outputTokens", "totalCostUsd", "latestRequestTokens", "modelContextWindow", "threadInputTokens", "threadOutputTokens", "threadTotalTokens", "threadTotalCostUsd"],
+      "properties": {
+        "inputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "outputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "totalCostUsd": { "type": ["number", "null"], "minimum": 0 },
+        "latestRequestTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "modelContextWindow": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] },
+        "threadInputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "threadOutputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "threadTotalTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "threadTotalCostUsd": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "weeklyRateLimit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["remainingPercent", "resetsAt"],
+      "properties": {
+        "remainingPercent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "resetsAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }
+      }
+    },
     "threadSummary": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "parentId", "title", "workspace", "archived", "state", "settings", "createdAt", "updatedAt", "lastActivityAt", "headTurnId"],
+      "required": ["id", "parentId", "title", "preview", "workspace", "archived", "state", "settings", "createdAt", "updatedAt", "lastActivityAt", "headTurnId"],
       "properties": {
         "id": { "$ref": "#/$defs/id" }, "parentId": { "$ref": "#/$defs/nullableId" }, "title": { "$ref": "#/$defs/nullableString" },
-        "workspace": { "type": "string" }, "archived": { "type": "boolean" },
+        "preview": { "type": "string" }, "workspace": { "type": "string" }, "archived": { "type": "boolean" },
         "state": { "enum": ["idle", "running", "waitingForApproval", "waitingForInput", "completed", "failed", "interrupted"] },
         "settings": { "oneOf": [{ "$ref": "#/$defs/threadSettings" }, { "type": "null" }] }, "createdAt": { "$ref": "#/$defs/timestamp" }, "updatedAt": { "$ref": "#/$defs/timestamp" },
         "lastActivityAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "headTurnId": { "$ref": "#/$defs/nullableId" }
@@ -66,11 +97,14 @@
     },
     "turnView": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "threadId", "state", "createdAt", "completedAt", "items"],
+      "required": ["id", "threadId", "state", "createdAt", "completedAt", "durationMs", "activity", "usage", "items"],
       "properties": {
         "id": { "$ref": "#/$defs/id" }, "threadId": { "$ref": "#/$defs/id" },
         "state": { "enum": ["queued", "running", "completed", "failed", "interrupted"] },
         "createdAt": { "$ref": "#/$defs/timestamp" }, "completedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "durationMs": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] },
+        "activity": { "oneOf": [{ "$ref": "#/$defs/turnActivity" }, { "type": "null" }] },
+        "usage": { "oneOf": [{ "$ref": "#/$defs/turnUsage" }, { "type": "null" }] },
         "items": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/item" } }
       }
     },
@@ -174,7 +208,7 @@
       { "type": "object", "additionalProperties": false, "required": ["kind", "support"], "properties": { "kind": { "const": "workspace.inspect" }, "support": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["provider", "repositoryRoot", "canCreate"], "properties": { "provider": { "$ref": "#/$defs/id" }, "repositoryRoot": { "type": "string" }, "canCreate": { "type": "boolean" } } }] } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": { "kind": { "const": "queue.list" }, "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/queueItem" } } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "operationId", "receipt"], "properties": { "kind": { "const": "operation.get" }, "operationId": { "$ref": "#/$defs/operationId" }, "receipt": { "$ref": "#/$defs/operationReceipt" } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "activeProfileId", "profiles", "allExhausted"], "properties": { "kind": { "const": "accounts.list" }, "activeProfileId": { "$ref": "#/$defs/nullableId" }, "profiles": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["id", "email", "plan", "enabled", "priority", "exhaustedUntil"], "properties": { "id": { "$ref": "#/$defs/id" }, "email": { "$ref": "#/$defs/nullableString" }, "plan": { "$ref": "#/$defs/nullableString" }, "enabled": { "type": "boolean" }, "priority": { "$ref": "#/$defs/safeInteger" }, "exhaustedUntil": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] } } } }, "allExhausted": { "type": "boolean" } } }
+      { "type": "object", "additionalProperties": false, "required": ["kind", "activeProfileId", "profiles", "allExhausted"], "properties": { "kind": { "const": "accounts.list" }, "activeProfileId": { "$ref": "#/$defs/nullableId" }, "profiles": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["id", "email", "plan", "enabled", "priority", "exhaustedUntil", "exhaustedIndefinitely", "weeklyLimit", "rateLimitsUpdatedAt", "rateLimitsFailed"], "properties": { "id": { "$ref": "#/$defs/id" }, "email": { "$ref": "#/$defs/nullableString" }, "plan": { "$ref": "#/$defs/nullableString" }, "enabled": { "type": "boolean" }, "priority": { "$ref": "#/$defs/safeInteger" }, "exhaustedUntil": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "exhaustedIndefinitely": { "type": "boolean" }, "weeklyLimit": { "oneOf": [{ "$ref": "#/$defs/weeklyRateLimit" }, { "type": "null" }] }, "rateLimitsUpdatedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "rateLimitsFailed": { "type": "boolean" } } } }, "allExhausted": { "type": "boolean" } } }
     ] },
     "commandResult": { "oneOf": [
       { "type": "object", "additionalProperties": false, "required": ["kind", "thread"], "properties": { "kind": { "enum": ["thread.create", "thread.fork", "thread.update"] }, "thread": { "$ref": "#/$defs/threadSummary" } } },

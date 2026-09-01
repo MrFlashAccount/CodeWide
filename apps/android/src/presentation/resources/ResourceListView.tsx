@@ -11,6 +11,7 @@ import { colors, radii, spacing } from "../../theme";
 import { ProductText } from "../text/ProductText";
 
 export interface ResourceListRow {
+  accessibilityLabel?: string;
   detail?: string;
   id: string;
   label: string;
@@ -58,7 +59,7 @@ export function ResourceListView({ empty, rows }: ResourceListViewProps): React.
           </View>
         ) : (
           <Pressable
-            accessibilityLabel={row.label}
+            accessibilityLabel={row.accessibilityLabel ?? row.label}
             accessibilityRole="button"
             key={row.id}
             onPress={row.onPress}

@@ -1,5 +1,14 @@
 import type { ComponentProps } from "react";
-import { StyleSheet, Text, type TextStyle } from "react-native";
+import {
+  StyleSheet,
+  Text as NativeText,
+  TextInput as NativeTextInput,
+  type StyleProp,
+  type TextStyle,
+} from "react-native";
+
+import { productFonts } from "../../ui/product-fonts";
+import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../../ui/typography-policy";
 
 type ProductTextTone = "default" | "dim" | "muted" | "danger" | "success" | "warning";
 type ProductTextWeight = "medium" | "regular" | "semibold";
@@ -9,11 +18,57 @@ export function ProductText({
   tone = "default",
   weight = "regular",
   ...props
-}: ComponentProps<typeof Text> & {
+}: ComponentProps<typeof NativeText> & {
   tone?: ProductTextTone;
   weight?: ProductTextWeight;
 }): React.JSX.Element {
-  return <Text {...props} style={[styles.base, tones[tone], weights[weight], style]} />;
+  return <PresentationText {...props} style={[styles.base, tones[tone], weights[weight], style]} />;
+}
+
+export function PresentationText({
+  allowFontScaling = true,
+  maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
+  style,
+  ...props
+}: ComponentProps<typeof NativeText>): React.JSX.Element {
+  return (
+    <NativeText
+      {...props}
+      allowFontScaling={allowFontScaling}
+      maxFontSizeMultiplier={maxFontSizeMultiplier}
+      style={[style, presentationFontStyle(style)]}
+    />
+  );
+}
+
+export function PresentationTextInput({
+  allowFontScaling = true,
+  maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
+  style,
+  ...props
+}: ComponentProps<typeof NativeTextInput>): React.JSX.Element {
+  return (
+    <NativeTextInput
+      {...props}
+      allowFontScaling={allowFontScaling}
+      maxFontSizeMultiplier={maxFontSizeMultiplier}
+      style={[style, presentationFontStyle(style)]}
+    />
+  );
+}
+
+function presentationFontStyle(style: StyleProp<TextStyle>): TextStyle | null {
+  const flattened = StyleSheet.flatten(style);
+  if (flattened?.fontFamily !== undefined) return null;
+  const rawWeight = flattened?.fontWeight;
+  const weight = rawWeight === "bold" ? 700 : Number.parseInt(String(rawWeight ?? 400), 10);
+  const fontFamily =
+    weight <= 400
+      ? productFonts.regular
+      : weight <= 500
+        ? productFonts.medium
+        : productFonts.semibold;
+  return { fontFamily, fontWeight: "400" };
 }
 
 const tones = StyleSheet.create<Record<ProductTextTone, TextStyle>>({
@@ -26,9 +81,9 @@ const tones = StyleSheet.create<Record<ProductTextTone, TextStyle>>({
 });
 
 const weights = StyleSheet.create<Record<ProductTextWeight, TextStyle>>({
-  medium: { fontFamily: "RobotoFlex-Medium", fontWeight: "400" },
-  regular: { fontFamily: "RobotoFlex-Regular", fontWeight: "400" },
-  semibold: { fontFamily: "RobotoFlex-SemiBold", fontWeight: "400" },
+  medium: { fontWeight: "600" },
+  regular: { fontWeight: "400" },
+  semibold: { fontWeight: "700" },
 });
 
 const styles = StyleSheet.create({

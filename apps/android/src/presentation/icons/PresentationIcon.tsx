@@ -3,19 +3,41 @@ import { StyleSheet, Text } from "react-native";
 
 export type PresentationIconName =
   | "add"
+  | "analytics"
   | "alert"
+  | "archive"
   | "attach"
+  | "back"
   | "changes"
+  | "chevronDown"
+  | "chevronForward"
+  | "chevronUp"
+  | "checkCircle"
   | "chat"
+  | "close"
   | "construct"
+  | "create"
   | "filter"
+  | "fingerprint"
   | "flash"
+  | "folder"
+  | "forward"
   | "list"
+  | "layers"
   | "mic"
+  | "more"
+  | "ports"
+  | "people"
+  | "pin"
+  | "refresh"
+  | "radio"
   | "search"
   | "send"
+  | "server"
   | "settings"
+  | "shield"
   | "sparkles"
+  | "stop"
   | "terminal";
 
 export interface PresentationIconProps {
@@ -31,7 +53,7 @@ const PresentationIconContext = createContext<PresentationIconRenderer | null>(n
 export function PresentationIconProvider({
   children,
   renderIcon,
-}: PropsWithChildren<{ renderIcon: PresentationIconRenderer }>): React.JSX.Element {
+}: PropsWithChildren<{ renderIcon: PresentationIconRenderer | null }>): React.JSX.Element {
   return (
     <PresentationIconContext.Provider value={renderIcon}>
       {children}
@@ -40,7 +62,7 @@ export function PresentationIconProvider({
 }
 
 export function PresentationIcon({ color, name, size }: PresentationIconProps): React.JSX.Element {
-  const renderIcon = useContext(PresentationIconContext);
+  const renderIcon = usePresentationIconRenderer();
   if (renderIcon !== null) return <>{renderIcon({ color, name, size })}</>;
   return (
     <Text style={[styles.icon, { color, fontSize: size, lineHeight: size + 2 }]}>
@@ -49,21 +71,47 @@ export function PresentationIcon({ color, name, size }: PresentationIconProps): 
   );
 }
 
+export function usePresentationIconRenderer(): PresentationIconRenderer | null {
+  return useContext(PresentationIconContext);
+}
+
 const glyphs: Record<PresentationIconName, string> = {
   add: "+",
+  analytics: "⌁",
   alert: "!",
+  archive: "▣",
   attach: "⌁",
+  back: "←",
   changes: "⑂",
+  chevronDown: "⌄",
+  chevronForward: "›",
+  chevronUp: "⌃",
+  checkCircle: "●",
   chat: "…",
+  close: "×",
   construct: "◇",
+  create: "+",
   filter: "≡",
+  fingerprint: "◎",
   flash: "↯",
+  folder: "□",
+  forward: "›",
   list: "☷",
+  layers: "▱",
   mic: "⌾",
+  more: "⋮",
+  ports: "⌘",
+  people: "♙",
+  pin: "⌖",
+  refresh: "↻",
+  radio: "○",
   search: "⌕",
   send: "↑",
+  server: "▣",
   settings: "⚙",
+  shield: "◇",
   sparkles: "✦",
+  stop: "■",
   terminal: "›_",
 };
 

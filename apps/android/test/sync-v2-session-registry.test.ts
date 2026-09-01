@@ -55,7 +55,7 @@ describe("SyncSessionRegistry", () => {
     expect(await registry.open("saved-server")).toBe(catalog);
     expect(created.map(({ currentThreadId }) => currentThreadId)).toEqual([null]);
     expect(created[0]!.updateIntent).toHaveBeenLastCalledWith({
-      catalog: { activeLimit: 100, archivedLimit: 50 },
+      catalog: { activeLimit: 40, archivedLimit: 40 },
       currentThread: { threadId: "thread-1", turnLimit: 36 },
     });
 
@@ -64,7 +64,7 @@ describe("SyncSessionRegistry", () => {
     expect(created).toHaveLength(1);
     expect(created[0]!.updateIntent).toHaveBeenCalledTimes(2);
     expect(created[0]!.updateIntent).toHaveBeenLastCalledWith({
-      catalog: { activeLimit: 100, archivedLimit: 50 },
+      catalog: { activeLimit: 40, archivedLimit: 40 },
       currentThread: { threadId: "thread-2", turnLimit: 36 },
     });
     expect(created[0]!.release).not.toHaveBeenCalled();

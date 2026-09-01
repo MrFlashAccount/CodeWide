@@ -1,8 +1,8 @@
-import { router } from "expo-router";
+import { router, usePathname } from "expo-router";
 import { useState, useSyncExternalStore, type PropsWithChildren } from "react";
-import { ActivityIndicator, StyleSheet, View } from "react-native";
 
 import { SavedServerWorkspaceView } from "../../../presentation/layouts/AdaptiveWorkspaceView";
+import { ResourceStateView } from "../../../presentation/feedback/ResourceStateView";
 import { ThreadSidebarView } from "../../../presentation/navigation/ThreadSidebarView";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import type { SavedServerId, ThreadId } from "../../domain/ids";
@@ -11,10 +11,16 @@ import { qualifiedThread } from "../../domain/qualifiedThread";
 import { useV2Runtime } from "../../V2Application";
 import {
   newThreadDestination,
-  serverSettingsDestination,
+  serverDestination,
   threadDestination,
 } from "../navigation/routeDestinations";
 import { useEvent } from "../../../react/useEvent";
+import { threadListCopy } from "../threadList/threadListPresentation";
+import { useVoiceInputControl } from "../conversation/VoiceInputControl";
+import { useLiveQuery } from "../../application/react/useLiveQuery";
+import { accountUsagePresentation } from "../accounts/accountUsagePresentation";
+
+const ACCOUNTS_QUERY = { kind: "accounts.list" } as const;
 
 interface SavedServerWorkspaceChromeProps {
   savedServerId: SavedServerId;
@@ -31,13 +37,20 @@ export function SavedServerWorkspaceChrome({
   selectedThreadId,
 }: PropsWithChildren<SavedServerWorkspaceChromeProps>): React.JSX.Element {
   const runtime = useV2Runtime();
-  const [outer] = useState(() => runtime.projection(savedServerId));
+  const [outer, setOuter] = useState(() => runtime.projection(savedServerId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
+  const retry = useEvent(() => setOuter(runtime.projection(savedServerId)));
   if (opened.value === null) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator accessibilityLabel="Opening V2 saved server workspace" />
-      </View>
+      <ResourceStateView
+        message={
+          opened.status === "error"
+            ? (opened.message ?? "Could not open saved server")
+            : "Connecting to server…"
+        }
+        onRetry={retry}
+        status={opened.status === "error" ? "error" : "loading"}
+      />
     );
   }
   return (
@@ -58,6 +71,7 @@ function ProjectedSavedServerWorkspace({
   selectedThreadId,
 }: PropsWithChildren<ProjectedSavedServerWorkspaceProps>): React.JSX.Element {
   const runtime = useV2Runtime();
+  const pathname = usePathname();
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
   const servers = useSyncExternalStore(
     runtime.savedServers.subscribe,
@@ -65,32 +79,49 @@ function ProjectedSavedServerWorkspace({
     runtime.savedServers.snapshot,
   );
   const projection = snapshot.value.projections.live ?? snapshot.value.projections.retained;
+  const accounts = useLiveQuery(runtime, savedServerId, ACCOUNTS_QUERY);
   const server = servers.value.find((candidate) => candidate.id === savedServerId);
-  const rows = (projection?.catalog ?? []).map(({ thread }) => ({
-    id: thread.id,
-    preview: thread.workspace,
-    retained: snapshot.value.projections.live === null,
-    state: thread.state,
-    title: thread.title ?? "Untitled thread",
-    updatedAt: formatThreadTime(thread.updatedAt),
-  }));
+  const [query, setQuery] = useState("");
+  const rows = (projection?.catalog ?? []).map(({ thread }) => {
+    const copy = threadListCopy(thread);
+    return {
+      archived: thread.archived,
+      id: thread.id,
+      preview: copy.preview,
+      retained: snapshot.value.projections.live === null,
+      state: thread.state,
+      title: copy.title,
+      updatedAt: formatThreadTime(thread.lastActivityAt ?? thread.updatedAt),
+    };
+  });
   const createThread = useEvent(() => router.push(newThreadDestination(savedServerId)));
   const openThread = useEvent((id: string) => {
     router.push(threadDestination(qualifiedThread(savedServerId, threadId(id))));
   });
-  const openSettings = useEvent(() => router.push(serverSettingsDestination(savedServerId)));
+  const changeQuery = useEvent((value: string) => setQuery(value));
+  const voice = useVoiceInputControl({
+    audience: savedServerId,
+    live: snapshot.value.state === "live" && snapshot.value.projections.live !== null,
+    onTranscript: changeQuery,
+    projection: snapshot.value.projections.live,
+    scope: { id: `thread-search:${savedServerId}`, kind: "generic" },
+    thread: null,
+  });
   return (
     <SavedServerWorkspaceView
-      emptyMain={selectedThreadId === null}
+      emptyMain={pathname === serverDestination(savedServerId)}
       sidebar={
         <ThreadSidebarView
           connectionState={snapshot.value.state}
+          onChangeQuery={changeQuery}
           onNewThread={createThread}
           onOpen={openThread}
-          onSettings={openSettings}
+          query={query}
           rows={rows}
+          usageAccounts={accountUsagePresentation(accounts.value, runtime.now())}
           {...(selectedThreadId === null ? {} : { selectedId: selectedThreadId })}
           title={server?.displayName ?? "Server"}
+          voice={voice}
         />
       }
     >
@@ -104,7 +135,3 @@ function formatThreadTime(value: string): string {
   if (!Number.isFinite(timestamp)) return "";
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
-
-const styles = StyleSheet.create({
-  loading: { alignItems: "center", flex: 1, justifyContent: "center" },
-});

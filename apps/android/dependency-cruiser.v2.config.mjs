@@ -19,10 +19,10 @@ const config = {
       name: "v2-does-not-import-legacy",
       severity: "error",
       comment:
-        "The V2 application cannot depend on the legacy Android implementation. The exact shared react/useEvent.ts callback primitive is runtime-neutral and required by the repository callback contract.",
+        "The V2 application cannot depend on the legacy Android implementation. Only generation-neutral app services and the shared connection catalog cross this boundary.",
       from: { path: "^src/v2/" },
       to: {
-        path: "^src/(?!(?:boot|presentation|v2)(?:/|$)|react/useEvent[.]ts$|native/authenticated-transport-lease(?:[.]contract)?(?:[.](?:native|web))?(?:[.]ts)?$)",
+        path: "^src/(?!(?:boot|presentation|v2)(?:/|$)|react/useEvent[.]ts$|ui/(?:AppDialog|AppLockGate)[.]tsx$|data/connection-profile-database[.](?:native|web)[.]ts$|native/authenticated-transport-lease(?:[.]contract)?(?:[.](?:native|web))?(?:[.]ts)?$)",
       },
     },
     {
@@ -105,6 +105,21 @@ const config = {
     },
   ],
   options: {
+    enhancedResolveOptions: {
+      conditionNames: ["react-native", "import", "require", "node", "default", "types"],
+      extensions: [
+        ".native.tsx",
+        ".native.ts",
+        ".android.tsx",
+        ".android.ts",
+        ".tsx",
+        ".ts",
+        ".jsx",
+        ".js",
+        ".json",
+      ],
+      exportsFields: ["exports"],
+    },
     doNotFollow: {
       dependencyTypes: ["npm", "npm-bundled", "npm-dev", "npm-no-pkg", "npm-optional", "npm-peer"],
       path: "node_modules",

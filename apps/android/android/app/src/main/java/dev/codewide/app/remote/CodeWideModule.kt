@@ -12,6 +12,9 @@ import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.net.Uri
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -70,6 +73,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   private var audioAutomaticGainControl: AutomaticGainControl? = null
   private val voiceAura = VoiceAuraRenderEffect(context)
   private val browserDevTools = BrowserDevToolsBridge(context)
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   init {
     contexts += context
@@ -426,11 +430,39 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod
   fun acquireAuthenticatedTransportLease(savedServerId: String, promise: Promise) {
     try {
-      val service = CodexConnectionService.instance ?: error("Connection service is not running")
-      promise.resolve(service.acquireAuthenticatedTransportLease(savedServerId))
+      require(savedServerId.isNotBlank()) { "Saved server id is required" }
+      wakeSocket(savedServerId)
+      acquireAuthenticatedTransportLeaseWhenReady(
+        savedServerId,
+        promise,
+        SystemClock.uptimeMillis() + AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS,
+      )
     } catch (error: Throwable) {
       promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "Could not acquire the authenticated transport lease", error)
     }
+  }
+
+  private fun acquireAuthenticatedTransportLeaseWhenReady(savedServerId: String, promise: Promise, deadline: Long) {
+    val service = CodexConnectionService.instance
+    if (service != null) {
+      try {
+        promise.resolve(service.acquireAuthenticatedTransportLease(savedServerId))
+      } catch (error: Throwable) {
+        promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "Could not acquire the authenticated transport lease", error)
+      }
+      return
+    }
+    if (SystemClock.uptimeMillis() >= deadline) {
+      promise.reject(
+        "AUTHENTICATED_LEASE_UNAVAILABLE",
+        "Connection service did not become ready",
+      )
+      return
+    }
+    mainHandler.postDelayed(
+      { acquireAuthenticatedTransportLeaseWhenReady(savedServerId, promise, deadline) },
+      AUTHENTICATED_LEASE_SERVICE_RETRY_MS,
+    )
   }
 
   @ReactMethod
@@ -1269,6 +1301,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     private const val MAX_COMMITTED_FRAME_PAGE = 128
     private const val MAX_COMMITTED_FRAME_BYTES = 512 * 1024
     private const val DOCUMENT_IO_BUFFER_BYTES = 256 * 1024
+    private const val AUTHENTICATED_LEASE_SERVICE_RETRY_MS = 25L
+    private const val AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS = 5_000L
     private val contexts = CopyOnWriteArraySet<ReactApplicationContext>()
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val pairingHttpClient = OkHttpClient.Builder()

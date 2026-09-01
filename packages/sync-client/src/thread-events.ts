@@ -461,10 +461,16 @@ export function threadContainsClientMessage(thread: Thread, clientId: string): b
 }
 
 function upsertTurn(thread: Thread, value: unknown): void {
-  const turn = asObject(value) as Turn | null;
-  if (turn === null || typeof turn.id !== "string") return;
-  const index = turnIndex(thread, turn.id);
-  const nextTurn = mergeTurnMetadata(structuredClone(turn), index === -1 ? undefined : thread.turns[index]);
+  const source = asObject(value);
+  if (source === null || typeof source.id !== "string") return;
+  const index = turnIndex(thread, source.id);
+  const cached = index === -1 ? undefined : thread.turns[index];
+  const turn = structuredClone(source) as Turn;
+  if (!Array.isArray((turn as Turn & { items?: unknown }).items)) {
+    turn.items = cached?.items.map((item) => structuredClone(item)) ?? [];
+    turn.itemsView = cached?.itemsView ?? "full";
+  }
+  const nextTurn = mergeTurnMetadata(turn, cached);
   const targetIndex = index === -1 ? thread.turns.length : index;
   if (index === -1) thread.turns.push(nextTurn);
   else thread.turns[index] = nextTurn;

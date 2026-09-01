@@ -2783,10 +2783,6 @@ type ThreadResourcesPatch = Pick<ThreadResourcesValue, "threadId" | "revision"> 
   attachments?: ThreadResourcesValue["attachments"];
 };
 
-function parseThreadResources(value: unknown, expectedThreadId: string): ThreadResourcesValue {
-  return mergeThreadResources(null, parseThreadResourcesPatch(value, expectedThreadId, "all"));
-}
-
 function parseThreadResourcesPatch(value: unknown, expectedThreadId: string, kind: ThreadResourceLoadKind): ThreadResourcesPatch {
   const source = asRecord(value);
   if (source === null || source.threadId !== expectedThreadId || typeof source.revision !== "string") {

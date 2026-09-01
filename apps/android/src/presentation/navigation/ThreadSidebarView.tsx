@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -7,50 +8,109 @@ import {
 } from "react-native";
 
 import { colors, radii, spacing, touchTarget } from "../../theme";
+import type { UsageAccountViewModel } from "../usage/UsagePopoverView";
+import { UsagePopoverView } from "../usage/UsagePopoverView";
 import { PresentationIcon } from "../icons/PresentationIcon";
-import { ProductText } from "../text/ProductText";
-import { ThreadListView, type ThreadListRow } from "./ThreadListView";
+import { PresentationText as Text } from "../text/ProductText";
+import { ThreadListView, type ThreadListRow, type ThreadListVoiceControl } from "./ThreadListView";
+import { useEvent } from "../../react/useEvent";
 
 interface ThreadSidebarViewProps {
   connectionState: string;
+  onChangeQuery?(query: string): void;
   onNewThread(): void;
   onOpen(id: string): void;
-  onSettings(): void;
+  query?: string;
   rows: ThreadListRow[];
   selectedId?: string;
-  title: string;
+  title: ReactNode;
+  usageAccounts?: readonly UsageAccountViewModel[];
+  voice?: ThreadListVoiceControl;
 }
 
 interface HeaderActionProps {
   label: string;
-  name: "add" | "settings";
-  onPress(): void;
+  name: "back" | "create" | "more";
+  onPress?(): void;
 }
 
 export function ThreadSidebarView({
   connectionState,
+  onChangeQuery,
   onNewThread,
   onOpen,
-  onSettings,
+  query,
   rows,
   selectedId,
   title,
+  usageAccounts,
+  voice,
 }: ThreadSidebarViewProps): React.JSX.Element {
   const connecting = connectionState !== "live";
+  const [archived, setArchived] = useState(false);
+  const archivedCount = rows.filter((row) => row.archived === true).length;
+  const visibleRows = rows.filter((row) => (row.archived === true) === archived);
+  const backToThreads = useEvent(() => setArchived(false));
+  const openArchived = useEvent(() => setArchived(true));
   return (
     <View style={styles.root}>
       <View style={styles.header}>
-        <ProductText numberOfLines={1} style={styles.title} weight="semibold">
-          {title}
-        </ProductText>
-        {connecting ? <ActivityIndicator color={colors.amber} size={14} /> : null}
-        <HeaderAction label="New thread" name="add" onPress={onNewThread} />
-        <HeaderAction label="Server settings" name="settings" onPress={onSettings} />
+        {archived ? (
+          <>
+            <HeaderAction label="Back to threads" name="back" onPress={backToThreads} />
+            <View style={styles.titleSlot}>
+              <Text numberOfLines={1} style={styles.title}>
+                Archived threads
+              </Text>
+              <Text style={styles.subtitle}>
+                {archivedCount === 1 ? "1 thread" : `${archivedCount} threads`}
+              </Text>
+            </View>
+          </>
+        ) : (
+          <>
+            <View style={styles.titleSlot}>
+              {typeof title === "string" ? (
+                <Text numberOfLines={1} style={styles.title}>
+                  {title}
+                </Text>
+              ) : (
+                title
+              )}
+            </View>
+            {connecting && typeof title === "string" ? (
+              <ActivityIndicator color={colors.amber} size={14} />
+            ) : null}
+            <HeaderAction label="New thread" name="create" onPress={onNewThread} />
+            <UsagePopoverView
+              {...(usageAccounts === undefined ? {} : { accounts: usageAccounts })}
+              actions={[
+                {
+                  description: archivedCount === 1 ? "1 thread" : `${archivedCount} threads`,
+                  icon: "archive",
+                  id: "archived",
+                  label: "Archived threads",
+                  onPress: openArchived,
+                },
+              ]}
+              align="end"
+              placement="bottom"
+              triggerAccessibilityLabel="Thread list menu"
+              triggerStyle={headerActionStyle}
+            >
+              <PresentationIcon color={colors.text} name="more" size={21} />
+            </UsagePopoverView>
+          </>
+        )}
       </View>
       <ThreadListView
         onOpen={onOpen}
-        rows={rows}
+        rows={visibleRows}
+        showSections={!archived}
+        {...(onChangeQuery === undefined ? {} : { onChangeQuery })}
+        {...(query === undefined ? {} : { query })}
         {...(selectedId === undefined ? {} : { selectedId })}
+        {...(voice === undefined ? {} : { voice })}
       />
     </View>
   );
@@ -85,10 +145,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.xxs,
-    minHeight: touchTarget + spacing.md,
+    minHeight: touchTarget,
     paddingLeft: spacing.sm,
+    paddingRight: 0,
+    transform: [{ translateY: spacing.xs }],
   },
   pressed: { opacity: 0.68 },
   root: { backgroundColor: colors.surface, flex: 1, minHeight: 0 },
-  title: { flex: 1, fontSize: 18, lineHeight: 24, minWidth: 0 },
+  title: { color: colors.text, fontSize: 18, fontWeight: "700", lineHeight: 24 },
+  subtitle: { color: colors.textMuted, fontSize: 12, lineHeight: 16 },
+  titleSlot: { flex: 1, minWidth: 0, transform: [{ translateY: -0.5 }] },
 });

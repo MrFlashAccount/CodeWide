@@ -2,7 +2,7 @@ import type { PropsWithChildren, ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { colors, spacing, typeScale } from "../../theme";
-import { ProductText } from "../text/ProductText";
+import { PresentationText as Text } from "../text/ProductText";
 
 export function WorkspaceView({
   actions,
@@ -14,22 +14,31 @@ export function WorkspaceView({
   actions?: ReactNode;
   leading?: ReactNode;
   subtitle?: ReactNode;
-  title: string;
+  title: ReactNode;
 }>): React.JSX.Element {
   return (
     <View style={styles.root}>
       <View style={styles.header}>
         {leading === undefined ? null : <View style={styles.leading}>{leading}</View>}
         <View style={styles.identity}>
-          <ProductText
-            accessibilityRole="header"
-            numberOfLines={1}
-            style={styles.title}
-            weight="semibold"
-          >
-            {title}
-          </ProductText>
-          {subtitle === undefined ? null : <View style={styles.subtitle}>{subtitle}</View>}
+          {typeof title === "string" ? (
+            <Text accessibilityRole="header" numberOfLines={1} style={styles.title}>
+              {title}
+            </Text>
+          ) : (
+            title
+          )}
+          {subtitle === undefined ? null : (
+            <View style={styles.subtitle}>
+              {typeof subtitle === "string" ? (
+                <Text ellipsizeMode="middle" numberOfLines={1} style={styles.subtitleText}>
+                  {subtitle}
+                </Text>
+              ) : (
+                subtitle
+              )}
+            </View>
+          )}
         </View>
         {actions === undefined ? null : <View style={styles.actions}>{actions}</View>}
       </View>
@@ -48,9 +57,17 @@ const styles = StyleSheet.create({
     minHeight: 56,
     paddingLeft: spacing.xs,
   },
-  identity: { flex: 1, minWidth: 0, paddingHorizontal: spacing.xs },
+  identity: { flex: 1, minWidth: 0 },
   leading: { alignItems: "center", justifyContent: "center" },
   root: { backgroundColor: colors.background, flex: 1 },
   subtitle: { marginTop: 1 },
-  title: { ...typeScale.titleMedium },
+  subtitleText: { color: colors.textMuted, ...typeScale.labelMedium },
+  title: {
+    alignSelf: "flex-start",
+    color: colors.text,
+    flexShrink: 1,
+    maxWidth: "100%",
+    minWidth: 0,
+    ...typeScale.titleMedium,
+  },
 });

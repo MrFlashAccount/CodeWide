@@ -191,6 +191,7 @@ pub struct ThreadSummary {
     pub parent_id: Option<Id>,
     #[serde(deserialize_with = "required_option")]
     pub title: Option<String>,
+    pub preview: String,
     pub workspace: String,
     pub archived: bool,
     pub state: ThreadState,
@@ -209,6 +210,30 @@ pub struct ThreadSummary {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnActivity {
+    pub count: i64,
+    pub kinds: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnUsage {
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    #[serde(deserialize_with = "required_option")]
+    pub total_cost_usd: Option<f64>,
+    pub latest_request_tokens: i64,
+    #[serde(deserialize_with = "required_option")]
+    pub model_context_window: Option<i64>,
+    pub thread_input_tokens: i64,
+    pub thread_output_tokens: i64,
+    pub thread_total_tokens: i64,
+    #[serde(deserialize_with = "required_option")]
+    pub thread_total_cost_usd: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnView {
     pub id: Id,
     pub thread_id: Id,
@@ -216,6 +241,12 @@ pub struct TurnView {
     pub created_at: Timestamp,
     #[serde(deserialize_with = "required_option")]
     pub completed_at: Option<Timestamp>,
+    #[serde(deserialize_with = "required_option")]
+    pub duration_ms: Option<i64>,
+    #[serde(deserialize_with = "required_option")]
+    pub activity: Option<TurnActivity>,
+    #[serde(deserialize_with = "required_option")]
+    pub usage: Option<TurnUsage>,
     pub items: Vec<Item>,
 }
 

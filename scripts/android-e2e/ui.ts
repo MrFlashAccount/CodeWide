@@ -34,6 +34,13 @@ export function createAndroidE2eUi(input: {
     return element;
   };
 
+  const waitForAnyThreadRow = async (driver: AppiumBrowser): Promise<void> => {
+    const element = await driver.$(
+      'android=new UiSelector().descriptionStartsWith("Open thread ")',
+    );
+    await element.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 });
+  };
+
   const openProjectedThreadMatching = async (
     driver: AppiumBrowser,
     predicate: () => Promise<boolean>,
@@ -55,17 +62,75 @@ export function createAndroidE2eUi(input: {
     driver: AppiumBrowser,
     threadId: string,
   ): Promise<boolean> => {
-    const candidate = await driver.$(
-      `android=new UiSelector().descriptionStartsWith("Open thread ").descriptionContains("${escapeUiSelector(threadId)}")`,
-    );
-    if (!(await candidate.isDisplayed().catch(() => false))) return false;
-    await candidate.click();
-    return true;
+    const selector = `android=new UiSelector().descriptionStartsWith("Open thread ").descriptionContains("${escapeUiSelector(threadId)}")`;
+    const visibleCandidate = await driver.$(selector);
+    if (await visibleCandidate.isDisplayed().catch(() => false)) {
+      await visibleCandidate.click();
+      return true;
+    }
+    const search = await driver.$("~Search threads");
+    if (!(await search.isDisplayed().catch(() => false))) return false;
+    await search.setValue(threadId);
+    const filteredCandidate = await driver.$(selector);
+    const found = await filteredCandidate
+      .waitForDisplayed({ timeout: Math.min(5_000, input.timeoutMs), interval: 250 })
+      .then(() => true)
+      .catch(() => false);
+    if (found) {
+      await filteredCandidate.click();
+      return true;
+    }
+    await search.clearValue();
+    return false;
   };
 
   const clickAccessibility = async (driver: AppiumBrowser, label: string): Promise<void> => {
     const element = await waitForAccessibility(driver, label);
     await element.click();
+  };
+
+  const clickVisibleText = async (driver: AppiumBrowser, text: string): Promise<void> => {
+    const element = await driver.$(`android=new UiSelector().text("${escapeUiSelector(text)}")`);
+    await element.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 });
+    await element.click();
+  };
+
+  const scrollAccessibilityIntoView = async (
+    driver: AppiumBrowser,
+    label: string,
+  ): Promise<void> => {
+    const target = await driver.$(`~${label}`);
+    if (await target.isDisplayed().catch(() => false)) return;
+    const sheet = await driver.$('//*[@pane-title="Bottom Sheet"]');
+    await sheet.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 });
+    const sheetTop = await sheet.getLocation("y");
+    const candidates = await driver.$$(
+      'android=new UiSelector().className("android.widget.ScrollView")',
+    );
+    for (const candidate of candidates) {
+      if (!(await candidate.isDisplayed().catch(() => false))) continue;
+      if ((await candidate.getLocation("y")) < sheetTop) continue;
+      const [height, width, x, y] = await Promise.all([
+        candidate.getSize("height"),
+        candidate.getSize("width"),
+        candidate.getLocation("x"),
+        candidate.getLocation("y"),
+      ]);
+      const centerX = x + Math.floor(width / 2);
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await driver
+          .action("pointer", { parameters: { pointerType: "touch" } })
+          .move({ duration: 0, x: centerX, y: y + Math.floor(height * 0.82) })
+          .down({ button: 0 })
+          .pause(100)
+          .move({ duration: 550, x: centerX, y: y + Math.floor(height * 0.18) })
+          .up({ button: 0 })
+          .perform();
+        if (await target.isDisplayed().catch(() => false)) return;
+        await delay(150);
+      }
+    }
+    await target.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 });
   };
 
   const waitForApplicationReady = async (driver: AppiumBrowser): Promise<void> => {
@@ -75,7 +140,7 @@ export function createAndroidE2eUi(input: {
         "Open manual server setup",
         "Scan pairing QR",
         "New thread",
-        "Open Saved server 1",
+        "Choose server",
       ]) {
         const appElement = await driver.$(`~${label}`);
         if (await appElement.isDisplayed().catch(() => false)) return;
@@ -126,6 +191,19 @@ export function createAndroidE2eUi(input: {
     },
 
     clickAccessibility,
+    clickVisibleText,
+    scrollAccessibilityIntoView,
+
+    async clickLastAccessibility(driver: AppiumBrowser, label: string): Promise<void> {
+      const candidates = await driver.$$(`~${label}`);
+      const displayed = [];
+      for (const candidate of candidates) {
+        if (await candidate.isDisplayed().catch(() => false)) displayed.push(candidate);
+      }
+      const target = displayed.at(-1);
+      if (target === undefined) throw new Error(`No displayed accessibility element ${label}`);
+      await target.click();
+    },
 
     async clickFirstAccessibilityExcept(
       driver: AppiumBrowser,
@@ -160,9 +238,18 @@ export function createAndroidE2eUi(input: {
     ): Promise<void> {
       const deadline = Date.now() + input.timeoutMs;
       while (Date.now() < deadline) {
+        const alreadyOpen = await driver.$(
+          `android=new UiSelector().textContains("${escapeUiSelector(expectedText)}")`,
+        );
+        const openComposer = await driver.$("~Message Codex");
+        if (
+          (await alreadyOpen.isDisplayed().catch(() => false)) &&
+          (await openComposer.isDisplayed().catch(() => false))
+        )
+          return;
         if (threadId !== undefined) {
           if (await openProjectedThreadById(driver, threadId)) {
-            await waitForAccessibility(driver, "Attachments");
+            await waitForAccessibility(driver, "Message Codex");
             await waitForVisibleTextContaining(driver, expectedText);
             return;
           }
@@ -189,17 +276,45 @@ export function createAndroidE2eUi(input: {
         // empty first snapshot as proof that the command never appeared.
         await delay(250);
       }
-      throw new Error("The authoritative V2 thread was absent from the visible projected catalog");
+      throw new Error("The authoritative thread was absent from the visible projected catalog");
+    },
+
+    async reopenLegacyThreadContaining(driver: AppiumBrowser, expectedText: string): Promise<void> {
+      await clickAccessibility(driver, "New thread");
+      const search = await waitForAccessibility(driver, "Search threads");
+      await search.clearValue();
+      await search.addValue(expectedText);
+      const row = await driver.$(
+        `android=new UiSelector().descriptionStartsWith("${escapeUiSelector(expectedText)}")`,
+      );
+      await row.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 });
+      await row.click();
+      await waitForAccessibility(driver, "Message Codex");
+      await waitForVisibleTextContaining(driver, expectedText);
     },
 
     async sendComposerMessage(driver: AppiumBrowser, message: string): Promise<void> {
       const composer = await waitForAccessibility(driver, "Message Codex");
       await composer.click();
       await composer.setValue(message);
-      await clickAccessibility(driver, "Send message");
+      // The wide split keyboard can cover V1's composer after text entry.
+      // Close only the IME, then press the real app action through Appium.
+      await driver.hideKeyboard().catch(() => undefined);
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await clickAccessibility(driver, "Send message");
+        const deadline = Date.now() + 2_000;
+        while (Date.now() < deadline) {
+          const activeComposer = await driver.$("~Message Codex");
+          const currentText = await activeComposer.getText().catch(() => "");
+          if (currentText !== message) return;
+          await delay(100);
+        }
+      }
+      throw new Error("Send message press did not clear the composer");
     },
 
     waitForAccessibility,
+    waitForAnyThreadRow,
 
     async waitForAccessibilityHidden(driver: AppiumBrowser, label: string): Promise<void> {
       const element = await driver.$(`~${label}`);
@@ -231,30 +346,9 @@ export function createAndroidE2eUi(input: {
         throw new Error("Recovery assertion requires at least one reply");
       }
       const composer = await driver.$("~Message Codex");
-      if (!(await composer.isDisplayed().catch(() => false))) {
-        if (
-          !(await openProjectedThreadMatching(driver, async () => {
-            const results = await Promise.all(
-              replies.map(async (reply) => {
-                const element = await driver.$(
-                  `android=new UiSelector().textContains("${escapeUiSelector(reply)}")`,
-                );
-                return element
-                  .waitForDisplayed({
-                    timeout: 1_500,
-                    interval: 250,
-                  })
-                  .then(() => true)
-                  .catch(() => false);
-              }),
-            );
-            return results.every(Boolean);
-          }))
-        ) {
-          throw new Error("Recovered thread is absent from the authoritative catalog");
-        }
-      }
-      await waitForAccessibility(driver, "Message Codex");
+      await composer.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 }).catch(() => {
+        throw new Error("Recovered conversation did not become ready after process death");
+      });
       for (const reply of replies) await waitForVisibleTextContaining(driver, reply);
     },
 

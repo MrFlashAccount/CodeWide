@@ -11,9 +11,12 @@ const MAX_EVENT_BATCH_COUNT = 4_096;
 const MAX_EVENT_BATCH_BYTES = 8 * 1024 * 1024;
 
 export class RpcResponseError extends Error {
-  constructor(readonly code: number, message: string) {
+  readonly code: number;
+
+  constructor(code: number, message: string) {
     super(message);
     this.name = "RpcResponseError";
+    this.code = code;
   }
 }
 

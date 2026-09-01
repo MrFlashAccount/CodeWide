@@ -1,7 +1,10 @@
 import { router } from "expo-router";
 import { useSyncExternalStore, type PropsWithChildren } from "react";
 
-import { ServerWorkspaceView } from "../../../presentation/layouts/AdaptiveWorkspaceView";
+import {
+  ServerWorkspaceView,
+  WorkspaceSafeAreaView,
+} from "../../../presentation/layouts/AdaptiveWorkspaceView";
 import { ServerRailView } from "../../../presentation/navigation/ServerRailView";
 import { useV2Runtime } from "../../V2Application";
 import { V2PresentationProvider } from "../../platform/rendering/V2PresentationProvider";
@@ -36,19 +39,21 @@ export function ServerWorkspaceChrome({
   const openSettings = useEvent(() => router.push("/settings"));
   return (
     <V2PresentationProvider>
-      <ServerWorkspaceView
-        rail={
-          <ServerRailView
-            {...(activeSavedServerId === null ? {} : { activeId: activeSavedServerId })}
-            onAdd={addServer}
-            onOpen={openServer}
-            onSettings={openSettings}
-            rows={rows}
-          />
-        }
-      >
-        {children}
-      </ServerWorkspaceView>
+      <WorkspaceSafeAreaView>
+        <ServerWorkspaceView
+          rail={
+            <ServerRailView
+              {...(activeSavedServerId === null ? {} : { activeId: activeSavedServerId })}
+              onAdd={addServer}
+              onOpen={openServer}
+              onSettings={openSettings}
+              rows={rows}
+            />
+          }
+        >
+          {children}
+        </ServerWorkspaceView>
+      </WorkspaceSafeAreaView>
     </V2PresentationProvider>
   );
 }

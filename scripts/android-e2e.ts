@@ -28,12 +28,14 @@ import { writeE2eReport } from "./android-e2e/report.ts";
 import {
   armCommandFault,
   assertCompanionAdmissionCount,
+  readClientDurableCreate,
   releaseCommandFault,
   waitForClientDurableCreate,
   waitForCommandFault,
   waitForCompanionAdmission,
 } from "./android-e2e/faultControl.ts";
 import { createAndroidE2eUi, type AppiumBrowser } from "./android-e2e/ui.ts";
+import { writeVisualDiff } from "./android-e2e/visualDiff.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const PACKAGE_NAME = "dev.codexremote.app.e2e";
@@ -42,6 +44,7 @@ const APPIUM_DRIVER_VERSION = "8.5.0";
 const APP_SERVER_TIMEOUT_MS = 180_000;
 const UI_TIMEOUT_MS = 60_000;
 const APK_PATH = path.join(REPO_ROOT, "apps/android/android/app/build/outputs/apk/e2e/app-e2e.apk");
+const VISUAL_PARITY_ONLY = process.argv.includes("--visual-parity-only");
 
 type StepEvidence = {
   name: string;
@@ -71,6 +74,7 @@ type E2EObservation = {
 
 const runId = `${timestamp()}-${randomUUID().slice(0, 8)}`;
 const artifactDir = path.join(REPO_ROOT, "test-results", "android-e2e", runId);
+const parityArtifactDir = path.join(artifactDir, "visual-parity");
 const steps: StepEvidence[] = [];
 const videos: string[] = [];
 const observations: E2EObservation[] = [];
@@ -78,11 +82,14 @@ const startedAt = performance.now();
 const {
   caseWithVideo,
   clickAccessibility,
-  clickFirstAccessibilityExcept,
+  clickLastAccessibility,
+  clickVisibleText,
   openProjectedThreadContaining,
+  reopenLegacyThreadContaining,
+  scrollAccessibilityIntoView,
   sendComposerMessage,
   waitForAccessibility,
-  waitForAccessibilityHidden,
+  waitForAnyThreadRow,
   waitForApplicationReady,
   waitForConnectionReady,
   waitForRecoveredConversation,
@@ -95,6 +102,7 @@ await main();
 async function main(): Promise<void> {
   await mkdir(artifactDir, { recursive: true, mode: 0o700 });
   await chmod(artifactDir, 0o700);
+  await mkdir(parityArtifactDir, { recursive: true, mode: 0o700 });
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), "codewide-android-e2e-"));
   await chmod(runtimeDir, 0o700);
   const processes: ManagedProcess[] = [];
@@ -103,6 +111,10 @@ async function main(): Promise<void> {
   let driver: AppiumBrowser | null = null;
   let appServer: AppServerClient | null = null;
   let threadId: string | null = null;
+  let parityThreadId: string | null = null;
+  let parityThreadTitle: string | null = null;
+  let parityReplies: string[] = [];
+  let parityReply: string | null = null;
   let failure: Error | null = null;
 
   try {
@@ -192,49 +204,81 @@ async function main(): Promise<void> {
 
     const nonce = runId.replaceAll(/[^A-Za-z0-9]/g, "").toUpperCase();
     if (!process.argv.includes("--v2-only")) {
-      const baselineIds = new Set((await appServer.listThreads()).map(({ id }) => id));
-      const mobileReply = `MOBILEOK${nonce}`;
-      const mobileMessage = `E2EMOBILE${nonce}. Reply exactly ${mobileReply}.`;
-      await caseWithVideo(driver, "02-mobile-foreground", async () => {
-        await clickAccessibility(driver!, "New thread");
-        await waitForConnectionReady(driver!);
-        await sendComposerMessage(driver!, mobileMessage);
-        threadId = await appServer!.findNewThreadWithUserText(
-          baselineIds,
-          mobileMessage,
-          APP_SERVER_TIMEOUT_MS,
-        );
-        await appServer!.waitForAgentText(threadId, mobileReply, APP_SERVER_TIMEOUT_MS);
-        await waitForVisibleTextContaining(driver!, mobileReply);
-      });
+      const recoveryReplies: string[] = [];
+      if (!VISUAL_PARITY_ONLY) {
+        const baselineIds = new Set((await appServer.listThreads()).map(({ id }) => id));
+        const mobileReply = `MOBILEOK${nonce}`;
+        recoveryReplies.push(mobileReply);
+        const mobileMessage = `E2EMOBILE${nonce}. Reply exactly ${mobileReply}.`;
+        await caseWithVideo(driver, "02-mobile-foreground", async () => {
+          await clickAccessibility(driver!, "New thread");
+          await waitForConnectionReady(driver!);
+          await sendComposerMessage(driver!, mobileMessage);
+          threadId = await appServer!.findNewThreadWithUserText(
+            baselineIds,
+            mobileMessage,
+            APP_SERVER_TIMEOUT_MS,
+          );
+          await appServer!.waitForAgentText(threadId, mobileReply, APP_SERVER_TIMEOUT_MS);
+          await waitForVisibleTextContaining(driver!, mobileReply);
+        });
 
-      const backgroundReply = `BACKGROUNDOK${nonce}`;
-      const backgroundMessage = `E2EBACKGROUND${nonce}. Reply exactly ${backgroundReply}.`;
-      await caseWithVideo(driver, "03-mobile-send-while-backgrounded", async () => {
-        await sendComposerMessage(driver!, backgroundMessage);
-        await driver!.pressKeyCode(3);
-        await appServer!.waitForUserText(threadId!, backgroundMessage, APP_SERVER_TIMEOUT_MS);
-        await appServer!.waitForAgentText(threadId!, backgroundReply, APP_SERVER_TIMEOUT_MS);
-        await driver!.activateApp(PACKAGE_NAME);
-        await waitForVisibleTextContaining(driver!, backgroundReply);
-      });
+        const backgroundReply = `BACKGROUNDOK${nonce}`;
+        recoveryReplies.push(backgroundReply);
+        const backgroundMessage = `E2EBACKGROUND${nonce}. Reply exactly ${backgroundReply}.`;
+        await caseWithVideo(driver, "03-mobile-send-while-backgrounded", async () => {
+          await sendComposerMessage(driver!, backgroundMessage);
+          await driver!.pressKeyCode(3);
+          await appServer!.waitForUserText(threadId!, backgroundMessage, APP_SERVER_TIMEOUT_MS);
+          await appServer!.waitForAgentText(threadId!, backgroundReply, APP_SERVER_TIMEOUT_MS);
+          await activateApplication(driver!, PACKAGE_NAME);
+          await waitForVisibleTextContaining(driver!, backgroundReply);
+        });
 
-      const directReply = `DIRECTOK${nonce}`;
-      const directMessage = `E2EDIRECT${nonce}. Reply exactly ${directReply}.`;
-      await caseWithVideo(driver, "04-direct-app-server-while-backgrounded", async () => {
-        await driver!.pressKeyCode(3);
-        await appServer!.startTurn(threadId!, directMessage, `e2e-direct-${nonce.toLowerCase()}`);
-        await appServer!.waitForAgentText(threadId!, directReply, APP_SERVER_TIMEOUT_MS);
-        await driver!.activateApp(PACKAGE_NAME);
-        await waitForVisibleTextContaining(driver!, directReply);
-      });
+        const directReply = `DIRECTOK${nonce}`;
+        recoveryReplies.push(directReply);
+        const directMessage = `E2EDIRECT${nonce}. Reply exactly ${directReply}.`;
+        await caseWithVideo(driver, "04-direct-app-server-while-backgrounded", async () => {
+          await driver!.pressKeyCode(3);
+          await appServer!.startTurn(threadId!, directMessage, `e2e-direct-${nonce.toLowerCase()}`);
+          await appServer!.waitForAgentText(threadId!, directReply, APP_SERVER_TIMEOUT_MS);
+          await activateApplication(driver!, PACKAGE_NAME);
+          await waitForVisibleTextContaining(driver!, directReply);
+        });
+      }
 
       await caseWithVideo(driver, "05-process-death-recovery", async () => {
         await driver!.terminateApp(PACKAGE_NAME);
-        await delay(1_000);
-        await driver!.activateApp(PACKAGE_NAME);
+        await stopAndroidConnectionService(device!);
+        parityThreadTitle = `Visual parity ${nonce.slice(-12)}`;
+        parityReplies = [`PARITYONE${nonce}`, `PARITYTWO${nonce}`, `PARITYTHREE${nonce}`];
+        const finalParityReply = parityReplies.at(-1);
+        if (finalParityReply === undefined) throw new Error("Visual parity replies are empty");
+        parityReply = finalParityReply;
+        parityThreadId = await appServer!.createThread(REPO_ROOT, parityThreadTitle);
+        for (const [index, reply] of parityReplies.entries()) {
+          const message = `PARITYTURN${index + 1}${nonce}. Reply exactly ${reply}.`;
+          await appServer!.startSubscribedTurn(
+            parityThreadId,
+            message,
+            `e2e-parity-${index + 1}-${nonce.toLowerCase()}`,
+            "high",
+          );
+          await appServer!.waitForAgentText(parityThreadId, reply, APP_SERVER_TIMEOUT_MS);
+        }
+        await appServer!.unarchiveThreadIfNeeded(parityThreadId);
+        await activateApplication(driver!, PACKAGE_NAME);
         await waitForApplicationReady(driver!);
-        await waitForRecoveredConversation(driver!, [mobileReply, backgroundReply, directReply]);
+        if (recoveryReplies.length > 0) {
+          await waitForRecoveredConversation(driver!, recoveryReplies);
+        }
+        await reopenLegacyThreadContaining(driver!, parityThreadTitle);
+        for (const reply of parityReplies) await waitForVisibleTextContaining(driver!, reply);
+        await setThreadSearchQuery(driver!, paritySearchQuery(finalParityReply));
+        await prepareVisualParityState(driver!, device!);
+        await waitForVisualParityProjectionReady(driver!, 3);
+        await captureVisualParityState(driver!, "wide-selected-thread-v1");
+        await captureWideOverlayParityStates(driver!, "v1");
         const source = await driver!.getPageSource();
         if (source.includes("There was a problem loading the project")) {
           throw new Error("Expo project failed to load after process death");
@@ -242,6 +286,7 @@ async function main(): Promise<void> {
         const deviceCount = await readDeviceCount(companion.controlEndpoint, companion.tokenFile);
         if (deviceCount !== 1)
           throw new Error(`Expected one durable paired device after restart, found ${deviceCount}`);
+        if (threadId !== null) await appServer!.unarchiveThreadIfNeeded(threadId);
       });
     }
 
@@ -256,27 +301,55 @@ async function main(): Promise<void> {
       await clickAccessibility(driver!, "Use V2 interface");
       await delay(1_500);
       await driver!.terminateApp(PACKAGE_NAME);
-      await driver!.activateApp(PACKAGE_NAME);
+      await stopAndroidConnectionService(device!);
+      await activateApplication(driver!, PACKAGE_NAME);
       await waitForApplicationReady(driver!);
-      await waitForVisibleTextContaining(driver!, "All saved servers");
-      await clickAccessibility(driver!, "Open Saved server 1");
-      await waitForVisibleTextContaining(driver!, "live");
+      await waitForVisibleTextContaining(driver!, "All threads");
+      await clickAccessibility(driver!, "Choose server");
+      await selectFirstConnectedServer(driver!);
+      await waitForAccessibility(driver!, "New thread");
+      await waitForAnyThreadRow(driver!);
+      if (parityThreadId !== null && parityReply !== null) {
+        await openProjectedThreadContaining(driver!, parityReply, parityThreadId);
+        for (const reply of parityReplies) await waitForVisibleTextContaining(driver!, reply);
+        await setThreadSearchQuery(driver!, paritySearchQuery(parityReply));
+        await prepareVisualParityState(driver!, device!);
+        await waitForVisualParityProjectionReady(driver!, 3);
+        await captureVisualParityState(driver!, "wide-selected-thread-v2");
+        await captureWideOverlayParityStates(driver!, "v2");
+        for (const state of [
+          "wide-selected-thread",
+          "wide-thread-filters",
+          "wide-thread-list-menu",
+          "wide-context-usage",
+          "wide-composer-menu",
+        ]) {
+          await writeVisualParityDiff(state);
+        }
+      }
+      if (VISUAL_PARITY_ONLY) return;
 
       const baselineIds = new Set((await appServer!.listThreads()).map(({ id }) => id));
       const v2Reply = `V2FEATUREOK${nonce}`;
       const v2Message = `E2EV2${nonce}. Reply exactly ${v2Reply}.`;
       await clickAccessibility(driver!, "New thread");
-      const workspace = await waitForAccessibility(driver!, "Workspace path");
-      await workspace.setValue(REPO_ROOT);
-      const firstMessage = await waitForAccessibility(driver!, "First message");
+      await waitForVisibleTextContaining(driver!, "What would you like to work on?");
+      const projectSelector = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Change project, currently ")',
+      );
+      await projectSelector.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      await projectSelector.click();
+      await clickAccessibility(driver!, `Project ${REPO_ROOT}`);
+      const firstMessage = await waitForAccessibility(driver!, "Message Codex");
       await firstMessage.setValue(v2Message);
       const fault = await armCommandFault(companion.controlEndpoint, companion.tokenFile);
       observe("faultArmed", "companionPrivateControl", fault.state);
       const companionLog = path.join(artifactDir, "companion.log");
       const admissionCheckpoint = (await stat(companionLog)).size;
       await adb(device!, REPO_ROOT, ["logcat", "-c"]);
-      await clickAccessibility(driver!, "Create thread");
+      await clickAccessibility(driver!, "Send message");
       observe("uiActionDispatch", "appium", "completed");
+      await retryMissedDurableSend(driver!, device!);
       const durableOperationId = await waitForClientDurableCreate(
         device!,
         REPO_ROOT,
@@ -307,19 +380,19 @@ async function main(): Promise<void> {
 
       await driver!.terminateApp(PACKAGE_NAME);
       await delay(1_000);
-      await driver!.activateApp(PACKAGE_NAME);
+      await activateApplication(driver!, PACKAGE_NAME);
       await waitForApplicationReady(driver!);
-      await waitForVisibleTextContaining(driver!, "All saved servers");
-      await clickAccessibility(driver!, "Open Saved server 1");
+      await waitForVisibleTextContaining(driver!, "All threads");
+      await clickAccessibility(driver!, "Choose server");
+      await selectFirstConnectedServer(driver!);
       // The injected fault deliberately holds this recovered session before
       // Live. The server shell is still navigable, so verify the durable
       // correlation on the remounted route before releasing that boundary.
       await waitForAccessibility(driver!, "New thread");
       await clickAccessibility(driver!, "New thread");
-      const remountedWorkspace = await waitForAccessibility(driver!, "Workspace path");
-      const remountedMessage = await waitForAccessibility(driver!, "First message");
+      const remountedMessage = await waitForAccessibility(driver!, "Message Codex");
       await waitForVisibleTextContaining(driver!, "saved action is waiting for the server");
-      if (!(await remountedWorkspace.isEnabled()) || !(await remountedMessage.isEnabled())) {
+      if (!(await remountedMessage.isEnabled())) {
         throw new Error(
           "A recovered durable correlation incorrectly locked the fresh remounted draft",
         );
@@ -354,7 +427,10 @@ async function main(): Promise<void> {
       // the created conversation by its authoritative marker through the UI
       // instead of assuming any catalog position or title is unique.
       await openProjectedThreadContaining(driver!, v2Reply, threadId);
-      await waitForAccessibility(driver!, "Attachments");
+      await waitForAccessibility(driver!, "Message Codex");
+      await waitForAccessibility(driver!, "Full access");
+      await waitForAccessibility(driver!, "No changes");
+      await waitForAccessibility(driver!, "No attachments");
       observe(
         "appServerOracleResult",
         "appServer",
@@ -363,33 +439,38 @@ async function main(): Promise<void> {
       );
 
       // The isolated E2E pairing is a real V2 device context, so this proves
-      // the visible Voice control reaches the V2 Voice websocket and that a
-      // user cancellation releases the native capture/session without relying
-      // on a transcription result or any pre-existing user server.
-      await clickAccessibility(driver!, "Start V2 voice input");
-      await waitForAccessibility(driver!, "Cancel V2 voice input");
-      await clickAccessibility(driver!, "Cancel V2 voice input");
-      await waitForVisibleTextContaining(driver!, "Voice input cancelled.");
-      observe("v2VoiceCancelled", "appium", "authoritativeSessionClosed");
+      // the V1-parity microphone inside the composer reaches the V2 Voice
+      // websocket and finishes the native capture/session through the same
+      // control surface shown to users.
+      await clickRightmostAccessibility(driver!, "Voice input");
+      await waitForAccessibility(driver!, "Stop voice input and insert transcript");
+      await clickAccessibility(driver!, "Stop voice input and insert transcript");
+      await waitForRightmostAccessibility(driver!, "Voice input");
+      observe("v2VoiceRoundTrip", "appium", "authoritativeSessionClosed");
 
-      await clickAccessibility(driver!, "Attachments");
+      await clickAccessibility(driver!, "Composer menu");
+      await clickVisibleText(driver!, "Attach file");
       await waitForVisibleTextContaining(driver!, "No attachments in this thread");
       await clickAccessibility(driver!, "Refresh attachments");
       await driver!.back();
-      await waitForAccessibility(driver!, "Changes");
+      await waitForAccessibility(driver!, "Message Codex");
 
-      await clickAccessibility(driver!, "Changes");
+      await clickAccessibility(driver!, "No changes");
       await waitForVisibleTextContaining(driver!, "No file changes in this thread");
       await clickAccessibility(driver!, "Refresh changes");
       await driver!.back();
-      await waitForAccessibility(driver!, "Agents");
-
-      await clickAccessibility(driver!, "Agents");
+      await waitForAccessibility(driver!, "Message Codex");
+      await clickAccessibility(driver!, "Composer menu");
+      await clickVisibleText(driver!, "Skills");
       await waitForVisibleTextContaining(driver!, "No agent threads");
       await driver!.back();
-      await waitForAccessibility(driver!, "Terminal");
-
-      await clickAccessibility(driver!, "Terminal");
+      await waitForAccessibility(driver!, "Message Codex");
+      await clickAccessibility(driver!, "Thread menu");
+      await waitForVisibleTextContaining(driver!, "Copy session ID");
+      await driver!.back();
+      await waitForAccessibility(driver!, "Message Codex");
+      await clickAccessibility(driver!, "Composer menu");
+      await clickVisibleText(driver!, "Terminal");
       await clickAccessibility(driver!, "Open terminal");
       const terminalInput = await waitForAccessibility(driver!, "Terminal input");
       const terminalMarker = `V2TERMINAL${nonce}`;
@@ -397,13 +478,15 @@ async function main(): Promise<void> {
       await driver!.pressKeyCode(66);
       await waitForVisibleTextContaining(driver!, terminalMarker);
       await driver!.back();
-      await waitForAccessibility(driver!, "Attachments");
-      await driver!.back();
-      await waitForAccessibility(driver!, "Ports");
-
-      await clickAccessibility(driver!, "Ports");
+      await waitForAccessibility(driver!, "Message Codex");
+      await clickAccessibility(driver!, "Composer menu");
+      await clickVisibleText(driver!, "Port forward");
       await clickAccessibility(driver!, "Scan ports");
-      await clickFirstAccessibilityExcept(driver!, new Set(["Scan ports"]));
+      const discoveredPort = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Open port ")',
+      );
+      await discoveredPort.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      await discoveredPort.click();
       await waitForAccessibility(driver!, "Create secure tunnel");
       await clickAccessibility(driver!, "Create secure tunnel");
       await waitForAccessibility(driver!, "Close tunnel");
@@ -411,17 +494,18 @@ async function main(): Promise<void> {
       await waitForAccessibility(driver!, "Create secure tunnel");
       await driver!.back();
       await driver!.back();
-      await waitForAccessibility(driver!, "Accounts");
-
-      await clickAccessibility(driver!, "Accounts");
-      await waitForAccessibilityHidden(driver!, "Server settings");
-      await waitForVisibleTextContaining(driver!, "Accounts");
-      await driver!.back();
-      await waitForAccessibility(driver!, "Server settings");
-      await clickAccessibility(driver!, "Server settings");
+      await waitForAccessibility(driver!, "Settings");
+      await clickAccessibility(driver!, "Settings");
+      await waitForAccessibility(driver!, "Close server settings");
+      await scrollAccessibilityIntoView(driver!, "Actions for CodeWide E2E");
+      await clickAccessibility(driver!, "Actions for CodeWide E2E");
+      await clickVisibleText(driver!, "Edit server");
+      await waitForVisibleTextContaining(driver!, "Server settings");
       await clickAccessibility(driver!, "Reconnect server");
       await driver!.back();
-      await waitForVisibleTextContaining(driver!, "live");
+      await waitForAccessibility(driver!, "Close server settings");
+      await clickAccessibility(driver!, "Close server settings");
+      await waitForAccessibility(driver!, "Message Codex");
       await driver!.back();
       await waitForAccessibility(driver!, "Add server");
 
@@ -429,18 +513,35 @@ async function main(): Promise<void> {
       const pairingInput = await waitForAccessibility(driver!, "Pairing link");
       await pairingInput.setValue(secondPairingLink);
       await clickAccessibility(driver!, "Connect server");
-      await waitForVisibleTextContaining(driver!, "live");
+      await waitForAccessibility(driver!, "New thread");
+      const enabledServerRows = await driver!.$$(
+        'android=new UiSelector().description("CodeWide E2E, Enabled")',
+      );
+      let enabledServerCount = 0;
+      let selectedServerCount = 0;
+      for (const row of enabledServerRows) {
+        if (!(await row.isDisplayed().catch(() => false))) continue;
+        enabledServerCount += 1;
+        if ((await row.getAttribute("selected")) === "true") selectedServerCount += 1;
+      }
+      if (enabledServerCount !== 2 || selectedServerCount !== 1) {
+        throw new Error("The second pairing did not produce one newly selected saved server");
+      }
 
       // The second pairing link belongs solely to this run. Delete that
       // selected saved-server namespace and prove the original test-created
       // server remains available on the V2 catalog.
-      await clickAccessibility(driver!, "Server settings");
+      await clickAccessibility(driver!, "Settings");
+      await scrollAccessibilityIntoView(driver!, "Actions for CodeWide E2E");
+      await clickLastAccessibility(driver!, "Actions for CodeWide E2E");
+      await clickVisibleText(driver!, "Edit server");
+      await waitForVisibleTextContaining(driver!, "Server settings");
       await clickAccessibility(driver!, "Delete saved server");
       await waitForAccessibility(driver!, "Confirm delete server");
       await clickAccessibility(driver!, "Confirm delete server");
-      await waitForVisibleTextContaining(driver!, "All saved servers");
-      await waitForAccessibility(driver!, "Open Saved server 1");
-      await waitForAccessibilityHidden(driver!, "Open Saved server 2");
+      await waitForVisibleTextContaining(driver!, "All threads");
+      await clickAccessibility(driver!, "Choose server");
+      await waitForAccessibility(driver!, "CodeWide E2E, Connected");
       observe("v2SavedServerDeleted", "appium", "selectedNamespacePurged");
 
       await delay(1_000);
@@ -470,6 +571,12 @@ async function main(): Promise<void> {
     appServer?.close();
     if (driver !== null) await driver.deleteSession().catch(() => undefined);
     if (device !== null) {
+      await adb(
+        device,
+        REPO_ROOT,
+        ["shell", "am", "broadcast", "-a", "com.android.systemui.demo", "-e", "command", "exit"],
+        { allowFailure: true },
+      ).catch(() => undefined);
       await adb(device, REPO_ROOT, ["shell", "pm", "clear", PACKAGE_NAME], {
         allowFailure: true,
       }).catch(() => undefined);
@@ -690,6 +797,232 @@ async function createPairing(
   });
 }
 
+async function captureVisualParityState(driver: AppiumBrowser, name: string): Promise<void> {
+  await Promise.all([
+    driver.saveScreenshot(path.join(parityArtifactDir, `${name}.png`)),
+    driver
+      .getPageSource()
+      .then((source) =>
+        writeFile(path.join(parityArtifactDir, `${name}.xml`), source, { mode: 0o600 }),
+      ),
+  ]);
+}
+
+type VisualGeneration = "v1" | "v2";
+
+async function captureWideOverlayParityStates(
+  driver: AppiumBrowser,
+  generation: VisualGeneration,
+): Promise<void> {
+  for (const { label, state } of [
+    { label: "Thread filters", state: "wide-thread-filters" },
+    { label: "Thread list menu", state: "wide-thread-list-menu" },
+    { label: "Context usage and account limits", state: "wide-context-usage" },
+    { label: "Composer menu", state: "wide-composer-menu" },
+  ]) {
+    await driver.hideKeyboard().catch(() => undefined);
+    await clickAccessibility(driver, label);
+    await delay(400);
+    await driver.hideKeyboard().catch(() => undefined);
+    await delay(150);
+    await captureVisualParityState(driver, `${state}-${generation}`);
+    await driver.back();
+    await driver.hideKeyboard().catch(() => undefined);
+    await delay(250);
+  }
+}
+
+async function writeVisualParityDiff(state: string): Promise<void> {
+  const visualDiff = await writeVisualDiff({
+    actualPath: path.join(parityArtifactDir, `${state}-v2.png`),
+    baselinePath: path.join(parityArtifactDir, `${state}-v1.png`),
+    diffPath: path.join(parityArtifactDir, `${state}-diff.png`),
+  });
+  await writeFile(
+    path.join(parityArtifactDir, `${state}-diff.json`),
+    `${JSON.stringify(visualDiff, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+}
+
+async function setThreadSearchQuery(driver: AppiumBrowser, query: string): Promise<void> {
+  const search = await waitForAccessibility(driver, "Search threads");
+  await search.click();
+  await search.clearValue();
+  await search.addValue(query);
+  await driver.pressKeyCode(66);
+  await driver.hideKeyboard().catch(() => undefined);
+  await delay(250);
+}
+
+function paritySearchQuery(marker: string): string {
+  return marker.slice(-12);
+}
+
+async function prepareVisualParityState(
+  driver: AppiumBrowser,
+  device: AndroidDevice,
+): Promise<void> {
+  await driver.hideKeyboard().catch(() => undefined);
+  const { height, width } = await driver.getWindowSize();
+  await driver.execute("mobile: clickGesture", {
+    x: Math.floor(width * 0.55),
+    y: Math.floor(height * 0.12),
+  });
+  await delay(150);
+  const left = Math.floor(width * 0.42);
+  const top = Math.floor(height * 0.13);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const canScrollMore: unknown = await driver.execute("mobile: scrollGesture", {
+      direction: "down",
+      height: Math.floor(height * 0.7),
+      left,
+      percent: 0.95,
+      top,
+      width: width - left - 20,
+    });
+    if (canScrollMore !== true) break;
+  }
+  await stabilizeSystemUi(device);
+  await delay(250);
+}
+
+async function waitForVisualParityProjectionReady(
+  driver: AppiumBrowser,
+  expectedCompletedTurns: number,
+): Promise<void> {
+  const deadline = Date.now() + UI_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const source = await driver.getPageSource();
+    const completedTurns = occurrenceCount(source, 'text="Completed"');
+    const loadingActivity = source.includes("Loading activity");
+    const unavailableActivity = source.includes("Activity unavailable");
+    const summarizedActivityHeaders = occurrenceCount(
+      source,
+      'content-desc="Expand activity Activity',
+    );
+    const expandedActivityHeaders = occurrenceCount(source, 'content-desc="Collapse activity ');
+    if (
+      completedTurns >= expectedCompletedTurns &&
+      !loadingActivity &&
+      !unavailableActivity &&
+      summarizedActivityHeaders === 0 &&
+      expandedActivityHeaders === 0
+    ) {
+      return;
+    }
+    const expandedActivity = await driver.$(
+      'android=new UiSelector().descriptionStartsWith("Collapse activity ")',
+    );
+    if (await expandedActivity.isDisplayed().catch(() => false)) {
+      const label = await expandedActivity.getAttribute("content-desc").catch(() => null);
+      if (
+        typeof label === "string" &&
+        !label.includes("Loading activity") &&
+        !label.includes("Activity unavailable")
+      ) {
+        await expandedActivity.click();
+        await delay(250);
+        continue;
+      }
+    }
+    const summarizedActivity = await driver.$(
+      'android=new UiSelector().descriptionStartsWith("Expand activity Activity")',
+    );
+    if (await summarizedActivity.isDisplayed().catch(() => false)) {
+      await summarizedActivity.click();
+      await delay(250);
+      continue;
+    }
+    await delay(500);
+  }
+  throw new Error(
+    `Visual parity projection did not expose ${expectedCompletedTurns} settled completed turns`,
+  );
+}
+
+function occurrenceCount(source: string, needle: string): number {
+  let count = 0;
+  let offset = 0;
+  while (true) {
+    const index = source.indexOf(needle, offset);
+    if (index < 0) return count;
+    count += 1;
+    offset = index + needle.length;
+  }
+}
+
+async function retryMissedDurableSend(driver: AppiumBrowser, device: AndroidDevice): Promise<void> {
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline) {
+    if ((await readClientDurableCreate(device, REPO_ROOT)) !== null) return;
+    if (!(await isAccessibilityActionEnabled(driver, "Send message"))) return;
+    await delay(100);
+  }
+  if (!(await isAccessibilityActionEnabled(driver, "Send message"))) return;
+  const send = await driver.$("~Send message");
+  await send.click();
+  observe("uiActionRedispatch", "appium", "firstClickNotObserved");
+}
+
+async function isAccessibilityActionEnabled(
+  driver: AppiumBrowser,
+  label: string,
+): Promise<boolean> {
+  const action = await driver.$(`~${label}`);
+  if (!(await action.isExisting().catch(() => false))) return false;
+  return action.isEnabled().catch(() => false);
+}
+
+async function stabilizeSystemUi(device: AndroidDevice): Promise<void> {
+  await adb(device, REPO_ROOT, ["shell", "settings", "put", "global", "sysui_demo_allowed", "1"], {
+    allowFailure: true,
+  });
+  for (const extras of [
+    ["clock", "-e", "hhmm", "0900"],
+    ["battery", "-e", "level", "100", "-e", "plugged", "false"],
+    ["network", "-e", "wifi", "show", "-e", "level", "4", "-e", "mobile", "hide"],
+    ["notifications", "-e", "visible", "false"],
+  ]) {
+    await adb(
+      device,
+      REPO_ROOT,
+      ["shell", "am", "broadcast", "-a", "com.android.systemui.demo", "-e", "command", ...extras],
+      { allowFailure: true },
+    );
+  }
+  await delay(250);
+}
+
+async function clickRightmostAccessibility(driver: AppiumBrowser, label: string): Promise<void> {
+  const element = await waitForRightmostAccessibility(driver, label);
+  await element.click();
+}
+
+async function waitForRightmostAccessibility(driver: AppiumBrowser, label: string) {
+  const deadline = Date.now() + UI_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const candidates = await driver.$$(`~${label}`);
+    const displayed = [];
+    for (const candidate of candidates) {
+      if (!(await candidate.isDisplayed().catch(() => false))) continue;
+      displayed.push({ candidate, x: await candidate.getLocation("x") });
+    }
+    const rightmost = displayed.sort((left, right) => right.x - left.x)[0];
+    if (rightmost !== undefined) return rightmost.candidate;
+    await delay(100);
+  }
+  throw new Error(`No displayed accessibility element ${label}`);
+}
+
+async function selectFirstConnectedServer(driver: AppiumBrowser): Promise<void> {
+  const row = await driver.$('android=new UiSelector().descriptionMatches(".*, Connected$")');
+  await row.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+  await row.click();
+  const scrim = await driver.$("~Close sheet");
+  await scrim.waitForDisplayed({ interval: 250, reverse: true, timeout: UI_TIMEOUT_MS });
+}
+
 async function readDeviceCount(controlEndpoint: string, tokenFile: string): Promise<number> {
   const result = await runCommand(
     path.join(REPO_ROOT, "target/debug/codewide-companion"),
@@ -740,6 +1073,35 @@ async function grantShellScopeToOnlyDevice(
   });
 }
 
+async function activateApplication(driver: AppiumBrowser, packageName: string): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await driver.activateApp(packageName);
+    await delay(1_000);
+    const currentPackage = await driver.getCurrentPackage().catch(() => null);
+    if (currentPackage === packageName) return;
+  }
+  const currentPackage = await driver.getCurrentPackage().catch(() => "unknown");
+  throw new Error(
+    `Appium did not bring ${packageName} to foreground; current package is ${currentPackage}`,
+  );
+}
+
+async function stopAndroidConnectionService(device: AndroidDevice): Promise<void> {
+  await adb(
+    device,
+    REPO_ROOT,
+    [
+      "shell",
+      "am",
+      "stopservice",
+      "-n",
+      `${PACKAGE_NAME}/dev.codewide.app.remote.CodexConnectionService`,
+    ],
+    { allowFailure: true },
+  );
+  await delay(500);
+}
+
 async function step<T>(name: string, action: () => Promise<T>): Promise<T> {
   const started = Date.now();
   process.stdout.write(`→ ${name}\n`);
@@ -762,6 +1124,15 @@ async function removeRuntimeDir(directory: string): Promise<void> {
   if (!directory.startsWith(expectedPrefix))
     throw new Error(`Refusing to remove unexpected runtime directory: ${directory}`);
   await rm(directory, { recursive: true, force: true });
+}
+
+async function revealComposerContext(driver: AppiumBrowser, label: string): Promise<void> {
+  const visible = await driver.$(`~${label}`);
+  if (await visible.isDisplayed().catch(() => false)) return;
+  const item = await driver.$(
+    `android=new UiScrollable(new UiSelector().resourceIdMatches(".*composer-context-strip")).setAsHorizontalList().scrollIntoView(new UiSelector().description("${label}"))`,
+  );
+  await item.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
 }
 
 function codexHome(): string {

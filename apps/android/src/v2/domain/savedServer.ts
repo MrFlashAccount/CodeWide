@@ -4,5 +4,6 @@ export interface SavedServer {
   displayName: string;
   emoji: string;
   enabled: boolean;
+  endpoint: string;
   id: SavedServerId;
 }

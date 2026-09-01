@@ -548,6 +548,20 @@ pub struct AccountProfile {
     pub priority: i64,
     #[serde(deserialize_with = "required_option")]
     pub exhausted_until: Option<Timestamp>,
+    pub exhausted_indefinitely: bool,
+    #[serde(deserialize_with = "required_option")]
+    pub weekly_limit: Option<WeeklyRateLimit>,
+    #[serde(deserialize_with = "required_option")]
+    pub rate_limits_updated_at: Option<Timestamp>,
+    pub rate_limits_failed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WeeklyRateLimit {
+    pub remaining_percent: f64,
+    #[serde(deserialize_with = "required_option")]
+    pub resets_at: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

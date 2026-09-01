@@ -35,10 +35,9 @@ export function useThreadSummaryView(
     });
   }, [connectionId, database, enabled, viewId]);
 
-  useSelector(() => resource === null ? true : resource.ready$.get(), { suspense: true });
   return useSelector(() => {
     if (resource === null) return null;
-    const revision = resource.view$.revision.get();
-    return { ...resource.view$.peek(), revision };
-  });
+    resource.ready$.get();
+    return resource.view$.get();
+  }, { suspense: true });
 }

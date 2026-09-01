@@ -142,6 +142,7 @@ export function thread(id: string, overrides: Partial<V2ThreadSummary> = {}): V2
     id,
     parentId: null,
     title: id,
+    preview: "",
     workspace: "/workspace",
     archived: false,
     state: "idle",

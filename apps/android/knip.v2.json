@@ -6,6 +6,10 @@
   "expo": false,
   "metro": false,
   "typescript": false,
+  "ignoreUnresolved": [
+    "^(?:\\.\\./){2,3}ui/(?:ActionMenu|MessageActionMenu)$",
+    "^(?:\\.\\./){3}data/connection-profile-database$"
+  ],
   "entry": [
     "app/**/*.tsx",
     "src/boot/**/*.{ts,tsx}",

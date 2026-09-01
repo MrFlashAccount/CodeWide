@@ -33,6 +33,7 @@ import type {
   CommandSettlement,
 } from "./commandCorrelation";
 import { CommandCorrelationResource } from "./resources/commandCorrelationResource";
+import { AggregateProjectionResource } from "./resources/aggregateProjectionResource";
 
 export interface RuntimeSessionProvider extends CommandSessionProvider {
   close(savedServerId: string): Promise<void>;
@@ -64,6 +65,7 @@ interface V2RuntimeInput {
 }
 
 export class V2Runtime {
+  readonly aggregate: AggregateProjectionResource;
   readonly savedServers: SavedServersResource;
   readonly selection = new ServerSelectionResource();
   readonly sessions: RuntimeSessionProvider;
@@ -101,19 +103,25 @@ export class V2Runtime {
     this.terminal = new TerminalController(input.terminalTransport);
     this.voice = new VoiceInputController(input.voiceTransport);
     this.savedServers = new SavedServersResource(input.repository);
+    this.aggregate = new AggregateProjectionResource(input.projections, input.deletions);
   }
 
   async start(): Promise<void> {
     await this.#recoverPendingDeletions();
     await this.savedServers.start();
-    for (const server of this.savedServers.snapshot().value) {
+    const servers = this.savedServers.snapshot().value;
+    await this.aggregate.start(servers.map(({ id }) => id));
+    const openings: Array<Promise<unknown>> = [];
+    for (const server of servers) {
       if (server.enabled && !(await this.#deletions.pending(v2SavedServerId(server.id)))) {
-        await this.sessions.open(server.id);
+        openings.push(this.sessions.open(server.id));
       }
     }
+    await Promise.allSettled(openings);
   }
 
   async stop(): Promise<void> {
+    this.aggregate.stop();
     this.savedServers.stop();
     await this.sessions.closeAll();
     this.#repository.close();
@@ -134,15 +142,21 @@ export class V2Runtime {
     return new CommandCorrelationResource(this.commands, scope, onSettlement);
   }
 
+  now(): number {
+    return this.#now();
+  }
+
   async pairSavedServerLink(raw: string): Promise<SavedServerId> {
     const parsed = parsePairingPayload(raw, this.#now());
     const id = this.#savedServerId();
     await this.#repository.pair(id, {
+      displayName: parsed.displayName,
+      emoji: parsed.emoji,
       endpoint: parsed.endpoint,
       pairingToken: parsed.pairingToken,
       tlsPinSha256: parsed.tlsPinSha256,
     });
-    await this.savedServers.refresh();
+    await this.#refreshSavedServers();
     await this.sessions.open(id);
     return id;
   }
@@ -154,8 +168,13 @@ export class V2Runtime {
 
   async setSavedServerEnabled(savedServerId: SavedServerId, enabled: boolean): Promise<void> {
     await this.#repository.setEnabled(savedServerId, enabled);
-    await this.savedServers.refresh();
+    await this.#refreshSavedServers();
     if (enabled) await this.sessions.open(savedServerId);
+  }
+
+  async moveSavedServer(savedServerId: SavedServerId, direction: -1 | 1): Promise<void> {
+    await this.#repository.move(savedServerId, direction);
+    await this.#refreshSavedServers();
   }
 
   /**
@@ -169,7 +188,7 @@ export class V2Runtime {
     await this.#repository.delete(savedServerId);
     await this.#purgeSavedServer(savedServerId);
     await this.#deletions.complete(v2SavedServerId(savedServerId));
-    await this.savedServers.refresh();
+    await this.#refreshSavedServers();
   }
 
   projection(
@@ -215,5 +234,12 @@ export class V2Runtime {
     await this.#projections.deleteSavedServer(v2SavedServerId(savedServerId));
     await this.#operations.deleteSavedServer(v2SavedServerId(savedServerId));
     await this.#correlations.deleteSavedServer(savedServerId);
+  }
+
+  async #refreshSavedServers(): Promise<void> {
+    await this.savedServers.refresh();
+    await this.aggregate.replaceSavedServers(
+      this.savedServers.snapshot().value.map(({ id }) => id),
+    );
   }
 }

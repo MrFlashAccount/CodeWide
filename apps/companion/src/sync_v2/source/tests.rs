@@ -46,6 +46,7 @@ fn thread_with_partition(thread_id: &str, archived: bool) -> ThreadSummary {
         "id": thread_id,
         "parentId": null,
         "title": null,
+        "preview": "",
         "workspace": "/tmp",
         "archived": archived,
         "state": "idle",

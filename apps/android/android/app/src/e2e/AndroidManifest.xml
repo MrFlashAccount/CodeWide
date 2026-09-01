@@ -1,6 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
   <application>
+    <!-- Expo's development tools button overlaps the app's rightmost header action.
+         E2E drives the real app controls, so no developer overlay may intercept them. -->
+    <meta-data
+        android:name="EXDevMenuShowFloatingActionButton"
+        android:value="false" />
+    <meta-data
+        android:name="EXDevMenuShowsAtLaunch"
+        android:value="false" />
+    <meta-data
+        android:name="EXDevMenuIsOnboardingFinished"
+        android:value="true" />
     <!-- E2E uses the unsigned Metro development manifest; release keeps the pinned OTA certificate. -->
     <meta-data
         android:name="expo.modules.updates.CODE_SIGNING_CERTIFICATE"

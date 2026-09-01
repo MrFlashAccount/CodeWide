@@ -24,6 +24,12 @@ export type AsyncResourceHandle<T> = {
 
 class AsyncResource<T> implements AsyncResourceHandle<T> {
   readonly snapshot$: Observable<AsyncResourceSnapshot<T>>;
+  readonly key: string;
+  readonly cacheKey: string;
+  readonly revision: string | number;
+  private readonly loader: Loader<T>;
+  private readonly estimateWeight: (value: T) => number;
+  private readonly cancelWhenUnobserved: boolean;
   private readonly controller = new AbortController();
   private retainCount = 0;
   private weight = 0;
@@ -32,13 +38,19 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
-    readonly key: string,
-    readonly cacheKey: string,
-    readonly revision: string | number,
-    private readonly loader: Loader<T>,
-    private readonly estimateWeight: (value: T) => number,
-    private readonly cancelWhenUnobserved: boolean,
+    key: string,
+    cacheKey: string,
+    revision: string | number,
+    loader: Loader<T>,
+    estimateWeight: (value: T) => number,
+    cancelWhenUnobserved: boolean,
   ) {
+    this.key = key;
+    this.cacheKey = cacheKey;
+    this.revision = revision;
+    this.loader = loader;
+    this.estimateWeight = estimateWeight;
+    this.cancelWhenUnobserved = cancelWhenUnobserved;
     this.snapshot$ = observable<AsyncResourceSnapshot<T>>({ status: "loading", value: null, error: null });
     this.load();
   }

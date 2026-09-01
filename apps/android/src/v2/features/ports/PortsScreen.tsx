@@ -27,12 +27,16 @@ export function PortsScreen({ savedServerId }: PortsScreenProps): React.JSX.Elem
       />
       <ResourceListView
         empty={snapshot.status === "loading" ? "Scanning ports…" : "No discoverable ports"}
-        rows={snapshot.value.ports.map((port) => ({
-          detail: `${port.group} · ${port.details}`,
-          id: port.forwardingKey,
-          label: `${port.name === "" ? "Port" : port.name} · ${port.port}`,
-          onPress: () => router.push(portDestination(savedServerId, port.forwardingKey)),
-        }))}
+        rows={snapshot.value.ports.map((port) => {
+          const label = `${port.name === "" ? "Port" : port.name} · ${port.port}`;
+          return {
+            accessibilityLabel: `Open port ${label}`,
+            detail: `${port.group} · ${port.details}`,
+            id: port.forwardingKey,
+            label,
+            onPress: () => router.push(portDestination(savedServerId, port.forwardingKey)),
+          };
+        })}
       />
     </WorkspaceView>
   );

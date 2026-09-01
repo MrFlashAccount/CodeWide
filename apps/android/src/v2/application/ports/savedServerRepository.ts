@@ -7,6 +7,8 @@ export interface SavedServerConnection {
 }
 
 export interface PairSavedServerInput {
+  displayName: string;
+  emoji: string;
   endpoint: string;
   pairingToken: string;
   tlsPinSha256: string;
@@ -18,6 +20,7 @@ export interface SavedServerRepository {
   /** Removes the native saved-server identity and all native capabilities for this id. */
   delete(id: SavedServer["id"]): Promise<void>;
   list(): Promise<SavedServer[]>;
+  move(id: SavedServer["id"], direction: -1 | 1): Promise<void>;
   pair(id: SavedServer["id"], input: PairSavedServerInput): Promise<void>;
   reconnect(id: SavedServer["id"]): void;
   setEnabled(id: SavedServer["id"], enabled: boolean): Promise<void>;

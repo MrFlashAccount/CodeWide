@@ -1291,15 +1291,12 @@ function CodeWideWorkspaceContent({
   const scopedThreads = threadScope.scoped;
   const serverThreads = threadScope.active;
   const archivedThreads = threadScope.archived;
-  if (desktop && newChatDraft === null && threadNavigation.current().id === null && serverThreads[0] !== undefined) {
-    const defaultThreadId = threadSelectionKey(serverThreads[0]);
-    // Desktop opens the first available conversation, but selection itself is
-    // always an explicit stable id. Updating during render restarts this render
-    // before commit, so a later Recent reorder can never select by row index.
-    if (threadNavigation.current().id === null) {
-      setThreadSelection(threadNavigation.select(defaultThreadId));
-    }
-  }
+  const defaultDesktopThreadId = desktop
+    && newChatDraft === null
+    && threadSelection.id === null
+    && serverThreads[0] !== undefined
+    ? threadSelectionKey(serverThreads[0])
+    : null;
   const loadMoreThreads = () => {
     const loadedCount = threadListMode === "archived"
       ? archivedThreadSummaryRows.length
@@ -1351,6 +1348,10 @@ function CodeWideWorkspaceContent({
       if (__DEV__) console.log(`[CodeWide perf] thread_selection_next_frame_ms=${Math.round(elapsed)}`);
     });
   };
+  const commitDefaultDesktopThread = useEvent(() => {
+    if (defaultDesktopThreadId === null || threadNavigation.current().id !== null) return;
+    setThreadSelection(threadNavigation.select(defaultDesktopThreadId));
+  });
   const selectThread = useEvent((value: string) => {
     const target = parseThreadSelectionKey(value);
     let navigationId: string | undefined;
@@ -1993,6 +1994,11 @@ function CodeWideWorkspaceContent({
     <AppVoiceInputProvider runtime={voiceInputRuntime}>
     <VoiceAura phase={voiceAuraPhase} controller={remote.voiceController} scope={voiceAuraResource?.scope ?? null} reducedMotion={reduceVoiceMotion}>
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}> 
+      <CommitOnChangeProbe
+        scope="desktop-default-thread"
+        revision={defaultDesktopThreadId}
+        onCommit={commitDefaultDesktopThread}
+      />
       <View style={styles.desktopWorkspace}>
         <ServerRail
           servers={servers}

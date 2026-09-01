@@ -109,7 +109,7 @@ export class SyncSessionRegistry {
 
 function intent(currentThreadId: string | null): V2OpenIntent {
   return {
-    catalog: { activeLimit: 100, archivedLimit: 50 },
+    catalog: { activeLimit: 40, archivedLimit: 40 },
     currentThread:
       currentThreadId === null
         ? null

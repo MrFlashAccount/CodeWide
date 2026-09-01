@@ -68,15 +68,22 @@ export async function waitForClientDurableCreate(
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const logcat = await adb(device, repoRoot, ["logcat", "-d", "-v", "brief"], {
-      allowFailure: true,
-      timeoutMs: 10_000,
-    });
-    const operationId = parseDurableCreateOperationId(logcat);
+    const operationId = await readClientDurableCreate(device, repoRoot);
     if (operationId !== null) return operationId;
     await delay(50);
   }
   throw new Error("Android did not publish a durable Sync V2 operation commit");
+}
+
+export async function readClientDurableCreate(
+  device: AndroidDevice,
+  repoRoot: string,
+): Promise<string | null> {
+  const logcat = await adb(device, repoRoot, ["logcat", "-d", "-v", "brief"], {
+    allowFailure: true,
+    timeoutMs: 10_000,
+  });
+  return parseDurableCreateOperationId(logcat);
 }
 
 export function parseDurableCreateOperationId(logcat: string): string | null {

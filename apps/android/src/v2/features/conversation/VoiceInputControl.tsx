@@ -1,36 +1,47 @@
+import type { V2Projection } from "@codewide/sync-client/v2";
 import { useRef, useState } from "react";
-import {
-  VoiceCaptureControls,
-  type VoiceCaptureState,
-} from "../../../presentation/voice/VoiceCaptureControls";
 
+import { useEvent } from "../../../react/useEvent";
 import type {
-  VoiceTransportEvent,
   VoiceSessionHandle,
+  VoiceTransportEvent,
 } from "../../application/ports/voiceTransport";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
-import type { V2Projection } from "@codewide/sync-client/v2";
+import type { SavedServerId } from "../../domain/ids";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
-import { useEvent } from "../../../react/useEvent";
+import type { VoiceInputScope } from "../../domain/voiceInputScope";
 
-interface VoiceInputControlProps {
-  live: boolean;
-  onTranscript(text: string): void;
-  owner: QualifiedThread;
-  projection: V2Projection | null;
+export type VoiceInputState = "idle" | "starting" | "recording" | "finishing" | "retry" | "error";
+
+export interface VoiceInputControlModel {
+  activate(): Promise<void>;
+  disabled: boolean;
+  message: string | null;
+  state: VoiceInputState;
 }
 
-/** Binds shared Voice presentation to a live, authoritative V2 conversation generation. */
-export function VoiceInputControl({
+interface UseVoiceInputControlInput {
+  audience: SavedServerId;
+  live: boolean;
+  onTranscript(text: string): void;
+  projection: V2Projection | null;
+  scope: VoiceInputScope;
+  thread: QualifiedThread | null;
+}
+
+/** Binds the composer microphone to one live authoritative V2 generation. */
+export function useVoiceInputControl({
+  audience,
   live,
   onTranscript,
-  owner,
   projection,
-}: VoiceInputControlProps): React.JSX.Element {
+  scope,
+  thread,
+}: UseVoiceInputControlInput): VoiceInputControlModel {
   const runtime = useV2Runtime();
   const handle = useRef<VoiceSessionHandle | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [state, setState] = useState<VoiceCaptureState>("idle");
+  const [state, setState] = useState<VoiceInputState>("idle");
   const usable = live && projection !== null;
 
   const onEvent = useEvent((event: VoiceTransportEvent): void => {
@@ -42,7 +53,7 @@ export function VoiceInputControl({
     if (event.type === "result") {
       handle.current = null;
       onTranscript(event.text);
-      setMessage("Voice transcript added to the message.");
+      setMessage(null);
       setState("idle");
       return;
     }
@@ -53,49 +64,42 @@ export function VoiceInputControl({
     }
     handle.current = null;
     if (event.type === "cancelled") {
-      setMessage("Voice input cancelled.");
+      setMessage(null);
       setState("idle");
       return;
     }
     setMessage("Voice input is unavailable. Try again.");
     setState("error");
   });
-  const cancel = useEvent(async () => {
-    setState("finishing");
-    await handle.current?.cancel();
-  });
-  const fail = useEvent(() => {
-    handle.current = null;
-    setMessage("Voice input is unavailable. Try again.");
-    setState("error");
-  });
-  const finish = useEvent(async () => {
-    setState("finishing");
-    await handle.current?.finish();
-  });
-  const start = useEvent(async () => {
-    if (projection === null || !live || handle.current !== null) return;
+  const activate = useEvent(async (): Promise<void> => {
+    if (state === "recording") {
+      setState("finishing");
+      await handle.current?.finish();
+      return;
+    }
+    if (!usable || state === "starting" || state === "finishing" || handle.current !== null) return;
     setMessage(null);
     setState("starting");
-    const started = await runtime.voice.start({
-      audience: owner.savedServerId,
-      onEvent,
-      scope: { id: owner.threadId, kind: "composer" },
-      sourceGeneration: projection.sourceGeneration,
-      thread: owner,
-    });
-    handle.current = started;
+    try {
+      handle.current = await runtime.voice.start({
+        audience,
+        onEvent,
+        scope,
+        sourceGeneration: projection.sourceGeneration,
+        thread,
+      });
+    } catch (cause) {
+      handle.current = null;
+      setMessage("Voice input is unavailable. Try again.");
+      setState("error");
+      throw cause;
+    }
   });
 
-  return (
-    <VoiceCaptureControls
-      disabled={!usable || state === "starting"}
-      message={usable ? message : "Voice input requires a live saved-server connection."}
-      onCancel={cancel}
-      onFailure={fail}
-      onFinish={finish}
-      onStart={start}
-      state={state}
-    />
-  );
+  return {
+    activate,
+    disabled: !usable || state === "starting" || state === "finishing",
+    message: usable ? message : "Voice input requires a live saved-server connection.",
+    state,
+  };
 }

@@ -52,15 +52,6 @@ pub(super) fn query_scope(query: &Query) -> &'static str {
     }
 }
 
-pub(super) fn unsupported_account_capability() -> V2Error {
-    V2Error {
-        code: ErrorCode::UnsupportedCapability,
-        recovery: Recovery::None,
-        message: "account capability is disabled until least-privilege authority is approved"
-            .into(),
-    }
-}
-
 pub(super) fn command_thread_id(command: &Command) -> Option<&Id> {
     match command {
         Command::ThreadFork { thread_id, .. }
@@ -470,9 +461,5 @@ mod tests {
             assert_ne!(required, "threads.write");
             assert!(require_scope(&read_only, required).is_err());
         }
-
-        let account_error = unsupported_account_capability();
-        assert_eq!(account_error.code, ErrorCode::UnsupportedCapability);
-        assert_eq!(account_error.recovery, Recovery::None);
     }
 }

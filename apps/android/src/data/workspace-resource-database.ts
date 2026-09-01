@@ -4,7 +4,7 @@ import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import { createTurnControlsCollection } from "./turn-controls-collection";
 import { createThreadHistoryModel, type ThreadHistoryModel, type ThreadHistoryRow } from "./thread-history-model";
-import type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
+import type { TurnControlsRow } from "./turn-controls-types";
 import { createThreadResourcesModel, type ThreadResourcesModel } from "./thread-resources-model";
 
 export type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";

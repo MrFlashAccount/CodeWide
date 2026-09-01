@@ -461,6 +461,16 @@ impl HistoryService {
             }
         }
     }
+
+    /// Projects the latest canonical conversation preview onto one App Server thread record.
+    pub async fn enrich_thread(&self, thread: Value) -> Value {
+        let mut result = self.enrich_thread_list(json!({ "data": [thread] })).await;
+        result
+            .get_mut("data")
+            .and_then(Value::as_array_mut)
+            .and_then(|threads| threads.pop())
+            .unwrap_or(Value::Null)
+    }
 }
 
 fn enrich_thread_list_result(
@@ -1122,6 +1132,32 @@ mod tests {
         let source = json!({"data": [{"id": THREAD_ID, "preview": "First prompt"}]});
 
         assert_eq!(service.enrich_thread_list(source.clone()).await, source);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn single_thread_uses_the_same_canonical_preview_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(path)?;
+        for line in [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"agent_message","message":"Canonical answer"}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","last_agent_message":"Canonical answer"}}"#,
+        ] {
+            writeln!(rollout, "{line}")?;
+        }
+        rollout.sync_all()?;
+        let service = history_service(directory.path())?;
+
+        let result = service
+            .enrich_thread(json!({"id": THREAD_ID, "preview": "First prompt"}))
+            .await;
+
+        assert_eq!(result["preview"], "Canonical answer");
         Ok(())
     }
 

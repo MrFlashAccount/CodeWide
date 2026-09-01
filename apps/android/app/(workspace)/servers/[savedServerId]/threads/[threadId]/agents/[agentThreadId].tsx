@@ -7,7 +7,10 @@ import {
   requireThreadRouteParam,
 } from "../../../../../../../src/v2/features/navigation/routeParams";
 import { qualifiedThread } from "../../../../../../../src/v2/domain/qualifiedThread";
-import { threadResourceDestination } from "../../../../../../../src/v2/features/navigation/routeDestinations";
+import {
+  portsDestination,
+  threadResourceDestination,
+} from "../../../../../../../src/v2/features/navigation/routeDestinations";
 
 export default function AgentThreadRoute(): React.JSX.Element {
   const params = useLocalSearchParams<{
@@ -21,5 +24,14 @@ export default function AgentThreadRoute(): React.JSX.Element {
   const openResource = useEvent((resourceName: Parameters<typeof threadResourceDestination>[1]) =>
     router.push(threadResourceDestination(owner, resourceName)),
   );
-  return <AgentThreadScreen onOpenResource={openResource} owner={owner} />;
+  const openPorts = useEvent(() => router.push(portsDestination(owner.savedServerId)));
+  const goBack = useEvent(() => router.back());
+  return (
+    <AgentThreadScreen
+      onBack={goBack}
+      onOpenPorts={openPorts}
+      onOpenResource={openResource}
+      owner={owner}
+    />
+  );
 }

@@ -26,6 +26,7 @@ const readEmptyPortForwardingSnapshot = (): NativePortForwardingSnapshot => EMPT
 
 class PortForwardScope {
   readonly connectionId: string;
+  private readonly onDiscovered: (ports: readonly NativeDiscoveredPort[]) => Promise<void>;
   #listeners = new Set<Listener>();
   #snapshot: NativePortForwardingSnapshot = { profiles: [], discoveredPorts: [], discoveryStatus: "idle", discoveryError: null };
   #loaded = false;
@@ -34,8 +35,12 @@ class PortForwardScope {
   #discoveredAt = 0;
   #pollTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(connectionId: string, private readonly onDiscovered: (ports: readonly NativeDiscoveredPort[]) => Promise<void>) {
+  constructor(
+    connectionId: string,
+    onDiscovered: (ports: readonly NativeDiscoveredPort[]) => Promise<void>,
+  ) {
     this.connectionId = connectionId;
+    this.onDiscovered = onDiscovered;
   }
 
   readonly subscribe = (listener: Listener): (() => void) => {

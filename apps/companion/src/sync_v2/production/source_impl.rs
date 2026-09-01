@@ -60,11 +60,20 @@ impl SemanticSource for UpstreamSemanticSource {
                 .current_thread_recipient_count(&current.thread_id, generation)
                 == 1
             {
-                self.rpc(
-                    "thread/resume",
-                    json!({"threadId": current.thread_id.as_str(), "excludeTurns": true}),
-                )
-                .await?;
+                let resumed = self
+                    .rpc(
+                        "thread/resume",
+                        json!({"threadId": current.thread_id.as_str(), "excludeTurns": true}),
+                    )
+                    .await?;
+                if let Some(settings) = normalize::thread_summary_from_response(&resumed)?.settings
+                {
+                    let _ = self
+                        .resumed_thread_settings
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(current.thread_id.clone(), settings);
+                }
             }
         }
         Ok(())
@@ -187,9 +196,6 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> Result<QueryResult, V2Error> {
-        if matches!(query, Query::AccountsList) {
-            return Err(unsupported_account_capability());
-        }
         require_scope(authorization, query_scope(&query))?;
         ensure_generation(self, generation)?;
         match query {
@@ -323,9 +329,6 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> Result<(), V2Error> {
-        if matches!(command, Command::AccountUpdate { .. }) {
-            return Err(unsupported_account_capability());
-        }
         require_scope(authorization, command_scope(command))?;
         if command_has_attachment(command) {
             require_scope(authorization, "files.download.workspace")?;
@@ -376,9 +379,6 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> CommandExecution {
-        if matches!(command, Command::AccountUpdate { .. }) {
-            return CommandExecution::Failed(unsupported_account_capability());
-        }
         if let Err(error) = require_scope(authorization, command_scope(&command))
             .and_then(|()| ensure_generation(self, generation))
         {

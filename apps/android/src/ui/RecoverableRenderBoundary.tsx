@@ -12,7 +12,7 @@ const RenderRecoveryContext = createContext<RecoveryHandler | null>(null);
 export class RenderRecoveryProvider extends Component<{ children: ReactNode; onFix: RecoveryHandler }> {
   private fix: RecoveryHandler = async (failure) => await this.props.onFix(failure);
 
-  render(): ReactNode {
+  override render(): ReactNode {
     return <RenderRecoveryContext.Provider value={this.fix}>{this.props.children}</RenderRecoveryContext.Provider>;
   }
 }
@@ -42,18 +42,18 @@ function normalizeError(value: unknown): Error {
 }
 
 class RecoverableRenderBoundaryImpl extends Component<BoundaryProps & { onFix: RecoveryHandler | null }, BoundaryState> {
-  state: BoundaryState = { error: null, componentStack: "" };
+  override state: BoundaryState = { error: null, componentStack: "" };
 
   static getDerivedStateFromError(value: unknown): Partial<BoundaryState> {
     return { error: normalizeError(value) };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error(`CodeWide ${this.props.scope} render failed: ${this.props.label}`, error, info.componentStack);
     this.setState({ componentStack: info.componentStack ?? "" });
   }
 
-  componentDidUpdate(previous: BoundaryProps & { onFix: RecoveryHandler | null }): void {
+  override componentDidUpdate(previous: BoundaryProps & { onFix: RecoveryHandler | null }): void {
     if (this.state.error !== null && previous.resetKey !== this.props.resetKey) {
       this.setState({ error: null, componentStack: "" });
     }
@@ -63,7 +63,7 @@ class RecoverableRenderBoundaryImpl extends Component<BoundaryProps & { onFix: R
     this.setState({ error: null, componentStack: "" });
   };
 
-  render(): ReactNode {
+  override render(): ReactNode {
     if (this.state.error === null) return this.props.children;
     const failure: RecoverableRenderFailure = {
       scope: this.props.scope,

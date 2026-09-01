@@ -12,6 +12,8 @@ type ThreadSummary = {
   id: string;
 };
 
+type TurnEffort = "high" | "low" | "medium" | "xhigh";
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export class AppServerClient {
@@ -68,6 +70,20 @@ export class AppServerClient {
     return threads;
   }
 
+  async createThread(workspace: string, name: string): Promise<string> {
+    const result = await this.request("thread/start", {
+      cwd: workspace,
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      baseInstructions:
+        "You are a visual parity test. Reply exactly with the token requested by the user. Do not call tools.",
+      developerInstructions: "Return only the requested token and no other text.",
+    });
+    const threadId = readThreadId(result);
+    await this.request("thread/name/set", { threadId, name });
+    return threadId;
+  }
+
   async readThread(threadId: string): Promise<unknown> {
     const result = await this.request("thread/read", { threadId, includeTurns: true });
     if (!isRecord(result) || !isRecord(result.thread) || result.thread.id !== threadId) {
@@ -81,38 +97,102 @@ export class AppServerClient {
     expectedText: string,
     timeoutMs: number,
   ): Promise<string> {
-    return poll(timeoutMs, async () => {
-      const threads = await this.listThreads();
-      for (const thread of threads) {
-        if (baselineIds.has(thread.id)) continue;
-        const detail = await this.readThread(thread.id);
-        if (hasUserText(detail, expectedText)) return thread.id;
-      }
-      return null;
-    }, `new authoritative thread containing ${expectedText}`);
+    return poll(
+      timeoutMs,
+      async () => {
+        const threads = await this.listThreads();
+        for (const thread of threads) {
+          if (baselineIds.has(thread.id)) continue;
+          const detail = await this.readThread(thread.id);
+          if (hasUserText(detail, expectedText)) return thread.id;
+        }
+        return null;
+      },
+      `new authoritative thread containing ${expectedText}`,
+    );
   }
 
   async waitForAgentText(threadId: string, expectedText: string, timeoutMs: number): Promise<void> {
-    await poll(timeoutMs, async () => {
-      const detail = await this.readThread(threadId);
-      return hasCompletedAgentText(detail, expectedText) ? true : null;
-    }, `completed authoritative agent response ${expectedText}`);
+    await poll(
+      timeoutMs,
+      async () => {
+        const detail = await this.readThread(threadId);
+        return hasCompletedAgentText(detail, expectedText) ? true : null;
+      },
+      `completed authoritative agent response ${expectedText}`,
+    );
   }
 
   async waitForUserText(threadId: string, expectedText: string, timeoutMs: number): Promise<void> {
-    await poll(timeoutMs, async () => {
-      const detail = await this.readThread(threadId);
-      return hasUserText(detail, expectedText) ? true : null;
-    }, `authoritative user message ${expectedText}`);
+    await poll(
+      timeoutMs,
+      async () => {
+        const detail = await this.readThread(threadId);
+        return hasUserText(detail, expectedText) ? true : null;
+      },
+      `authoritative user message ${expectedText}`,
+    );
+  }
+
+  async unarchiveThreadIfNeeded(threadId: string): Promise<void> {
+    const result = await this.request("thread/list", {
+      archived: true,
+      cursor: null,
+      limit: 100,
+      sortKey: "updated_at",
+      sortDirection: "desc",
+      useStateDbOnly: true,
+    });
+    if (!isRecord(result) || !Array.isArray(result.data)) {
+      throw new Error("App Server returned an invalid archived thread/list response");
+    }
+    if (!result.data.some((candidate) => isRecord(candidate) && candidate.id === threadId)) return;
+    await this.request("thread/unarchive", { threadId });
+    await poll(
+      REQUEST_TIMEOUT_MS,
+      async () => {
+        const active = await this.request("thread/list", {
+          archived: false,
+          cursor: null,
+          limit: 100,
+          sortKey: "updated_at",
+          sortDirection: "desc",
+          useStateDbOnly: true,
+        });
+        if (!isRecord(active) || !Array.isArray(active.data)) return null;
+        return active.data.some((candidate) => isRecord(candidate) && candidate.id === threadId)
+          ? true
+          : null;
+      },
+      `unarchived thread ${threadId} in active catalog`,
+    );
   }
 
   async startTurn(threadId: string, userText: string, clientUserMessageId: string): Promise<void> {
     await this.request("thread/resume", { threadId, excludeTurns: true });
+    await this.#submitTurn(threadId, userText, clientUserMessageId);
+  }
+
+  async startSubscribedTurn(
+    threadId: string,
+    userText: string,
+    clientUserMessageId: string,
+    effort: TurnEffort = "low",
+  ): Promise<void> {
+    await this.#submitTurn(threadId, userText, clientUserMessageId, effort);
+  }
+
+  async #submitTurn(
+    threadId: string,
+    userText: string,
+    clientUserMessageId: string,
+    effort: TurnEffort = "low",
+  ): Promise<void> {
     await this.request("turn/start", {
       threadId,
       clientUserMessageId,
       input: [{ type: "text", text: userText, text_elements: [] }],
-      effort: "low",
+      effort,
     });
   }
 
@@ -129,7 +209,9 @@ export class AppServerClient {
         reject(new Error(`App Server request timed out: ${method}`));
       }, REQUEST_TIMEOUT_MS);
       this.#pending.set(id, { resolve, reject, timeout });
-      this.#socket.send(JSON.stringify({ id, method, ...(params === undefined ? {} : { params }) }));
+      this.#socket.send(
+        JSON.stringify({ id, method, ...(params === undefined ? {} : { params }) }),
+      );
     });
   }
 
@@ -151,7 +233,8 @@ export class AppServerClient {
     clearTimeout(pending.timeout);
     this.#pending.delete(message.id);
     if (isRecord(message.error)) {
-      const detail = typeof message.error.message === "string" ? message.error.message : "unknown RPC error";
+      const detail =
+        typeof message.error.message === "string" ? message.error.message : "unknown RPC error";
       pending.reject(new Error(`App Server RPC failed: ${detail}`));
     } else {
       pending.resolve(message.result);
@@ -172,8 +255,11 @@ function hasUserText(thread: unknown, expectedText: string): boolean {
   return thread.turns.some((turn) => {
     if (!isRecord(turn) || !Array.isArray(turn.items)) return false;
     return turn.items.some((item) => {
-      if (!isRecord(item) || item.type !== "userMessage" || !Array.isArray(item.content)) return false;
-      return item.content.some((input) => isRecord(input) && input.type === "text" && input.text === expectedText);
+      if (!isRecord(item) || item.type !== "userMessage" || !Array.isArray(item.content))
+        return false;
+      return item.content.some(
+        (input) => isRecord(input) && input.type === "text" && input.text === expectedText,
+      );
     });
   });
 }
@@ -182,11 +268,21 @@ function hasCompletedAgentText(thread: unknown, expectedText: string): boolean {
   if (!isRecord(thread) || !Array.isArray(thread.turns)) return false;
   return thread.turns.some((turn) => {
     if (!isRecord(turn) || turn.status !== "completed" || !Array.isArray(turn.items)) return false;
-    return turn.items.some((item) => isRecord(item) && item.type === "agentMessage" && typeof item.text === "string" && item.text.includes(expectedText));
+    return turn.items.some(
+      (item) =>
+        isRecord(item) &&
+        item.type === "agentMessage" &&
+        typeof item.text === "string" &&
+        item.text.includes(expectedText),
+    );
   });
 }
 
-async function poll<T>(timeoutMs: number, read: () => Promise<T | null>, description: string): Promise<T> {
+async function poll<T>(
+  timeoutMs: number,
+  read: () => Promise<T | null>,
+  description: string,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   let lastError: Error | null = null;
   while (Date.now() < deadline) {
@@ -205,6 +301,13 @@ async function poll<T>(timeoutMs: number, read: () => Promise<T | null>, descrip
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readThreadId(result: unknown): string {
+  if (!isRecord(result) || !isRecord(result.thread) || typeof result.thread.id !== "string") {
+    throw new Error("App Server returned an invalid thread/start response");
+  }
+  return result.thread.id;
 }
 
 function delay(durationMs: number): Promise<void> {

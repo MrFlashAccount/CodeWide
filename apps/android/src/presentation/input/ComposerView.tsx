@@ -1,38 +1,61 @@
+import { useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   type PressableStateCallbackType,
   StyleSheet,
-  TextInput,
   View,
 } from "react-native";
 
 import { colors, radii, spacing, touchTarget } from "../../theme";
+import { useEvent } from "../../react/useEvent";
+import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { PresentationIcon } from "../icons/PresentationIcon";
-import { ProductText } from "../text/ProductText";
+import { PresentationTextInput, ProductText } from "../text/ProductText";
 
 interface ComposerViewProps {
   disabled: boolean;
   error?: string | null;
+  menuActions?: readonly ActionMenuItem[];
   onChangeText(text: string): void;
-  onOpenMenu?(): void;
+  onSelectMenu?(id: string): void;
   onSubmit(): void;
+  onVoice?(): Promise<void>;
   pending: boolean;
   retryBlocked: boolean;
   text: string;
+  voiceDisabled?: boolean;
+  voiceMessage?: string | null;
+  voiceState?: "idle" | "starting" | "recording" | "finishing" | "retry" | "error";
 }
 
 export function ComposerView({
   disabled,
   error,
+  menuActions,
   onChangeText,
-  onOpenMenu,
+  onSelectMenu,
   onSubmit,
+  onVoice,
   pending,
   retryBlocked,
   text,
+  voiceDisabled = false,
+  voiceMessage = null,
+  voiceState = "idle",
 }: ComposerViewProps): React.JSX.Element {
-  const sendDisabled = disabled || pending || retryBlocked;
+  const sendDisabled = disabled || pending || retryBlocked || text.trim() === "";
+  const [voicePending, setVoicePending] = useState(false);
+  const voiceActive =
+    voiceState === "starting" || voiceState === "recording" || voiceState === "finishing";
+  const selectMenu = useEvent((id: string) => onSelectMenu?.(id));
+  const activateVoice = useEvent(() => {
+    if (onVoice === undefined || voiceDisabled || voicePending) return;
+    setVoicePending(true);
+    onVoice()
+      .finally(() => setVoicePending(false))
+      .catch(() => undefined);
+  });
   return (
     <View style={styles.dock}>
       {error === undefined || error === null ? null : (
@@ -43,37 +66,78 @@ export function ComposerView({
         </View>
       )}
       <View style={styles.row}>
-        <Pressable
-          accessibilityLabel="Composer menu"
-          accessibilityRole="button"
-          disabled={onOpenMenu === undefined}
-          onPress={onOpenMenu}
-          style={onOpenMenu === undefined ? disabledMenuStyle : enabledMenuStyle}
-        >
-          <PresentationIcon color={colors.text} name="add" size={22} />
-        </Pressable>
-        <View style={styles.inputShell}>
-          <TextInput
-            accessibilityLabel="V2 message composer"
-            editable={!disabled && !pending}
-            multiline
-            onChangeText={onChangeText}
-            placeholder="Message Codex…"
-            placeholderTextColor={colors.textDim}
-            style={styles.input}
-            textAlignVertical="top"
-            value={text}
-          />
+        {menuActions === undefined || onSelectMenu === undefined ? (
           <Pressable
-            accessibilityLabel="Voice input"
+            accessibilityLabel="Composer menu"
             accessibilityRole="button"
             disabled
-            style={styles.inputAction}
+            style={disabledMenuStyle}
           >
-            <PresentationIcon color={colors.textMuted} name="mic" size={20} />
+            <PresentationIcon color={colors.text} name="add" size={22} />
+          </Pressable>
+        ) : (
+          <ActionMenu
+            accessibilityLabel="Composer menu"
+            actions={menuActions}
+            align="start"
+            onSelect={selectMenu}
+            placement="top"
+            style={styles.menuAnchor}
+          >
+            <Pressable
+              accessibilityLabel="Composer menu"
+              accessibilityRole="button"
+              style={enabledMenuStyle}
+            >
+              <PresentationIcon color={colors.text} name="add" size={22} />
+            </Pressable>
+          </ActionMenu>
+        )}
+        <View style={styles.inputShell}>
+          {voiceActive ? (
+            <View accessibilityLabel="Voice recording" style={styles.voiceStatus}>
+              <ActivityIndicator color={colors.primary} size="small" />
+              <ProductText numberOfLines={1} style={styles.voiceLabel} tone="muted">
+                {voiceStatusLabel(voiceState, voiceMessage)}
+              </ProductText>
+            </View>
+          ) : (
+            <PresentationTextInput
+              accessibilityLabel="Message Codex"
+              editable={!disabled && !pending}
+              multiline
+              onChangeText={onChangeText}
+              placeholder="Message Codex…"
+              placeholderTextColor={colors.textDim}
+              style={styles.input}
+              textAlignVertical="top"
+              value={text}
+            />
+          )}
+          <Pressable
+            accessibilityLabel={
+              voiceActive ? "Stop voice input and insert transcript" : "Voice input"
+            }
+            accessibilityRole="button"
+            accessibilityState={{
+              busy: voicePending,
+              disabled: voiceDisabled || onVoice === undefined,
+            }}
+            disabled={voiceDisabled || onVoice === undefined}
+            onPress={activateVoice}
+            style={[
+              styles.inputAction,
+              (voiceDisabled || onVoice === undefined) && styles.disabled,
+            ]}
+          >
+            <PresentationIcon
+              color={voiceActive ? colors.red : colors.text}
+              name={voiceActive ? "stop" : voiceState === "error" ? "refresh" : "mic"}
+              size={20}
+            />
           </Pressable>
           <Pressable
-            accessibilityLabel="Send V2 message"
+            accessibilityLabel="Send message"
             accessibilityRole="button"
             accessibilityState={{ busy: pending, disabled: sendDisabled }}
             disabled={sendDisabled}
@@ -90,6 +154,16 @@ export function ComposerView({
       </View>
     </View>
   );
+}
+
+function voiceStatusLabel(
+  state: NonNullable<ComposerViewProps["voiceState"]>,
+  message: string | null,
+): string {
+  if (message !== null) return message;
+  if (state === "starting") return "Starting voice…";
+  if (state === "finishing") return "Finishing voice…";
+  return "Listening…";
 }
 
 function disabledMenuStyle({ pressed }: PressableStateCallbackType) {
@@ -123,7 +197,6 @@ const styles = StyleSheet.create({
   input: {
     color: colors.text,
     flex: 1,
-    fontFamily: "RobotoFlex-Regular",
     fontSize: 15,
     lineHeight: 20,
     maxHeight: 132,
@@ -139,7 +212,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     height: touchTarget,
     justifyContent: "center",
-    width: 40,
+    width: touchTarget,
   },
   inputShell: {
     alignItems: "flex-end",
@@ -159,6 +232,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: touchTarget,
   },
+  menuAnchor: { flexShrink: 0, height: touchTarget, width: touchTarget },
   pressed: { opacity: 0.68 },
   row: {
     alignItems: "flex-end",
@@ -180,4 +254,14 @@ const styles = StyleSheet.create({
     width: touchTarget,
   },
   sendPressed: { backgroundColor: colors.primaryPressed },
+  voiceLabel: { flex: 1, fontSize: 13, lineHeight: 18 },
+  voiceStatus: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: touchTarget,
+    minWidth: 0,
+    paddingLeft: spacing.sm,
+  },
 });

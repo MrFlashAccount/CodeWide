@@ -32,9 +32,12 @@ export type StartVoiceTranscription = (
 ) => Promise<VoiceTranscriptionSession>;
 
 export class RetryableVoiceTranscriptionError extends Error {
-  constructor(message: string, readonly retryAfterMs: number) {
+  readonly retryAfterMs: number;
+
+  constructor(message: string, retryAfterMs: number) {
     super(message);
     this.name = "RetryableVoiceTranscriptionError";
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -74,6 +77,7 @@ const VOICE_SESSION_START_RETRY_BASE_MS = 250;
  * capture, remote dictation session or retry payload.
  */
 export class VoiceInputController {
+  private readonly resources: WorkspaceResourceDatabase;
   private binding: VoiceBinding | null = null;
   private activeBinding: VoiceBinding | null = null;
   private retryBinding: VoiceBinding | null = null;
@@ -92,7 +96,9 @@ export class VoiceInputController {
   private originalDraft: string | null = null;
   private capturedAudioChunks = 0;
 
-  constructor(private readonly resources: WorkspaceResourceDatabase) {}
+  constructor(resources: WorkspaceResourceDatabase) {
+    this.resources = resources;
+  }
 
   /**
    * Audio level is frame-rate UI telemetry, not durable application state.

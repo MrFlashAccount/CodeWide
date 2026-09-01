@@ -1,28 +1,36 @@
 import { useState } from "react";
 
 import { ComposerView } from "../../../presentation/input/ComposerView";
+import type { ActionMenuItem } from "../../../ui/ActionMenu";
 import { useEvent } from "../../../react/useEvent";
+import type { VoiceInputControlModel } from "../conversation/VoiceInputControl";
 
 interface ChatComposerProps {
   disabled: boolean;
   error?: string | null;
   locked?: boolean;
+  menuActions?: readonly ActionMenuItem[];
   onEdit?(): void;
+  onSelectMenu?(id: string): void;
   onSubmit(text: string): Promise<boolean>;
   onTextChange?(text: string): void;
   retryBlocked?: boolean;
   text?: string;
+  voice?: VoiceInputControlModel;
 }
 
 export function ChatComposer({
   disabled,
   error,
   locked,
+  menuActions,
   onEdit,
+  onSelectMenu,
   onSubmit,
   onTextChange,
   retryBlocked = false,
   text: controlledText,
+  voice,
 }: ChatComposerProps): React.JSX.Element {
   const [uncontrolledText, setUncontrolledText] = useState("");
   const text = controlledText ?? uncontrolledText;
@@ -61,8 +69,18 @@ export function ChatComposer({
       {...(error === undefined && activationError === null
         ? {}
         : { error: error ?? activationError })}
+      {...(menuActions === undefined ? {} : { menuActions })}
       onChangeText={changeText}
+      {...(onSelectMenu === undefined ? {} : { onSelectMenu })}
       onSubmit={activateSubmit}
+      {...(voice === undefined
+        ? {}
+        : {
+            onVoice: voice.activate,
+            voiceDisabled: voice.disabled,
+            voiceMessage: voice.message,
+            voiceState: voice.state,
+          })}
       pending={sending}
       retryBlocked={retryBlocked}
       text={text}

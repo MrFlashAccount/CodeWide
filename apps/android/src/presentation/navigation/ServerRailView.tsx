@@ -8,7 +8,7 @@ import {
 
 import { colors, radii, spacing, touchTarget } from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
-import { ProductText } from "../text/ProductText";
+import { PresentationText as Text } from "../text/ProductText";
 import { useEvent } from "../../react/useEvent";
 
 export interface ServerRailRow {
@@ -46,7 +46,7 @@ export function ServerRailView({
   rows,
 }: ServerRailViewProps): React.JSX.Element {
   return (
-    <View accessibilityLabel="V2 saved servers" style={styles.rail}>
+    <View style={styles.rail}>
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
@@ -75,8 +75,7 @@ function ServerRailItem({ active, onOpen, row }: ServerRailItemProps): React.JSX
       style={active ? activeAvatarStyle : inactiveAvatarStyle}
     >
       {active ? <View style={styles.activeMarker} /> : null}
-      <ProductText style={styles.emoji}>{row.emoji}</ProductText>
-      <View style={[styles.status, row.detail === "Enabled" && styles.statusEnabled]} />
+      <Text style={styles.emoji}>{row.emoji}</Text>
     </Pressable>
   );
 }
@@ -126,7 +125,7 @@ const styles = StyleSheet.create({
   },
   avatarActive: { backgroundColor: colors.primaryContainer, borderRadius: radii.selected },
   content: { alignItems: "center", gap: spacing.xs, paddingVertical: spacing.xs },
-  emoji: { fontSize: 22, lineHeight: 28 },
+  emoji: { color: colors.text, fontSize: 22 },
   pressed: { opacity: 0.68 },
   rail: {
     alignItems: "center",
@@ -136,16 +135,4 @@ const styles = StyleSheet.create({
     width: 64,
   },
   scroll: { flex: 1, width: "100%" },
-  status: {
-    backgroundColor: colors.textDim,
-    borderColor: colors.surfaceContainerLowest,
-    borderRadius: 6,
-    borderWidth: 2,
-    bottom: 1,
-    height: 12,
-    position: "absolute",
-    right: -1,
-    width: 12,
-  },
-  statusEnabled: { backgroundColor: colors.green },
 });

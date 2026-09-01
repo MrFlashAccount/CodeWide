@@ -11,11 +11,11 @@ use super::{
     domain::{
         ApprovalPolicy, Attachment, Effort, ExecutionState, FileChangeKind, FileChangeState,
         InputBlock, Item, PlanStep, PlanStepState, Sandbox, ThreadSettings, ThreadState,
-        ThreadSummary, TurnState, TurnView,
+        ThreadSummary, TurnActivity, TurnState, TurnUsage, TurnView,
     },
     protocol::{
         AccountProfile, Model, Project, QueueItem, QueueState, ResourceChange, V2Error,
-        WorkspaceSupport,
+        WeeklyRateLimit, WorkspaceSupport,
     },
     scalar::{Id, Timestamp, U64},
 };
@@ -81,11 +81,12 @@ fn thread_summary_with_settings(
                 .get("parentId")
                 .or_else(|| value.get("parentThreadId")),
         )?,
-        title: value
-            .get("title")
-            .or_else(|| value.get("name"))
+        title: semantic_thread_title(value),
+        preview: value
+            .get("preview")
             .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
+            .unwrap_or_default()
+            .to_owned(),
         workspace: value
             .get("workspace")
             .or_else(|| value.get("cwd"))
@@ -103,6 +104,16 @@ fn thread_summary_with_settings(
         last_activity_at: Some(updated_at),
         head_turn_id: optional_id(value.get("headTurnId"))?,
     })
+}
+
+fn semantic_thread_title(value: &Value) -> Option<String> {
+    value
+        .get("name")
+        .or_else(|| value.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && !title.eq_ignore_ascii_case("Untitled thread"))
+        .map(ToOwned::to_owned)
 }
 
 pub fn turn_view(thread_id: &Id, value: &Value) -> Result<TurnView, V2Error> {
@@ -126,11 +137,65 @@ pub fn turn_view(thread_id: &Id, value: &Value) -> Result<TurnView, V2Error> {
         id: required_id(value, "id")?,
         thread_id: thread_id.clone(),
         state,
-        created_at: timestamp(value.get("createdAt").or_else(|| value.get("startedAt")))
+        created_at: timestamp(value.get("startedAt").or_else(|| value.get("createdAt")))
             .unwrap_or_else(Timestamp::now),
         completed_at: timestamp(value.get("completedAt")),
+        duration_ms: nonnegative_safe_integer(value.get("durationMs")),
+        activity: turn_activity(value),
+        usage: turn_usage(value),
         items,
     })
+}
+
+fn turn_activity(value: &Value) -> Option<TurnActivity> {
+    let activity = value.pointer("/codewide/activity")?;
+    let count = nonnegative_safe_integer(activity.get("count"))?;
+    let kinds = activity
+        .get("kinds")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .take(256)
+        .map(ToOwned::to_owned)
+        .collect();
+    Some(TurnActivity { count, kinds })
+}
+
+fn turn_usage(value: &Value) -> Option<TurnUsage> {
+    let tokens = value.pointer("/codewide/usage/turn/tokens")?;
+    let thread_tokens = value.pointer("/codewide/usage/thread/tokens")?;
+    let input_tokens = nonnegative_safe_integer(tokens.get("inputTokens"))?;
+    let output_tokens = nonnegative_safe_integer(tokens.get("outputTokens"))?;
+    let total_cost_usd = value
+        .pointer("/codewide/usage/turn/cost/totalCostUsd")
+        .and_then(Value::as_f64)
+        .filter(|cost| cost.is_finite() && *cost >= 0.0);
+    let thread_total_cost_usd = value
+        .pointer("/codewide/usage/thread/cost/totalCostUsd")
+        .and_then(Value::as_f64)
+        .filter(|cost| cost.is_finite() && *cost >= 0.0);
+    Some(TurnUsage {
+        input_tokens,
+        output_tokens,
+        total_cost_usd,
+        latest_request_tokens: nonnegative_safe_integer(
+            value.pointer("/codewide/usage/latestRequest/totalTokens"),
+        )?,
+        model_context_window: value
+            .pointer("/codewide/usage/modelContextWindow")
+            .and_then(Value::as_i64)
+            .filter(|number| (0..=9_007_199_254_740_991).contains(number)),
+        thread_input_tokens: nonnegative_safe_integer(thread_tokens.get("inputTokens"))?,
+        thread_output_tokens: nonnegative_safe_integer(thread_tokens.get("outputTokens"))?,
+        thread_total_tokens: nonnegative_safe_integer(thread_tokens.get("totalTokens"))?,
+        thread_total_cost_usd,
+    })
+}
+
+fn nonnegative_safe_integer(value: Option<&Value>) -> Option<i64> {
+    value
+        .and_then(Value::as_i64)
+        .filter(|number| (0..=9_007_199_254_740_991).contains(number))
 }
 
 fn item(value: &Value) -> Option<Item> {
@@ -428,6 +493,7 @@ pub fn accounts(result: &Value) -> (Option<Id>, Vec<AccountProfile>, bool) {
                     .map(ToOwned::to_owned),
                 plan: value
                     .get("plan")
+                    .or_else(|| value.get("planType"))
                     .and_then(Value::as_str)
                     .map(ToOwned::to_owned),
                 enabled: value
@@ -436,6 +502,15 @@ pub fn accounts(result: &Value) -> (Option<Id>, Vec<AccountProfile>, bool) {
                     .unwrap_or(true),
                 priority: value.get("priority").and_then(Value::as_i64).unwrap_or(0),
                 exhausted_until: timestamp(value.get("exhaustedUntil")),
+                exhausted_indefinitely: value
+                    .get("exhaustedIndefinitely")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                weekly_limit: weekly_rate_limit(value.get("rateLimits")),
+                rate_limits_updated_at: timestamp(value.get("rateLimitsUpdatedAt")),
+                rate_limits_failed: value
+                    .get("rateLimitsError")
+                    .is_some_and(|error| !error.is_null()),
             })
         })
         .collect();
@@ -447,6 +522,35 @@ pub fn accounts(result: &Value) -> (Option<Id>, Vec<AccountProfile>, bool) {
             .and_then(Value::as_bool)
             .unwrap_or(false),
     )
+}
+
+fn weekly_rate_limit(value: Option<&Value>) -> Option<WeeklyRateLimit> {
+    let response = value?;
+    let mut snapshots = response
+        .get("rateLimitsByLimitId")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flat_map(serde_json::Map::values)
+        .collect::<Vec<_>>();
+    if let Some(snapshot) = response.get("rateLimits") {
+        snapshots.push(snapshot);
+    }
+    snapshots.into_iter().find_map(|snapshot| {
+        ["primary", "secondary"].into_iter().find_map(|name| {
+            let window = snapshot.get(name)?;
+            if window.get("windowDurationMins").and_then(Value::as_i64) != Some(10_080) {
+                return None;
+            }
+            let used = window.get("usedPercent")?.as_f64()?;
+            if !used.is_finite() {
+                return None;
+            }
+            Some(WeeklyRateLimit {
+                remaining_percent: (100.0 - used).clamp(0.0, 100.0),
+                resets_at: timestamp(window.get("resetsAt")),
+            })
+        })
+    })
 }
 
 pub fn resource_changes(result: &Value) -> Vec<ResourceChange> {
@@ -689,9 +793,22 @@ mod tests {
 
     #[test]
     fn thread_list_and_read_records_without_settings_remain_truthful() {
-        let summary = thread_summary(&source_thread(&json!({})))
+        let summary = thread_summary(&source_thread(&json!({ "preview": "Newest answer" })))
             .unwrap_or_else(|error| panic!("real thread DTO should normalize: {error:?}"));
         assert_eq!(summary.settings, None);
+        assert_eq!(summary.preview, "Newest answer");
+    }
+
+    #[test]
+    fn app_server_placeholder_title_does_not_override_the_canonical_preview() {
+        let summary = thread_summary(&source_thread(&json!({
+            "title": "Untitled thread",
+            "preview": "Newest answer"
+        })))
+        .unwrap_or_else(|error| panic!("placeholder title should normalize: {error:?}"));
+
+        assert_eq!(summary.title, None);
+        assert_eq!(summary.preview, "Newest answer");
     }
 
     #[test]
@@ -719,6 +836,114 @@ mod tests {
         assert_eq!(settings.effort, Some(Effort::High));
         assert_eq!(settings.approval_policy, ApprovalPolicy::Never);
         assert_eq!(settings.sandbox, Sandbox::Unrestricted);
+    }
+
+    #[test]
+    fn canonical_turn_display_metadata_survives_v2_normalization() {
+        let source = json!({
+            "id": "turn",
+            "createdAt": "2026-08-27T11:59:00Z",
+            "startedAt": "2026-08-27T12:00:00Z",
+            "completedAt": "2026-08-27T12:00:03Z",
+            "durationMs": 3200,
+            "status": "completed",
+            "items": [
+                {"type": "userMessage", "id": "user", "content": [{"type": "text", "text": "Question"}]},
+                {"type": "agentMessage", "id": "agent", "text": "Answer"}
+            ],
+            "codewide": {
+                "activity": {"count": 2, "kinds": ["reasoning", "commandExecution"]},
+                "usage": {
+                    "latestRequest": {"totalTokens": 25700},
+                    "modelContextWindow": 258400,
+                    "turn": {
+                        "tokens": {"inputTokens": 26000, "outputTokens": 19},
+                        "cost": {"totalCostUsd": 0.014}
+                    },
+                    "thread": {
+                        "tokens": {"inputTokens": 76000, "outputTokens": 1000, "totalTokens": 77000},
+                        "cost": {"totalCostUsd": 0.044}
+                    }
+                }
+            }
+        });
+        let normalized = turn_view(
+            &Id::new("thread").unwrap_or_else(|error| panic!("valid id: {error:?}")),
+            &source,
+        )
+        .unwrap_or_else(|error| panic!("turn should normalize: {error:?}"));
+
+        assert_eq!(normalized.created_at.as_str(), "2026-08-27T12:00:00Z");
+        assert_eq!(normalized.duration_ms, Some(3200));
+        assert_eq!(
+            normalized
+                .activity
+                .unwrap_or_else(|| panic!("activity must survive"))
+                .kinds,
+            ["reasoning", "commandExecution"]
+        );
+        let usage = normalized
+            .usage
+            .unwrap_or_else(|| panic!("usage must survive"));
+        assert_eq!(usage.input_tokens, 26000);
+        assert_eq!(usage.output_tokens, 19);
+        assert_eq!(usage.total_cost_usd, Some(0.014));
+        assert_eq!(usage.latest_request_tokens, 25700);
+        assert_eq!(usage.model_context_window, Some(258400));
+        assert_eq!(usage.thread_input_tokens, 76000);
+        assert_eq!(usage.thread_output_tokens, 1000);
+        assert_eq!(usage.thread_total_tokens, 77000);
+        assert_eq!(usage.thread_total_cost_usd, Some(0.044));
+    }
+
+    #[test]
+    fn account_weekly_limit_survives_v2_normalization() {
+        let result = json!({
+            "activeProfileId": "profile-1",
+            "allExhausted": false,
+            "profiles": [{
+                "id": "profile-1",
+                "email": "person@example.com",
+                "planType": "pro",
+                "enabled": true,
+                "priority": 0,
+                "active": true,
+                "exhaustedUntil": null,
+                "exhaustedIndefinitely": false,
+                "rateLimits": {
+                    "rateLimits": {
+                        "primary": {"usedPercent": 10, "windowDurationMins": 300, "resetsAt": 1788000000},
+                        "secondary": {"usedPercent": 13, "windowDurationMins": 10080, "resetsAt": 1789000000}
+                    },
+                    "rateLimitsByLimitId": null
+                },
+                "rateLimitsUpdatedAt": 1787000000,
+                "rateLimitsError": null
+            }]
+        });
+        let (active, profiles, exhausted) = accounts(&result);
+        assert_eq!(active.as_ref().map(Id::as_str), Some("profile-1"));
+        assert!(!exhausted);
+        let profile = profiles
+            .first()
+            .unwrap_or_else(|| panic!("profile should normalize"));
+        assert_eq!(profile.plan.as_deref(), Some("pro"));
+        assert_eq!(
+            profile
+                .rate_limits_updated_at
+                .as_ref()
+                .map(Timestamp::as_str),
+            Some("2026-08-17T20:53:20Z")
+        );
+        let weekly = profile
+            .weekly_limit
+            .as_ref()
+            .unwrap_or_else(|| panic!("weekly limit should normalize"));
+        assert_eq!(weekly.remaining_percent, 87.0);
+        assert_eq!(
+            weekly.resets_at.as_ref().map(Timestamp::as_str),
+            Some("2026-09-10T00:26:40Z")
+        );
     }
 
     #[test]

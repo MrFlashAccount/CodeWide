@@ -35,7 +35,8 @@ describe("V2 feature surfaces", () => {
       new URL("../src/v2/features/conversation/ConversationScreen.tsx", import.meta.url),
       "utf8",
     );
-    expect(conversation).toContain("run: () => onOpenResource(resourceName)");
+    expect(conversation).toContain("onSelect={onSelectResource}");
+    expect(conversation).toContain("await onOpenResource(id)");
     const conversationRoute = readFileSync(
       new URL(
         "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/index.tsx",
@@ -68,6 +69,18 @@ describe("V2 feature surfaces", () => {
       const source = readFileSync(new URL(layout, import.meta.url), "utf8");
       expect(source).not.toContain("V2Application");
     }
+  });
+
+  it("opens on the aggregate thread catalog instead of a server-picker page", () => {
+    const screen = readFileSync(
+      new URL("../src/v2/features/serverList/ServerListScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(screen).toContain("runtime.aggregate");
+    expect(screen).toContain("<ThreadSidebarView");
+    expect(screen).toContain("<ServerSelectorView");
+    expect(screen).not.toContain("<ServerPickerView");
+    expect(screen).not.toContain("All saved servers");
   });
 
   it("keeps every secondary destination qualified by saved server and thread", () => {
@@ -145,9 +158,12 @@ describe("V2 feature surfaces", () => {
     );
     expect(newThread).toContain("setActivationLocked(true)");
     expect(newThread).toContain('accessibilityLiveRegion="polite"');
-    expect(newThread).toContain("editable={!activationLocked && !locallyLocked}");
+    expect(newThread).toContain("disabled={activationLocked}");
+    expect(newThread).toContain("locked={locallyLocked}");
     expect(composer).toContain("<ComposerView");
+    expect(composer).toContain("disabled={disabled || locked === true}");
     expect(composer).toContain("pending={sending}");
+    expect(composerView).toContain("editable={!disabled && !pending}");
     expect(composerView).toContain(
       "accessibilityState={{ busy: pending, disabled: sendDisabled }}",
     );

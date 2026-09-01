@@ -48,6 +48,22 @@ describe("opaque authenticated transport lease", () => {
     expect(registry).toContain("val lease = leases.remove(handle) ?: return");
   });
 
+  it("starts and awaits the owning connection service on a cold V2 launch", () => {
+    const module = read(
+      "../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt",
+    );
+    const acquire = module.slice(
+      module.indexOf("fun acquireAuthenticatedTransportLease("),
+      module.indexOf("fun openAuthenticatedDuplex("),
+    );
+    expect(acquire).toContain("wakeSocket(savedServerId)");
+    expect(acquire).toContain("acquireAuthenticatedTransportLeaseWhenReady(");
+    expect(acquire).toContain("AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS");
+    expect(acquire).not.toContain(
+      'CodexConnectionService.instance ?: error("Connection service is not running")',
+    );
+  });
+
   it("prevents V2 consumers from importing raw transport construction", () => {
     const adapter = read("../src/v2/infrastructure/connection/sharedConnectionAdapter.native.ts");
     expect(adapter).toContain("acquireAuthenticatedTransportLease");

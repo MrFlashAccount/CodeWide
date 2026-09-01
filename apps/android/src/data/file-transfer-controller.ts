@@ -15,8 +15,11 @@ type UploadedAttachment = { id: string; rootId: string; path: string; name: stri
 export class FileTransferController {
   private readonly running = new Map<string, RunningTransfer>();
   private readonly generations = new Map<string, number>();
+  private readonly resources: WorkspaceResourceDatabase;
 
-  constructor(private readonly resources: WorkspaceResourceDatabase) {}
+  constructor(resources: WorkspaceResourceDatabase) {
+    this.resources = resources;
+  }
 
   async start(options: {
     scope: string;

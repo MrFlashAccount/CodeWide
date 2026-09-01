@@ -296,6 +296,33 @@ describe("thread event projection", () => {
     expect(projectedTurnMetadata(value.turns[0]!)?.execution?.model).toBe("gpt-5.6-sol");
   });
 
+  it("normalizes a metadata-only started turn before live items arrive", () => {
+    const value = thread();
+    const sparseTurn = structuredClone(value.turns[0]!) as unknown as Record<string, unknown>;
+    delete sparseTurn.items;
+    delete sparseTurn.itemsView;
+    value.turns = [];
+
+    const started = applyThreadEventsImmutable(value, [event("turn/started", { turn: sparseTurn })]);
+
+    expect(started.turns[0]).toMatchObject({ id: "turn", items: [], itemsView: "full" });
+    expect(() => started.turns[0]?.items.length).not.toThrow();
+
+    const withUserMessage = applyThreadEventsImmutable(started, [
+      event("item/started", {
+        item: {
+          type: "userMessage",
+          id: "live-user",
+          clientId: "live-client",
+          content: [{ type: "text", text: "hello", text_elements: [] }],
+        },
+      }),
+    ]);
+    expect(withUserMessage.turns[0]?.items).toEqual([
+      expect.objectContaining({ id: "live-user", type: "userMessage" }),
+    ]);
+  });
+
   it("applies a model reroute only to the addressed turn", () => {
     const value = seedThreadExecutionSettings(thread(), {
       model: "gpt-5.6-sol",

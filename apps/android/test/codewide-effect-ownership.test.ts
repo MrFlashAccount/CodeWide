@@ -104,6 +104,9 @@ describe("CodeWide effect ownership", () => {
     expect(screen).toContain("function ThreadSidebar(");
     expect(screen).toContain("function SelectableThreadRow(");
     expect(screen).toContain("navigation.selection$.id.get() === selectionKey");
+    expect(screen).toContain('scope="desktop-default-thread"');
+    expect(screen).toContain("onCommit={commitDefaultDesktopThread}");
+    expect(screen).not.toContain("setThreadSelection(threadNavigation.select(defaultThreadId))");
     expect(screen).not.toContain("extraData={`${activeThreadId");
   });
 });

@@ -87,6 +87,7 @@ pub struct UpstreamSemanticSource {
     live_history_cursors: Arc<Mutex<BoundedMap<String, String>>>,
     history_cursor_owners: Arc<Mutex<BoundedMap<String, ()>>>,
     thread_access: Arc<Mutex<BoundedMap<ThreadAccessKey, u64>>>,
+    resumed_thread_settings: Arc<Mutex<BoundedMap<Id, super::domain::ThreadSettings>>>,
 }
 
 impl UpstreamSemanticSource {
@@ -113,6 +114,9 @@ impl UpstreamSemanticSource {
             live_history_cursors: Arc::new(Mutex::new(BoundedMap::new(MAX_CURSOR_WITNESSES))),
             history_cursor_owners: Arc::new(Mutex::new(BoundedMap::new(MAX_CURSOR_WITNESSES))),
             thread_access: Arc::new(Mutex::new(BoundedMap::new(MAX_THREAD_ACCESS_WITNESSES))),
+            resumed_thread_settings: Arc::new(Mutex::new(BoundedMap::new(
+                MAX_THREAD_ACCESS_WITNESSES,
+            ))),
         });
         source.spawn_generation_monitor(generation_tx);
         source.spawn_event_normalizer();
@@ -209,6 +213,10 @@ impl UpstreamSemanticSource {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        self.resumed_thread_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     async fn purge_context_state(&self, context: &AuthenticatedContextKey) {
@@ -288,6 +296,10 @@ impl UpstreamSemanticSource {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|key, _| &key.thread_id != thread_id);
+        self.resumed_thread_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|candidate, _| candidate != thread_id);
     }
 
     async fn authorize_thread_access(
@@ -373,6 +385,7 @@ impl UpstreamSemanticSource {
                 }),
             )
             .await?;
+        let result = self.history.enrich_thread_list(result).await;
         let source_threads = result
             .get("data")
             .and_then(Value::as_array)
@@ -423,13 +436,25 @@ impl UpstreamSemanticSource {
     }
 
     async fn read_thread(&self, thread_id: &Id) -> Result<super::domain::ThreadSummary, V2Error> {
-        let result = self
+        let mut result = self
             .rpc(
                 "thread/read",
                 json!({"threadId": thread_id.as_str(), "includeTurns": false}),
             )
             .await?;
-        normalize::thread_summary(result.get("thread").unwrap_or(&result))
+        let thread = match result.get_mut("thread") {
+            Some(thread) => thread.take(),
+            None => result,
+        };
+        let thread = self.history.enrich_thread(thread).await;
+        let thread = normalize::thread_summary(&thread)?;
+        let settings = self
+            .resumed_thread_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(thread_id)
+            .cloned();
+        Ok(with_cached_thread_settings(thread, settings.as_ref()))
     }
 
     async fn latest_turn(
@@ -448,12 +473,53 @@ impl UpstreamSemanticSource {
                 "turn source exceeded record limit",
             ));
         }
+        let local_metadata = if detail == HistoryDetail::Full {
+            self.local_turn_display_metadata(thread_id, limit).await
+        } else {
+            HashMap::new()
+        };
         let mut turns = source_turns
             .iter()
-            .map(|value| normalize::turn_view(thread_id, value))
+            .map(|value| {
+                let enriched = merge_turn_display_metadata(value, &local_metadata);
+                normalize::turn_view(thread_id, &enriched)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         turns.reverse();
         Ok(turns)
+    }
+
+    async fn local_turn_display_metadata(
+        &self,
+        thread_id: &Id,
+        limit: u16,
+    ) -> HashMap<String, Value> {
+        let Some(Ok(result)) = self
+            .history
+            .try_turns_page(
+                "thread/turns/list",
+                &json!({
+                    "threadId": thread_id.as_str(),
+                    "cursor": null,
+                    "limit": limit,
+                    "sortDirection": "desc",
+                    "itemsView": "summary"
+                }),
+            )
+            .await
+        else {
+            return HashMap::new();
+        };
+        result
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|turn| {
+                let id = turn.get("id")?.as_str()?.to_owned();
+                Some((id, turn.clone()))
+            })
+            .collect()
     }
 
     async fn history_page(
@@ -734,6 +800,44 @@ fn retained_cursor_key(context: &AuthenticatedContextKey, value: &str) -> String
     format!("{}#{value}", context.as_str())
 }
 
+fn merge_turn_display_metadata(source: &Value, local_metadata: &HashMap<String, Value>) -> Value {
+    let Some(turn_id) = source.get("id").and_then(Value::as_str) else {
+        return source.clone();
+    };
+    let Some(local) = local_metadata.get(turn_id) else {
+        return source.clone();
+    };
+    let Some(local_codewide) = local.get("codewide").and_then(Value::as_object) else {
+        return source.clone();
+    };
+    let mut enriched = source.clone();
+    let Some(enriched_object) = enriched.as_object_mut() else {
+        return enriched;
+    };
+    let codewide = enriched_object
+        .entry("codewide")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Some(codewide) = codewide.as_object_mut() else {
+        return enriched;
+    };
+    for key in ["activity", "usage"] {
+        if let Some(value) = local_codewide.get(key) {
+            codewide.insert(key.to_owned(), value.clone());
+        }
+    }
+    enriched
+}
+
+fn with_cached_thread_settings(
+    mut thread: super::domain::ThreadSummary,
+    settings: Option<&super::domain::ThreadSettings>,
+) -> super::domain::ThreadSummary {
+    if thread.settings.is_none() {
+        thread.settings = settings.cloned();
+    }
+    thread
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -749,6 +853,77 @@ mod tests {
             expires_at: u64::MAX,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn full_turn_keeps_source_items_and_adds_indexed_display_metadata() {
+        let source = json!({
+            "id": "turn-1",
+            "items": [{"type": "agentMessage", "id": "answer", "text": "Done"}],
+            "status": "completed",
+            "durationMs": 3200
+        });
+        let local = json!({
+            "id": "turn-1",
+            "items": [{"type": "agentMessage", "id": "summary", "text": "Summary"}],
+            "codewide": {
+                "activity": {"count": 2, "kinds": ["commandExecution"]},
+                "usage": {
+                    "tokens": {"input": 26000, "output": 1900},
+                    "cost": {"totalCostUsd": 0.014}
+                }
+            }
+        });
+        let metadata = HashMap::from([("turn-1".to_owned(), local)]);
+
+        let enriched = merge_turn_display_metadata(&source, &metadata);
+
+        assert_eq!(enriched.pointer("/items/0/id"), Some(&json!("answer")));
+        assert_eq!(enriched.pointer("/durationMs"), Some(&json!(3200)));
+        assert_eq!(
+            enriched.pointer("/codewide/activity/count"),
+            Some(&json!(2))
+        );
+        assert_eq!(
+            enriched.pointer("/codewide/usage/tokens/input"),
+            Some(&json!(26000))
+        );
+    }
+
+    #[test]
+    fn resumed_settings_fill_a_read_only_thread_shell() {
+        let thread = serde_json::from_value(json!({
+            "id": "thread-1",
+            "parentId": null,
+            "title": null,
+            "preview": "",
+            "workspace": "/tmp",
+            "archived": false,
+            "state": "idle",
+            "settings": null,
+            "createdAt": "2026-08-31T00:00:00Z",
+            "updatedAt": "2026-08-31T00:00:00Z",
+            "lastActivityAt": null,
+            "headTurnId": null
+        }))
+        .unwrap();
+        let settings = serde_json::from_value(json!({
+            "model": "gpt-5.6-sol",
+            "effort": "low",
+            "approvalPolicy": "never",
+            "sandbox": "unrestricted"
+        }))
+        .unwrap();
+
+        let enriched = with_cached_thread_settings(thread, Some(&settings));
+
+        assert_eq!(
+            enriched
+                .settings
+                .as_ref()
+                .and_then(|value| value.model.as_deref()),
+            Some("gpt-5.6-sol")
+        );
     }
 
     #[test]

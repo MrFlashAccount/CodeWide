@@ -6,12 +6,17 @@ import type {
 } from "../../application/ports/savedServerRepository";
 import type { SavedServer } from "../../domain/savedServer";
 import { savedServerId } from "../../domain/ids";
+import {
+  createConnectionProfileDatabase,
+  type ConnectionProfileDatabase,
+} from "../../../data/connection-profile-database";
 
 interface NativeConnectionConfig {
   connectionId: string;
   enabled: boolean;
   endpoint: string;
   savedServerId?: string;
+  tlsPinSha256?: string;
 }
 
 interface NativeSavedServerBridge {
@@ -48,12 +53,20 @@ interface NativeSavedServerBridge {
 /** Adapter over the sole generation-neutral native saved-server catalog. */
 export function createSavedServerRepository(): SavedServerRepository {
   const bridge = NativeModules.CodeWideNative as NativeSavedServerBridge | undefined;
+  let profiles: ConnectionProfileDatabase | null = null;
   const requireBridge = (): NativeSavedServerBridge => {
     if (bridge === undefined) throw new Error("Saved server catalog is unavailable");
     return bridge;
   };
+  const requireProfiles = (): ConnectionProfileDatabase => {
+    profiles ??= createConnectionProfileDatabase();
+    return profiles;
+  };
   return {
-    close: () => undefined,
+    close() {
+      profiles?.close();
+      profiles = null;
+    },
     async connection(id) {
       const value = (await requireBridge().listConnectionConfigs()).find(
         (row) => (row.savedServerId ?? row.connectionId) === id,
@@ -63,11 +76,37 @@ export function createSavedServerRepository(): SavedServerRepository {
     },
     async delete(id) {
       await requireBridge().deleteConnectionCredentials(id);
+      await requireProfiles().delete(id);
     },
     async list() {
-      const value = await requireBridge().listSavedServerSummaries();
+      const [value, configs] = await Promise.all([
+        requireBridge().listSavedServerSummaries(),
+        requireBridge().listConnectionConfigs(),
+      ]);
       if (!Array.isArray(value)) throw new Error("Saved server catalog is invalid");
-      return value.map((row, index) => parseSummary(row, index));
+      const profileDatabase = requireProfiles();
+      await profileDatabase.hydrate();
+      await profileDatabase.reconcileRuntimeConfigs(configs.map(runtimeConfig));
+      const profileRows = await profileDatabase.hydrate();
+      const nativeRows = value.map((row, index) => parseSummary(row, configs, index));
+      const byId = new Map(nativeRows.map((row) => [row.id, row]));
+      const ordered = profileRows.flatMap((profile) => {
+        const native = byId.get(savedServerId(profile.id));
+        if (native === undefined) return [];
+        byId.delete(native.id);
+        return [
+          {
+            ...native,
+            displayName: profile.displayName,
+            emoji: profile.emoji,
+            endpoint: profile.endpoint,
+          },
+        ];
+      });
+      return [...ordered, ...byId.values()];
+    },
+    async move(id, direction) {
+      await requireProfiles().move(id, direction);
     },
     async pair(id, input) {
       await requireBridge().listSavedServerSummaries();
@@ -97,6 +136,16 @@ export function createSavedServerRepository(): SavedServerRepository {
           claimed.deviceId,
         );
       }
+      await requireProfiles().add(
+        {
+          displayName: input.displayName,
+          emoji: input.emoji,
+          endpoint: input.endpoint,
+          token: input.pairingToken,
+          tlsPinSha256: input.tlsPinSha256,
+        },
+        id,
+      );
       native.wakeSocket(id);
     },
     reconnect(id) {
@@ -105,6 +154,7 @@ export function createSavedServerRepository(): SavedServerRepository {
     async setEnabled(id, enabled) {
       const native = requireBridge();
       await native.setConnectionEnabled(id, enabled);
+      await requireProfiles().setEnabled(id, enabled);
       if (enabled) native.wakeSocket(id);
     },
     subscribe: () => () => undefined,
@@ -127,7 +177,11 @@ function parseConnection(
   return { enabled: value.enabled, endpoint: value.endpoint, id };
 }
 
-function parseSummary(value: unknown, index: number): SavedServer {
+function parseSummary(
+  value: unknown,
+  configs: NativeConnectionConfig[],
+  index: number,
+): SavedServer {
   if (value === null || typeof value !== "object") {
     throw new Error("Saved server summary is invalid");
   }
@@ -136,5 +190,23 @@ function parseSummary(value: unknown, index: number): SavedServer {
   if (typeof id !== "string" || typeof enabled !== "boolean") {
     throw new Error("Saved server summary is invalid");
   }
-  return { displayName: `Saved server ${index + 1}`, emoji: "🖥️", enabled, id: savedServerId(id) };
+  const config = configs.find(
+    (candidate) => (candidate.savedServerId ?? candidate.connectionId) === id,
+  );
+  return {
+    displayName: `Saved server ${index + 1}`,
+    emoji: "🖥️",
+    enabled,
+    endpoint: config?.endpoint ?? "",
+    id: savedServerId(id),
+  };
+}
+
+function runtimeConfig(value: NativeConnectionConfig) {
+  return {
+    connectionId: value.savedServerId ?? value.connectionId,
+    enabled: value.enabled,
+    endpoint: value.endpoint,
+    tlsPinSha256: value.tlsPinSha256 ?? null,
+  };
 }
