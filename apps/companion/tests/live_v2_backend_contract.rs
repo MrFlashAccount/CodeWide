@@ -1376,11 +1376,12 @@ async fn run_observer_app_server(
                         continue;
                     }
                     let result = match method {
-                        "thread/read" => json!({"thread": observer_thread(thread_id)}),
+                        "thread/read" | "thread/resume" => {
+                            json!({"thread": observer_thread(thread_id)})
+                        }
                         "thread/list" | "thread/turns/list" => {
                             json!({"data": [], "nextCursor": null})
                         }
-                        "thread/resume" => json!({"thread": observer_thread(thread_id)}),
                         "thread/unsubscribe" => json!({}),
                         _ => return Err(format!("unexpected production adapter method: {method}").into()),
                     };
