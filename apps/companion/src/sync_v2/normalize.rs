@@ -854,14 +854,14 @@ mod tests {
             "codewide": {
                 "activity": {"count": 2, "kinds": ["reasoning", "commandExecution"]},
                 "usage": {
-                    "latestRequest": {"totalTokens": 25700},
-                    "modelContextWindow": 258400,
+                    "latestRequest": {"totalTokens": 25_700},
+                    "modelContextWindow": 258_400,
                     "turn": {
-                        "tokens": {"inputTokens": 26000, "outputTokens": 19},
+                        "tokens": {"inputTokens": 26_000, "outputTokens": 19},
                         "cost": {"totalCostUsd": 0.014}
                     },
                     "thread": {
-                        "tokens": {"inputTokens": 76000, "outputTokens": 1000, "totalTokens": 77000},
+                        "tokens": {"inputTokens": 76_000, "outputTokens": 1000, "totalTokens": 77_000},
                         "cost": {"totalCostUsd": 0.044}
                     }
                 }
@@ -885,14 +885,14 @@ mod tests {
         let usage = normalized
             .usage
             .unwrap_or_else(|| panic!("usage must survive"));
-        assert_eq!(usage.input_tokens, 26000);
+        assert_eq!(usage.input_tokens, 26_000);
         assert_eq!(usage.output_tokens, 19);
         assert_eq!(usage.total_cost_usd, Some(0.014));
-        assert_eq!(usage.latest_request_tokens, 25700);
-        assert_eq!(usage.model_context_window, Some(258400));
-        assert_eq!(usage.thread_input_tokens, 76000);
+        assert_eq!(usage.latest_request_tokens, 25_700);
+        assert_eq!(usage.model_context_window, Some(258_400));
+        assert_eq!(usage.thread_input_tokens, 76_000);
         assert_eq!(usage.thread_output_tokens, 1000);
-        assert_eq!(usage.thread_total_tokens, 77000);
+        assert_eq!(usage.thread_total_tokens, 77_000);
         assert_eq!(usage.thread_total_cost_usd, Some(0.044));
     }
 
@@ -912,12 +912,12 @@ mod tests {
                 "exhaustedIndefinitely": false,
                 "rateLimits": {
                     "rateLimits": {
-                        "primary": {"usedPercent": 10, "windowDurationMins": 300, "resetsAt": 1788000000},
-                        "secondary": {"usedPercent": 13, "windowDurationMins": 10080, "resetsAt": 1789000000}
+                        "primary": {"usedPercent": 10, "windowDurationMins": 300, "resetsAt": 1_788_000_000},
+                        "secondary": {"usedPercent": 13, "windowDurationMins": 10_080, "resetsAt": 1_789_000_000}
                     },
                     "rateLimitsByLimitId": null
                 },
-                "rateLimitsUpdatedAt": 1787000000,
+                "rateLimitsUpdatedAt": 1_787_000_000,
                 "rateLimitsError": null
             }]
         });
@@ -939,7 +939,7 @@ mod tests {
             .weekly_limit
             .as_ref()
             .unwrap_or_else(|| panic!("weekly limit should normalize"));
-        assert_eq!(weekly.remaining_percent, 87.0);
+        assert!((weekly.remaining_percent - 87.0).abs() < f64::EPSILON);
         assert_eq!(
             weekly.resets_at.as_ref().map(Timestamp::as_str),
             Some("2026-09-10T00:26:40Z")

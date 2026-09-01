@@ -468,7 +468,7 @@ impl HistoryService {
         result
             .get_mut("data")
             .and_then(Value::as_array_mut)
-            .and_then(|threads| threads.pop())
+            .and_then(Vec::pop)
             .unwrap_or(Value::Null)
     }
 }
