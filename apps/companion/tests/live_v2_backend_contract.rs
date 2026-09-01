@@ -1380,7 +1380,8 @@ async fn run_observer_app_server(
                         "thread/list" | "thread/turns/list" => {
                             json!({"data": [], "nextCursor": null})
                         }
-                        "thread/resume" | "thread/unsubscribe" => json!({}),
+                        "thread/resume" => json!({"thread": observer_thread(thread_id)}),
+                        "thread/unsubscribe" => json!({}),
                         _ => return Err(format!("unexpected production adapter method: {method}").into()),
                     };
                     socket.send(Message::Text(json!({"id": id, "result": result}).to_string().into())).await?;
