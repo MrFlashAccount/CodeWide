@@ -891,9 +891,12 @@ describe("checked-in Android project mirrors app config", () => {
     expect(threadRoute).toContain('<Redirect href="/legacy" />');
     expect(pairRoute).not.toContain("<CodeWideScreen />");
     expect(threadRoute).not.toContain("<CodeWideScreen />");
-    expect(screen).toContain("threadNavigation.current().id === null && serverThreads[0] !== undefined");
-    expect(screen).toContain("const defaultThreadId = threadSelectionKey(serverThreads[0])");
-    expect(screen).toContain("threadNavigation.select(defaultThreadId)");
+    expect(screen).toContain("const defaultDesktopThreadId = desktop");
+    expect(screen).toContain("? threadSelectionKey(serverThreads[0])");
+    expect(screen).toContain("threadNavigation.select(defaultDesktopThreadId)");
+    expect(screen).toContain('scope="desktop-default-thread"');
+    expect(screen).toContain("revision={defaultDesktopThreadId}");
+    expect(screen).toContain("onCommit={commitDefaultDesktopThread}");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
     expect(screen).toContain("const windowLayout = useWindowLayout()");
     expect(screen).toContain("windowLayoutStore.subscribe");

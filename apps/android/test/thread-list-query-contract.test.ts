@@ -35,9 +35,12 @@ describe("thread list query contract", () => {
   });
 
   it("commits the initial desktop conversation by stable id before Recent can reorder", () => {
-    expect(screen).toContain("threadNavigation.current().id === null && serverThreads[0] !== undefined");
-    expect(screen).toContain("const defaultThreadId = threadSelectionKey(serverThreads[0])");
-    expect(screen).toContain("threadNavigation.select(defaultThreadId)");
+    expect(screen).toContain("const defaultDesktopThreadId = desktop");
+    expect(screen).toContain("? threadSelectionKey(serverThreads[0])");
+    expect(screen).toContain("threadNavigation.select(defaultDesktopThreadId)");
+    expect(screen).toContain('scope="desktop-default-thread"');
+    expect(screen).toContain("revision={defaultDesktopThreadId}");
+    expect(screen).toContain("onCommit={commitDefaultDesktopThread}");
     expect(screen).toContain("? selectedThread\n    : null;");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
   });

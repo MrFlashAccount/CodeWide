@@ -2,13 +2,13 @@ import type { ComponentProps } from "react";
 import {
   StyleSheet,
   Text as NativeText,
-  TextInput as NativeTextInput,
   type StyleProp,
   type TextStyle,
 } from "react-native";
 
 import { productFonts } from "../../ui/product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../../ui/typography-policy";
+import { AppTextInput, type AppTextInputProps } from "../../ui/Typography";
 
 type ProductTextTone = "default" | "dim" | "muted" | "danger" | "success" | "warning";
 type ProductTextWeight = "medium" | "regular" | "semibold";
@@ -46,9 +46,9 @@ export function PresentationTextInput({
   maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
   style,
   ...props
-}: ComponentProps<typeof NativeTextInput>): React.JSX.Element {
+}: AppTextInputProps): React.JSX.Element {
   return (
-    <NativeTextInput
+    <AppTextInput
       {...props}
       allowFontScaling={allowFontScaling}
       maxFontSizeMultiplier={maxFontSizeMultiplier}
