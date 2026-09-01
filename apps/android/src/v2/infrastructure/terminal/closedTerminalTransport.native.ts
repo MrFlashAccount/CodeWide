@@ -70,6 +70,12 @@ export function createClosedTerminalTransport(sessionId: () => string): Terminal
             ),
           );
         },
+        async resize(cols, rows) {
+          if (closed || channel.readyState !== 1) throw new Error("Terminal is not open");
+          channel.send(
+            JSON.stringify(validateV2TerminalClientRecord({ cols, rows, type: "resize" })),
+          );
+        },
       };
     },
   };

@@ -149,7 +149,7 @@ describe("V2 feature surfaces", () => {
       "utf8",
     );
     const composerView = readFileSync(
-      new URL("../src/presentation/input/ComposerView.tsx", import.meta.url),
+      new URL("../src/v2/presentation/input/ComposerView.tsx", import.meta.url),
       "utf8",
     );
     const correlations = readFileSync(

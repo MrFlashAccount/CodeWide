@@ -8,7 +8,12 @@ import {
 } from "@codewide/sync-client/v2";
 import { parsePairingPayload } from "@codewide/codex-protocol/pairing";
 
-import type { SavedServerRepository } from "./ports/savedServerRepository";
+import type {
+  PairingPreview,
+  PairSavedServerInput,
+  SavedServerRepository,
+  UpdateSavedServerInput,
+} from "./ports/savedServerRepository";
 import { savedServerId as parseSavedServerId, type SavedServerId } from "../domain/ids";
 import {
   CommandCapabilities,
@@ -110,7 +115,12 @@ export class V2Runtime {
     await this.#recoverPendingDeletions();
     await this.savedServers.start();
     const servers = this.savedServers.snapshot().value;
-    await this.aggregate.start(servers.map(({ id }) => id));
+    await this.aggregate.start(
+      servers.map((value) => {
+        const { id } = value;
+        return id;
+      }),
+    );
     const openings: Array<Promise<unknown>> = [];
     for (const server of servers) {
       if (server.enabled && !(await this.#deletions.pending(v2SavedServerId(server.id)))) {
@@ -147,7 +157,24 @@ export class V2Runtime {
   }
 
   async pairSavedServerLink(raw: string): Promise<SavedServerId> {
+    const parsed = this.parseSavedServerLink(raw);
+    return this.pairSavedServer(parsed);
+  }
+
+  parseSavedServerLink(raw: string): PairingPreview {
     const parsed = parsePairingPayload(raw, this.#now());
+    return {
+      displayName: parsed.displayName,
+      emoji: parsed.emoji,
+      endpoint: parsed.endpoint,
+      expiresAt: parsed.expiresAt,
+      pairingToken: parsed.pairingToken,
+      tlsPinSha256: parsed.tlsPinSha256,
+    };
+  }
+
+  async pairSavedServer(input: PairSavedServerInput): Promise<SavedServerId> {
+    const parsed = validatePairingInput(input, this.#now());
     const id = this.#savedServerId();
     await this.#repository.pair(id, {
       displayName: parsed.displayName,
@@ -177,6 +204,15 @@ export class V2Runtime {
     await this.#refreshSavedServers();
   }
 
+  async updateSavedServer(
+    savedServerId: SavedServerId,
+    input: UpdateSavedServerInput,
+  ): Promise<void> {
+    await this.#repository.update(savedServerId, input);
+    await this.#refreshSavedServers();
+    this.sessions.reconnect(savedServerId);
+  }
+
   /**
    * Deletes exactly one saved-server namespace. The durable intent remains until
    * every V2 partition is gone, so a process death resumes cleanup on startup.
@@ -197,7 +233,8 @@ export class V2Runtime {
   ): ObservableResource<ProjectionResource | null> {
     const result = new ObservableResource<ProjectionResource | null>(null);
     void this.sessions.open(savedServerId, currentThreadId).then(
-      ({ resource }) => {
+      (openedSession) => {
+        const { resource } = openedSession;
         result.publish({ status: "ready", value: resource });
       },
       () => {
@@ -210,7 +247,8 @@ export class V2Runtime {
   query(savedServerId: string, query: V2Query): ObservableResource<QueryResource | null> {
     const result = new ObservableResource<QueryResource | null>(null);
     void this.sessions.open(savedServerId).then(
-      ({ session }) => {
+      (openedSession) => {
+        const { session } = openedSession;
         const resource = new QueryResource(session, query);
         resource.start();
         result.publish({ status: "ready", value: resource });
@@ -239,7 +277,33 @@ export class V2Runtime {
   async #refreshSavedServers(): Promise<void> {
     await this.savedServers.refresh();
     await this.aggregate.replaceSavedServers(
-      this.savedServers.snapshot().value.map(({ id }) => id),
+      this.savedServers.snapshot().value.map((value) => {
+        const { id } = value;
+        return id;
+      }),
     );
   }
+}
+
+function validatePairingInput(input: PairSavedServerInput, now: number): PairSavedServerInput {
+  const parsed = parsePairingPayload(
+    JSON.stringify({
+      displayName: input.displayName,
+      emoji: input.emoji,
+      endpoint: input.endpoint,
+      expiresAt: now + 60_000,
+      pairingToken: input.pairingToken,
+      tlsPinSha256: input.tlsPinSha256,
+      type: "codewide-pairing",
+      version: 1,
+    }),
+    now,
+  );
+  return {
+    displayName: parsed.displayName,
+    emoji: parsed.emoji,
+    endpoint: parsed.endpoint,
+    pairingToken: parsed.pairingToken,
+    tlsPinSha256: parsed.tlsPinSha256,
+  };
 }

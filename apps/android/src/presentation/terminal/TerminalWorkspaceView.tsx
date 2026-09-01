@@ -14,15 +14,8 @@ interface TerminalWorkspaceViewProps {
   state: string;
 }
 
-export function TerminalWorkspaceView({
-  input,
-  live,
-  onInputChange,
-  onSubmit,
-  openControl,
-  output,
-  state,
-}: TerminalWorkspaceViewProps): React.JSX.Element {
+export function TerminalWorkspaceView(props: TerminalWorkspaceViewProps): React.JSX.Element {
+  const { input, live, onInputChange, onSubmit, openControl, output, state } = props;
   return (
     <View style={styles.root}>
       <View style={styles.toolbar}>

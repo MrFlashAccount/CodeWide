@@ -11,7 +11,8 @@ interface NewThreadScreenProps {
   savedServerId: SavedServerId;
 }
 
-export function NewThreadScreen({ savedServerId }: NewThreadScreenProps): React.JSX.Element {
+export function NewThreadScreen(props: NewThreadScreenProps): React.JSX.Element {
+  const { savedServerId } = props;
   const close = useEvent(() => router.back());
   const openThread = useEvent((createdThreadId: string) => {
     router.replace(threadDestination(qualifiedThread(savedServerId, threadId(createdThreadId))));

@@ -44,13 +44,8 @@ interface SectionLabelProps {
   title: string;
 }
 
-export function ProjectPickerView({
-  currentPath,
-  isOpen,
-  onOpenChange,
-  onSelect,
-  projects,
-}: ProjectPickerViewProps): React.JSX.Element {
+export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Element {
+  const { currentPath, isOpen, onOpenChange, onSelect, projects } = props;
   const [query, setQuery] = useState("");
   const [pending, startTransition] = useTransition();
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -168,12 +163,8 @@ export function ProjectPickerView({
   );
 }
 
-function ProjectRowView({
-  disabled,
-  onSelect,
-  project,
-  selected,
-}: ProjectRowViewProps): React.JSX.Element {
+function ProjectRowView(props: ProjectRowViewProps): React.JSX.Element {
+  const { disabled, onSelect, project, selected } = props;
   const select = useEvent(() => onSelect(project.path));
   return (
     <Pressable
@@ -208,7 +199,8 @@ function ProjectRowView({
   );
 }
 
-function SectionLabel({ count, title }: SectionLabelProps): React.JSX.Element {
+function SectionLabel(props: SectionLabelProps): React.JSX.Element {
+  const { count, title } = props;
   return (
     <View style={styles.section}>
       <ProductText style={styles.sectionTitle} tone="muted" weight="semibold">
@@ -221,15 +213,18 @@ function SectionLabel({ count, title }: SectionLabelProps): React.JSX.Element {
   );
 }
 
-function closeStyle({ pressed }: PressableStateCallbackType) {
+function closeStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.close, pressed && styles.pressed];
 }
 
-function rowStyle({ pressed }: PressableStateCallbackType) {
+function rowStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.row, pressed && styles.pressed];
 }
 
-function selectedRowStyle({ pressed }: PressableStateCallbackType) {
+function selectedRowStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.row, styles.rowSelected, pressed && styles.pressed];
 }
 

@@ -16,5 +16,6 @@ export interface TerminalTransport {
     close(): Promise<void>;
     id: string;
     input(text: string): Promise<void>;
+    resize(cols: number, rows: number): Promise<void>;
   }>;
 }

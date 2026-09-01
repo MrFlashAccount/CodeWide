@@ -34,8 +34,8 @@ interface NativeSavedServerBridge {
   saveConnectionCredentials(
     connectionId: string,
     endpoint: string,
-    token: string,
-    tlsPinSha256: string,
+    token: string | null,
+    tlsPinSha256: string | null,
     enabled: boolean,
   ): Promise<void>;
   saveConnectionCredentialsV2?(
@@ -158,6 +158,25 @@ export function createSavedServerRepository(): SavedServerRepository {
       if (enabled) native.wakeSocket(id);
     },
     subscribe: () => () => undefined,
+    async update(id, input) {
+      const native = requireBridge();
+      const existing = await this.connection(id);
+      await native.saveConnectionCredentials(
+        id,
+        input.endpoint,
+        input.replacementToken,
+        input.tlsPinSha256,
+        existing.enabled,
+      );
+      await requireProfiles().update(id, {
+        displayName: input.displayName,
+        emoji: input.emoji,
+        endpoint: input.endpoint,
+        ...(input.replacementToken === null ? {} : { token: input.replacementToken }),
+        tlsPinSha256: input.tlsPinSha256,
+      });
+      if (existing.enabled) native.wakeSocket(id);
+    },
   };
 }
 
@@ -174,7 +193,12 @@ function parseConnection(
     typeof value.enabled !== "boolean"
   )
     throw new Error("Saved server connection is invalid");
-  return { enabled: value.enabled, endpoint: value.endpoint, id };
+  return {
+    enabled: value.enabled,
+    endpoint: value.endpoint,
+    id,
+    tlsPinSha256: value.tlsPinSha256 ?? null,
+  };
 }
 
 function parseSummary(

@@ -204,7 +204,7 @@ impl DigestBuilder {
         ) else {
             return;
         };
-        self.upsert(id.to_owned(), kind);
+        self.upsert(id.to_owned(), canonical_materialized_item_kind(kind));
     }
 
     fn upsert(&mut self, key: String, kind: &str) {
@@ -250,6 +250,14 @@ impl DigestBuilder {
             activity_kinds,
             unknown_event_kinds: self.unknown_event_kinds,
         }
+    }
+}
+
+fn canonical_materialized_item_kind(kind: &str) -> &str {
+    match kind {
+        "AgentMessage" => "agentMessage",
+        "UserMessage" => "userMessage",
+        _ => kind,
     }
 }
 
@@ -868,6 +876,37 @@ mod tests {
         )?;
 
         assert_eq!(projected["items"][0]["clientId"], "android-command");
+        Ok(())
+    }
+
+    #[test]
+    fn summary_does_not_count_materialized_messages_as_activity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        for line in [
+            r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn","started_at":10}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"user-id"}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"agent-id"}}}"#,
+            r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","completed_at":12}}"#,
+        ] {
+            writeln!(file, "{line}")?;
+        }
+        file.sync_all()?;
+
+        let digest = digest_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(digest.activity_count, 0);
+        assert!(digest.activity_kinds.is_empty());
         Ok(())
     }
 

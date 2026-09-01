@@ -24,7 +24,8 @@ interface ResourceListViewProps {
   rows: ResourceListRow[];
 }
 
-export function ResourceListView({ empty, rows }: ResourceListViewProps): React.JSX.Element {
+export function ResourceListView(props: ResourceListViewProps): React.JSX.Element {
+  const { empty, rows } = props;
   return (
     <ScrollView contentContainerStyle={rows.length === 0 ? styles.emptyContent : styles.content}>
       {rows.length === 0 ? (
@@ -73,7 +74,8 @@ export function ResourceListView({ empty, rows }: ResourceListViewProps): React.
   );
 }
 
-function resourceRowStyle({ pressed }: PressableStateCallbackType) {
+function resourceRowStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.row, pressed && styles.pressed];
 }
 

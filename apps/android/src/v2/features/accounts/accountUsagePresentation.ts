@@ -1,6 +1,6 @@
 import type { V2QueryResult } from "@codewide/sync-client/v2";
 
-import type { UsageAccountViewModel } from "../../../presentation/usage/UsagePopoverView";
+import type { UsageAccountViewModel } from "../../presentation/usage/UsagePopoverView";
 
 export function accountUsagePresentation(
   result: V2QueryResult | null,

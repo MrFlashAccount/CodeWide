@@ -8,19 +8,59 @@ Status values: `open` means not captured, `diff` means paired evidence exists bu
 
 ## Current coverage audit — 2026-09-01
 
-The current authoritative run is
-`test-results/android-e2e/2026-09-01T11-57-12-890Z-5ea87859/visual-parity`.
-It contains five paired wide-layout states: selected thread, thread filters, thread-list menu,
-context usage and composer menu. Sergey accepted their remaining small visual differences for the
-current release, but they stay marked `diff` because the matrix status records measured evidence,
-not release acceptance.
+The latest V2 route sweep is
+`test-results/android-e2e/2026-09-01T20-06-57-627Z-4edd943d`. It passed against a real Observer on
+the Android foldable emulator and exercised pairing, chat creation, authoritative send and process
+death recovery, attachments, changes, agents, terminal tabs, port discovery, saved-server actions,
+second pairing and deletion. Its two videos and structured evidence prove that the transferred
+screens are reachable; they are not identical-data V1/V2 screenshot pairs.
+
+The latest real-device phone run is
+`test-results/android-e2e/2026-09-01T15-59-06-660Z-f19e5fda/visual-parity`.
+It passed the Appium scenario and contains seven V1/V2 pairs: selected thread, thread list, server
+selector, thread filters, thread-list menu, context usage and composer menu. The server selector and
+thread-list controls now align closely; the remaining image differences are dominated by different
+live catalog and conversation contents. These captures remain `diff`, not `pass`, because the
+evidence contract requires identical data.
+
+The selected-server `Live` label is no longer clipped. In the latest XML evidence its bounds are
+`[53,227][700,269]` in V2 and `[53,228][700,270]` in V1.
+
+The authoritative wide-layout run remains
+`test-results/android-e2e/2026-09-01T11-57-12-890Z-5ea87859/visual-parity`, with five paired states.
+Sergey accepted their remaining small visual differences for the current release, but release
+acceptance does not turn measured differences into parity.
 
 Of 265 atomic rows, 35 are visible inside those five paired states and 230 remain `open`. There is
-no current authoritative paired evidence for phone or foldable layouts, boot/reconnect/error
+no current authoritative identical-data evidence for phone or foldable layouts, boot/reconnect/error
 states, server-selector variants, most thread and conversation states, queue and voice states, or
-any of the 57 resource and secondary-route rows. Older local phone screenshots are exploratory and
-do not count because their V1 and V2 data projections were not identical and no image diff was
-recorded.
+any of the 57 resource and secondary-route rows. The current phone pairs are diagnostic rather than
+authoritative because their V1 and V2 data projections were not identical.
+
+### Screen-level route audit
+
+This source audit is deliberately separate from screenshot status. `structural mismatch` means the
+V2 route cannot visually match V1 with its current composition even before comparing pixels.
+
+| Surface | Current V2 composition | Audit result |
+| --- | --- | --- |
+| Selected-server thread list | V2-owned copy of the sidebar, selector, search, filters and rows | Device checked; remaining diff is live data, exact parity still unproven |
+| Conversation shell | V2-owned workspace, timeline, context and composer presentation | Device checked; different selected live threads prevent an authoritative pass |
+| Server selector | V2-owned sheet presentation | Device checked; visually aligned, identical-data pass still missing |
+| Thread filters and list menu | V2-owned action/popover presentation | Device checked; visually aligned, identical-data pass still missing |
+| Settings root | V2-owned settings and connection presentation | Composition is suitable; paired device capture missing |
+| Thread action menu | V2-owned thread action presentation | Composition is suitable; paired device capture missing |
+| New thread | V2-owned workspace, project picker, conversation and composer presentation | Composition is suitable; paired device capture missing |
+| Add server / pairing | V2-owned QR, paste, review, manual and success flow | Rich flow transferred; paired device capture missing |
+| Attachments | V2-owned resource sheet and video preview flow | List and video route transferred; document/image materialization is not yet device-proven |
+| Changes | V2-owned scoped change list | List transferred; file-diff and review actions are not exposed by the current V2 contract |
+| Terminal | V2-owned tabbed terminal workspace and lifecycle UI | Screen and tab creation checked on device; live terminal round trip remains unproven |
+| Ports | V2-owned forwarding manager and port profile | Port discovery checked on device; tunnel lifecycle remains unproven |
+| Agents | V2-owned master/detail subagent workspace and nested conversation | Composition transferred; paired device capture missing |
+| Saved-server settings | V2-owned saved-server settings screen and action menu | Screen checked on device; paired V1/V2 capture missing |
+| Account settings | V2-owned account/settings presentation | Composition transferred; paired device capture missing |
+| Video preview | V2-owned video preview presentation | Composition is suitable; paired stream/local/error captures missing |
+| Folded, unfolded and landscape layouts | No paired route sweep | Unchecked |
 
 ### Boot and application shell
 

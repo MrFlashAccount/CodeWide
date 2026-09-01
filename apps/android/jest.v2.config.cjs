@@ -3,6 +3,8 @@ module.exports = {
   rootDir: ".",
   testMatch: ["<rootDir>/test/**/*.render.test.tsx"],
   moduleNameMapper: {
+    "^@expo/vector-icons$": "<rootDir>/test/mocks/ExpoVectorIcons.tsx",
+    "^@expo/vector-icons/.*$": "<rootDir>/test/mocks/ExpoVectorIcons.tsx",
     "^expo-clipboard$": "<rootDir>/test/mocks/ExpoClipboard.ts",
     "^expo-haptics$": "<rootDir>/test/mocks/ExpoHaptics.ts",
     "^.*/rendering/RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",

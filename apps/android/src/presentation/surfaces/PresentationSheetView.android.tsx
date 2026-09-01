@@ -26,12 +26,8 @@ interface PresentationSheetViewProps {
   onOpenChange(isOpen: boolean): void;
 }
 
-export function PresentationSheetView({
-  children,
-  contentProps,
-  isOpen,
-  onOpenChange,
-}: PresentationSheetViewProps): React.JSX.Element {
+export function PresentationSheetView(props: PresentationSheetViewProps): React.JSX.Element {
+  const { children, contentProps, isOpen, onOpenChange } = props;
   return (
     <AppSheet contentProps={contentProps} isOpen={isOpen} onOpenChange={onOpenChange}>
       {children}

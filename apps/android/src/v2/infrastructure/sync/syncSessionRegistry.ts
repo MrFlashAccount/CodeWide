@@ -79,7 +79,12 @@ export class SyncSessionRegistry {
   reconnect(savedServerId: string): void {
     const entry = this.#entries.get(savedServerId);
     if (entry !== undefined)
-      void entry.then(({ session }) => session.reconnect()).catch(() => undefined);
+      void entry
+        .then((value) => {
+          const { session } = value;
+          return session.reconnect();
+        })
+        .catch(() => undefined);
   }
 
   /** Releases one saved-server session before its local authority is purged. */

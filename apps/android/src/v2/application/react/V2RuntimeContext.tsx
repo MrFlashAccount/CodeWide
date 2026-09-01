@@ -4,10 +4,10 @@ import type { V2Runtime } from "../v2Runtime";
 
 const RuntimeContext = createContext<V2Runtime | null>(null);
 
-export function V2RuntimeProvider({
-  children,
-  runtime,
-}: PropsWithChildren<{ runtime: V2Runtime }>): React.JSX.Element {
+export function V2RuntimeProvider(
+  props: PropsWithChildren<{ runtime: V2Runtime }>,
+): React.JSX.Element {
+  const { children, runtime } = props;
   return <RuntimeContext.Provider value={runtime}>{children}</RuntimeContext.Provider>;
 }
 

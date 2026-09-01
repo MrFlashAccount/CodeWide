@@ -5,15 +5,17 @@ import {
   PresentationIconProvider,
   type PresentationIconName,
   type PresentationIconRenderer,
-} from "../../../presentation/icons/PresentationIcon";
+} from "../../presentation/icons/PresentationIcon";
 
-export function V2PresentationProvider({ children }: PropsWithChildren): React.JSX.Element {
+export function V2PresentationProvider(props: PropsWithChildren): React.JSX.Element {
+  const { children } = props;
   return <PresentationIconProvider renderIcon={renderIcon}>{children}</PresentationIconProvider>;
 }
 
-const renderIcon: PresentationIconRenderer = ({ color, name, size }) => (
-  <Ionicons color={color} name={ioniconNames[name]} size={size} />
-);
+const renderIcon: PresentationIconRenderer = (value) => {
+  const { color, name, size } = value;
+  return <Ionicons color={color} name={ioniconNames[name]} size={size} />;
+};
 
 const ioniconNames: Record<PresentationIconName, keyof typeof Ionicons.glyphMap> = {
   add: "add",

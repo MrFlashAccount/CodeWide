@@ -1,14 +1,15 @@
 import type { V2Query, V2QueryResult } from "@codewide/sync-client/v2";
 import { useState, useSyncExternalStore, type ReactNode } from "react";
-import { ActivityIndicator, Text } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import type { QueryResource } from "../../application/resources/queryResource";
-import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
+import { WorkspaceView } from "../../presentation/layouts/WorkspaceView";
 
 interface V2QueryBoundaryProps {
   children(result: V2QueryResult, refresh: () => Promise<void>): ReactNode;
+  chrome?: "none" | "workspace";
   query: V2Query;
   savedServerId: SavedServerId;
   title: string;
@@ -16,46 +17,61 @@ interface V2QueryBoundaryProps {
 
 interface LoadedQueryProps {
   children(result: V2QueryResult, refresh: () => Promise<void>): ReactNode;
+  chrome: "none" | "workspace";
   resource: QueryResource;
   title: string;
 }
 
-export function V2QueryBoundary({
-  children,
-  query,
-  savedServerId,
-  title,
-}: V2QueryBoundaryProps): React.JSX.Element {
+export function V2QueryBoundary(props: V2QueryBoundaryProps): React.JSX.Element {
+  const { children, chrome = "workspace", query, savedServerId, title } = props;
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.query(savedServerId, query));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
   if (opened.value === null) {
-    return (
-      <WorkspaceView title={title}>
+    const loading = (
+      <View style={styles.center}>
         <ActivityIndicator accessibilityLabel={`Loading ${title}`} />
-      </WorkspaceView>
+      </View>
+    );
+    return chrome === "workspace" ? (
+      <WorkspaceView title={title}>{loading}</WorkspaceView>
+    ) : (
+      loading
     );
   }
   return (
-    <LoadedQuery resource={opened.value} title={title}>
+    <LoadedQuery chrome={chrome} resource={opened.value} title={title}>
       {children}
     </LoadedQuery>
   );
 }
 
-function LoadedQuery({ children, resource, title }: LoadedQueryProps): React.JSX.Element {
+function LoadedQuery(props: LoadedQueryProps): React.JSX.Element {
+  const { children, chrome, resource, title } = props;
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
-  return (
-    <WorkspaceView title={title}>
-      {snapshot.value === null ? (
-        snapshot.status === "error" ? (
-          <Text style={{ color: "#ff8b8b" }}>{snapshot.message}</Text>
-        ) : (
-          <ActivityIndicator accessibilityLabel={`Reading ${title}`} />
-        )
+  const content =
+    snapshot.value === null ? (
+      snapshot.status === "error" ? (
+        <View style={styles.center}>
+          <Text style={styles.error}>{snapshot.message}</Text>
+        </View>
       ) : (
-        children(snapshot.value, () => resource.refresh())
-      )}
-    </WorkspaceView>
+        <View style={styles.center}>
+          <ActivityIndicator accessibilityLabel={`Reading ${title}`} />
+        </View>
+      )
+    ) : (
+      children(snapshot.value, () => resource.refresh())
+    );
+  return chrome === "workspace" ? (
+    <WorkspaceView title={title}>{content}</WorkspaceView>
+  ) : (
+    <View style={styles.content}>{content}</View>
   );
 }
+
+const styles = StyleSheet.create({
+  center: { alignItems: "center", flex: 1, justifyContent: "center" },
+  content: { flex: 1, minHeight: 0 },
+  error: { color: "#ff8b8b" },
+});

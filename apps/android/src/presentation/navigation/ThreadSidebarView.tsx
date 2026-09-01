@@ -34,18 +34,19 @@ interface HeaderActionProps {
   onPress?(): void;
 }
 
-export function ThreadSidebarView({
-  connectionState,
-  onChangeQuery,
-  onNewThread,
-  onOpen,
-  query,
-  rows,
-  selectedId,
-  title,
-  usageAccounts,
-  voice,
-}: ThreadSidebarViewProps): React.JSX.Element {
+export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Element {
+  const {
+    connectionState,
+    onChangeQuery,
+    onNewThread,
+    onOpen,
+    query,
+    rows,
+    selectedId,
+    title,
+    usageAccounts,
+    voice,
+  } = props;
   const connecting = connectionState !== "live";
   const [archived, setArchived] = useState(false);
   const archivedCount = rows.filter((row) => row.archived === true).length;
@@ -116,7 +117,8 @@ export function ThreadSidebarView({
   );
 }
 
-function HeaderAction({ label, name, onPress }: HeaderActionProps): React.JSX.Element {
+function HeaderAction(props: HeaderActionProps): React.JSX.Element {
+  const { label, name, onPress } = props;
   return (
     <Pressable
       accessibilityLabel={label}
@@ -129,7 +131,8 @@ function HeaderAction({ label, name, onPress }: HeaderActionProps): React.JSX.El
   );
 }
 
-function headerActionStyle({ pressed }: PressableStateCallbackType) {
+function headerActionStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.action, pressed && styles.pressed];
 }
 
@@ -144,11 +147,11 @@ const styles = StyleSheet.create({
   header: {
     alignItems: "center",
     flexDirection: "row",
-    gap: spacing.xxs,
-    minHeight: touchTarget,
+    gap: 2,
+    minHeight: 56,
     paddingLeft: spacing.sm,
-    paddingRight: 0,
-    transform: [{ translateY: spacing.xs }],
+    paddingRight: spacing.sm,
+    transform: [{ translateY: spacing.xxs }],
   },
   pressed: { opacity: 0.68 },
   root: { backgroundColor: colors.surface, flex: 1, minHeight: 0 },

@@ -41,12 +41,8 @@ interface PresentationSheetViewProps {
   onOpenChange(isOpen: boolean): void;
 }
 
-export function PresentationSheetView({
-  children,
-  contentProps,
-  isOpen,
-  onOpenChange,
-}: PresentationSheetViewProps): React.JSX.Element {
+export function PresentationSheetView(props: PresentationSheetViewProps): React.JSX.Element {
+  const { children, contentProps, isOpen, onOpenChange } = props;
   const expanded = contentProps.enableDynamicSizing === false;
   const detached = contentProps.detached ?? true;
   const close = useEvent(() => onOpenChange(false));
@@ -89,10 +85,8 @@ export function PresentationSheetView({
   );
 }
 
-export function PresentationSheetScrollView({
-  nestedScrollEnabled = true,
-  ...props
-}: ScrollViewProps): React.JSX.Element {
+export function PresentationSheetScrollView(scrollViewProps: ScrollViewProps): React.JSX.Element {
+  const { nestedScrollEnabled = true, ...props } = scrollViewProps;
   return <BottomSheetScrollView nestedScrollEnabled={nestedScrollEnabled} {...props} />;
 }
 

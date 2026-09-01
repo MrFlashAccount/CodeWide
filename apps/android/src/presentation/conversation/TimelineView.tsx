@@ -57,7 +57,8 @@ interface TimelineTurnProps {
   turn: TimelineDisplayTurn;
 }
 
-export function TimelineView({ turns }: TimelineViewProps): React.JSX.Element {
+export function TimelineView(props: TimelineViewProps): React.JSX.Element {
+  const { turns } = props;
   if (turns.length === 0) {
     return (
       <View style={styles.empty}>
@@ -77,7 +78,8 @@ export function TimelineView({ turns }: TimelineViewProps): React.JSX.Element {
   );
 }
 
-function TimelineTurn({ turn }: TimelineTurnProps): React.JSX.Element {
+function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
+  const { turn } = props;
   const [activityExpanded, setActivityExpanded] = useState(false);
   const toggleActivity = useEvent(() => setActivityExpanded((current) => !current));
   const userText = turn.userText.join("\n\n");

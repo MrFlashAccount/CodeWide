@@ -7,13 +7,14 @@ import type { V2ThreadWindow } from "@codewide/sync-client/v2";
 import {
   SavedServerWorkspaceView,
   ServerWorkspaceView,
-} from "../src/presentation/layouts/AdaptiveWorkspaceView";
-import { WorkspaceView } from "../src/presentation/layouts/WorkspaceView";
-import { ThreadSidebarView } from "../src/presentation/navigation/ThreadSidebarView";
-import { TimelineView } from "../src/presentation/conversation/TimelineView";
-import { ConnectionSettingsView } from "../src/presentation/settings/ConnectionSettingsView";
+} from "../src/v2/presentation/layouts/AdaptiveWorkspaceView";
+import { WorkspaceView } from "../src/v2/presentation/layouts/WorkspaceView";
+import { ThreadSidebarView } from "../src/v2/presentation/navigation/ThreadSidebarView";
+import { TimelineView } from "../src/v2/presentation/conversation/TimelineView";
+import { ConnectionSettingsView } from "../src/v2/presentation/settings/ConnectionSettingsView";
 import { timelineDisplayModel } from "../src/v2/features/conversation/timelineDisplayModel";
 import { threadListCopy } from "../src/v2/features/threadList/threadListPresentation";
+import { AgentsWorkspace } from "../src/v2/features/agents/AgentsWorkspace";
 
 describe("V2 presentation", () => {
   it("keeps a string workspace subtitle on one line like V1", () => {
@@ -131,6 +132,34 @@ describe("V2 presentation", () => {
     expect(onOpen).toHaveBeenCalledWith("thread-b");
     fireEvent.press(screen.getByLabelText("New thread"));
     expect(onNewThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the copied V1 subagent workspace shell inside V2", () => {
+    setWindowWidth(420);
+    const close = jest.fn();
+    const select = jest.fn();
+    render(
+      <AgentsWorkspace
+        detail={null}
+        onClose={close}
+        onSelect={select}
+        rows={[
+          {
+            active: true,
+            id: "agent-a",
+            subtitle: "running · /workspace",
+            time: "10:00",
+            title: "Researcher",
+          },
+        ]}
+        selectedId={null}
+      />,
+    );
+
+    expect(screen.getByText("Subagents")).toBeTruthy();
+    expect(screen.getByText("1 · newest activity first")).toBeTruthy();
+    fireEvent.press(screen.getByLabelText("Back to conversation"));
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("keeps messages, lifecycle rows, activities, and terminal status distinct", () => {

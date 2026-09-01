@@ -15,15 +15,8 @@ interface VoiceCaptureControlsProps {
 }
 
 /** Protocol-neutral Voice controls; callers own audio, authority, and transcript state. */
-export function VoiceCaptureControls({
-  disabled,
-  message,
-  onCancel,
-  onFailure,
-  onFinish,
-  onStart,
-  state,
-}: VoiceCaptureControlsProps): React.JSX.Element {
+export function VoiceCaptureControls(props: VoiceCaptureControlsProps): React.JSX.Element {
+  const { disabled, message, onCancel, onFailure, onFinish, onStart, state } = props;
   const [pending, setPending] = useState(false);
   const run = useEvent((action: () => Promise<void>): void => {
     if (pending) return;

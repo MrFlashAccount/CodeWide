@@ -1,9 +1,9 @@
 import { router } from "expo-router";
 import { useState, useSyncExternalStore } from "react";
 
-import { ResourceStateView } from "../../../presentation/feedback/ResourceStateView";
-import { ServerSelectorView } from "../../../presentation/navigation/ServerSelectorView";
-import { ThreadSidebarView } from "../../../presentation/navigation/ThreadSidebarView";
+import { ResourceStateView } from "../../presentation/feedback/ResourceStateView";
+import { ServerSelectorView } from "../../presentation/navigation/ServerSelectorView";
+import { ThreadSidebarView } from "../../presentation/navigation/ThreadSidebarView";
 import { useEvent } from "../../../react/useEvent";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import { threadId, type SavedServerId } from "../../domain/ids";
@@ -29,7 +29,8 @@ interface ProjectedThreadListProps extends ThreadListScreenProps {
   resource: ProjectionResource;
 }
 
-export function ThreadListScreen({ savedServerId }: ThreadListScreenProps): React.JSX.Element {
+export function ThreadListScreen(props: ThreadListScreenProps): React.JSX.Element {
+  const { savedServerId } = props;
   const runtime = useV2Runtime();
   const [outer, setOuter] = useState(() => runtime.projection(savedServerId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -50,10 +51,8 @@ export function ThreadListScreen({ savedServerId }: ThreadListScreenProps): Reac
   return <ProjectedThreadList resource={opened.value} savedServerId={savedServerId} />;
 }
 
-function ProjectedThreadList({
-  resource,
-  savedServerId,
-}: ProjectedThreadListProps): React.JSX.Element {
+function ProjectedThreadList(props: ProjectedThreadListProps): React.JSX.Element {
+  const { resource, savedServerId } = props;
   const runtime = useV2Runtime();
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
   const servers = useSyncExternalStore(
@@ -86,7 +85,8 @@ function ProjectedThreadList({
     scope: { id: `thread-search:${savedServerId}`, kind: "generic" },
     thread: null,
   });
-  const rows = (projection?.catalog ?? []).map(({ thread }) => {
+  const rows = (projection?.catalog ?? []).map((value) => {
+    const { thread } = value;
     const copy = threadListCopy(thread);
     return {
       archived: thread.archived,
@@ -99,7 +99,7 @@ function ProjectedThreadList({
     };
   });
   const selectorRows = servers.value.map((candidate) => ({
-    detail: candidate.enabled ? "Connected" : "Disabled",
+    detail: candidate.enabled ? "Live" : "Disabled",
     emoji: candidate.emoji,
     id: candidate.id,
     label: candidate.displayName,
@@ -131,7 +131,7 @@ function ProjectedThreadList({
 }
 
 function connectionStateLabel(state: string): string {
-  if (state === "live") return "Connected";
+  if (state === "live") return "Live";
   if (state === "retained") return "Connecting";
   return state.charAt(0).toUpperCase() + state.slice(1);
 }

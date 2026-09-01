@@ -83,7 +83,8 @@ const ACCOUNT_LIMIT_LABELS: Record<UsageAccountViewModel["limitState"], string> 
   unavailable: "Unavailable",
 };
 
-function Text({ style, ...props }: ComponentProps<typeof NativeText>): React.JSX.Element {
+function Text(textProps: ComponentProps<typeof NativeText>): React.JSX.Element {
+  const { style, ...props } = textProps;
   const flattened = StyleSheet.flatten(style);
   const rawWeight = flattened?.fontWeight;
   const numericWeight = rawWeight === "bold" ? 700 : Number.parseInt(String(rawWeight ?? 400), 10);
@@ -108,17 +109,18 @@ interface UsagePopoverViewProps {
   triggerStyle?: ComponentProps<typeof Pressable>["style"];
 }
 
-export function UsagePopoverView({
-  accounts = EMPTY_ACCOUNTS,
-  actions = EMPTY_ACTIONS,
-  align = "start",
-  children,
-  context,
-  placement = "top",
-  session,
-  triggerAccessibilityLabel,
-  triggerStyle,
-}: UsagePopoverViewProps): React.JSX.Element {
+export function UsagePopoverView(props: UsagePopoverViewProps): React.JSX.Element {
+  const {
+    accounts = EMPTY_ACCOUNTS,
+    actions = EMPTY_ACTIONS,
+    align = "start",
+    children,
+    context,
+    placement = "top",
+    session,
+    triggerAccessibilityLabel,
+    triggerStyle,
+  } = props;
   const [open, setOpen] = useState(false);
   const [sessionExpanded, setSessionExpanded] = useState(false);
   const portalIconRenderer = usePresentationIconRenderer();
@@ -362,7 +364,8 @@ export function UsagePopoverView({
   );
 }
 
-function UsageActionRow({ action, divided, onDismiss }: UsageActionRowProps): React.JSX.Element {
+function UsageActionRow(props: UsageActionRowProps): React.JSX.Element {
+  const { action, divided, onDismiss } = props;
   const activate = useEvent(() => {
     onDismiss();
     action.onPress();
@@ -392,7 +395,8 @@ function UsageActionRow({ action, divided, onDismiss }: UsageActionRowProps): Re
   );
 }
 
-function SessionRow({ emphasized = false, label, value }: SessionRowProps): React.JSX.Element {
+function SessionRow(props: SessionRowProps): React.JSX.Element {
+  const { emphasized = false, label, value } = props;
   return (
     <View style={[styles.sessionUsageRow, emphasized ? styles.sessionUsageTotalRow : undefined]}>
       <Text

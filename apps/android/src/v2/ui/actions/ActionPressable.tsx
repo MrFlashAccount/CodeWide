@@ -1,4 +1,4 @@
-import { ActionButtonView } from "../../../presentation/actions/ActionButtonView";
+import { ActionButtonView } from "../../presentation/actions/ActionButtonView";
 
 import type { Action } from "./action";
 import { useActionRunner } from "./ActionRunner";
@@ -8,7 +8,8 @@ interface ActionPressableProps {
   action: Action;
 }
 
-export function ActionPressable({ action }: ActionPressableProps): React.JSX.Element {
+export function ActionPressable(props: ActionPressableProps): React.JSX.Element {
+  const { action } = props;
   const runner = useActionRunner();
   const pending = runner.active === action.id;
   const failure = runner.failures[action.id];

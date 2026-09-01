@@ -4,8 +4,8 @@ import { useSyncExternalStore, type PropsWithChildren } from "react";
 import {
   ServerWorkspaceView,
   WorkspaceSafeAreaView,
-} from "../../../presentation/layouts/AdaptiveWorkspaceView";
-import { ServerRailView } from "../../../presentation/navigation/ServerRailView";
+} from "../../presentation/layouts/AdaptiveWorkspaceView";
+import { ServerRailView } from "../../presentation/navigation/ServerRailView";
 import { useV2Runtime } from "../../V2Application";
 import { V2PresentationProvider } from "../../platform/rendering/V2PresentationProvider";
 import { serverDestination } from "../navigation/routeDestinations";
@@ -15,10 +15,10 @@ interface ServerWorkspaceChromeProps {
   activeSavedServerId: string | null;
 }
 
-export function ServerWorkspaceChrome({
-  activeSavedServerId,
-  children,
-}: PropsWithChildren<ServerWorkspaceChromeProps>): React.JSX.Element {
+export function ServerWorkspaceChrome(
+  props: PropsWithChildren<ServerWorkspaceChromeProps>,
+): React.JSX.Element {
+  const { activeSavedServerId, children } = props;
   const runtime = useV2Runtime();
   const servers = useSyncExternalStore(
     runtime.savedServers.subscribe,

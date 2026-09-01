@@ -4,6 +4,15 @@ export interface SavedServerConnection {
   enabled: boolean;
   endpoint: string;
   id: SavedServer["id"];
+  tlsPinSha256: string | null;
+}
+
+export interface UpdateSavedServerInput {
+  displayName: string;
+  emoji: string;
+  endpoint: string;
+  replacementToken: string | null;
+  tlsPinSha256: string;
 }
 
 export interface PairSavedServerInput {
@@ -12,6 +21,10 @@ export interface PairSavedServerInput {
   endpoint: string;
   pairingToken: string;
   tlsPinSha256: string;
+}
+
+export interface PairingPreview extends PairSavedServerInput {
+  expiresAt: number;
 }
 
 export interface SavedServerRepository {
@@ -25,4 +38,5 @@ export interface SavedServerRepository {
   reconnect(id: SavedServer["id"]): void;
   setEnabled(id: SavedServer["id"], enabled: boolean): Promise<void>;
   subscribe(listener: () => void): () => void;
+  update(id: SavedServer["id"], input: UpdateSavedServerInput): Promise<void>;
 }

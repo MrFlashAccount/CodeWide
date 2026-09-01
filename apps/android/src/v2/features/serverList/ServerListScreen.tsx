@@ -7,10 +7,10 @@ import {
   serverDestination,
   threadDestination,
 } from "../navigation/routeDestinations";
-import { ThreadCatalogWorkspaceView } from "../../../presentation/layouts/AdaptiveWorkspaceView";
-import type { ThreadListRow } from "../../../presentation/navigation/ThreadListView";
-import { ServerSelectorView } from "../../../presentation/navigation/ServerSelectorView";
-import { ThreadSidebarView } from "../../../presentation/navigation/ThreadSidebarView";
+import { ThreadCatalogWorkspaceView } from "../../presentation/layouts/AdaptiveWorkspaceView";
+import type { ThreadListRow } from "../../presentation/navigation/ThreadListView";
+import { ServerSelectorView } from "../../presentation/navigation/ServerSelectorView";
+import { ThreadSidebarView } from "../../presentation/navigation/ThreadSidebarView";
 import { useEvent } from "../../../react/useEvent";
 import { qualifiedThread } from "../../domain/qualifiedThread";
 import { savedServerId, threadId, type SavedServerId } from "../../domain/ids";
@@ -34,7 +34,8 @@ export function ServerListScreen(): React.JSX.Element {
     runtime.aggregate.snapshot,
   );
   const rows = aggregate.value.threads
-    .map(({ entry, identity }) => {
+    .map((threadRecord) => {
+      const { entry, identity } = threadRecord;
       const copy = threadListCopy(entry.thread);
       return {
         archived: entry.thread.archived,
@@ -71,7 +72,7 @@ export function ServerListScreen(): React.JSX.Element {
     router.push(threadDestination(qualifiedThread(row.savedServerId, threadId(row.threadId))));
   });
   const selectorRows = servers.value.map((server) => ({
-    detail: server.enabled ? "Connected" : "Disabled",
+    detail: server.enabled ? "Live" : "Disabled",
     emoji: server.emoji,
     id: server.id,
     label: server.displayName,

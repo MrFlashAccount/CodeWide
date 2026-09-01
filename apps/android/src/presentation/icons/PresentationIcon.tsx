@@ -50,10 +50,10 @@ export type PresentationIconRenderer = (props: PresentationIconProps) => ReactNo
 
 const PresentationIconContext = createContext<PresentationIconRenderer | null>(null);
 
-export function PresentationIconProvider({
-  children,
-  renderIcon,
-}: PropsWithChildren<{ renderIcon: PresentationIconRenderer | null }>): React.JSX.Element {
+export function PresentationIconProvider(
+  props: PropsWithChildren<{ renderIcon: PresentationIconRenderer | null }>,
+): React.JSX.Element {
+  const { children, renderIcon } = props;
   return (
     <PresentationIconContext.Provider value={renderIcon}>
       {children}
@@ -61,7 +61,8 @@ export function PresentationIconProvider({
   );
 }
 
-export function PresentationIcon({ color, name, size }: PresentationIconProps): React.JSX.Element {
+export function PresentationIcon(props: PresentationIconProps): React.JSX.Element {
+  const { color, name, size } = props;
   const renderIcon = usePresentationIconRenderer();
   if (renderIcon !== null) return <>{renderIcon({ color, name, size })}</>;
   return (

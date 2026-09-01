@@ -193,9 +193,22 @@ export default {
         "eslint/no-restricted-globals": "off",
       },
     },
+    {
+      files: ["src/v2/**/*.ts", "src/v2/**/*.tsx"],
+      rules: {
+        "codewide-v2/no-raw-style-values": "error",
+      },
+    },
+    {
+      files: ["src/v2/theme.ts"],
+      rules: {
+        "codewide-v2/no-raw-style-values": "off",
+      },
+    },
   ],
   rules: {
     ...base.rules,
+    "codewide-v2/no-destructured-function-parameters": "error",
     "codewide-v2/no-inline-object-parameter-types": "error",
     "expo/no-dynamic-env-var": "error",
     "expo/no-env-var-destructuring": "error",

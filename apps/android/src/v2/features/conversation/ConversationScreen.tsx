@@ -7,41 +7,38 @@ import { useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, useWindowDimensions } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
-import {
-  ActionSheetView,
-  type ActionSheetItem,
-} from "../../../presentation/actions/ActionSheetView";
-import { TopBarActionView } from "../../../presentation/actions/TopBarActionView";
+import { ActionSheetView, type ActionSheetItem } from "../../presentation/actions/ActionSheetView";
+import { TopBarActionView } from "../../presentation/actions/TopBarActionView";
 import {
   UsagePopoverView,
   type UsageAccountViewModel,
   type UsageContextViewModel,
   type UsageSessionViewModel,
-} from "../../../presentation/usage/UsagePopoverView";
-import type { ActionMenuItem } from "../../../ui/ActionMenu";
-import { MessageActionProviderView } from "../../../presentation/conversation/MessageActionProviderView";
+} from "../../presentation/usage/UsagePopoverView";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
+import { MessageActionProviderView } from "../../presentation/conversation/MessageActionProviderView";
 import type { CommandSettlement } from "../../application/commandCorrelation";
 import { useLiveQuery } from "../../application/react/useLiveQuery";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
-import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
-import { ConversationView } from "../../../presentation/conversation/ConversationView";
-import { ConversationSearchView } from "../../../presentation/conversation/ConversationSearchView";
+import { WorkspaceView } from "../../presentation/layouts/WorkspaceView";
+import { ConversationView } from "../../presentation/conversation/ConversationView";
+import { ConversationSearchView } from "../../presentation/conversation/ConversationSearchView";
 import {
   ContextRingView,
   contextRingActionStyle,
-} from "../../../presentation/conversation/ContextRingActionView";
+} from "../../presentation/conversation/ContextRingActionView";
 import {
   TimelineView,
   type TimelineDisplayTurn,
-} from "../../../presentation/conversation/TimelineView";
+} from "../../presentation/conversation/TimelineView";
 import {
   ComposerContextStripView,
   type ComposerContextItem,
-} from "../../../presentation/input/ComposerContextStripView";
-import { ProductText } from "../../../presentation/text/ProductText";
-import { isDesktopWindow } from "../../../presentation/layouts/windowLayout";
+} from "../../presentation/input/ComposerContextStripView";
+import { ProductText } from "../../presentation/text/ProductText";
+import { isDesktopWindow } from "../../presentation/layouts/windowLayout";
 import { ChatComposer } from "../composer/ChatComposer";
 import { useVoiceInputControl, type VoiceInputControlModel } from "./VoiceInputControl";
 import { ConversationThreadMenu } from "./ConversationThreadMenu";
@@ -86,12 +83,8 @@ interface ProjectedConversationProps extends ConversationScreenProps {
   resource: ProjectionResource;
 }
 
-export function ConversationScreen({
-  onBack,
-  onOpenPorts,
-  onOpenResource,
-  owner,
-}: ConversationScreenProps): React.JSX.Element {
+export function ConversationScreen(props: ConversationScreenProps): React.JSX.Element {
+  const { onBack, onOpenPorts, onOpenResource, owner } = props;
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.projection(owner.savedServerId, owner.threadId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -113,13 +106,8 @@ export function ConversationScreen({
   );
 }
 
-function ProjectedConversation({
-  onBack,
-  onOpenPorts,
-  onOpenResource,
-  owner,
-  resource,
-}: ProjectedConversationProps): React.JSX.Element {
+function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Element {
+  const { onBack, onOpenPorts, onOpenResource, owner, resource } = props;
   const runtime = useV2Runtime();
   const { height, width } = useWindowDimensions();
   const [ports] = useState(() => runtime.ports(owner.savedServerId));
@@ -193,7 +181,10 @@ function ProjectedConversation({
     correlations.snapshot,
   );
   const unsettledCorrelationIds = new Set(
-    correlationSnapshot.value.map(({ correlationId }) => correlationId),
+    correlationSnapshot.value.map((value) => {
+      const { correlationId } = value;
+      return correlationId;
+    }),
   );
   if (lockedActivation !== null) unsettledCorrelationIds.add(lockedActivation.correlationId);
   const unsettledCount = unsettledCorrelationIds.size;
@@ -328,7 +319,10 @@ function ProjectedConversation({
   const subtitle =
     snapshot.value.state === "live"
       ? conversationSubtitle(
-          servers.value.find(({ id }) => id === owner.savedServerId)?.displayName ?? "",
+          servers.value.find((value) => {
+            const { id } = value;
+            return id === owner.savedServerId;
+          })?.displayName ?? "",
           window?.thread.workspace ?? "",
         )
       : "connecting…";
@@ -409,41 +403,42 @@ interface ConversationSurfaceProps {
   voice: VoiceInputControlModel;
 }
 
-function ConversationSurface({
-  accounts,
-  archived,
-  clearVersion,
-  composerError,
-  composerText,
-  contextItems,
-  contextUsage,
-  desktop,
-  live,
-  locallyLocked,
-  onBack,
-  onChangeSearchQuery,
-  onCloseResourceMenu,
-  onCloseSearch,
-  onComposerError,
-  onEditComposer,
-  onOpenContext,
-  onSelectComposerAction,
-  onSelectResource,
-  onSubmitMessage,
-  onTextChange,
-  onToggleSearch,
-  owner,
-  resourceMenuVisible,
-  retryBlocked,
-  searchQuery,
-  searchVisible,
-  sessionUsage,
-  subtitle,
-  title,
-  turns,
-  unsettledCount,
-  voice,
-}: ConversationSurfaceProps): React.JSX.Element {
+function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
+  const {
+    accounts,
+    archived,
+    clearVersion,
+    composerError,
+    composerText,
+    contextItems,
+    contextUsage,
+    desktop,
+    live,
+    locallyLocked,
+    onBack,
+    onChangeSearchQuery,
+    onCloseResourceMenu,
+    onCloseSearch,
+    onComposerError,
+    onEditComposer,
+    onOpenContext,
+    onSelectComposerAction,
+    onSelectResource,
+    onSubmitMessage,
+    onTextChange,
+    onToggleSearch,
+    owner,
+    resourceMenuVisible,
+    retryBlocked,
+    searchQuery,
+    searchVisible,
+    sessionUsage,
+    subtitle,
+    title,
+    turns,
+    unsettledCount,
+    voice,
+  } = props;
   return (
     <WorkspaceView
       subtitle={subtitle}
@@ -584,7 +579,10 @@ function composerContextItems(
 ): ComposerContextItem[] {
   const settings = window?.thread.settings;
   const models = modelsResult?.kind === "models.list" ? modelsResult.models : [];
-  const selectedModel = models.find(({ id }) => id === settings?.model);
+  const selectedModel = models.find((value) => {
+    const { id } = value;
+    return id === settings?.model;
+  });
   const model = selectedModel?.label ?? settings?.model ?? "Model";
   const effort = settings?.effort ?? selectedModel?.defaultEffort ?? "default";
   const access = accessLabel(settings ?? null);
@@ -656,7 +654,10 @@ function timelineTurnText(turn: TimelineDisplayTurn): string {
   return [
     ...turn.userText,
     ...turn.assistantText,
-    ...turn.lifecycle.map(({ label }) => label),
+    ...turn.lifecycle.map((value) => {
+      const { label } = value;
+      return label;
+    }),
     ...activities,
     turn.state,
   ].join(" ");

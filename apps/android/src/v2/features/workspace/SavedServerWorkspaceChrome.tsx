@@ -1,9 +1,9 @@
 import { router, usePathname } from "expo-router";
 import { useState, useSyncExternalStore, type PropsWithChildren } from "react";
 
-import { SavedServerWorkspaceView } from "../../../presentation/layouts/AdaptiveWorkspaceView";
-import { ResourceStateView } from "../../../presentation/feedback/ResourceStateView";
-import { ThreadSidebarView } from "../../../presentation/navigation/ThreadSidebarView";
+import { SavedServerWorkspaceView } from "../../presentation/layouts/AdaptiveWorkspaceView";
+import { ResourceStateView } from "../../presentation/feedback/ResourceStateView";
+import { ThreadSidebarView } from "../../presentation/navigation/ThreadSidebarView";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import type { SavedServerId, ThreadId } from "../../domain/ids";
 import { threadId } from "../../domain/ids";
@@ -31,11 +31,10 @@ interface ProjectedSavedServerWorkspaceProps extends SavedServerWorkspaceChromeP
   resource: ProjectionResource;
 }
 
-export function SavedServerWorkspaceChrome({
-  children,
-  savedServerId,
-  selectedThreadId,
-}: PropsWithChildren<SavedServerWorkspaceChromeProps>): React.JSX.Element {
+export function SavedServerWorkspaceChrome(
+  props: PropsWithChildren<SavedServerWorkspaceChromeProps>,
+): React.JSX.Element {
+  const { children, savedServerId, selectedThreadId } = props;
   const runtime = useV2Runtime();
   const [outer, setOuter] = useState(() => runtime.projection(savedServerId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -64,12 +63,10 @@ export function SavedServerWorkspaceChrome({
   );
 }
 
-function ProjectedSavedServerWorkspace({
-  children,
-  resource,
-  savedServerId,
-  selectedThreadId,
-}: PropsWithChildren<ProjectedSavedServerWorkspaceProps>): React.JSX.Element {
+function ProjectedSavedServerWorkspace(
+  props: PropsWithChildren<ProjectedSavedServerWorkspaceProps>,
+): React.JSX.Element {
+  const { children, resource, savedServerId, selectedThreadId } = props;
   const runtime = useV2Runtime();
   const pathname = usePathname();
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
@@ -82,7 +79,8 @@ function ProjectedSavedServerWorkspace({
   const accounts = useLiveQuery(runtime, savedServerId, ACCOUNTS_QUERY);
   const server = servers.value.find((candidate) => candidate.id === savedServerId);
   const [query, setQuery] = useState("");
-  const rows = (projection?.catalog ?? []).map(({ thread }) => {
+  const rows = (projection?.catalog ?? []).map((threadRecord) => {
+    const { thread } = threadRecord;
     const copy = threadListCopy(thread);
     return {
       archived: thread.archived,

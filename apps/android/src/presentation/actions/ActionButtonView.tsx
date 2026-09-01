@@ -17,13 +17,8 @@ interface ActionButtonViewProps {
   pending: boolean;
 }
 
-export function ActionButtonView({
-  disabled,
-  error,
-  label,
-  onPress,
-  pending,
-}: ActionButtonViewProps): React.JSX.Element {
+export function ActionButtonView(props: ActionButtonViewProps): React.JSX.Element {
+  const { disabled, error, label, onPress, pending } = props;
   return (
     <View style={styles.root}>
       <Pressable
@@ -51,11 +46,13 @@ export function ActionButtonView({
   );
 }
 
-function disabledButtonStyle({ pressed }: PressableStateCallbackType) {
+function disabledButtonStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.button, styles.disabled, pressed && styles.pressed];
 }
 
-function enabledButtonStyle({ pressed }: PressableStateCallbackType) {
+function enabledButtonStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.button, pressed && styles.pressed];
 }
 

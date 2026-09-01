@@ -23,10 +23,8 @@ interface ContextRingViewProps {
   size?: number;
 }
 
-export function ContextRingActionView({
-  onPress,
-  percent,
-}: ContextRingActionViewProps): React.JSX.Element {
+export function ContextRingActionView(props: ContextRingActionViewProps): React.JSX.Element {
+  const { onPress, percent } = props;
   const activate = useEvent(() => onPress?.());
   return (
     <Pressable
@@ -40,11 +38,8 @@ export function ContextRingActionView({
   );
 }
 
-export function ContextRingView({
-  percent,
-  showValue = false,
-  size = 22,
-}: ContextRingViewProps): React.JSX.Element {
+export function ContextRingView(props: ContextRingViewProps): React.JSX.Element {
+  const { percent, showValue = false, size = 22 } = props;
   const strokeWidth = Math.max(2, size * 0.12);
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -91,9 +86,8 @@ export function ContextRingView({
   );
 }
 
-export function contextRingActionStyle({
-  pressed,
-}: PressableStateCallbackType): StyleProp<ViewStyle> {
+export function contextRingActionStyle(state: PressableStateCallbackType): StyleProp<ViewStyle> {
+  const { pressed } = state;
   return [styles.action, pressed && styles.pressed];
 }
 

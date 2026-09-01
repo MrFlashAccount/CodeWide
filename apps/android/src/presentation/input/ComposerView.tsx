@@ -29,21 +29,22 @@ interface ComposerViewProps {
   voiceState?: "idle" | "starting" | "recording" | "finishing" | "retry" | "error";
 }
 
-export function ComposerView({
-  disabled,
-  error,
-  menuActions,
-  onChangeText,
-  onSelectMenu,
-  onSubmit,
-  onVoice,
-  pending,
-  retryBlocked,
-  text,
-  voiceDisabled = false,
-  voiceMessage = null,
-  voiceState = "idle",
-}: ComposerViewProps): React.JSX.Element {
+export function ComposerView(props: ComposerViewProps): React.JSX.Element {
+  const {
+    disabled,
+    error,
+    menuActions,
+    onChangeText,
+    onSelectMenu,
+    onSubmit,
+    onVoice,
+    pending,
+    retryBlocked,
+    text,
+    voiceDisabled = false,
+    voiceMessage = null,
+    voiceState = "idle",
+  } = props;
   const sendDisabled = disabled || pending || retryBlocked || text.trim() === "";
   const [voicePending, setVoicePending] = useState(false);
   const voiceActive =
@@ -166,19 +167,23 @@ function voiceStatusLabel(
   return "Listening…";
 }
 
-function disabledMenuStyle({ pressed }: PressableStateCallbackType) {
+function disabledMenuStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.menu, styles.disabled, pressed && styles.pressed];
 }
 
-function disabledSendStyle({ pressed }: PressableStateCallbackType) {
+function disabledSendStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.send, styles.disabled, pressed && styles.sendPressed];
 }
 
-function enabledMenuStyle({ pressed }: PressableStateCallbackType) {
+function enabledMenuStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.menu, pressed && styles.pressed];
 }
 
-function enabledSendStyle({ pressed }: PressableStateCallbackType) {
+function enabledSendStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.send, pressed && styles.sendPressed];
 }
 

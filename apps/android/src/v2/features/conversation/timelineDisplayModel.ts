@@ -3,7 +3,7 @@ import type { V2Item, V2ThreadWindow } from "@codewide/sync-client/v2";
 import type {
   TimelineDisplayActivity,
   TimelineDisplayTurn,
-} from "../../../presentation/conversation/TimelineView";
+} from "../../presentation/conversation/TimelineView";
 
 export function timelineDisplayModel(window: V2ThreadWindow | null): TimelineDisplayTurn[] {
   return (window?.turns ?? []).map((turn) => {

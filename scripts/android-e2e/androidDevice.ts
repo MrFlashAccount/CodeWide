@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { delay, ManagedProcess, runCommand } from "./process.ts";
+import { delay, findFreePort, ManagedProcess, runCommand } from "./process.ts";
 
 const BOOT_TIMEOUT_MS = 180_000;
 
@@ -89,8 +89,32 @@ function quoteAndroidShellArgument(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-export async function reversePort(device: AndroidDevice, repoRoot: string, port: number): Promise<void> {
-  await adb(device, repoRoot, ["reverse", `tcp:${port}`, `tcp:${port}`]);
+export async function reverseHostPort(
+  device: AndroidDevice,
+  repoRoot: string,
+  hostPort: number,
+  preferredDevicePort: number,
+): Promise<number> {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const devicePort = attempt === 0
+      ? preferredDevicePort
+      : attempt === 1
+        ? hostPort
+        : await findFreePort();
+    try {
+      await adb(device, repoRoot, ["reverse", `tcp:${devicePort}`, `tcp:${hostPort}`]);
+      return devicePort;
+    } catch (cause) {
+      if (!(cause instanceof Error) || !cause.message.includes("Address already in use")) {
+        throw cause;
+      }
+    }
+  }
+  throw new Error(`Could not allocate an Android reverse port for host port ${hostPort}`);
+}
+
+export async function removeAllReversePorts(device: AndroidDevice, repoRoot: string): Promise<void> {
+  await adb(device, repoRoot, ["reverse", "--remove-all"], { allowFailure: true });
 }
 
 export async function removeReversePort(device: AndroidDevice, repoRoot: string, port: number): Promise<void> {

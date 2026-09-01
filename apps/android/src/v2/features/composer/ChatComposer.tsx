@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-import { ComposerView } from "../../../presentation/input/ComposerView";
-import type { ActionMenuItem } from "../../../ui/ActionMenu";
+import { ComposerView } from "../../presentation/input/ComposerView";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useEvent } from "../../../react/useEvent";
 import type { VoiceInputControlModel } from "../conversation/VoiceInputControl";
 
@@ -19,19 +19,20 @@ interface ChatComposerProps {
   voice?: VoiceInputControlModel;
 }
 
-export function ChatComposer({
-  disabled,
-  error,
-  locked,
-  menuActions,
-  onEdit,
-  onSelectMenu,
-  onSubmit,
-  onTextChange,
-  retryBlocked = false,
-  text: controlledText,
-  voice,
-}: ChatComposerProps): React.JSX.Element {
+export function ChatComposer(props: ChatComposerProps): React.JSX.Element {
+  const {
+    disabled,
+    error,
+    locked,
+    menuActions,
+    onEdit,
+    onSelectMenu,
+    onSubmit,
+    onTextChange,
+    retryBlocked = false,
+    text: controlledText,
+    voice,
+  } = props;
   const [uncontrolledText, setUncontrolledText] = useState("");
   const text = controlledText ?? uncontrolledText;
   const [activationError, setActivationError] = useState<string | null>(null);

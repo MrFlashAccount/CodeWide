@@ -38,13 +38,8 @@ interface RailActionProps {
   onPress(): void;
 }
 
-export function ServerRailView({
-  activeId,
-  onAdd,
-  onOpen,
-  onSettings,
-  rows,
-}: ServerRailViewProps): React.JSX.Element {
+export function ServerRailView(props: ServerRailViewProps): React.JSX.Element {
+  const { activeId, onAdd, onOpen, onSettings, rows } = props;
   return (
     <View style={styles.rail}>
       <ScrollView
@@ -64,7 +59,8 @@ export function ServerRailView({
   );
 }
 
-function ServerRailItem({ active, onOpen, row }: ServerRailItemProps): React.JSX.Element {
+function ServerRailItem(props: ServerRailItemProps): React.JSX.Element {
+  const { active, onOpen, row } = props;
   const open = useEvent(() => onOpen(row.id));
   return (
     <Pressable
@@ -80,15 +76,18 @@ function ServerRailItem({ active, onOpen, row }: ServerRailItemProps): React.JSX
   );
 }
 
-function activeAvatarStyle({ pressed }: PressableStateCallbackType) {
+function activeAvatarStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.avatar, styles.avatarActive, pressed && styles.pressed];
 }
 
-function inactiveAvatarStyle({ pressed }: PressableStateCallbackType) {
+function inactiveAvatarStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.avatar, pressed && styles.pressed];
 }
 
-function RailAction({ icon, label, onPress }: RailActionProps): React.JSX.Element {
+function RailAction(props: RailActionProps): React.JSX.Element {
+  const { icon, label, onPress } = props;
   return (
     <Pressable
       accessibilityLabel={label}
@@ -101,7 +100,8 @@ function RailAction({ icon, label, onPress }: RailActionProps): React.JSX.Elemen
   );
 }
 
-function railActionStyle({ pressed }: PressableStateCallbackType) {
+function railActionStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.avatar, pressed && styles.pressed];
 }
 

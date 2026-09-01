@@ -8,7 +8,8 @@ export interface VideoPreviewViewProps {
 
 /** Protocol-neutral fullscreen frame. Playback and private-file access stay in
  * the injected platform capability instead of leaking into presentation. */
-export function VideoPreviewView({ children, title }: VideoPreviewViewProps): React.JSX.Element {
+export function VideoPreviewView(props: VideoPreviewViewProps): React.JSX.Element {
+  const { children, title } = props;
   return (
     <View accessibilityLabel={`Video preview: ${title}`} style={styles.root}>
       <View style={styles.player}>{children}</View>

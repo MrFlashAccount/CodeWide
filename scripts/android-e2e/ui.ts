@@ -35,10 +35,18 @@ export function createAndroidE2eUi(input: {
   };
 
   const waitForAnyThreadRow = async (driver: AppiumBrowser): Promise<void> => {
-    const element = await driver.$(
-      'android=new UiSelector().descriptionStartsWith("Open thread ")',
-    );
-    await element.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 });
+    const deadline = Date.now() + input.timeoutMs;
+    while (Date.now() < deadline) {
+      for (const selector of [
+        'android=new UiSelector().resourceId("thread-time")',
+        'android=new UiSelector().descriptionStartsWith("Open thread ")',
+      ]) {
+        const element = await driver.$(selector);
+        if (await element.isDisplayed().catch(() => false)) return;
+      }
+      await delay(250);
+    }
+    throw new Error("No displayed thread row");
   };
 
   const openProjectedThreadMatching = async (
@@ -279,11 +287,35 @@ export function createAndroidE2eUi(input: {
       throw new Error("The authoritative thread was absent from the visible projected catalog");
     },
 
-    async reopenLegacyThreadContaining(driver: AppiumBrowser, expectedText: string): Promise<void> {
-      await clickAccessibility(driver, "New thread");
-      const search = await waitForAccessibility(driver, "Search threads");
+    async reopenLegacyThreadContaining(
+      driver: AppiumBrowser,
+      expectedText: string,
+      compact = false,
+      query = expectedText,
+    ): Promise<void> {
+      const search = await driver.$("~Search threads");
+      if (!(await search.isDisplayed().catch(() => false))) {
+        await clickAccessibility(driver, compact ? "Back to threads" : "New thread");
+        await search.waitForDisplayed({ timeout: input.timeoutMs, interval: 250 });
+      }
+      const visibleTitle = await driver.$(
+        `android=new UiSelector().text("${escapeUiSelector(expectedText)}")`,
+      );
+      const titleVisible = await visibleTitle
+        .waitForDisplayed({
+          timeout: compact ? input.timeoutMs : Math.min(5_000, input.timeoutMs),
+          interval: 250,
+        })
+        .then(() => true)
+        .catch(() => false);
+      if (titleVisible) {
+        await visibleTitle.click();
+        await waitForAccessibility(driver, "Message Codex");
+        await waitForVisibleTextContaining(driver, expectedText);
+        return;
+      }
       await search.clearValue();
-      await search.addValue(expectedText);
+      await search.addValue(query);
       const row = await driver.$(
         `android=new UiSelector().descriptionStartsWith("${escapeUiSelector(expectedText)}")`,
       );

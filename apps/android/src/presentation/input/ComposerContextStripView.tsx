@@ -22,10 +22,8 @@ interface ComposerContextChipProps {
   onOpen(id: string): void;
 }
 
-export function ComposerContextStripView({
-  items,
-  onOpen,
-}: ComposerContextStripViewProps): React.JSX.Element {
+export function ComposerContextStripView(props: ComposerContextStripViewProps): React.JSX.Element {
+  const { items, onOpen } = props;
   return (
     <ScrollView
       contentContainerStyle={styles.content}
@@ -41,7 +39,8 @@ export function ComposerContextStripView({
   );
 }
 
-function ComposerContextChip({ item, onOpen }: ComposerContextChipProps): React.JSX.Element {
+function ComposerContextChip(props: ComposerContextChipProps): React.JSX.Element {
+  const { item, onOpen } = props;
   const open = useEvent(() => onOpen(item.id));
   return (
     <Pressable

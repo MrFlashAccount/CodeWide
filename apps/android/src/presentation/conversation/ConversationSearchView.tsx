@@ -12,12 +12,8 @@ interface ConversationSearchViewProps {
   query: string;
 }
 
-export function ConversationSearchView({
-  matchCount,
-  onChangeText,
-  onClose,
-  query,
-}: ConversationSearchViewProps): React.JSX.Element {
+export function ConversationSearchView(props: ConversationSearchViewProps): React.JSX.Element {
+  const { matchCount, onChangeText, onClose, query } = props;
   return (
     <View style={styles.root}>
       <PresentationIcon color={colors.textMuted} name="search" size={18} />

@@ -1,10 +1,5 @@
 import type { ComponentProps } from "react";
-import {
-  StyleSheet,
-  Text as NativeText,
-  type StyleProp,
-  type TextStyle,
-} from "react-native";
+import { StyleSheet, Text as NativeText, type StyleProp, type TextStyle } from "react-native";
 
 import { productFonts } from "../../ui/product-fonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../../ui/typography-policy";
@@ -13,24 +8,23 @@ import { AppTextInput, type AppTextInputProps } from "../../ui/Typography";
 type ProductTextTone = "default" | "dim" | "muted" | "danger" | "success" | "warning";
 type ProductTextWeight = "medium" | "regular" | "semibold";
 
-export function ProductText({
-  style,
-  tone = "default",
-  weight = "regular",
-  ...props
-}: ComponentProps<typeof NativeText> & {
-  tone?: ProductTextTone;
-  weight?: ProductTextWeight;
-}): React.JSX.Element {
+export function ProductText(
+  textProps: ComponentProps<typeof NativeText> & {
+    tone?: ProductTextTone;
+    weight?: ProductTextWeight;
+  },
+): React.JSX.Element {
+  const { style, tone = "default", weight = "regular", ...props } = textProps;
   return <PresentationText {...props} style={[styles.base, tones[tone], weights[weight], style]} />;
 }
 
-export function PresentationText({
-  allowFontScaling = true,
-  maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
-  style,
-  ...props
-}: ComponentProps<typeof NativeText>): React.JSX.Element {
+export function PresentationText(textProps: ComponentProps<typeof NativeText>): React.JSX.Element {
+  const {
+    allowFontScaling = true,
+    maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
+    style,
+    ...props
+  } = textProps;
   return (
     <NativeText
       {...props}
@@ -41,12 +35,13 @@ export function PresentationText({
   );
 }
 
-export function PresentationTextInput({
-  allowFontScaling = true,
-  maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
-  style,
-  ...props
-}: AppTextInputProps): React.JSX.Element {
+export function PresentationTextInput(inputProps: AppTextInputProps): React.JSX.Element {
+  const {
+    allowFontScaling = true,
+    maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
+    style,
+    ...props
+  } = inputProps;
   return (
     <AppTextInput
       {...props}

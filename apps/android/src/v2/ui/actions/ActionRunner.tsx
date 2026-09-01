@@ -14,7 +14,8 @@ const Context = createContext<ActionRunnerValue>({
   run: () => undefined,
 });
 
-export function ActionRunner({ children }: PropsWithChildren): React.JSX.Element {
+export function ActionRunner(props: PropsWithChildren): React.JSX.Element {
+  const { children } = props;
   const [active, setActive] = useState<string | null>(null);
   const [failures, setFailures] = useState<Readonly<Record<string, string>>>({});
   return (
@@ -28,7 +29,12 @@ export function ActionRunner({ children }: PropsWithChildren): React.JSX.Element
           setFailures((current) => {
             if (!(action.id in current)) return current;
             // WHY: React state needs a new identity after removing one action-local failure.
-            return Object.fromEntries(Object.entries(current).filter(([id]) => id !== action.id));
+            return Object.fromEntries(
+              Object.entries(current).filter((value) => {
+                const [id] = value;
+                return id !== action.id;
+              }),
+            );
           });
           Promise.resolve(action.run())
             .catch(() => {

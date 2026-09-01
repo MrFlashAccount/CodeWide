@@ -9,11 +9,8 @@ const ERROR_MAX_WIDTH = 420;
 const ERROR_PADDING = 24;
 const FULLSCREEN_OPTIONS = { enable: true } as const;
 
-export function ExpoVideoPlayer({
-  autoplay,
-  source,
-  title,
-}: VideoPlayerCapabilityProps): React.JSX.Element {
+export function ExpoVideoPlayer(props: VideoPlayerCapabilityProps): React.JSX.Element {
+  const { autoplay, source, title } = props;
   const player = useVideoPlayer(
     {
       metadata: { title },

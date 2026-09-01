@@ -66,18 +66,19 @@ interface SettingsServerRowProps {
   row: ConnectionSettingsServerRow;
 }
 
-export function ConnectionSettingsView({
-  appLockBusy,
-  appLockEnabled,
-  error,
-  generationControl,
-  onAppLockChange,
-  onClose,
-  onServerAction,
-  onServerEnabledChange,
-  servers,
-  version,
-}: ConnectionSettingsViewProps): React.JSX.Element {
+export function ConnectionSettingsView(props: ConnectionSettingsViewProps): React.JSX.Element {
+  const {
+    appLockBusy,
+    appLockEnabled,
+    error,
+    generationControl,
+    onAppLockChange,
+    onClose,
+    onServerAction,
+    onServerEnabledChange,
+    servers,
+    version,
+  } = props;
   const handleOpenChange = useEvent((isOpen: boolean) => {
     if (!isOpen) onClose();
   });
@@ -155,7 +156,8 @@ export function ConnectionSettingsView({
   );
 }
 
-function SettingsSection({ children, title }: SettingsSectionProps): React.JSX.Element {
+function SettingsSection(props: SettingsSectionProps): React.JSX.Element {
+  const { children, title } = props;
   return (
     <View style={styles.section}>
       <ProductText style={styles.sectionTitle} tone="muted" weight="semibold">
@@ -166,12 +168,8 @@ function SettingsSection({ children, title }: SettingsSectionProps): React.JSX.E
   );
 }
 
-function SettingsControlRow({
-  children,
-  detail,
-  icon,
-  title,
-}: SettingsControlRowProps): React.JSX.Element {
+function SettingsControlRow(props: SettingsControlRowProps): React.JSX.Element {
+  const { children, detail, icon, title } = props;
   return (
     <View style={styles.controlRow}>
       <View style={styles.controlIcon}>
@@ -188,11 +186,8 @@ function SettingsControlRow({
   );
 }
 
-function SettingsServerRow({
-  onAction,
-  onEnabledChange,
-  row,
-}: SettingsServerRowProps): React.JSX.Element {
+function SettingsServerRow(props: SettingsServerRowProps): React.JSX.Element {
+  const { onAction, onEnabledChange, row } = props;
   const actions: readonly ActionMenuItem[] = [
     { disabled: !row.enabled, icon: "refresh", id: "reconnect", label: "Reconnect" },
     { icon: "pencil-outline", id: "edit", label: "Edit server" },
@@ -271,7 +266,8 @@ function stateLabel(state: ConnectionSettingsServerRow["state"]): string {
   return "Disabled";
 }
 
-function iconStyle({ pressed }: PressableStateCallbackType) {
+function iconStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.iconButton, pressed && styles.pressed];
 }
 

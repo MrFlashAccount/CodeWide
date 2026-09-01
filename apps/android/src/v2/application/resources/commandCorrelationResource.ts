@@ -67,11 +67,14 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
       const authorityGeneration = this.#authorityGeneration;
       const retainedLocks = [...this.#retainedLocks.entries()];
       const reconciled = await Promise.all(
-        retainedLocks.map(async ([correlationId, lock]) => ({
-          correlationId,
-          lock,
-          settlement: await this.#commands.reconcile(correlationId).catch(() => null),
-        })),
+        retainedLocks.map(async (value) => {
+          const [correlationId, lock] = value;
+          return {
+            correlationId,
+            lock,
+            settlement: await this.#commands.reconcile(correlationId).catch(() => null),
+          };
+        }),
       );
       if (
         refreshGeneration !== this.#refreshGeneration ||
@@ -92,7 +95,10 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
       if (settled.size > 0) this.#authorityGeneration += 1;
       this.publish({
         status: "ready",
-        value: value.filter(({ correlationId }) => !settled.has(correlationId)),
+        value: value.filter((value) => {
+          const { correlationId } = value;
+          return !settled.has(correlationId);
+        }),
       });
       for (const settlement of notifications) this.#notifySettlement(settlement);
     } catch {
@@ -144,7 +150,10 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
 
   pendingCount(): number {
     return new Set([
-      ...this.snapshot().value.map(({ correlationId }) => correlationId),
+      ...this.snapshot().value.map((value) => {
+        const { correlationId } = value;
+        return correlationId;
+      }),
       ...this.#retainedLocks.keys(),
     ]).size;
   }

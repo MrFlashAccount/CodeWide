@@ -23,11 +23,8 @@ interface ServerPickerRowProps {
   row: ServerRailRow;
 }
 
-export function ServerPickerView({
-  onAdd,
-  onOpen,
-  rows,
-}: ServerPickerViewProps): React.JSX.Element {
+export function ServerPickerView(props: ServerPickerViewProps): React.JSX.Element {
+  const { onAdd, onOpen, rows } = props;
   return (
     <ScrollView contentContainerStyle={styles.list}>
       {rows.map((row) => (
@@ -46,7 +43,8 @@ export function ServerPickerView({
   );
 }
 
-function ServerPickerRow({ onOpen, row }: ServerPickerRowProps): React.JSX.Element {
+function ServerPickerRow(props: ServerPickerRowProps): React.JSX.Element {
+  const { onOpen, row } = props;
   const open = useEvent(() => onOpen(row.id));
   return (
     <Pressable
@@ -73,11 +71,13 @@ function ServerPickerRow({ onOpen, row }: ServerPickerRowProps): React.JSX.Eleme
   );
 }
 
-function addButtonStyle({ pressed }: PressableStateCallbackType) {
+function addButtonStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.add, pressed && styles.pressed];
 }
 
-function serverRowStyle({ pressed }: PressableStateCallbackType) {
+function serverRowStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.row, pressed && styles.pressed];
 }
 

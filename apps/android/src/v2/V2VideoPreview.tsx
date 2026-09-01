@@ -6,6 +6,7 @@ interface V2VideoPreviewProps {
   model: VideoPreviewRouteModel;
 }
 
-export function V2VideoPreview({ model }: V2VideoPreviewProps): React.JSX.Element {
+export function V2VideoPreview(props: V2VideoPreviewProps): React.JSX.Element {
+  const { model } = props;
   return <VideoPreviewScreen model={model} Player={ExpoVideoPlayer} />;
 }

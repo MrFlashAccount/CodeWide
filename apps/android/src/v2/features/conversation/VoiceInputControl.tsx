@@ -30,14 +30,8 @@ interface UseVoiceInputControlInput {
 }
 
 /** Binds the composer microphone to one live authoritative V2 generation. */
-export function useVoiceInputControl({
-  audience,
-  live,
-  onTranscript,
-  projection,
-  scope,
-  thread,
-}: UseVoiceInputControlInput): VoiceInputControlModel {
+export function useVoiceInputControl(input2: UseVoiceInputControlInput): VoiceInputControlModel {
+  const { audience, live, onTranscript, projection, scope, thread } = input2;
   const runtime = useV2Runtime();
   const handle = useRef<VoiceSessionHandle | null>(null);
   const [message, setMessage] = useState<string | null>(null);

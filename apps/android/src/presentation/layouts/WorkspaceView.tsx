@@ -4,18 +4,15 @@ import { StyleSheet, View } from "react-native";
 import { colors, spacing, typeScale } from "../../theme";
 import { PresentationText as Text } from "../text/ProductText";
 
-export function WorkspaceView({
-  actions,
-  children,
-  leading,
-  subtitle,
-  title,
-}: PropsWithChildren<{
-  actions?: ReactNode;
-  leading?: ReactNode;
-  subtitle?: ReactNode;
-  title: ReactNode;
-}>): React.JSX.Element {
+export function WorkspaceView(
+  props: PropsWithChildren<{
+    actions?: ReactNode;
+    leading?: ReactNode;
+    subtitle?: ReactNode;
+    title: ReactNode;
+  }>,
+): React.JSX.Element {
+  const { actions, children, leading, subtitle, title } = props;
   return (
     <View style={styles.root}>
       <View style={styles.header}>

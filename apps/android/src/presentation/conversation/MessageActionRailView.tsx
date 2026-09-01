@@ -12,10 +12,8 @@ interface MessageActionRailViewProps {
   copyText: string;
 }
 
-export function MessageActionRailView({
-  completedAt,
-  copyText,
-}: MessageActionRailViewProps): React.JSX.Element {
+export function MessageActionRailView(props: MessageActionRailViewProps): React.JSX.Element {
+  const { completedAt, copyText } = props;
   const openMessageActions = useMessageActionMenu();
   const actionButtonRef = useRef<View>(null);
   const openActions = useEvent(() => {
@@ -50,7 +48,8 @@ export function MessageActionRailView({
   );
 }
 
-function messageActionStyle({ pressed }: PressableStateCallbackType) {
+function messageActionStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.action, pressed ? styles.pressed : null];
 }
 

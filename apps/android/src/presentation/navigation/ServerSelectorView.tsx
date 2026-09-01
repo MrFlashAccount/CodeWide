@@ -32,16 +32,8 @@ interface SelectorActionProps {
   onPress(): void;
 }
 
-export function ServerSelectorView({
-  activeId,
-  detail,
-  heading,
-  onAdd,
-  onOpenAll,
-  onOpen,
-  onSettings,
-  rows,
-}: ServerSelectorViewProps): React.JSX.Element {
+export function ServerSelectorView(props: ServerSelectorViewProps): React.JSX.Element {
+  const { activeId, detail, heading, onAdd, onOpenAll, onOpen, onSettings, rows } = props;
   const [visible, setVisible] = useState(false);
   const show = useEvent((): void => {
     setVisible(true);
@@ -96,9 +88,7 @@ export function ServerSelectorView({
             </ProductText>
           )}
         </View>
-        <ProductText style={styles.selectorChevron} tone="muted">
-          ⌄
-        </ProductText>
+        <PresentationIcon color={colors.textMuted} name="chevronDown" size={17} />
       </Pressable>
       <PresentationSheetView
         contentProps={{ enableDynamicSizing: true, index: 0 }}
@@ -139,7 +129,8 @@ export function ServerSelectorView({
   );
 }
 
-function ServerSelectorRow({ onOpen, row, selected }: ServerSelectorRowProps): React.JSX.Element {
+function ServerSelectorRow(props: ServerSelectorRowProps): React.JSX.Element {
+  const { onOpen, row, selected } = props;
   const open = useEvent((): void => {
     onOpen(row.id);
   });
@@ -168,7 +159,8 @@ function ServerSelectorRow({ onOpen, row, selected }: ServerSelectorRowProps): R
   );
 }
 
-function SelectorAction({ detail, icon, label, onPress }: SelectorActionProps): React.JSX.Element {
+function SelectorAction(props: SelectorActionProps): React.JSX.Element {
+  const { detail, icon, label, onPress } = props;
   return (
     <Pressable accessibilityLabel={label} onPress={onPress} style={actionStyle}>
       <View style={styles.actionIcon}>
@@ -187,19 +179,23 @@ function SelectorAction({ detail, icon, label, onPress }: SelectorActionProps): 
   );
 }
 
-function selectorButtonStyle({ pressed }: PressableStateCallbackType) {
+function selectorButtonStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.selector, pressed && styles.pressed];
 }
 
-function optionStyle({ pressed }: PressableStateCallbackType) {
+function optionStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.option, pressed && styles.pressed];
 }
 
-function selectedOptionStyle({ pressed }: PressableStateCallbackType) {
+function selectedOptionStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.option, styles.optionSelected, pressed && styles.pressed];
 }
 
-function actionStyle({ pressed }: PressableStateCallbackType) {
+function actionStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.action, pressed && styles.pressed];
 }
 
@@ -239,17 +235,16 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.68 },
   selector: {
     alignItems: "center",
-    alignSelf: "flex-start",
+    alignSelf: "stretch",
     flexDirection: "row",
-    gap: spacing.xxs,
+    gap: spacing.xs,
     maxWidth: "100%",
     minHeight: touchTarget,
     paddingHorizontal: spacing.xs,
     borderRadius: radii.medium,
   },
-  selectorCopy: { flexShrink: 1, minWidth: 0 },
+  selectorCopy: { flex: 1, minWidth: 0 },
   selectorDetail: { fontSize: 12, lineHeight: 16 },
-  selectorChevron: { fontSize: 13, lineHeight: 16 },
   selectorHeading: { fontSize: 22, lineHeight: 28 },
   selectorLabel: { flexShrink: 1, fontSize: 12, lineHeight: 16 },
   sheetTitle: { flexShrink: 1, minWidth: 0, ...typeScale.titleLarge },

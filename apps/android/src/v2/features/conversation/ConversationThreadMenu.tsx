@@ -2,10 +2,10 @@ import type { V2Command } from "@codewide/sync-client/v2";
 import { setStringAsync } from "expo-clipboard";
 import { useState } from "react";
 
-import { ThreadActionMenuView } from "../../../presentation/actions/ThreadActionMenuView";
+import { ThreadActionMenuView } from "../../presentation/actions/ThreadActionMenuView";
 import { useEvent } from "../../../react/useEvent";
-import type { ActionMenuItem } from "../../../ui/ActionMenu";
-import { useAppDialog } from "../../../ui/AppDialog";
+import type { ActionMenuItem } from "../../ui/ActionMenu";
+import { useAppDialog } from "../../ui/AppDialog";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 
@@ -16,14 +16,10 @@ interface ConversationThreadMenuProps {
   owner: QualifiedThread;
 }
 
-export function ConversationThreadMenu({
-  archived,
-  onBack,
-  onError,
-  owner,
-}: ConversationThreadMenuProps): React.JSX.Element {
+export function ConversationThreadMenu(props: ConversationThreadMenuProps): React.JSX.Element {
+  const { archived, onBack, onError, owner } = props;
   const runtime = useV2Runtime();
-  const dialog = useAppDialog();
+  const alert = useAppDialog();
   const [pinned, setPinned] = useState(false);
   const execute = useEvent(async (command: V2Command): Promise<boolean> => {
     try {
@@ -70,7 +66,7 @@ export function ConversationThreadMenu({
       return;
     }
     if (id !== "delete") return;
-    dialog.alert("Delete thread?", "This permanently deletes the thread on the selected server.", [
+    alert("Delete thread?", "This permanently deletes the thread on the selected server.", [
       { style: "cancel", text: "Cancel" },
       {
         onPress: () => {

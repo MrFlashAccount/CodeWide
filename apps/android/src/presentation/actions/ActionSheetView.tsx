@@ -31,13 +31,8 @@ interface ActionSheetRowProps {
   onSelect(id: string): void;
 }
 
-export function ActionSheetView({
-  items,
-  onClose,
-  onSelect,
-  title,
-  visible,
-}: ActionSheetViewProps): React.JSX.Element {
+export function ActionSheetView(props: ActionSheetViewProps): React.JSX.Element {
+  const { items, onClose, onSelect, title, visible } = props;
   const handleOpenChange = useEvent((isOpen: boolean) => {
     if (!isOpen) onClose();
   });
@@ -64,7 +59,8 @@ export function ActionSheetView({
   );
 }
 
-function ActionSheetRow({ item, onSelect }: ActionSheetRowProps): React.JSX.Element {
+function ActionSheetRow(props: ActionSheetRowProps): React.JSX.Element {
+  const { item, onSelect } = props;
   const select = useEvent(() => onSelect(item.id));
   return (
     <Pressable
@@ -92,15 +88,18 @@ function ActionSheetRow({ item, onSelect }: ActionSheetRowProps): React.JSX.Elem
   );
 }
 
-function closeStyle({ pressed }: PressableStateCallbackType) {
+function closeStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.close, pressed && styles.pressed];
 }
 
-function rowStyle({ pressed }: PressableStateCallbackType) {
+function rowStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.row, pressed && styles.pressed];
 }
 
-function selectedRowStyle({ pressed }: PressableStateCallbackType) {
+function selectedRowStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.row, styles.rowSelected, pressed && styles.pressed];
 }
 

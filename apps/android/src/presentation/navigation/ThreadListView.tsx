@@ -79,15 +79,8 @@ interface ThreadSectionHeaderInfo {
   section: SectionListData<RenderableThreadListRow, ThreadListSection>;
 }
 
-export function ThreadListView({
-  onChangeQuery,
-  onOpen,
-  query,
-  rows,
-  selectedId,
-  showSections = true,
-  voice,
-}: ThreadListViewProps): React.JSX.Element {
+export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
+  const { onChangeQuery, onOpen, query, rows, selectedId, showSections = true, voice } = props;
   const [localQuery, setLocalQuery] = useState("");
   const [filter, setFilter] = useState<ThreadListFilter>("all");
   const [voicePending, setVoicePending] = useState(false);
@@ -235,13 +228,15 @@ function threadMatchesFilter(row: ThreadListRow, filter: ThreadListFilter): bool
   return true;
 }
 
-function renderThread({
-  item,
-}: SectionListRenderItemInfo<RenderableThreadListRow, ThreadListSection>): React.JSX.Element {
+function renderThread(
+  row2: SectionListRenderItemInfo<RenderableThreadListRow, ThreadListSection>,
+): React.JSX.Element {
+  const { item } = row2;
   return <ThreadRow onOpen={item.onOpen} row={item} selected={item.selected} />;
 }
 
-function renderSectionHeader({ section }: ThreadSectionHeaderInfo): React.JSX.Element | null {
+function renderSectionHeader(value: ThreadSectionHeaderInfo): React.JSX.Element | null {
+  const { section } = value;
   if (section.title === "") return null;
   return (
     <ProductText style={styles.section} tone="muted" weight="semibold">
@@ -250,7 +245,8 @@ function renderSectionHeader({ section }: ThreadSectionHeaderInfo): React.JSX.El
   );
 }
 
-function ThreadRow({ onOpen, row, selected }: ThreadRowProps): React.JSX.Element {
+function ThreadRow(props: ThreadRowProps): React.JSX.Element {
+  const { onOpen, row, selected } = props;
   const active = row.state === "running";
   const attention = row.state === "waitingForApproval" || row.state === "waitingForInput";
   const open = useEvent(() => onOpen(row.id));
@@ -298,15 +294,18 @@ function ThreadRow({ onOpen, row, selected }: ThreadRowProps): React.JSX.Element
   );
 }
 
-function selectedThreadStyle({ pressed }: PressableStateCallbackType) {
+function selectedThreadStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.thread, styles.threadSelected, pressed && styles.pressed];
 }
 
-function unselectedThreadStyle({ pressed }: PressableStateCallbackType) {
+function unselectedThreadStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.thread, pressed && styles.pressed];
 }
 
-function filterButtonStyle({ pressed }: PressableStateCallbackType) {
+function filterButtonStyle(state: PressableStateCallbackType) {
+  const { pressed } = state;
   return [styles.filterButton, pressed && styles.pressed];
 }
 
@@ -374,8 +373,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xxs,
     paddingBottom: spacing.xs,
-    paddingLeft: spacing.sm,
-    paddingRight: 0,
+    paddingHorizontal: spacing.md,
     paddingTop: spacing.xs,
   },
   section: {

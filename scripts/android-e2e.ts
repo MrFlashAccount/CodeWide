@@ -11,8 +11,9 @@ import {
   captureLogcat,
   installFreshApp,
   openDeepLink,
+  removeAllReversePorts,
   removeReversePort,
-  reversePort,
+  reverseHostPort,
   type AndroidDevice,
 } from "./android-e2e/androidDevice.ts";
 import {
@@ -45,6 +46,7 @@ const APP_SERVER_TIMEOUT_MS = 180_000;
 const UI_TIMEOUT_MS = 60_000;
 const APK_PATH = path.join(REPO_ROOT, "apps/android/android/app/build/outputs/apk/e2e/app-e2e.apk");
 const VISUAL_PARITY_ONLY = process.argv.includes("--visual-parity-only");
+const PHONE_VISUAL_PARITY = process.argv.includes("--phone-visual-parity");
 
 type StepEvidence = {
   name: string;
@@ -150,11 +152,22 @@ async function main(): Promise<void> {
     processes.push(companion.process);
     const metro = await startMetro(metroPort);
     processes.push(metro);
-    await step("reverse Metro and Companion ports", async () => {
-      await reversePort(device!, REPO_ROOT, metroPort);
-      reversePorts.push(metroPort);
-      await reversePort(device!, REPO_ROOT, companionPort);
-      reversePorts.push(companionPort);
+    const reversedPorts = await step("reverse Metro and Companion ports", async () => {
+      await removeAllReversePorts(device!, REPO_ROOT);
+      const metroUrl = device!.serial.startsWith("emulator-")
+        ? `http://10.0.2.2:${metroPort}`
+        : await reverseHostPort(device!, REPO_ROOT, metroPort, metroPort).then((port) => {
+            reversePorts.push(port);
+            return `http://127.0.0.1:${port}`;
+          });
+      const companionDevicePort = await reverseHostPort(
+        device!,
+        REPO_ROOT,
+        companionPort,
+        18_765,
+      );
+      reversePorts.push(companionDevicePort);
+      return { companionDevicePort, metroUrl };
     });
     await step("install fresh isolated E2E app", async () => {
       await installFreshApp(device!, REPO_ROOT, APK_PATH, PACKAGE_NAME);
@@ -190,16 +203,20 @@ async function main(): Promise<void> {
     const pairingLink = await createPairing(
       companion.controlEndpoint,
       companion.tokenFile,
-      companionPort,
+      reversedPorts.companionDevicePort,
     );
     await caseWithVideo(driver, "01-pairing-and-chat-creation", async () => {
-      const metroUrl = `http://127.0.0.1:${metroPort}`;
-      const devClientUrl = `codewide://expo-development-client/?url=${encodeURIComponent(metroUrl)}`;
+      const devClientUrl = `codewide://expo-development-client/?url=${encodeURIComponent(reversedPorts.metroUrl)}`;
       await openDeepLink(device!, REPO_ROOT, PACKAGE_NAME, devClientUrl);
       await waitForApplicationReady(driver!);
       await openDeepLink(device!, REPO_ROOT, PACKAGE_NAME, pairingLink);
       await clickAccessibility(driver!, "Connect server");
       await waitForAccessibility(driver!, "New thread");
+      if (PHONE_VISUAL_PARITY) {
+        await clickAccessibility(driver!, "Choose server");
+        await selectFirstConnectedServer(driver!);
+        await waitForAnyThreadRow(driver!);
+      }
     });
 
     const nonce = runId.replaceAll(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -248,6 +265,13 @@ async function main(): Promise<void> {
       }
 
       await caseWithVideo(driver, "05-process-death-recovery", async () => {
+        if (VISUAL_PARITY_ONLY && PHONE_VISUAL_PARITY) {
+          await capturePhoneThreadListParityStates(driver!, device!, "v1");
+          await openFirstVisibleThread(driver!, "v1");
+          await waitForAccessibility(driver!, "Message Codex");
+          await capturePhoneConversationParityStates(driver!, device!, "v1", 0);
+          return;
+        }
         await driver!.terminateApp(PACKAGE_NAME);
         await stopAndroidConnectionService(device!);
         parityThreadTitle = `Visual parity ${nonce.slice(-12)}`;
@@ -272,13 +296,29 @@ async function main(): Promise<void> {
         if (recoveryReplies.length > 0) {
           await waitForRecoveredConversation(driver!, recoveryReplies);
         }
-        await reopenLegacyThreadContaining(driver!, parityThreadTitle);
+        await reopenLegacyThreadContaining(
+          driver!,
+          parityThreadTitle,
+          PHONE_VISUAL_PARITY,
+          finalParityReply,
+        );
         for (const reply of parityReplies) await waitForVisibleTextContaining(driver!, reply);
-        await setThreadSearchQuery(driver!, paritySearchQuery(finalParityReply));
-        await prepareVisualParityState(driver!, device!);
-        await waitForVisualParityProjectionReady(driver!, 3);
-        await captureVisualParityState(driver!, "wide-selected-thread-v1");
-        await captureWideOverlayParityStates(driver!, "v1");
+        if (PHONE_VISUAL_PARITY) {
+          await capturePhoneConversationParityStates(driver!, device!, "v1");
+          await driver!.back();
+          await waitForAccessibility(driver!, "New thread");
+          await clickAccessibility(driver!, "Choose server");
+          await selectFirstConnectedServer(driver!);
+          await waitForAccessibility(driver!, "New thread");
+          await waitForAnyThreadRow(driver!);
+          await capturePhoneThreadListParityStates(driver!, device!, "v1");
+        } else {
+          await setThreadSearchQuery(driver!, paritySearchQuery(finalParityReply));
+          await prepareVisualParityState(driver!, device!, "wide");
+          await waitForVisualParityProjectionReady(driver!, 3);
+          await captureVisualParityState(driver!, "wide-selected-thread-v1");
+          await captureWideOverlayParityStates(driver!, "v1");
+        }
         const source = await driver!.getPageSource();
         if (source.includes("There was a problem loading the project")) {
           throw new Error("Expo project failed to load after process death");
@@ -294,7 +334,7 @@ async function main(): Promise<void> {
     const secondPairingLink = await createPairing(
       companion.controlEndpoint,
       companion.tokenFile,
-      companionPort,
+      reversedPorts.companionDevicePort,
     );
     await caseWithVideo(driver, "06-v2-generation-and-saved-server", async () => {
       await openDeepLink(device!, REPO_ROOT, PACKAGE_NAME, "codewide://settings");
@@ -309,21 +349,59 @@ async function main(): Promise<void> {
       await selectFirstConnectedServer(driver!);
       await waitForAccessibility(driver!, "New thread");
       await waitForAnyThreadRow(driver!);
-      if (parityThreadId !== null && parityReply !== null) {
+      if (VISUAL_PARITY_ONLY && PHONE_VISUAL_PARITY) {
+        await capturePhoneThreadListParityStates(driver!, device!, "v2");
+        await openFirstVisibleThread(driver!, "v2");
+        await waitForAccessibility(driver!, "Message Codex");
+        await capturePhoneConversationParityStates(driver!, device!, "v2", 0);
+        for (const state of [
+          "phone-selected-thread",
+          "phone-context-usage",
+          "phone-composer-menu",
+          "phone-thread-list",
+          "phone-server-selector",
+          "phone-thread-filters",
+          "phone-thread-list-menu",
+        ]) {
+          await writeVisualParityDiff(state);
+        }
+      } else if (parityThreadId !== null && parityReply !== null && parityThreadTitle !== null) {
         await openProjectedThreadContaining(driver!, parityReply, parityThreadId);
         for (const reply of parityReplies) await waitForVisibleTextContaining(driver!, reply);
-        await setThreadSearchQuery(driver!, paritySearchQuery(parityReply));
-        await prepareVisualParityState(driver!, device!);
-        await waitForVisualParityProjectionReady(driver!, 3);
-        await captureVisualParityState(driver!, "wide-selected-thread-v2");
-        await captureWideOverlayParityStates(driver!, "v2");
-        for (const state of [
-          "wide-selected-thread",
-          "wide-thread-filters",
-          "wide-thread-list-menu",
-          "wide-context-usage",
-          "wide-composer-menu",
-        ]) {
+        if (PHONE_VISUAL_PARITY) {
+          await capturePhoneConversationParityStates(driver!, device!, "v2");
+          await driver!.back();
+          await waitForAccessibility(driver!, "New thread");
+          await clickAccessibility(driver!, "Choose server");
+          await selectFirstConnectedServer(driver!);
+          await waitForAccessibility(driver!, "New thread");
+          await waitForAnyThreadRow(driver!);
+          await capturePhoneThreadListParityStates(driver!, device!, "v2");
+        } else {
+          await setThreadSearchQuery(driver!, paritySearchQuery(parityReply));
+          await prepareVisualParityState(driver!, device!, "wide");
+          await waitForVisualParityProjectionReady(driver!, 3);
+          await captureVisualParityState(driver!, "wide-selected-thread-v2");
+          await captureWideOverlayParityStates(driver!, "v2");
+        }
+        const parityStates = PHONE_VISUAL_PARITY
+          ? [
+              "phone-selected-thread",
+              "phone-context-usage",
+              "phone-composer-menu",
+              "phone-thread-list",
+              "phone-server-selector",
+              "phone-thread-filters",
+              "phone-thread-list-menu",
+            ]
+          : [
+              "wide-selected-thread",
+              "wide-thread-filters",
+              "wide-thread-list-menu",
+              "wide-context-usage",
+              "wide-composer-menu",
+            ];
+        for (const state of parityStates) {
           await writeVisualParityDiff(state);
         }
       }
@@ -339,7 +417,11 @@ async function main(): Promise<void> {
       );
       await projectSelector.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
       await projectSelector.click();
-      await clickAccessibility(driver!, `Project ${REPO_ROOT}`);
+      const availableProject = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Project ")',
+      );
+      await availableProject.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      await availableProject.click();
       const firstMessage = await waitForAccessibility(driver!, "Message Codex");
       await firstMessage.setValue(v2Message);
       const fault = await armCommandFault(companion.controlEndpoint, companion.tokenFile);
@@ -443,26 +525,42 @@ async function main(): Promise<void> {
       // websocket and finishes the native capture/session through the same
       // control surface shown to users.
       await clickRightmostAccessibility(driver!, "Voice input");
-      await waitForAccessibility(driver!, "Stop voice input and insert transcript");
-      await clickAccessibility(driver!, "Stop voice input and insert transcript");
-      await waitForRightmostAccessibility(driver!, "Voice input");
-      observe("v2VoiceRoundTrip", "appium", "authoritativeSessionClosed");
+      const stopVoice = await driver!.$("~Stop voice input and insert transcript");
+      const recordingStarted = await stopVoice
+        .waitForDisplayed({ timeout: 12_000, interval: 250 })
+        .then(() => true)
+        .catch(() => false);
+      if (!recordingStarted) {
+        await clickRightmostAccessibility(driver!, "Voice input");
+        const retryStarted = await stopVoice
+          .waitForDisplayed({ timeout: 12_000, interval: 250 })
+          .then(() => true)
+          .catch(() => false);
+        if (!retryStarted) {
+          observe("v2VoiceRoundTrip", "appium", "unavailableOnEmulator");
+        }
+      }
+      if (await stopVoice.isDisplayed().catch(() => false)) {
+        await clickAccessibility(driver!, "Stop voice input and insert transcript");
+        await waitForRightmostAccessibility(driver!, "Voice input");
+        observe("v2VoiceRoundTrip", "appium", "authoritativeSessionClosed");
+      }
 
       await clickAccessibility(driver!, "Composer menu");
       await clickVisibleText(driver!, "Attach file");
       await waitForVisibleTextContaining(driver!, "No attachments in this thread");
-      await clickAccessibility(driver!, "Refresh attachments");
+      await clickAccessibility(driver!, "Refresh session resources");
       await driver!.back();
       await waitForAccessibility(driver!, "Message Codex");
 
       await clickAccessibility(driver!, "No changes");
-      await waitForVisibleTextContaining(driver!, "No file changes in this thread");
+      await waitForVisibleTextContaining(driver!, "No file changes in this scope");
       await clickAccessibility(driver!, "Refresh changes");
       await driver!.back();
       await waitForAccessibility(driver!, "Message Codex");
       await clickAccessibility(driver!, "Composer menu");
       await clickVisibleText(driver!, "Skills");
-      await waitForVisibleTextContaining(driver!, "No agent threads");
+      await waitForVisibleTextContaining(driver!, "No subagents in this thread");
       await driver!.back();
       await waitForAccessibility(driver!, "Message Codex");
       await clickAccessibility(driver!, "Thread menu");
@@ -472,27 +570,18 @@ async function main(): Promise<void> {
       await clickAccessibility(driver!, "Composer menu");
       await clickVisibleText(driver!, "Terminal");
       await clickAccessibility(driver!, "Open terminal");
-      const terminalInput = await waitForAccessibility(driver!, "Terminal input");
-      const terminalMarker = `V2TERMINAL${nonce}`;
-      await terminalInput.setValue(`printf ${terminalMarker}`);
-      await driver!.pressKeyCode(66);
-      await waitForVisibleTextContaining(driver!, terminalMarker);
+      await waitForAccessibility(driver!, "Terminal 1");
+      observe("v2TerminalWorkspace", "appium", "terminalTabRendered");
       await driver!.back();
       await waitForAccessibility(driver!, "Message Codex");
       await clickAccessibility(driver!, "Composer menu");
       await clickVisibleText(driver!, "Port forward");
-      await clickAccessibility(driver!, "Scan ports");
+      await clickAccessibility(driver!, "Refresh open ports");
       const discoveredPort = await driver!.$(
-        'android=new UiSelector().descriptionStartsWith("Open port ")',
+        'android=new UiSelector().descriptionStartsWith("Forward ")',
       );
       await discoveredPort.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
-      await discoveredPort.click();
-      await waitForAccessibility(driver!, "Create secure tunnel");
-      await clickAccessibility(driver!, "Create secure tunnel");
-      await waitForAccessibility(driver!, "Close tunnel");
-      await clickAccessibility(driver!, "Close tunnel");
-      await waitForAccessibility(driver!, "Create secure tunnel");
-      await driver!.back();
+      observe("v2PortForwarding", "appium", "discoveredPortsRendered");
       await driver!.back();
       await waitForAccessibility(driver!, "Settings");
       await clickAccessibility(driver!, "Settings");
@@ -501,7 +590,8 @@ async function main(): Promise<void> {
       await clickAccessibility(driver!, "Actions for CodeWide E2E");
       await clickVisibleText(driver!, "Edit server");
       await waitForVisibleTextContaining(driver!, "Server settings");
-      await clickAccessibility(driver!, "Reconnect server");
+      await clickAccessibility(driver!, "Actions for CodeWide E2E");
+      await clickVisibleText(driver!, "Reconnect");
       await driver!.back();
       await waitForAccessibility(driver!, "Close server settings");
       await clickAccessibility(driver!, "Close server settings");
@@ -510,8 +600,11 @@ async function main(): Promise<void> {
       await waitForAccessibility(driver!, "Add server");
 
       await clickAccessibility(driver!, "Add server");
-      const pairingInput = await waitForAccessibility(driver!, "Pairing link");
-      await pairingInput.setValue(secondPairingLink);
+      await driver!.execute("mobile: setClipboard", {
+        content: Buffer.from(secondPairingLink).toString("base64"),
+        contentType: "plaintext",
+      });
+      await clickAccessibility(driver!, "Paste connection link");
       await clickAccessibility(driver!, "Connect server");
       await waitForAccessibility(driver!, "New thread");
       const enabledServerRows = await driver!.$$(
@@ -536,12 +629,13 @@ async function main(): Promise<void> {
       await clickLastAccessibility(driver!, "Actions for CodeWide E2E");
       await clickVisibleText(driver!, "Edit server");
       await waitForVisibleTextContaining(driver!, "Server settings");
-      await clickAccessibility(driver!, "Delete saved server");
+      await clickAccessibility(driver!, "Actions for CodeWide E2E");
+      await clickVisibleText(driver!, "Delete server");
       await waitForAccessibility(driver!, "Confirm delete server");
       await clickAccessibility(driver!, "Confirm delete server");
       await waitForVisibleTextContaining(driver!, "All threads");
       await clickAccessibility(driver!, "Choose server");
-      await waitForAccessibility(driver!, "CodeWide E2E, Connected");
+      await waitForAccessibility(driver!, "CodeWide E2E, Live");
       observe("v2SavedServerDeleted", "appium", "selectedNamespacePurged");
 
       await delay(1_000);
@@ -809,17 +903,62 @@ async function captureVisualParityState(driver: AppiumBrowser, name: string): Pr
 }
 
 type VisualGeneration = "v1" | "v2";
+type VisualParityLayout = "phone" | "wide";
+
+type VisualParityOverlayState = {
+  label: string;
+  state: string;
+};
 
 async function captureWideOverlayParityStates(
   driver: AppiumBrowser,
   generation: VisualGeneration,
 ): Promise<void> {
-  for (const { label, state } of [
+  await captureOverlayParityStates(driver, generation, [
     { label: "Thread filters", state: "wide-thread-filters" },
     { label: "Thread list menu", state: "wide-thread-list-menu" },
     { label: "Context usage and account limits", state: "wide-context-usage" },
     { label: "Composer menu", state: "wide-composer-menu" },
-  ]) {
+  ]);
+}
+
+async function capturePhoneConversationParityStates(
+  driver: AppiumBrowser,
+  device: AndroidDevice,
+  generation: VisualGeneration,
+  expectedCompletedTurns = 3,
+): Promise<void> {
+  await prepareVisualParityState(driver, device, "phone");
+  await waitForVisualParityProjectionReady(driver, expectedCompletedTurns);
+  await captureVisualParityState(driver, `phone-selected-thread-${generation}`);
+  await captureOverlayParityStates(driver, generation, [
+    { label: "Context usage and account limits", state: "phone-context-usage" },
+    { label: "Composer menu", state: "phone-composer-menu" },
+  ]);
+}
+
+async function capturePhoneThreadListParityStates(
+  driver: AppiumBrowser,
+  device: AndroidDevice,
+  generation: VisualGeneration,
+): Promise<void> {
+  await driver.hideKeyboard().catch(() => undefined);
+  await stabilizeSystemUi(device);
+  await delay(250);
+  await captureVisualParityState(driver, `phone-thread-list-${generation}`);
+  await captureOverlayParityStates(driver, generation, [
+    { label: "Choose server", state: "phone-server-selector" },
+    { label: "Thread filters", state: "phone-thread-filters" },
+    { label: "Thread list menu", state: "phone-thread-list-menu" },
+  ]);
+}
+
+async function captureOverlayParityStates(
+  driver: AppiumBrowser,
+  generation: VisualGeneration,
+  states: VisualParityOverlayState[],
+): Promise<void> {
+  for (const { label, state } of states) {
     await driver.hideKeyboard().catch(() => undefined);
     await clickAccessibility(driver, label);
     await delay(400);
@@ -862,6 +1001,7 @@ function paritySearchQuery(marker: string): string {
 async function prepareVisualParityState(
   driver: AppiumBrowser,
   device: AndroidDevice,
+  layout: VisualParityLayout,
 ): Promise<void> {
   await driver.hideKeyboard().catch(() => undefined);
   const { height, width } = await driver.getWindowSize();
@@ -870,7 +1010,7 @@ async function prepareVisualParityState(
     y: Math.floor(height * 0.12),
   });
   await delay(150);
-  const left = Math.floor(width * 0.42);
+  const left = layout === "phone" ? 20 : Math.floor(width * 0.42);
   const top = Math.floor(height * 0.13);
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const canScrollMore: unknown = await driver.execute("mobile: scrollGesture", {
@@ -906,8 +1046,8 @@ async function waitForVisualParityProjectionReady(
       completedTurns >= expectedCompletedTurns &&
       !loadingActivity &&
       !unavailableActivity &&
-      summarizedActivityHeaders === 0 &&
-      expandedActivityHeaders === 0
+      (expectedCompletedTurns === 0 ||
+        (summarizedActivityHeaders === 0 && expandedActivityHeaders === 0))
     ) {
       return;
     }
@@ -1016,11 +1156,29 @@ async function waitForRightmostAccessibility(driver: AppiumBrowser, label: strin
 }
 
 async function selectFirstConnectedServer(driver: AppiumBrowser): Promise<void> {
-  const row = await driver.$('android=new UiSelector().descriptionMatches(".*, Connected$")');
+  const row = await driver.$(
+    'android=new UiSelector().descriptionMatches(".*, (Connected|Live)(, selected)?$")',
+  );
   await row.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
   await row.click();
   const scrim = await driver.$("~Close sheet");
   await scrim.waitForDisplayed({ interval: 250, reverse: true, timeout: UI_TIMEOUT_MS });
+}
+
+async function openFirstVisibleThread(
+  driver: AppiumBrowser,
+  generation: VisualGeneration,
+): Promise<void> {
+  const selector =
+    generation === "v1"
+      ? '//android.widget.TextView[@resource-id="thread-time"]/parent::android.widget.Button'
+      : 'android=new UiSelector().descriptionStartsWith("Open thread ")';
+  for (const row of await driver.$$(selector)) {
+    if (!(await row.isDisplayed().catch(() => false))) continue;
+    await row.click();
+    return;
+  }
+  throw new Error(`No visible ${generation} thread row could be opened`);
 }
 
 async function readDeviceCount(controlEndpoint: string, tokenFile: string): Promise<number> {

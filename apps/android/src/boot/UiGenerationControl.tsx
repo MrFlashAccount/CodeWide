@@ -17,7 +17,8 @@ interface UiGenerationOptionProps {
   onSelect(generation: UiGeneration): Promise<void>;
 }
 
-export function UiGenerationControl({ current }: UiGenerationControlProps): React.JSX.Element {
+export function UiGenerationControl(props: UiGenerationControlProps): React.JSX.Element {
+  const { current } = props;
   const [busy, setBusy] = useState(false);
   const select = useEvent(async (generation: UiGeneration): Promise<void> => {
     if (busy || generation === current) return;
@@ -40,12 +41,8 @@ export function UiGenerationControl({ current }: UiGenerationControlProps): Reac
   );
 }
 
-function UiGenerationOption({
-  busy,
-  current,
-  generation,
-  onSelect,
-}: UiGenerationOptionProps): React.JSX.Element {
+function UiGenerationOption(props: UiGenerationOptionProps): React.JSX.Element {
+  const { busy, current, generation, onSelect } = props;
   const select = useEvent(() => {
     onSelect(generation).catch(() => undefined);
   });

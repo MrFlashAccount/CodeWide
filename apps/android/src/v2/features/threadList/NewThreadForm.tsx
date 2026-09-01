@@ -2,16 +2,16 @@ import type { V2CommandTerminalFrame, V2QueryResult } from "@codewide/sync-clien
 import { useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
-import { TopBarActionView } from "../../../presentation/actions/TopBarActionView";
-import { ConversationView } from "../../../presentation/conversation/ConversationView";
-import { WorkspaceView } from "../../../presentation/layouts/WorkspaceView";
-import { isDesktopWindow } from "../../../presentation/layouts/windowLayout";
+import { TopBarActionView } from "../../presentation/actions/TopBarActionView";
+import { ConversationView } from "../../presentation/conversation/ConversationView";
+import { WorkspaceView } from "../../presentation/layouts/WorkspaceView";
+import { isDesktopWindow } from "../../presentation/layouts/windowLayout";
 import {
   ProjectPickerView,
   type ProjectPickerRow,
-} from "../../../presentation/navigation/ProjectPickerView";
-import { ProductText } from "../../../presentation/text/ProductText";
-import { colors, radii, spacing, typeScale } from "../../../presentation/tokens";
+} from "../../presentation/navigation/ProjectPickerView";
+import { ProductText } from "../../presentation/text/ProductText";
+import { colors, radii, spacing, typeScale } from "../../presentation/tokens";
 import { useEvent } from "../../../react/useEvent";
 import type { CommandSettlement } from "../../application/commandCorrelation";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
@@ -37,11 +37,8 @@ interface LockedActivation {
   operationId: string;
 }
 
-export function NewThreadForm({
-  onBack,
-  onThreadCreated,
-  savedServerId,
-}: NewThreadFormProps): React.JSX.Element {
+export function NewThreadForm(props: NewThreadFormProps): React.JSX.Element {
+  const { onBack, onThreadCreated, savedServerId } = props;
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.query(savedServerId, { kind: "projects.list" }));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
@@ -55,12 +52,8 @@ export function NewThreadForm({
   );
 }
 
-function NewThreadComposer({
-  onBack,
-  onThreadCreated,
-  projectResource,
-  savedServerId,
-}: NewThreadComposerProps): React.JSX.Element {
+function NewThreadComposer(props: NewThreadComposerProps): React.JSX.Element {
+  const { onBack, onThreadCreated, projectResource, savedServerId } = props;
   const runtime = useV2Runtime();
   const window = useWindowDimensions();
   const resource = projectResource ?? EMPTY_QUERY_RESOURCE;
@@ -119,7 +112,10 @@ function NewThreadComposer({
     correlations.snapshot,
   );
   const unsettledCorrelationIds = new Set(
-    correlationSnapshot.value.map(({ correlationId }) => correlationId),
+    correlationSnapshot.value.map((value) => {
+      const { correlationId } = value;
+      return correlationId;
+    }),
   );
   if (lockedActivation !== null) unsettledCorrelationIds.add(lockedActivation.correlationId);
   const unsettledCount = unsettledCorrelationIds.size;
@@ -306,7 +302,7 @@ function newThreadTerminalMessage(frame: V2CommandTerminalFrame): string {
 }
 
 const styles = StyleSheet.create({
-  chevron: { color: colors.accent, fontSize: 18, lineHeight: 22 },
+  chevron: { color: colors.accent, ...typeScale.title },
   emptyState: {
     alignItems: "center",
     flex: 1,
@@ -326,6 +322,6 @@ const styles = StyleSheet.create({
     minHeight: 40,
     paddingHorizontal: spacing.sm,
   },
-  projectText: { color: colors.accent, flexShrink: 1, minWidth: 0, ...typeScale.titleMedium },
-  prompt: { ...typeScale.titleLarge, textAlign: "center" },
+  projectText: { color: colors.accent, flexShrink: 1, minWidth: 0, ...typeScale.title },
+  prompt: { ...typeScale.heading, textAlign: "center" },
 });

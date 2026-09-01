@@ -4,9 +4,9 @@ import { useState, useSyncExternalStore, useTransition, type ReactNode } from "r
 import {
   ConnectionSettingsView,
   type ConnectionSettingsServerAction,
-} from "../../../presentation/settings/ConnectionSettingsView";
+} from "../../presentation/settings/ConnectionSettingsView";
 import { useEvent } from "../../../react/useEvent";
-import { useAppDialog } from "../../../ui/AppDialog";
+import { useAppDialog } from "../../ui/AppDialog";
 import { useAppLockSettings } from "../../../ui/AppLockGate";
 import { savedServerId } from "../../domain/ids";
 import { useV2Runtime } from "../../V2Application";
@@ -21,14 +21,11 @@ interface SettingsScreenProps {
 
 type SettingsDestination = ReturnType<typeof serverSettingsDestination>;
 
-export function SettingsScreen({
-  generationControl,
-  onClose,
-  version,
-}: SettingsScreenProps): React.JSX.Element {
+export function SettingsScreen(props: SettingsScreenProps): React.JSX.Element {
+  const { generationControl, onClose, version } = props;
   const runtime = useV2Runtime();
   const appLock = useAppLockSettings();
-  const dialog = useAppDialog();
+  const alert = useAppDialog();
   const servers = useSyncExternalStore(
     runtime.savedServers.subscribe,
     runtime.savedServers.snapshot,
@@ -87,26 +84,22 @@ export function SettingsScreen({
       return;
     }
     const server = servers.value.find((candidate) => candidate.id === parsedId);
-    dialog.alert(
-      "Delete server?",
-      `Remove ${server?.displayName ?? "this server"} from this device?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          onPress: () => {
-            startTransition(async () => {
-              try {
-                await runtime.deleteSavedServer(parsedId);
-              } catch {
-                setError("Could not delete this saved server.");
-              }
-            });
-          },
-          style: "destructive",
-          text: "Delete",
+    alert("Delete server?", `Remove ${server?.displayName ?? "this server"} from this device?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        onPress: () => {
+          startTransition(async () => {
+            try {
+              await runtime.deleteSavedServer(parsedId);
+            } catch {
+              setError("Could not delete this saved server.");
+            }
+          });
         },
-      ],
-    );
+        style: "destructive",
+        text: "Delete",
+      },
+    ]);
   });
   return (
     <V2PresentationProvider>

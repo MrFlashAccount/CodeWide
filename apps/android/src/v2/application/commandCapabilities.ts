@@ -138,9 +138,10 @@ export class CommandCapabilities {
     let status: V2OperationStatus | undefined;
     try {
       ({ session } = await this.#sessions.open(correlation.savedServerId));
-      status = (await session.operations()).find(
-        ({ operationId }) => operationId === correlation.operationId,
-      );
+      status = (await session.operations()).find((value) => {
+        const { operationId } = value;
+        return operationId === correlation.operationId;
+      });
     } catch {
       return durableUnsettled(correlation);
     }

@@ -11,5 +11,6 @@ export function createSavedServerRepository(): SavedServerRepository {
     reconnect: () => undefined,
     setEnabled: () => Promise.reject(new Error("Saved servers are available on Android only")),
     subscribe: () => () => undefined,
+    update: () => Promise.reject(new Error("Saved servers are available on Android only")),
   };
 }
