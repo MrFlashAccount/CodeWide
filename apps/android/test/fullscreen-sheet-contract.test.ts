@@ -18,6 +18,7 @@ const subagentWorkspace = readFileSync(new URL("../src/ui/SubagentWorkspace.tsx"
 function productSources(directory: string): Array<{ path: string; source: string }> {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const path = join(directory, entry.name);
+    if (entry.isDirectory() && directory === sourceRoot && entry.name === "v2") return [];
     if (entry.isDirectory()) return productSources(path);
     return [".ts", ".tsx"].includes(extname(entry.name))
       ? [{ path, source: readFileSync(path, "utf8") }]

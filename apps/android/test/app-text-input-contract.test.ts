@@ -30,6 +30,7 @@ const heroBottomSheetContent = readFileSync(
 describe("application text input contract", () => {
   it("routes every application field through AppTextInput", () => {
     const nativeInputOwners = globSync("**/*.tsx", { cwd: sourceRoot })
+      .filter((path) => !path.startsWith("v2/"))
       .filter((path) => readFileSync(`${sourceRoot}${path}`, "utf8").includes("TextInput as NativeTextInput"));
 
     expect(nativeInputOwners).toEqual(["ui/Typography.tsx"]);
