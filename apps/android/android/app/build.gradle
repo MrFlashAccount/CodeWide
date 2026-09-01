@@ -12,8 +12,8 @@ def releaseKeyAlias = System.getenv("CODEWIDE_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
 def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL") ?: "https://updates.example.invalid/api/updates"
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
-def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "111").toInteger()
-def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.98"
+def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "112").toInteger()
+def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.99"
 def nativeCodeAssetsDir = file("$buildDir/generated/nativeCodeAssets")
 def textMateGrammarDir = file("$projectRoot/node_modules/tm-grammars/grammars")
 def nativeCodeLanguageManifest = file("$projectRoot/src/rendering/native-code-languages.json")
