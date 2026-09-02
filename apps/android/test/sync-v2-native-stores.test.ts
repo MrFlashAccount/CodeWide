@@ -131,6 +131,39 @@ describe("native Sync V2 durable stores", () => {
     );
   });
 
+  it("does not publish projections persisted with the previous payload schema", async () => {
+    const database = memoryDatabase();
+    await database.execute(
+      "CREATE TABLE codewide_sync_v2_projection_by_saved_server (saved_server_id TEXT NOT NULL, generation_id TEXT NOT NULL, epoch_id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(saved_server_id, generation_id))",
+    );
+    await database.execute(
+      "CREATE TABLE codewide_sync_v2_active_by_saved_server (saved_server_id TEXT PRIMARY KEY NOT NULL, generation_id TEXT NOT NULL)",
+    );
+    await database.execute(
+      "INSERT INTO codewide_sync_v2_projection_by_saved_server(saved_server_id, generation_id, epoch_id, payload) VALUES (?, ?, ?, ?)",
+      [
+        savedServerA,
+        "legacy-generation",
+        "legacy-epoch",
+        JSON.stringify({
+          catalog: [{ coverage: "current", thread: { id: "legacy-thread" } }],
+          epochId: "legacy-epoch",
+          generationId: "legacy-generation",
+        }),
+      ],
+    );
+    await database.execute(
+      "INSERT INTO codewide_sync_v2_active_by_saved_server(saved_server_id, generation_id) VALUES (?, ?)",
+      [savedServerA, "legacy-generation"],
+    );
+
+    const store = createNativeSyncV2ProjectionStoreWithDatabase(database);
+
+    expect(await store.active(savedServerA)).toBeNull();
+    expect(await store.retained(savedServerA)).toBeNull();
+    expect(await store.hasSavedServerData(savedServerA)).toBe(false);
+  });
+
   it("publishes complete content-free native store observations", async () => {
     const database = memoryDatabase();
     const projections = createNativeSyncV2ProjectionStoreWithDatabase(database);
@@ -221,7 +254,7 @@ describe("native Sync V2 durable stores", () => {
       entered = resolve;
     });
     const database = memoryDatabase(async (sql) => {
-      if (sql.startsWith("INSERT INTO codewide_sync_v2_projection_by_saved_server")) {
+      if (sql.startsWith("INSERT INTO codewide_sync_v2_projection_v2_by_saved_server")) {
         entered();
         await blocked;
       }
@@ -375,7 +408,7 @@ describe("native Sync V2 durable stores", () => {
       if (
         failProjectionPurge &&
         sql.startsWith(
-          "DELETE FROM codewide_sync_v2_projection_by_saved_server WHERE saved_server_id",
+          "DELETE FROM codewide_sync_v2_projection_v2_by_saved_server WHERE saved_server_id",
         )
       ) {
         failProjectionPurge = false;
@@ -473,6 +506,7 @@ function snapshot(epochId: string, threadId: string) {
           id: threadId,
           parentId: null,
           title: threadId,
+          preview: "",
           workspace: "/workspace",
           archived: false,
           state: "idle" as const,

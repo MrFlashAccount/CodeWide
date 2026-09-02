@@ -1,14 +1,6 @@
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-  SectionList,
-  type SectionListData,
-  type SectionListRenderItemInfo,
-  StyleSheet,
-  View,
-} from "react-native";
+import { LegendList, type LegendListRenderItemProps } from "@legendapp/list/react-native";
+import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing, touchTarget, typeScale, typeTracking } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
@@ -18,6 +10,7 @@ import {
   PresentationTextInput as TextInput,
   ProductText,
 } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 
 type ThreadListFilter = "all" | "approval" | "pinned" | "running" | "unread";
@@ -70,14 +63,17 @@ interface RenderableThreadListRow extends ThreadListRow {
   selected: boolean;
 }
 
-interface ThreadListSection {
-  data: RenderableThreadListRow[];
+interface ThreadListHeaderItem {
+  kind: "header";
   title: string;
 }
 
-interface ThreadSectionHeaderInfo {
-  section: SectionListData<RenderableThreadListRow, ThreadListSection>;
+interface ThreadListThreadItem {
+  kind: "thread";
+  row: RenderableThreadListRow;
 }
+
+type RenderableThreadListItem = ThreadListHeaderItem | ThreadListThreadItem;
 
 export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
   const { onChangeQuery, onOpen, query, rows, selectedId, showSections = true, voice } = props;
@@ -114,14 +110,7 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
     onOpen,
     selected: row.id === selectedId,
   }));
-  const pinnedRows = renderableRows.filter((row) => row.pinned === true);
-  const recentRows = renderableRows.filter((row) => row.pinned !== true);
-  const sections: ThreadListSection[] = showSections
-    ? [
-        ...(pinnedRows.length === 0 ? [] : [{ data: pinnedRows, title: "Pinned" }]),
-        ...(recentRows.length === 0 ? [] : [{ data: recentRows, title: "Recent" }]),
-      ]
-    : [{ data: renderableRows, title: "" }];
+  const listItems = buildThreadListItems(renderableRows, showSections);
 
   return (
     <View style={styles.root}>
@@ -156,7 +145,7 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
                 style={[styles.voiceButton, voice.disabled && styles.disabled]}
               >
                 {voicePending || voice.state === "starting" || voice.state === "finishing" ? (
-                  <ActivityIndicator color={colors.accent} size="small" />
+                  <ShimmerText style={styles.voiceProgress} text="Voice" />
                 ) : (
                   <PresentationIcon
                     color={voice.state === "recording" ? colors.red : colors.textMuted}
@@ -192,18 +181,25 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
           </Pressable>
         </ActionMenu>
       </View>
-      <SectionList<RenderableThreadListRow, ThreadListSection>
+      <LegendList
         contentContainerStyle={visibleRows.length === 0 ? styles.emptyList : styles.list}
-        sections={sections}
-        keyExtractor={threadKey}
+        data={listItems}
+        dataKey={showSections ? "thread-list:sectioned" : "thread-list:flat"}
+        drawDistance={320}
+        estimatedItemSize={64}
+        extraData={selectedId}
+        getItemType={threadListItemType}
+        itemsAreEqual={threadListItemsEqual}
+        keyExtractor={threadListKey}
+        keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
           <View style={styles.empty}>
             <PresentationIcon color={colors.textDim} name="chat" size={24} />
             <ProductText tone="muted">No threads found</ProductText>
           </View>
         }
-        renderItem={renderThread}
-        renderSectionHeader={renderSectionHeader}
+        recycleItems
+        renderItem={renderThreadListItem}
       />
     </View>
   );
@@ -228,19 +224,43 @@ function threadMatchesFilter(row: ThreadListRow, filter: ThreadListFilter): bool
   return true;
 }
 
-function renderThread(
-  row2: SectionListRenderItemInfo<RenderableThreadListRow, ThreadListSection>,
-): React.JSX.Element {
-  const { item } = row2;
-  return <ThreadRow onOpen={item.onOpen} row={item} selected={item.selected} />;
+function buildThreadListItems(
+  rows: RenderableThreadListRow[],
+  showSections: boolean,
+): RenderableThreadListItem[] {
+  const items: RenderableThreadListItem[] = [];
+  if (!showSections) {
+    for (const row of rows) items.push({ kind: "thread", row });
+    return items;
+  }
+
+  const pinnedRows = rows.filter((row) => row.pinned === true);
+  const recentRows = rows.filter((row) => row.pinned !== true);
+  appendThreadListSection(items, "Pinned", pinnedRows);
+  appendThreadListSection(items, "Recent", recentRows);
+  return items;
 }
 
-function renderSectionHeader(value: ThreadSectionHeaderInfo): React.JSX.Element | null {
-  const { section } = value;
-  if (section.title === "") return null;
+function appendThreadListSection(
+  items: RenderableThreadListItem[],
+  title: string,
+  rows: RenderableThreadListRow[],
+): void {
+  if (rows.length === 0) return;
+  items.push({ kind: "header", title });
+  for (const row of rows) items.push({ kind: "thread", row });
+}
+
+function renderThreadListItem(
+  value: LegendListRenderItemProps<RenderableThreadListItem>,
+): React.JSX.Element {
+  const { item } = value;
+  if (item.kind === "thread") {
+    return <ThreadRow onOpen={item.row.onOpen} row={item.row} selected={item.row.selected} />;
+  }
   return (
     <ProductText style={styles.section} tone="muted" weight="semibold">
-      {section.title}
+      {item.title}
     </ProductText>
   );
 }
@@ -263,17 +283,19 @@ function ThreadRow(props: ThreadRowProps): React.JSX.Element {
           {row.emoji === undefined ? null : (
             <ProductText style={styles.emoji}>{row.emoji}</ProductText>
           )}
-          {active || attention ? (
-            <PresentationIcon
-              color={active ? colors.amber : colors.red}
-              name={active ? "flash" : "alert"}
-              size={14}
-            />
-          ) : null}
+          {attention ? <PresentationIcon color={colors.red} name="alert" size={14} /> : null}
           <View style={styles.titleSlot}>
-            <ProductText numberOfLines={1} style={styles.title} weight="semibold">
-              {row.title}
-            </ProductText>
+            {active ? (
+              <ShimmerText
+                containerStyle={styles.titleShimmer}
+                style={styles.title}
+                text={row.title}
+              />
+            ) : (
+              <ProductText numberOfLines={1} style={styles.title} weight="semibold">
+                {row.title}
+              </ProductText>
+            )}
           </View>
           <View style={styles.threadMeta}>
             <View style={styles.unreadSlot}>
@@ -309,8 +331,39 @@ function filterButtonStyle(state: PressableStateCallbackType) {
   return [styles.filterButton, pressed && styles.pressed];
 }
 
-function threadKey(row: ThreadListRow): string {
-  return row.id;
+function threadListKey(item: RenderableThreadListItem): string {
+  return item.kind === "header" ? `header:${item.title}` : item.row.id;
+}
+
+function threadListItemType(item: RenderableThreadListItem): RenderableThreadListItem["kind"] {
+  return item.kind;
+}
+
+function threadListItemsEqual(
+  left: RenderableThreadListItem,
+  right: RenderableThreadListItem,
+): boolean {
+  if (left === right) return true;
+  if (left.kind === "header") return right.kind === "header" && left.title === right.title;
+  if (right.kind === "header") return false;
+  return threadRowsEqual(left.row, right.row);
+}
+
+function threadRowsEqual(left: RenderableThreadListRow, right: RenderableThreadListRow): boolean {
+  return (
+    left.id === right.id &&
+    left.archived === right.archived &&
+    left.emoji === right.emoji &&
+    left.onOpen === right.onOpen &&
+    left.pinned === right.pinned &&
+    left.preview === right.preview &&
+    left.retained === right.retained &&
+    left.selected === right.selected &&
+    left.state === right.state &&
+    left.title === right.title &&
+    left.unread === right.unread &&
+    left.updatedAt === right.updatedAt
+  );
 }
 
 function threadStateLabel(state: string, retained: boolean): string {
@@ -411,6 +464,7 @@ const styles = StyleSheet.create({
   title: { flexShrink: 1, ...typeScale.body, maxWidth: "100%", minWidth: 0 },
   titleRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minWidth: 0 },
   titleSlot: { alignItems: "flex-start", flex: 1, minWidth: 0 },
+  titleShimmer: { alignSelf: "stretch" },
   unreadDot: { backgroundColor: colors.accent, borderRadius: 4, height: 7, width: 7 },
   unreadSlot: {
     alignItems: "center",
@@ -430,4 +484,5 @@ const styles = StyleSheet.create({
     width: 40,
   },
   voiceSearchInput: { paddingRight: touchTarget - spacing.xxs },
+  voiceProgress: { color: colors.accent, ...typeScale.caption },
 });

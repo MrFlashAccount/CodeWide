@@ -1,16 +1,10 @@
 import type { ReactNode } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-  StyleSheet,
-  Switch,
-  View,
-} from "react-native";
+import { Pressable, type PressableStateCallbackType, StyleSheet, Switch, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+import { ShimmerText } from "../text/ShimmerText";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 import {
   PresentationSheetScrollView,
@@ -112,7 +106,7 @@ export function ConnectionSettingsView(props: ConnectionSettingsViewProps): Reac
             icon="fingerprint"
             title="Biometric app lock"
           >
-            {appLockBusy ? <ActivityIndicator color={colors.textMuted} size="small" /> : null}
+            {appLockBusy ? <ShimmerText style={styles.stateText} text="Updating" /> : null}
             <Switch
               accessibilityLabel="Biometric app lock"
               disabled={appLockBusy}
@@ -212,13 +206,18 @@ function SettingsServerRow(props: SettingsServerRowProps): React.JSX.Element {
           </ProductText>
           <View style={styles.stateRow}>
             {row.pending === true ? (
-              <ActivityIndicator color={stateColor(row.state)} size={11} />
+              <ShimmerText
+                style={[styles.stateText, { color: stateColor(row.state) }]}
+                text={stateLabel(row.state)}
+              />
             ) : (
-              <View style={[styles.stateDot, { backgroundColor: stateColor(row.state) }]} />
+              <>
+                <View style={[styles.stateDot, { backgroundColor: stateColor(row.state) }]} />
+                <ProductText style={[styles.stateText, { color: stateColor(row.state) }]}>
+                  {stateLabel(row.state)}
+                </ProductText>
+              </>
             )}
-            <ProductText style={[styles.stateText, { color: stateColor(row.state) }]}>
-              {stateLabel(row.state)}
-            </ProductText>
           </View>
         </View>
         <Switch

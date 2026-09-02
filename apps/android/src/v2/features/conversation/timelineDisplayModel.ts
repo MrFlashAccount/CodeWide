@@ -1,4 +1,4 @@
-import type { V2Item, V2ThreadWindow } from "@codewide/sync-client/v2";
+import type { V2Item, V2ThreadWindow, V2TurnView } from "@codewide/sync-client/v2";
 
 import type {
   TimelineDisplayActivity,
@@ -6,7 +6,11 @@ import type {
 } from "../../presentation/conversation/TimelineView";
 
 export function timelineDisplayModel(window: V2ThreadWindow | null): TimelineDisplayTurn[] {
-  return (window?.turns ?? []).map((turn) => {
+  return timelineTurnsDisplayModel(window?.turns ?? []);
+}
+
+export function timelineTurnsDisplayModel(turns: V2TurnView[]): TimelineDisplayTurn[] {
+  return turns.map((turn) => {
     const activities = turn.items.flatMap(activityDisplayModel);
     return {
       activityCount: turn.activity?.count ?? activities.length,
@@ -26,7 +30,7 @@ export function timelineDisplayModel(window: V2ThreadWindow | null): TimelineDis
   });
 }
 
-function activityDisplayModel(item: V2Item): TimelineDisplayActivity[] {
+export function activityDisplayModel(item: V2Item): TimelineDisplayActivity[] {
   if (item.kind === "userText" || item.kind === "assistantText") return [];
   if (item.kind === "reasoning") {
     return [{ detail: item.summary, id: item.id, label: "Thinking" }];

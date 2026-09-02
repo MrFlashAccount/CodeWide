@@ -9,6 +9,7 @@ import type {
   V2Query,
   V2QueryResult,
 } from "./operations";
+import type { V2ProjectionChange } from "./model";
 import type { V2OperationStore } from "./operation-store";
 import type { V2ProjectionStore, V2ProjectionViews, V2StoreUnsubscribe } from "./projection";
 import type { SyncV2TransportLease, V2SocketLike } from "./transport";
@@ -22,6 +23,7 @@ import {
   pendingPromise,
   sameIntent,
   settleRequest,
+  SyncV2RequestError,
   SyncV2CommandDurableUnsettledError,
   SyncV2CommandNotCreatedError,
   type Pending,
@@ -81,9 +83,11 @@ export class SyncV2Session {
   readonly #reconnectDelayMs: number;
   readonly #queries = new Map<string, Pending<V2QueryResult>>();
   readonly #actions = new Map<string, Pending<V2ActionResult>>();
+  readonly #threadWatches = new Map<string, Pending<void>>();
   readonly #commands = new Map<string, Pending<V2CommandTerminalFrame>>();
   readonly #recoveringOperations = new Set<string>();
   readonly #observers = new Set<() => void>();
+  readonly #changeObservers = new Set<(change: V2ProjectionChange) => void>();
   #socket: V2SocketLike | undefined;
   #phase: "offline" | "waitingOpen" | "initializing" | "awaitingCommit" | "draining" | "live" =
     "offline";
@@ -152,6 +156,14 @@ export class SyncV2Session {
     this.#observers.add(listener);
     return () => {
       this.#observers.delete(listener);
+    };
+  }
+
+  /** Observes accepted semantic deltas without turning every publication into a refetch. */
+  subscribeChange(listener: (change: V2ProjectionChange) => void): V2StoreUnsubscribe {
+    this.#changeObservers.add(listener);
+    return () => {
+      this.#changeObservers.delete(listener);
     };
   }
 
@@ -255,6 +267,41 @@ export class SyncV2Session {
       throw cause;
     }
     return await promise;
+  }
+
+  /** Changes the live thread subscription without replacing the transport epoch. */
+  async watchThread(threadId: string, turnLimit: number): Promise<void> {
+    this.#intent = validateIntent({
+      catalog: this.#intent.catalog,
+      currentThread: { threadId, turnLimit },
+    });
+    await this.#whenLive();
+    const requestId = this.#requestId();
+    const frame = validateV2ClientFrame({ type: "threadWatch", requestId, threadId, turnLimit });
+    const promise = pendingPromise(this.#threadWatches, requestId, "threadWatch");
+    try {
+      this.#send(frame);
+    } catch (cause: unknown) {
+      this.#threadWatches.delete(requestId);
+      throw cause;
+    }
+    await promise;
+  }
+
+  async #whenLive(): Promise<void> {
+    if (this.#stopped) throw new Error("Sync V2 connection is stopped");
+    if (this.#connectionState === "live" && this.#phase === "live") return;
+    await new Promise<void>((resolve, reject) => {
+      const unsubscribe = this.subscribe(() => {
+        if (this.#connectionState === "live" && this.#phase === "live") {
+          unsubscribe();
+          resolve();
+        } else if (this.#stopped) {
+          unsubscribe();
+          reject(new Error("Sync V2 connection stopped before thread watch"));
+        }
+      });
+    });
   }
 
   async command(operationId: string, command: V2Command): Promise<V2CommandTerminalFrame> {
@@ -403,6 +450,21 @@ export class SyncV2Session {
         .catch(() => this.#protocolFailure("command_lifecycle_failed"));
       return;
     }
+    if (frame.type === "threadWatched") {
+      const pending = this.#threadWatches.get(frame.requestId);
+      if (pending === undefined) return;
+      if (frame.epochId !== this.#epochId) return this.#protocolFailure("foreign_thread_watch");
+      this.#threadWatches.delete(frame.requestId);
+      void this.#applyChain.then(() => pending.resolve()).catch(pending.reject);
+      return;
+    }
+    if (frame.type === "threadWatchFailed") {
+      const pending = this.#threadWatches.get(frame.requestId);
+      if (pending === undefined) return;
+      this.#threadWatches.delete(frame.requestId);
+      pending.reject(new SyncV2RequestError(frame.error));
+      return;
+    }
     if (frame.type === "queryCompleted" || frame.type === "queryFailed")
       return settleRequest(this.#queries, frame);
     if (frame.type === "actionCompleted" || frame.type === "actionFailed")
@@ -467,14 +529,15 @@ export class SyncV2Session {
       return this.#protocolFailure("invalid_change_watermark");
     this.#watermark = frame.watermark;
     this.#applyChain = this.#applyChain
-      .then(() =>
-        this.#projectionStore.applyChange(
+      .then(async () => {
+        await this.#projectionStore.applyChange(
           this.#savedServerId,
           frame.epochId,
           frame.watermark,
           frame.change,
-        ),
-      )
+        );
+        this.#publishChange(frame.change);
+      })
       .catch(() => this.#projectionFailure(frame.epochId));
   }
 
@@ -724,10 +787,15 @@ export class SyncV2Session {
 
   #rejectEphemeral(message: string): void {
     const error = new Error(message);
-    for (const pending of [...this.#queries.values(), ...this.#actions.values()])
+    for (const pending of [
+      ...this.#queries.values(),
+      ...this.#actions.values(),
+      ...this.#threadWatches.values(),
+    ])
       pending.reject(error);
     this.#queries.clear();
     this.#actions.clear();
+    this.#threadWatches.clear();
   }
 
   #rejectDurableCommands(): void {
@@ -778,6 +846,16 @@ export class SyncV2Session {
         observer();
       } catch {
         // Observer failures are isolated from protocol and durable state changes.
+      }
+    }
+  }
+
+  #publishChange(change: V2ProjectionChange): void {
+    for (const listener of this.#changeObservers) {
+      try {
+        listener(change);
+      } catch {
+        // Semantic invalidation observers cannot interrupt the projection owner.
       }
     }
   }

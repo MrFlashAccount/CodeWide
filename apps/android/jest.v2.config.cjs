@@ -7,6 +7,8 @@ module.exports = {
     "^@expo/vector-icons/.*$": "<rootDir>/test/mocks/ExpoVectorIcons.tsx",
     "^expo-clipboard$": "<rootDir>/test/mocks/ExpoClipboard.ts",
     "^expo-haptics$": "<rootDir>/test/mocks/ExpoHaptics.ts",
+    "^@legendapp/list/react-native$": "<rootDir>/test/mocks/LegendNativeList.tsx",
+    "^@legendapp/list/keyboard$": "<rootDir>/test/mocks/LegendKeyboardList.tsx",
     "^.*/rendering/RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",
     "^.*/surfaces/PresentationSheetView$": "<rootDir>/test/mocks/PresentationSheetView.tsx",
     "^.*/ui/ActionMenu$": "<rootDir>/test/mocks/ActionMenu.tsx",

@@ -1,12 +1,12 @@
 import { router } from "expo-router";
 import { useState, useSyncExternalStore } from "react";
-import { ActivityIndicator } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import { qualifiedThread, type QualifiedThread } from "../../domain/qualifiedThread";
 import { threadId } from "../../domain/ids";
 import { WorkspaceView } from "../../presentation/layouts/WorkspaceView";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 import {
   agentDestination,
@@ -33,7 +33,7 @@ export function AgentsScreen(props: AgentsScreenProps): React.JSX.Element {
   if (opened.value === null) {
     return (
       <WorkspaceView title="Agents">
-        <ActivityIndicator accessibilityLabel="Loading agents" />
+        <ShimmerText text="Loading agents…" />
       </WorkspaceView>
     );
   }

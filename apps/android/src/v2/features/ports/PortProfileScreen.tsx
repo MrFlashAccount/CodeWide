@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
 import type { V2PortDescriptor, V2TunnelCreateResponse } from "@codewide/sync-client/v2";
 
 import { useV2Runtime } from "../../V2Application";
@@ -11,6 +11,7 @@ import {
   PresentationTextInput as TextInput,
   ProductText as Text,
 } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 
@@ -42,7 +43,7 @@ export function PortProfileScreen(props: PortProfileScreenProps): React.JSX.Elem
     return (
       <View style={styles.center}>
         {snapshot.status === "loading" ? (
-          <ActivityIndicator accessibilityLabel="Scanning port" color={colors.textMuted} />
+          <ShimmerText style={styles.muted} text="Scanning port…" />
         ) : (
           <Text style={styles.muted}>This port is no longer available.</Text>
         )}
@@ -178,7 +179,7 @@ function PortForm(props: PortFormProps): React.JSX.Element {
             style={styles.primaryButton}
           >
             {pending ? (
-              <ActivityIndicator color={colors.onPrimary} />
+              <ShimmerText style={styles.primaryText} text="Adding" />
             ) : (
               <Text style={styles.primaryText}>{tunnel === null ? "Add" : "Active"}</Text>
             )}

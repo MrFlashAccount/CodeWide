@@ -2,7 +2,6 @@ import {
   V2_PROTOCOL_LIMITS,
   type SyncV2Session,
   type V2OperationStore,
-  type V2OpenIntent,
   type V2ProjectionStore,
 } from "@codewide/sync-client/v2";
 
@@ -44,10 +43,10 @@ export class SyncSessionRegistry {
       entry = this.#create(savedServerId, currentThreadId);
     } else if (currentThreadId !== null) {
       entry = entry.then(
-        (current) => {
+        async (current) => {
           if (current.currentThreadId === currentThreadId) return current;
+          await current.session.watchThread(currentThreadId, V2_PROTOCOL_LIMITS.turnWindowMax);
           current.currentThreadId = currentThreadId;
-          current.session.updateIntent(intent(currentThreadId));
           return current;
         },
         () => this.#create(savedServerId, currentThreadId),
@@ -110,14 +109,4 @@ export class SyncSessionRegistry {
       }),
     );
   }
-}
-
-function intent(currentThreadId: string | null): V2OpenIntent {
-  return {
-    catalog: { activeLimit: 40, archivedLimit: 40 },
-    currentThread:
-      currentThreadId === null
-        ? null
-        : { threadId: currentThreadId, turnLimit: V2_PROTOCOL_LIMITS.turnWindowMax },
-  };
 }

@@ -1,13 +1,8 @@
-import {
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 import { ProductText } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
 
 interface ActionButtonViewProps {
   disabled: boolean;
@@ -30,7 +25,7 @@ export function ActionButtonView(props: ActionButtonViewProps): React.JSX.Elemen
         style={disabled ? disabledButtonStyle : enabledButtonStyle}
       >
         {pending ? (
-          <ActivityIndicator accessibilityLabel={`${label} in progress`} color={colors.onPrimary} />
+          <ShimmerText style={styles.label} text={label} />
         ) : (
           <ProductText style={styles.label} weight="semibold">
             {label}

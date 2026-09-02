@@ -12,16 +12,21 @@ export function latestThreadMessagePreview(thread: Thread): string | null {
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
     const turn = thread.turns[turnIndex];
     if (turn === undefined) continue;
+    // Recovery/history can expose a metadata-only turn even though the
+    // generated protocol type requires `items`. Summary projection is a
+    // Conversation-derived view, so an incomplete envelope contributes no
+    // preview text and must not broaden the runtime protocol contract.
+    const items = Array.isArray((turn as unknown as { items?: unknown }).items) ? turn.items : [];
     if (turn.status !== "inProgress") {
-      for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
-        const item = turn.items[itemIndex];
+      for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+        const item = items[itemIndex];
         if (item?.type !== "agentMessage" || item.phase !== "final_answer") continue;
         const text = compactPreview(item.text);
         if (text !== "") return text;
       }
     }
-    for (let itemIndex = turn.items.length - 1; itemIndex >= 0; itemIndex -= 1) {
-      const item = turn.items[itemIndex];
+    for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+      const item = items[itemIndex];
       if (item?.type === "agentMessage") {
         if (turn.status === "inProgress" && item.phase === "final_answer") continue;
         const text = compactPreview(item.text);

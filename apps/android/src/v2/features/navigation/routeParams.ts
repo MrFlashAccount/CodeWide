@@ -1,25 +1,41 @@
 import { savedServerId, threadId, type SavedServerId, type ThreadId } from "../../domain/ids";
+import { qualifiedThread, type QualifiedThread } from "../../domain/qualifiedThread";
 
-export function requireSavedServerRouteParam(value: string | string[] | undefined): SavedServerId {
-  if (typeof value !== "string") {
-    throw new Error("SavedServerId route parameter is required");
-  }
-  return savedServerId(value);
+export type RawRouteParam = string | string[] | undefined;
+
+export interface SavedServerRouteParams {
+  savedServerId?: RawRouteParam;
 }
 
-export function requireThreadRouteParam(value: string | string[] | undefined): ThreadId {
-  if (typeof value !== "string") {
-    throw new Error("ThreadId route parameter is required");
-  }
-  return threadId(value);
+export interface ThreadRouteParams extends SavedServerRouteParams {
+  threadId?: RawRouteParam;
 }
 
-export function requireOpaqueRouteParam(
-  value: string | string[] | undefined,
-  label: string,
-): string {
-  if (typeof value !== "string" || value.length < 1 || value.length > 256) {
-    throw new Error(`${label} route parameter is required`);
+export function savedServerRouteParam(value: RawRouteParam): SavedServerId | null {
+  if (typeof value !== "string") return null;
+  try {
+    return savedServerId(value);
+  } catch {
+    return null;
   }
+}
+
+export function threadRouteParam(value: RawRouteParam): ThreadId | null {
+  if (typeof value !== "string") return null;
+  try {
+    return threadId(value);
+  } catch {
+    return null;
+  }
+}
+
+export function opaqueRouteParam(value: RawRouteParam): string | null {
+  if (typeof value !== "string" || value.length < 1 || value.length > 256) return null;
   return value;
+}
+
+export function qualifiedThreadRouteParams(params: ThreadRouteParams): QualifiedThread | null {
+  const server = savedServerRouteParam(params.savedServerId);
+  const thread = threadRouteParam(params.threadId);
+  return server === null || thread === null ? null : qualifiedThread(server, thread);
 }

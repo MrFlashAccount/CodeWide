@@ -1,23 +1,23 @@
-import { useLocalSearchParams } from "expo-router";
+import { Redirect, Stack, useLocalSearchParams } from "expo-router";
 
 import { ChangesScreen } from "../../../../../../src/v2/features/changes/ChangesScreen";
-import {
-  requireSavedServerRouteParam,
-  requireThreadRouteParam,
-} from "../../../../../../src/v2/features/navigation/routeParams";
-import { qualifiedThread } from "../../../../../../src/v2/domain/qualifiedThread";
+import { qualifiedThreadRouteParams } from "../../../../../../src/v2/features/navigation/routeParams";
+
+const SCREEN_OPTIONS = {
+  animation: "none",
+  contentStyle: { backgroundColor: "transparent" },
+  headerShown: false,
+  presentation: "transparentModal",
+} as const;
 
 export default function ThreadChangesRoute(): React.JSX.Element {
-  const params = useLocalSearchParams<{
-    savedServerId?: string | string[];
-    threadId?: string | string[];
-  }>();
+  const params = useLocalSearchParams<"/servers/[savedServerId]/threads/[threadId]/changes">();
+  const owner = qualifiedThreadRouteParams(params);
+  if (owner === null) return <Redirect href="/servers" />;
   return (
-    <ChangesScreen
-      owner={qualifiedThread(
-        requireSavedServerRouteParam(params.savedServerId),
-        requireThreadRouteParam(params.threadId),
-      )}
-    />
+    <>
+      <Stack.Screen options={SCREEN_OPTIONS} />
+      <ChangesScreen owner={owner} />
+    </>
   );
 }

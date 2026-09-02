@@ -392,6 +392,10 @@ pub enum ProjectionChange {
         thread_id: Id,
         reason: RemovalReason,
     },
+    CurrentThreadReplaced {
+        current_thread: ThreadWindow,
+        pending_requests: Vec<PendingRequest>,
+    },
     TurnUpserted {
         turn: TurnView,
     },

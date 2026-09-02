@@ -36,6 +36,18 @@ try {
   reportGlobalError(error, "ota-prefetch", true);
 }
 
+const APPLICATION_BACKGROUND = "#101011";
+const ROOT_SCREEN_OPTIONS = {
+  contentStyle: { backgroundColor: APPLICATION_BACKGROUND },
+  headerShown: false,
+} as const;
+const V2_ROUTE_SCREEN_OPTIONS = { animation: "none" } as const;
+const V2_MODAL_SCREEN_OPTIONS = {
+  animation: "none",
+  contentStyle: { backgroundColor: "transparent" },
+  presentation: "transparentModal",
+} as const;
+
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   return (
     <RootFailure
@@ -94,7 +106,7 @@ function RootApplication() {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={styles.application}>
       <KeyboardProvider>
         <SafeAreaProvider>
           <HeroUIRoot>
@@ -104,7 +116,10 @@ function RootApplication() {
                 <V2Application
                   active={generation.status === "ready" && generation.generation === "v2"}
                 >
-                  <Stack screenOptions={{ headerShown: false }} />
+                  <Stack screenOptions={ROOT_SCREEN_OPTIONS}>
+                    <Stack.Screen name="(workspace)" options={V2_ROUTE_SCREEN_OPTIONS} />
+                    <Stack.Screen name="(modal)" options={V2_MODAL_SCREEN_OPTIONS} />
+                  </Stack>
                 </V2Application>
               </AppLockGate>
             </PerformanceExperimentProvider>
@@ -116,9 +131,10 @@ function RootApplication() {
 }
 
 const styles = StyleSheet.create({
+  application: { backgroundColor: APPLICATION_BACKGROUND, flex: 1 },
   boot: {
     alignItems: "center",
-    backgroundColor: "#101011",
+    backgroundColor: APPLICATION_BACKGROUND,
     flex: 1,
     gap: 12,
     justifyContent: "center",

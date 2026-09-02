@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { createContext, useContext, useRef, useState } from "react";
+import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { useEvent } from "../../../react/useEvent";
 import { colors, spacing, typeScale } from "../../theme";
@@ -9,7 +10,13 @@ import { Bubble, BubbleContent } from "../../rendering/Bubble";
 import { RichMarkdown } from "../../rendering/RichMarkdown";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { PresentationText as Text, ProductText } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
 import { MessageActionRailView } from "./MessageActionRailView";
+import { ThreadTimelineList } from "./threadTimelineList";
+
+interface TimelineRenderItem {
+  item: TimelineDisplayTurn;
+}
 
 export interface TimelineDisplayActivity {
   detail?: string;
@@ -50,6 +57,13 @@ export interface TimelineDisplayUsage {
 }
 
 interface TimelineViewProps {
+  canLoadNewer?: boolean;
+  canLoadOlder?: boolean;
+  onLoadNewer?(): Promise<void>;
+  onLoadOlder?(): Promise<void>;
+  onLoadActivity?(turnId: string): Promise<TimelineDisplayActivity[]>;
+  onSettleWindow?(direction: "newer" | "older"): void;
+  timelineKey?: string;
   turns: TimelineDisplayTurn[];
 }
 
@@ -57,31 +71,116 @@ interface TimelineTurnProps {
   turn: TimelineDisplayTurn;
 }
 
+type TimelineActivityLoader = ((turnId: string) => Promise<TimelineDisplayActivity[]>) | undefined;
+
+const TimelineActivityLoaderContext = createContext<TimelineActivityLoader>(undefined);
+
 export function TimelineView(props: TimelineViewProps): React.JSX.Element {
-  const { turns } = props;
-  if (turns.length === 0) {
-    return (
-      <View style={styles.empty}>
-        <PresentationIcon color={colors.textDim} name="sparkles" size={26} />
-        <ProductText style={styles.emptyTitle} weight="semibold">
-          Start by typing a message
-        </ProductText>
-      </View>
-    );
-  }
+  const {
+    canLoadNewer = false,
+    canLoadOlder = false,
+    onLoadNewer,
+    onLoadOlder,
+    onLoadActivity,
+    onSettleWindow,
+    timelineKey = "conversation",
+    turns,
+  } = props;
+  const dimensions = useWindowDimensions();
+  const insets = useContext(SafeAreaInsetsContext);
+  const edgeLockRef = useRef<"newer" | "older" | null>(null);
+  const loadOlder = useEvent(() => {
+    if (!canLoadOlder || onLoadOlder === undefined || edgeLockRef.current === "newer") return;
+    edgeLockRef.current = "older";
+    onLoadOlder().catch(() => undefined);
+  });
+  const loadNewer = useEvent(() => {
+    if (!canLoadNewer || onLoadNewer === undefined || edgeLockRef.current === "older") return;
+    edgeLockRef.current = "newer";
+    onLoadNewer().catch(() => undefined);
+  });
+  const beginGesture = useEvent(() => {
+    edgeLockRef.current = null;
+  });
+  const settleWindow = useEvent(() => {
+    const direction = edgeLockRef.current;
+    edgeLockRef.current = null;
+    if (direction !== null) onSettleWindow?.(direction);
+  });
   return (
-    <ScrollView contentContainerStyle={styles.list} style={styles.scroll}>
-      {turns.map((turn) => (
-        <TimelineTurn key={turn.id} turn={turn} />
-      ))}
-    </ScrollView>
+    <TimelineActivityLoaderContext.Provider value={onLoadActivity}>
+      <ThreadTimelineList
+        contentContainerStyle={styles.list}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        data={turns}
+        extraData={`${canLoadNewer}:${canLoadOlder}`}
+        followTail={!canLoadNewer}
+        keyExtractor={turnKey}
+        keyboardDismissMode="interactive"
+        keyboardLiftBehavior="whenAtEnd"
+        keyboardOffset={insets?.bottom ?? 0}
+        keyboardShouldPersistTaps="handled"
+        measurementRevision={`${dimensions.width}:${dimensions.height}:${dimensions.scale}:${dimensions.fontScale}`}
+        onEndReached={loadNewer}
+        onEndReachedThreshold={0.5}
+        onMomentumScrollEnd={settleWindow}
+        onScrollBeginDrag={beginGesture}
+        onScrollEndDrag={settleWindow}
+        onStartReached={loadOlder}
+        onStartReachedThreshold={0.5}
+        renderItem={renderTimelineItem}
+        renderRevision={timelineKey}
+        showsVerticalScrollIndicator={false}
+        style={styles.scroll}
+        testID="conversation-timeline"
+        ListEmptyComponent={TimelineEmptyView}
+      />
+    </TimelineActivityLoaderContext.Provider>
+  );
+}
+
+function renderTimelineItem(value: TimelineRenderItem): React.JSX.Element {
+  return <TimelineTurn turn={value.item} />;
+}
+
+function turnKey(turn: TimelineDisplayTurn): string {
+  return turn.id;
+}
+
+function TimelineEmptyView(): React.JSX.Element {
+  return (
+    <View style={styles.empty}>
+      <PresentationIcon color={colors.textDim} name="sparkles" size={26} />
+      <ProductText style={styles.emptyTitle} weight="semibold">
+        Start by typing a message
+      </ProductText>
+    </View>
   );
 }
 
 function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
   const { turn } = props;
+  const onLoadActivity = useContext(TimelineActivityLoaderContext);
   const [activityExpanded, setActivityExpanded] = useState(false);
-  const toggleActivity = useEvent(() => setActivityExpanded((current) => !current));
+  const [activities, setActivities] = useState(turn.activities);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const toggleActivity = useEvent(() => {
+    const expanding = !activityExpanded;
+    setActivityExpanded(expanding);
+    if (
+      !expanding ||
+      activityLoading ||
+      activities.length >= turn.activityCount ||
+      onLoadActivity === undefined
+    )
+      return;
+    setActivityLoading(true);
+    onLoadActivity(turn.id)
+      .then(setActivities)
+      .catch(() => undefined)
+      .finally(() => setActivityLoading(false));
+  });
   const userText = turn.userText.join("\n\n");
   const assistantText = turn.assistantText.join("\n\n");
   const sentAt = clockLabel(turn.createdAt);
@@ -104,19 +203,24 @@ function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
       )}
       {turn.lifecycle.length === 0 ? null : (
         <View style={styles.lifecycleList}>
-          {turn.lifecycle.map((row) => (
+          {turn.lifecycle.map((row, index) => (
             <View key={row.id} style={styles.lifecycleRow}>
-              <View style={styles.lifecycleIcon}>
-                <PresentationIcon color={colors.textMuted} name="checkCircle" size={14} />
-              </View>
-              <ProductText
-                numberOfLines={1}
-                style={styles.lifecycleText}
-                tone="muted"
-                weight="semibold"
-              >
-                {row.label}
-              </ProductText>
+              {isProgressState(turn.state) && index === turn.lifecycle.length - 1 ? (
+                <ShimmerText
+                  containerStyle={styles.lifecycleShimmer}
+                  style={styles.lifecycleText}
+                  text={row.label}
+                />
+              ) : (
+                <ProductText
+                  numberOfLines={1}
+                  style={styles.lifecycleText}
+                  tone="muted"
+                  weight="semibold"
+                >
+                  {row.label}
+                </ProductText>
+              )}
             </View>
           ))}
         </View>
@@ -136,14 +240,22 @@ function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
                     <View style={styles.activityIconSlot}>
                       <PresentationIcon color={colors.textMuted} name="construct" size={13} />
                     </View>
-                    <ProductText
-                      numberOfLines={1}
-                      style={styles.activityLabel}
-                      tone="muted"
-                      weight="semibold"
-                    >
-                      {activityLabel(turn.activityCount)}
-                    </ProductText>
+                    {isProgressState(turn.state) ? (
+                      <ShimmerText
+                        containerStyle={styles.activityLabelShimmer}
+                        style={styles.activityLabel}
+                        text={activityLabel(turn.activityCount)}
+                      />
+                    ) : (
+                      <ProductText
+                        numberOfLines={1}
+                        style={styles.activityLabel}
+                        tone="muted"
+                        weight="semibold"
+                      >
+                        {activityLabel(turn.activityCount)}
+                      </ProductText>
+                    )}
                     <View style={styles.activityChevronSlot}>
                       <PresentationIcon
                         color={colors.textDim}
@@ -154,15 +266,30 @@ function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
                   </Pressable>
                   {activityExpanded ? (
                     <View style={styles.activityList}>
-                      {turn.activities.map((row) => (
+                      {activityLoading ? (
+                        <ShimmerText
+                          containerStyle={styles.activityLoadingShimmer}
+                          style={styles.activityDetailTitle}
+                          text="Loading activity…"
+                        />
+                      ) : null}
+                      {activities.map((row) => (
                         <View key={row.id} style={styles.activityDetail}>
-                          <ProductText
-                            style={styles.activityDetailTitle}
-                            tone="muted"
-                            weight="semibold"
-                          >
-                            {row.label}
-                          </ProductText>
+                          {isProgressState(row.state) ? (
+                            <ShimmerText
+                              containerStyle={styles.activityLoadingShimmer}
+                              style={styles.activityDetailTitle}
+                              text={row.label}
+                            />
+                          ) : (
+                            <ProductText
+                              style={styles.activityDetailTitle}
+                              tone="muted"
+                              weight="semibold"
+                            >
+                              {row.label}
+                            </ProductText>
+                          )}
                           {row.detail === undefined || row.detail === "" ? null : (
                             <ProductText selectable style={styles.activityDetailText} tone="muted">
                               {row.detail}
@@ -189,8 +316,14 @@ function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
         </View>
       ) : null}
       <View testID="turn-footer" style={styles.turnFooter}>
-        <View style={[styles.statusDot, statusDotStyle(turn.state)]} />
-        <Text style={styles.turnMetaText}>{turnStateLabel(turn.state)}</Text>
+        {isProgressState(turn.state) ? (
+          <ShimmerText style={styles.turnMetaText} text={turnStateLabel(turn.state)} />
+        ) : (
+          <>
+            <View style={[styles.statusDot, statusDotStyle(turn.state)]} />
+            <Text style={styles.turnMetaText}>{turnStateLabel(turn.state)}</Text>
+          </>
+        )}
         {duration === null ? null : <Text style={styles.turnMetaText}>{duration}</Text>}
         {turn.usage === null ? null : (
           <View
@@ -260,6 +393,10 @@ function turnStateLabel(state: string): string {
   return "Stopped";
 }
 
+function isProgressState(state: string | undefined): boolean {
+  return state === "running" || state === "queued" || state === "pending";
+}
+
 const styles = StyleSheet.create({
   activity: { alignSelf: "flex-start", marginTop: spacing.optical, maxWidth: "100%" },
   activityChevronSlot: {
@@ -286,6 +423,8 @@ const styles = StyleSheet.create({
     width: 15,
   },
   activityLabel: { flexShrink: 1, ...typeScale.caption, minWidth: 0 },
+  activityLabelShimmer: { alignSelf: "center", flex: 1 },
+  activityLoadingShimmer: { alignSelf: "flex-start" },
   activityList: {
     gap: spacing.xs,
     maxWidth: "100%",
@@ -314,13 +453,6 @@ const styles = StyleSheet.create({
   agentPlaceholder: { ...typeScale.label },
   empty: { alignItems: "center", flex: 1, gap: spacing.sm, justifyContent: "center" },
   emptyTitle: { ...typeScale.title },
-  lifecycleIcon: {
-    alignItems: "center",
-    flexShrink: 0,
-    height: 18,
-    justifyContent: "center",
-    width: 16,
-  },
   lifecycleList: {
     alignSelf: "stretch",
     gap: spacing.xxs,
@@ -337,6 +469,7 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   lifecycleText: { flexShrink: 1, ...typeScale.label, minWidth: 0 },
+  lifecycleShimmer: { alignSelf: "flex-start" },
   list: {
     flexGrow: 1,
     justifyContent: "flex-end",

@@ -4,12 +4,23 @@ import { useEvent } from "../../../react/useEvent";
 import { colors, spacing, typeScale, typeWeight } from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 import { PresentationText as Text } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
+import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
+
+export interface ComposerContextMenu {
+  accessibilityLabel: string;
+  actions: readonly ActionMenuItem[];
+  menuWidth?: number;
+  onSelect(id: string): void;
+}
 
 export interface ComposerContextItem {
   disabled?: boolean;
   icon?: PresentationIconName;
   id: string;
   label: string;
+  loading?: boolean;
+  menu?: ComposerContextMenu;
 }
 
 interface ComposerContextStripViewProps {
@@ -42,18 +53,38 @@ export function ComposerContextStripView(props: ComposerContextStripViewProps): 
 function ComposerContextChip(props: ComposerContextChipProps): React.JSX.Element {
   const { item, onOpen } = props;
   const open = useEvent(() => onOpen(item.id));
-  return (
+  const select = useEvent((id: string): void => {
+    item.menu?.onSelect(id);
+  });
+  const chip = (
     <Pressable
-      accessibilityLabel={item.label}
+      accessibilityLabel={item.menu?.accessibilityLabel ?? item.label}
+      accessibilityRole="button"
+      accessibilityState={{ busy: item.loading === true, disabled: item.disabled === true }}
       disabled={item.disabled === true}
-      onPress={open}
+      onPress={item.menu === undefined ? open : undefined}
       style={[styles.chip, item.disabled === true && styles.disabled]}
     >
-      {item.icon === undefined ? null : (
+      {item.loading === true || item.icon === undefined ? null : (
         <PresentationIcon color={colors.textMuted} name={item.icon} size={15} />
       )}
-      <Text style={styles.label}>{item.label}</Text>
+      {item.loading === true ? (
+        <ShimmerText containerStyle={styles.labelShimmer} style={styles.label} text={item.label} />
+      ) : (
+        <Text style={styles.label}>{item.label}</Text>
+      )}
     </Pressable>
+  );
+  if (item.menu === undefined) return chip;
+  return (
+    <ActionMenu
+      accessibilityLabel={item.menu.accessibilityLabel}
+      actions={item.menu.actions}
+      {...(item.menu.menuWidth === undefined ? {} : { menuWidth: item.menu.menuWidth })}
+      onSelect={select}
+    >
+      {chip}
+    </ActionMenu>
   );
 }
 
@@ -64,6 +95,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceContainer,
     borderRadius: 12,
     flexDirection: "row",
+    flexShrink: 0,
     gap: spacing.xs,
     minHeight: 24,
     paddingHorizontal: spacing.xs,
@@ -83,5 +115,6 @@ const styles = StyleSheet.create({
     ...typeScale.caption,
     fontWeight: typeWeight.semibold,
   },
+  labelShimmer: { alignSelf: "center", flexShrink: 0 },
   root: { backgroundColor: colors.surface, flexGrow: 0, flexShrink: 0 },
 });

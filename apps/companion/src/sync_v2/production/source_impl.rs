@@ -97,6 +97,74 @@ impl SemanticSource for UpstreamSemanticSource {
         self.coordinator.remove(recipient_id);
     }
 
+    async fn watch_thread(
+        &self,
+        recipient_id: &Id,
+        current: &CurrentThreadIntent,
+        authorization: &AuthorizationContext,
+        context: &AuthenticatedContextKey,
+        generation: u64,
+    ) -> Result<WatchedThreadData, V2Error> {
+        require_scope(authorization, "threads.read")?;
+        ensure_generation(self, generation)?;
+        self.authorize_thread_access(authorization, context, &current.thread_id, generation)
+            .await?;
+        let previous = self
+            .coordinator
+            .recipient_intent(recipient_id)
+            .ok_or_else(|| V2Error::source_unavailable("sync recipient is unavailable"))?
+            .current_thread;
+        let changed = previous.as_ref() != Some(current);
+        if changed
+            && self
+                .coordinator
+                .current_thread_recipient_count(&current.thread_id, generation)
+                == 0
+        {
+            self.resume_thread(&current.thread_id).await?;
+        }
+        if changed {
+            self.coordinator
+                .set_current_thread(recipient_id, Some(current.clone()));
+        }
+        let watched = self
+            .watched_thread_data(current, authorization, context, generation)
+            .await;
+        if watched.is_err() && changed {
+            self.coordinator
+                .set_current_thread(recipient_id, previous.clone());
+            if self
+                .coordinator
+                .current_thread_recipient_count(&current.thread_id, generation)
+                == 0
+            {
+                let _ = self
+                    .rpc(
+                        "thread/unsubscribe",
+                        json!({"threadId": current.thread_id.as_str()}),
+                    )
+                    .await;
+            }
+        }
+        let watched = watched?;
+        if changed
+            && let Some(previous) = previous
+            && previous.thread_id != current.thread_id
+            && self
+                .coordinator
+                .current_thread_recipient_count(&previous.thread_id, generation)
+                == 0
+        {
+            let _ = self
+                .rpc(
+                    "thread/unsubscribe",
+                    json!({"threadId": previous.thread_id.as_str()}),
+                )
+                .await;
+        }
+        Ok(watched)
+    }
+
     async fn snapshot(
         &self,
         intent: &OpenIntent,
@@ -139,13 +207,32 @@ impl SemanticSource for UpstreamSemanticSource {
             } else if archived.iter().any(|candidate| candidate.id == thread.id) {
                 thread.archived = true;
             }
+            let page = self
+                .history_page(
+                    context,
+                    current.thread_id.clone(),
+                    None,
+                    HistoryDirection::Older,
+                    current.turn_limit,
+                    HistoryDetail::Summary,
+                )
+                .await?;
+            let QueryResult::HistoryPage {
+                turns,
+                older_cursor,
+                newer_cursor,
+                ..
+            } = page
+            else {
+                return Err(V2Error::source_unavailable(
+                    "history query returned the wrong result kind",
+                ));
+            };
             Some(ThreadWindow {
                 thread,
-                turns: self
-                    .latest_turn(&current.thread_id, current.turn_limit, HistoryDetail::Full)
-                    .await?,
-                older_cursor: None,
-                newer_cursor: None,
+                turns,
+                older_cursor,
+                newer_cursor,
             })
         } else {
             None
@@ -230,6 +317,52 @@ impl SemanticSource for UpstreamSemanticSource {
                     .await?;
                 self.history_page(context, thread_id, cursor, direction, limit, detail)
                     .await
+            }
+            Query::TurnItems {
+                thread_id,
+                turn_id,
+                cursor,
+                limit,
+            } => {
+                self.authorize_thread_access(authorization, context, &thread_id, generation)
+                    .await?;
+                let result = self
+                    .rpc(
+                        "thread/items/list",
+                        json!({
+                            "threadId": thread_id.as_str(),
+                            "turnId": turn_id.as_str(),
+                            "cursor": cursor,
+                            "limit": limit,
+                            "sortDirection": "asc"
+                        }),
+                    )
+                    .await?;
+                let entries = result
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| V2Error::source_unavailable("thread/items/list omitted data"))?;
+                if entries.len() > limit as usize {
+                    return Err(V2Error::source_unavailable(
+                        "turn item source exceeded record limit",
+                    ));
+                }
+                let items = entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.get("turnId").and_then(Value::as_str) == Some(turn_id.as_str())
+                    })
+                    .filter_map(|entry| entry.get("item").and_then(normalize::item))
+                    .collect();
+                Ok(QueryResult::TurnItems {
+                    thread_id,
+                    turn_id,
+                    items,
+                    next: result
+                        .get("nextCursor")
+                        .and_then(Value::as_str)
+                        .map(ToOwned::to_owned),
+                })
             }
             Query::ThreadResources { thread_id, scope } => {
                 require_scope(authorization, "threads.read")?;
@@ -389,6 +522,9 @@ impl SemanticSource for UpstreamSemanticSource {
                 if let Some(thread_id) = result_thread_id(&result) {
                     self.record_thread_access(context, thread_id, generation);
                 }
+                if let CommandResult::ThreadUpdate { thread } = &result {
+                    self.publish_thread_to_authorized_contexts(generation, thread);
+                }
                 CommandExecution::Completed(result)
             }
             Err(error) if error.code == ErrorCode::SourceUnavailable => {
@@ -484,6 +620,78 @@ fn require_source_array_limit(result: &Value, field: &str, limit: usize) -> Resu
 }
 
 impl UpstreamSemanticSource {
+    async fn resume_thread(&self, thread_id: &Id) -> Result<(), V2Error> {
+        let resumed = self
+            .rpc(
+                "thread/resume",
+                json!({"threadId": thread_id.as_str(), "excludeTurns": true}),
+            )
+            .await?;
+        if let Some(settings) = normalize::thread_summary_from_response(&resumed)?.settings {
+            let _ = self
+                .resumed_thread_settings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(thread_id.clone(), settings);
+        }
+        Ok(())
+    }
+
+    async fn watched_thread_data(
+        &self,
+        current: &CurrentThreadIntent,
+        authorization: &AuthorizationContext,
+        context: &AuthenticatedContextKey,
+        generation: u64,
+    ) -> Result<WatchedThreadData, V2Error> {
+        let thread = self
+            .authorize_thread_access(authorization, context, &current.thread_id, generation)
+            .await?;
+        let page = self
+            .history_page(
+                context,
+                current.thread_id.clone(),
+                None,
+                HistoryDirection::Older,
+                current.turn_limit,
+                HistoryDetail::Summary,
+            )
+            .await?;
+        let QueryResult::HistoryPage {
+            turns,
+            older_cursor,
+            newer_cursor,
+            ..
+        } = page
+        else {
+            return Err(V2Error::source_unavailable(
+                "history query returned the wrong result kind",
+            ));
+        };
+        let mut pending = self.pending.write().await;
+        let mut pending_requests = Vec::new();
+        for owned in pending.values_mut() {
+            if pending_thread_id(&owned.request) == Some(&current.thread_id) {
+                owned.delivered_to.insert(context.clone());
+                pending_requests.push(owned.request.clone());
+            }
+        }
+        if pending_requests.len() > MAX_PENDING_REQUESTS {
+            return Err(V2Error::source_unavailable(
+                "pending request limit exceeded",
+            ));
+        }
+        Ok(WatchedThreadData {
+            current_thread: ThreadWindow {
+                thread,
+                turns,
+                older_cursor,
+                newer_cursor,
+            },
+            pending_requests,
+        })
+    }
+
     async fn execute_inner(
         &self,
         operation_id: &OperationId,
@@ -511,11 +719,27 @@ impl UpstreamSemanticSource {
                 })
             }
             Command::ThreadUpdate { thread_id, change } => {
+                let updated_settings = match &change {
+                    ThreadUpdate::Settings { settings } => Some(settings.clone()),
+                    ThreadUpdate::Title { .. }
+                    | ThreadUpdate::Archive { .. }
+                    | ThreadUpdate::Goal { .. }
+                    | ThreadUpdate::Section { .. } => None,
+                };
                 let (method, params) = thread_update_rpc(&thread_id, change);
                 self.rpc(method, params).await?;
-                Ok(CommandResult::ThreadUpdate {
-                    thread: self.read_thread(&thread_id).await?,
-                })
+                if let Some(settings) = &updated_settings {
+                    let _ = self
+                        .resumed_thread_settings
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(thread_id.clone(), settings.clone());
+                }
+                let mut thread = self.read_thread(&thread_id).await?;
+                if let Some(settings) = updated_settings {
+                    thread.settings = Some(settings);
+                }
+                Ok(CommandResult::ThreadUpdate { thread })
             }
             Command::ThreadDelete { thread_id } => {
                 self.rpc("thread/delete", json!({"threadId": thread_id.as_str()}))

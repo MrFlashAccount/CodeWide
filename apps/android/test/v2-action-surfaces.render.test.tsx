@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { act, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 
+import type { V2Query, V2QueryResult } from "@codewide/sync-client/v2";
 import type { V2Runtime } from "../src/v2/application/v2Runtime";
 import { V2RuntimeProvider } from "../src/v2/application/react/V2RuntimeContext";
 import { CommandCorrelationResource } from "../src/v2/application/resources/commandCorrelationResource";
@@ -207,6 +208,80 @@ describe("V2 rendered action surfaces", () => {
     expect(screen.queryByLabelText("Ports: 2")).toBeNull();
   });
 
+  it("omits empty changes and attachments from the conversation context", () => {
+    renderConversation(
+      runtimeWith({
+        executeCorrelated: jest.fn(async () => durableSettlement()),
+        projection: conversationProjection(),
+      }),
+    );
+
+    expect(screen.queryByLabelText(/Changes/)).toBeNull();
+    expect(screen.queryByLabelText(/Attachments/)).toBeNull();
+  });
+
+  it("updates model and thinking through the V2 model chip", async () => {
+    const execute = jest.fn(async () => completedThreadUpdate());
+    renderConversation(
+      runtimeWith({
+        execute,
+        executeCorrelated: jest.fn(async () => durableSettlement()),
+        models: modelCatalog(),
+        projection: conversationProjection(),
+      }),
+    );
+
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high"));
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high: GPT-5.6 Terra"));
+
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledWith(serverId, {
+        change: {
+          kind: "settings",
+          settings: {
+            approvalPolicy: "never",
+            effort: "high",
+            model: "gpt-5.6-terra",
+            sandbox: "unrestricted",
+          },
+        },
+        kind: "thread.update",
+        threadId: conversationThreadId,
+      }),
+    );
+  });
+
+  it("updates access through the V2 permissions chip", async () => {
+    const execute = jest.fn(async () => completedThreadUpdate());
+    renderConversation(
+      runtimeWith({
+        execute,
+        executeCorrelated: jest.fn(async () => durableSettlement()),
+        models: modelCatalog(),
+        projection: conversationProjection(),
+      }),
+    );
+
+    fireEvent.press(screen.getByLabelText("Permissions: Full access"));
+    fireEvent.press(screen.getByLabelText("Permissions: Full access: Read only"));
+
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledWith(serverId, {
+        change: {
+          kind: "settings",
+          settings: {
+            approvalPolicy: "never",
+            effort: "high",
+            model: "gpt-5.6-sol",
+            sandbox: "readOnly",
+          },
+        },
+        kind: "thread.update",
+        threadId: conversationThreadId,
+      }),
+    );
+  });
+
   it("retains Composer input while pending and rejected, then clears it on terminal success", async () => {
     const first = deferred<boolean>();
     const onSubmit = jest
@@ -320,7 +395,9 @@ function correlationResource(listUnsettled: () => Promise<never[]>): CommandCorr
 
 function runtimeWith(input: {
   correlationResource?: CommandCorrelationResource;
+  execute?: (...args: never[]) => Promise<unknown>;
   executeCorrelated: (...args: never[]) => Promise<unknown>;
+  models?: Extract<V2QueryResult, { kind: "models.list" }>["models"];
   ports?: Array<{
     details: string;
     forwardingKey: string;
@@ -345,35 +422,70 @@ function runtimeWith(input: {
       if (onSettlement !== undefined) resource.attachSettlementObserver(onSettlement);
       return resource;
     },
-    commands: { executeCorrelated: input.executeCorrelated },
+    commands: {
+      execute: input.execute ?? (async () => completedThreadUpdate()),
+      executeCorrelated: input.executeCorrelated,
+    },
     now: () => Date.parse("2026-08-31T22:00:00Z"),
     ports: () => new ObservableResource({ ports: input.ports ?? [], scannedAt: 0 }),
     projection: () => input.projection,
-    query: projectQuery,
+    query: (_savedServerId: unknown, query: V2Query) => projectQuery(query, input.models),
+    queries: {
+      execute: async () => ({
+        kind: "history.page",
+        newerCursor: null,
+        olderCursor: null,
+        threadId: conversationThreadId,
+        turns: [],
+      }),
+    },
     savedServers,
   } as unknown as V2Runtime;
 }
 
-function projectQuery(): ObservableResource<unknown> {
+function projectQuery(
+  query: V2Query,
+  models: Extract<V2QueryResult, { kind: "models.list" }>["models"] = [],
+): ObservableResource<unknown> {
   const inner = new ObservableResource<unknown>(null);
   inner.publish({
     status: "ready",
-    value: {
-      kind: "projects.list",
-      projects: [
-        {
-          addedAt: "2026-08-31T00:00:00Z",
-          lastUsedAt: "2026-08-31T00:00:00Z",
-          name: "project",
-          path: "/workspace/project",
-          pinned: true,
-        },
-      ],
-    },
+    value: queryResult(query, models),
   });
   const outer = new ObservableResource<unknown>(null);
   outer.publish({ status: "ready", value: inner });
   return outer;
+}
+
+function queryResult(
+  query: V2Query,
+  models: Extract<V2QueryResult, { kind: "models.list" }>["models"],
+): V2QueryResult {
+  if (query.kind === "models.list") return { kind: "models.list", models };
+  if (query.kind === "accounts.list") {
+    return { activeProfileId: null, allExhausted: false, kind: "accounts.list", profiles: [] };
+  }
+  if (query.kind === "thread.resources") {
+    return {
+      attachments: [],
+      changes: [],
+      kind: "thread.resources",
+      revision: "resources:1",
+      threadId: query.threadId,
+    };
+  }
+  return {
+    kind: "projects.list",
+    projects: [
+      {
+        addedAt: "2026-08-31T00:00:00Z",
+        lastUsedAt: "2026-08-31T00:00:00Z",
+        name: "project",
+        path: "/workspace/project",
+        pinned: true,
+      },
+    ],
+  };
 }
 
 function correlationController(
@@ -470,7 +582,16 @@ function conversationProjection(): ObservableResource<unknown> {
         currentThread: {
           newerCursor: null,
           olderCursor: null,
-          thread: { id: "thread-a", title: "Conversation" },
+          thread: {
+            id: "thread-a",
+            settings: {
+              approvalPolicy: "never",
+              effort: "high",
+              model: "gpt-5.6-sol",
+              sandbox: "unrestricted",
+            },
+            title: "Conversation",
+          },
           turns: [],
         },
       },
@@ -483,6 +604,34 @@ function conversationProjection(): ObservableResource<unknown> {
   const outer = new ObservableResource<unknown>(null);
   outer.publish({ status: "ready", value: inner });
   return outer;
+}
+
+function modelCatalog(): Extract<V2QueryResult, { kind: "models.list" }>["models"] {
+  return [
+    {
+      defaultEffort: "high",
+      efforts: ["medium", "high", "xhigh"],
+      id: "gpt-5.6-sol",
+      label: "GPT-5.6 Sol",
+    },
+    {
+      defaultEffort: "medium",
+      efforts: ["low", "medium", "high"],
+      id: "gpt-5.6-terra",
+      label: "GPT-5.6 Terra",
+    },
+  ];
+}
+
+function completedThreadUpdate() {
+  return {
+    operationId: "operation-settings",
+    result: {
+      kind: "thread.update" as const,
+      thread: { id: conversationThreadId },
+    },
+    type: "commandCompleted" as const,
+  };
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {

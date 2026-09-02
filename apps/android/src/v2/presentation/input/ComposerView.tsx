@@ -1,17 +1,12 @@
 import { useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 import { useEvent } from "../../../react/useEvent";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { PresentationTextInput, ProductText } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
 
 interface ComposerViewProps {
   disabled: boolean;
@@ -97,10 +92,11 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
         <View style={styles.inputShell}>
           {voiceActive ? (
             <View accessibilityLabel="Voice recording" style={styles.voiceStatus}>
-              <ActivityIndicator color={colors.primary} size="small" />
-              <ProductText numberOfLines={1} style={styles.voiceLabel} tone="muted">
-                {voiceStatusLabel(voiceState, voiceMessage)}
-              </ProductText>
+              <ShimmerText
+                containerStyle={styles.voiceLabelShimmer}
+                style={styles.voiceLabel}
+                text={voiceStatusLabel(voiceState, voiceMessage)}
+              />
             </View>
           ) : (
             <PresentationTextInput
@@ -146,7 +142,7 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
             style={sendDisabled ? disabledSendStyle : enabledSendStyle}
           >
             {pending ? (
-              <ActivityIndicator color={colors.onPrimary} size="small" />
+              <ShimmerText style={styles.sendProgress} text="Send" />
             ) : (
               <PresentationIcon color={colors.onPrimary} name="send" size={21} />
             )}
@@ -259,7 +255,9 @@ const styles = StyleSheet.create({
     width: touchTarget,
   },
   sendPressed: { backgroundColor: colors.primaryPressed },
+  sendProgress: { color: colors.onPrimary, ...typeScale.caption },
   voiceLabel: { flex: 1, ...typeScale.body },
+  voiceLabelShimmer: { alignSelf: "stretch", flex: 1 },
   voiceStatus: {
     alignItems: "center",
     flex: 1,

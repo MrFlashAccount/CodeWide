@@ -21,7 +21,7 @@ describe("SyncSessionRegistry", () => {
       currentThreadId: string | null;
       reconnect: ReturnType<typeof vi.fn>;
       release: ReturnType<typeof vi.fn>;
-      updateIntent: ReturnType<typeof vi.fn>;
+      watchThread: ReturnType<typeof vi.fn>;
     }> = [];
     const createSession: NonNullable<ConstructorParameters<typeof SyncSessionRegistry>[2]> = async (
       _savedServerId,
@@ -31,16 +31,16 @@ describe("SyncSessionRegistry", () => {
     ) => {
       const reconnect = vi.fn();
       const release = vi.fn(async () => undefined);
-      const updateIntent = vi.fn();
+      const watchThread = vi.fn(async () => undefined);
       const session = {
         reconnect,
         snapshot: async () => EMPTY,
         start: vi.fn(),
         stop: vi.fn(),
         subscribe: () => () => undefined,
-        updateIntent,
+        watchThread,
       } as unknown as SyncV2Session;
-      created.push({ currentThreadId, reconnect, release, updateIntent });
+      created.push({ currentThreadId, reconnect, release, watchThread });
       return { release, session };
     };
     const registry = new SyncSessionRegistry(
@@ -54,19 +54,14 @@ describe("SyncSessionRegistry", () => {
     expect(firstThread).toBe(catalog);
     expect(await registry.open("saved-server")).toBe(catalog);
     expect(created.map(({ currentThreadId }) => currentThreadId)).toEqual([null]);
-    expect(created[0]!.updateIntent).toHaveBeenLastCalledWith({
-      catalog: { activeLimit: 40, archivedLimit: 40 },
-      currentThread: { threadId: "thread-1", turnLimit: 36 },
-    });
+    expect(created[0]!.watchThread).toHaveBeenLastCalledWith("thread-1", 36);
 
     const secondThread = await registry.open("saved-server", "thread-2");
     expect(secondThread).toBe(firstThread);
     expect(created).toHaveLength(1);
-    expect(created[0]!.updateIntent).toHaveBeenCalledTimes(2);
-    expect(created[0]!.updateIntent).toHaveBeenLastCalledWith({
-      catalog: { activeLimit: 40, archivedLimit: 40 },
-      currentThread: { threadId: "thread-2", turnLimit: 36 },
-    });
+    expect(created[0]!.watchThread).toHaveBeenCalledTimes(2);
+    expect(created[0]!.watchThread).toHaveBeenLastCalledWith("thread-2", 36);
+    expect(created[0]!.reconnect).not.toHaveBeenCalled();
     expect(created[0]!.release).not.toHaveBeenCalled();
 
     registry.reconnect("saved-server");

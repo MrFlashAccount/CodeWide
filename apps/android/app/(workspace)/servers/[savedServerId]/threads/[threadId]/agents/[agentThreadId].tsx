@@ -1,25 +1,15 @@
-import { useLocalSearchParams } from "expo-router";
+import { Redirect, useLocalSearchParams } from "expo-router";
 import { AgentThreadScreen } from "../../../../../../../src/v2/features/agents/AgentThreadScreen";
 import {
-  requireSavedServerRouteParam,
-  requireThreadRouteParam,
+  qualifiedThreadRouteParams,
+  threadRouteParam,
 } from "../../../../../../../src/v2/features/navigation/routeParams";
-import { qualifiedThread } from "../../../../../../../src/v2/domain/qualifiedThread";
 
 export default function AgentThreadRoute(): React.JSX.Element {
-  const params = useLocalSearchParams<{
-    agentThreadId?: string | string[];
-    savedServerId?: string | string[];
-    threadId?: string | string[];
-  }>();
-  const owner = qualifiedThread(
-    requireSavedServerRouteParam(params.savedServerId),
-    requireThreadRouteParam(params.threadId),
-  );
-  return (
-    <AgentThreadScreen
-      owner={owner}
-      selectedAgentThreadId={requireThreadRouteParam(params.agentThreadId)}
-    />
-  );
+  const params =
+    useLocalSearchParams<"/servers/[savedServerId]/threads/[threadId]/agents/[agentThreadId]">();
+  const owner = qualifiedThreadRouteParams(params);
+  const selectedAgentThreadId = threadRouteParam(params.agentThreadId);
+  if (owner === null || selectedAgentThreadId === null) return <Redirect href="/servers" />;
+  return <AgentThreadScreen owner={owner} selectedAgentThreadId={selectedAgentThreadId} />;
 }

@@ -1,6 +1,5 @@
 import { useState, useTransition } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   type PressableStateCallbackType,
   StyleSheet,
@@ -11,6 +10,7 @@ import {
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeTracking } from "../../theme";
 import { PresentationIcon } from "../icons/PresentationIcon";
+import { ShimmerText } from "../text/ShimmerText";
 import {
   PresentationSheetScrollView,
   PresentationSheetView,
@@ -84,7 +84,7 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
             {projects.filter((project) => project.pinned).length} pinned · {projects.length} total
           </ProductText>
         </View>
-        {pending ? <ActivityIndicator color={colors.accent} size="small" /> : null}
+        {pending ? <ShimmerText style={styles.pendingText} text="Opening…" /> : null}
         <Pressable
           accessibilityLabel="Close project picker"
           accessibilityRole="button"
@@ -240,6 +240,7 @@ const styles = StyleSheet.create({
   empty: { alignItems: "center", gap: spacing.xs, paddingVertical: spacing.xl },
   header: { alignItems: "center", flexDirection: "row", minHeight: 56 },
   headerCopy: { flex: 1, minWidth: 0 },
+  pendingText: { color: colors.accent, ...typeScale.caption },
   list: { flex: 1, minHeight: 0 },
   pressed: { opacity: 0.68 },
   row: {

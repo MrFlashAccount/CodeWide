@@ -1,15 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import type { V2PortDescriptor } from "@codewide/sync-client/v2";
 
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import {
+  PresentationSheetView,
+  type PresentationSheetContentProps,
+} from "../../presentation/surfaces/PresentationSheetView";
+import {
   ProductText as Text,
   PresentationTextInput as TextInput,
 } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 import {
   colors,
@@ -73,99 +78,120 @@ export function PortsScreen(props: PortsScreenProps): React.JSX.Element {
   const showActive = useEvent(() => setSegment("active"));
   const showAvailable = useEvent(() => setSegment("available"));
   const showExcluded = useEvent(() => setSegment("excluded"));
+  const close = useEvent(() => router.back());
+  const changeOpen = useEvent((open: boolean) => {
+    if (!open) close();
+  });
 
   return (
-    <View testID="v2-port-forwarding-manager" style={styles.root}>
-      <View style={styles.header}>
-        <View style={styles.titleBlock}>
-          <Text style={styles.title}>Ports</Text>
-          <Text numberOfLines={1} style={styles.subtitle}>
-            {serverName}
-          </Text>
-        </View>
-        <Pressable
-          accessibilityLabel="Refresh open ports"
-          accessibilityRole="button"
-          disabled={snapshot.status === "loading"}
-          onPress={refresh}
-          style={styles.iconButton}
-        >
-          {snapshot.status === "loading" ? (
-            <ActivityIndicator color={colors.textMuted} size="small" />
-          ) : (
+    <PresentationSheetView contentProps={PORTS_SHEET_PROPS} isOpen onOpenChange={changeOpen}>
+      <View testID="v2-port-forwarding-manager" style={styles.root}>
+        <View style={styles.header}>
+          <View style={styles.titleBlock}>
+            {snapshot.status === "loading" ? (
+              <ShimmerText style={styles.title} text="Ports" />
+            ) : (
+              <Text style={styles.title}>Ports</Text>
+            )}
+            <Text numberOfLines={1} style={styles.subtitle}>
+              {serverName}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityLabel="Refresh open ports"
+            accessibilityRole="button"
+            disabled={snapshot.status === "loading"}
+            onPress={refresh}
+            style={styles.iconButton}
+          >
             <Ionicons color={colors.textMuted} name="refresh" size={19} />
-          )}
-        </Pressable>
-      </View>
-      <View style={styles.filters}>
-        <View accessibilityRole="tablist" style={styles.segments}>
-          <SegmentButton
-            count={0}
-            label="Active"
-            onPress={showActive}
-            selected={segment === "active"}
-          />
-          <SegmentButton
-            count={snapshot.value.ports.length}
-            label="Available"
-            onPress={showAvailable}
-            selected={segment === "available"}
-          />
-          <SegmentButton
-            count={0}
-            label="Excluded"
-            onPress={showExcluded}
-            selected={segment === "excluded"}
-          />
+          </Pressable>
+          <Pressable accessibilityLabel="Close ports" onPress={close} style={styles.iconButton}>
+            <Ionicons color={colors.text} name="close" size={21} />
+          </Pressable>
         </View>
-        <View style={styles.searchField}>
-          <Ionicons color={colors.textDim} name="search" size={16} />
-          <TextInput
-            accessibilityLabel="Filter ports"
-            onChangeText={setQuery}
-            placeholder="Name, category or port"
-            placeholderTextColor={colors.textDim}
-            style={styles.searchInput}
-            value={query}
-          />
-          {query === "" ? null : (
-            <Pressable accessibilityLabel="Clear port filter" onPress={clear}>
-              <Ionicons color={colors.textDim} name="close-circle" size={16} />
-            </Pressable>
-          )}
+        <View style={styles.filters}>
+          <View accessibilityRole="tablist" style={styles.segments}>
+            <SegmentButton
+              count={0}
+              label="Active"
+              onPress={showActive}
+              selected={segment === "active"}
+            />
+            <SegmentButton
+              count={snapshot.value.ports.length}
+              label="Available"
+              onPress={showAvailable}
+              selected={segment === "available"}
+            />
+            <SegmentButton
+              count={0}
+              label="Excluded"
+              onPress={showExcluded}
+              selected={segment === "excluded"}
+            />
+          </View>
+          <View style={styles.searchField}>
+            <Ionicons color={colors.textDim} name="search" size={16} />
+            <TextInput
+              accessibilityLabel="Filter ports"
+              onChangeText={setQuery}
+              placeholder="Name, category or port"
+              placeholderTextColor={colors.textDim}
+              style={styles.searchInput}
+              value={query}
+            />
+            {query === "" ? null : (
+              <Pressable accessibilityLabel="Clear port filter" onPress={clear}>
+                <Ionicons color={colors.textDim} name="close-circle" size={16} />
+              </Pressable>
+            )}
+          </View>
         </View>
+        <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+          {segment !== "available" ? (
+            <EmptySegment segment={segment} />
+          ) : snapshot.status === "loading" && snapshot.value.ports.length === 0 ? (
+            <InfoRow
+              loading
+              subtitle="Reading localhost listeners"
+              title="Looking for open ports…"
+            />
+          ) : snapshot.status === "error" && snapshot.value.ports.length === 0 ? (
+            <InfoRow subtitle="Tap refresh to try again" title="Could not scan ports" />
+          ) : filtered.length === 0 ? (
+            <InfoRow
+              subtitle={
+                query === ""
+                  ? "No localhost listeners were discovered"
+                  : "Try another name, category or port"
+              }
+              title="No available ports"
+            />
+          ) : (
+            groupPorts(filtered).map((group) => (
+              <View key={group.name}>
+                <Text style={styles.sectionLabel}>{group.name}</Text>
+                {group.ports.map((port) => (
+                  <PortRow key={port.forwardingKey} port={port} savedServerId={savedServerId} />
+                ))}
+              </View>
+            ))
+          )}
+          {segment === "available" && query === "" ? <ManualPortRow /> : null}
+        </ScrollView>
       </View>
-      <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
-        {segment !== "available" ? (
-          <EmptySegment segment={segment} />
-        ) : snapshot.status === "loading" && snapshot.value.ports.length === 0 ? (
-          <InfoRow loading subtitle="Reading localhost listeners" title="Looking for open ports…" />
-        ) : snapshot.status === "error" && snapshot.value.ports.length === 0 ? (
-          <InfoRow subtitle="Tap refresh to try again" title="Could not scan ports" />
-        ) : filtered.length === 0 ? (
-          <InfoRow
-            subtitle={
-              query === ""
-                ? "No localhost listeners were discovered"
-                : "Try another name, category or port"
-            }
-            title="No available ports"
-          />
-        ) : (
-          groupPorts(filtered).map((group) => (
-            <View key={group.name}>
-              <Text style={styles.sectionLabel}>{group.name}</Text>
-              {group.ports.map((port) => (
-                <PortRow key={port.forwardingKey} port={port} savedServerId={savedServerId} />
-              ))}
-            </View>
-          ))
-        )}
-        {segment === "available" && query === "" ? <ManualPortRow /> : null}
-      </ScrollView>
-    </View>
+    </PresentationSheetView>
   );
 }
+
+const PORTS_SHEET_PROPS: PresentationSheetContentProps = {
+  contentContainerClassName: "h-full",
+  enableDynamicSizing: false,
+  enableOverDrag: false,
+  index: 0,
+  snapPoints: ["55%", "90%"],
+};
 
 function SegmentButton(props: SegmentButtonProps): React.JSX.Element {
   const { count, label, onPress, selected } = props;
@@ -244,20 +270,21 @@ function InfoRow(props: InfoRowProps): React.JSX.Element {
   const { loading = false, subtitle, title } = props;
   return (
     <View style={styles.serviceRow}>
-      <View style={styles.serviceIcon}>
-        <Ionicons
-          color={colors.textMuted}
-          name={loading ? "scan-outline" : "information-circle-outline"}
-          size={19}
-        />
-      </View>
+      {loading ? null : (
+        <View style={styles.serviceIcon}>
+          <Ionicons color={colors.textMuted} name="information-circle-outline" size={19} />
+        </View>
+      )}
       <View style={styles.rowText}>
-        <Text style={styles.rowTitle}>{title}</Text>
+        {loading ? (
+          <ShimmerText containerStyle={styles.rowShimmer} style={styles.rowTitle} text={title} />
+        ) : (
+          <Text style={styles.rowTitle}>{title}</Text>
+        )}
         <Text numberOfLines={2} style={styles.rowSubtitle}>
           {subtitle}
         </Text>
       </View>
-      {loading ? <ActivityIndicator color={colors.textDim} size="small" /> : null}
     </View>
   );
 }
@@ -326,6 +353,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   rowText: { flex: 1, minWidth: 0 },
+  rowShimmer: { alignSelf: "flex-start" },
   rowTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
   searchField: {
     alignItems: "center",

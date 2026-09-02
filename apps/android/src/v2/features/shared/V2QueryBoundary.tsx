@@ -1,11 +1,12 @@
 import type { V2Query, V2QueryResult } from "@codewide/sync-client/v2";
 import { useState, useSyncExternalStore, type ReactNode } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import type { QueryResource } from "../../application/resources/queryResource";
 import { WorkspaceView } from "../../presentation/layouts/WorkspaceView";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 
 interface V2QueryBoundaryProps {
   children(result: V2QueryResult, refresh: () => Promise<void>): ReactNode;
@@ -30,7 +31,7 @@ export function V2QueryBoundary(props: V2QueryBoundaryProps): React.JSX.Element 
   if (opened.value === null) {
     const loading = (
       <View style={styles.center}>
-        <ActivityIndicator accessibilityLabel={`Loading ${title}`} />
+        <ShimmerText text={`Loading ${title}…`} />
       </View>
     );
     return chrome === "workspace" ? (
@@ -57,7 +58,7 @@ function LoadedQuery(props: LoadedQueryProps): React.JSX.Element {
         </View>
       ) : (
         <View style={styles.center}>
-          <ActivityIndicator accessibilityLabel={`Reading ${title}`} />
+          <ShimmerText text={`Reading ${title}…`} />
         </View>
       )
     ) : (

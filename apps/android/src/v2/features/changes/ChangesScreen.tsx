@@ -1,11 +1,16 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState, useTransition } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import type { V2Query, V2QueryResult } from "@codewide/sync-client/v2";
 
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ProductText as Text } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
+import {
+  PresentationSheetView,
+  type PresentationSheetContentProps,
+} from "../../presentation/surfaces/PresentationSheetView";
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { V2QueryBoundary } from "../shared/V2QueryBoundary";
@@ -20,6 +25,7 @@ type Change = ResourcesResult["changes"][number];
 
 interface ChangesListProps {
   changes: Change[];
+  onClose(): void;
   onRefresh(): Promise<void>;
   onSelectScope(scope: ChangeScope): void;
   scope: ChangeScope;
@@ -53,43 +59,53 @@ export function ChangesScreen(props: ChangesScreenProps): React.JSX.Element {
   const { owner } = props;
   const [scope, setScope] = useState<ChangeScope>("session");
   const selectScope = useEvent((next: ChangeScope) => setScope(next));
+  const close = useEvent(() => router.back());
+  const changeOpen = useEvent((open: boolean) => {
+    if (!open) close();
+  });
   return (
-    <V2QueryBoundary
-      key={scope}
-      chrome="none"
-      query={{ kind: "thread.resources", scope, threadId: owner.threadId }}
-      savedServerId={owner.savedServerId}
-      title="Changes"
-    >
-      {(result, refresh) => {
-        if (result.kind !== "thread.resources") return null;
-        return (
-          <ChangesList
-            changes={result.changes}
-            onRefresh={refresh}
-            onSelectScope={selectScope}
-            scope={scope}
-          />
-        );
-      }}
-    </V2QueryBoundary>
+    <PresentationSheetView contentProps={RESOURCE_SHEET_PROPS} isOpen onOpenChange={changeOpen}>
+      <V2QueryBoundary
+        key={scope}
+        chrome="none"
+        query={{ kind: "thread.resources", scope, threadId: owner.threadId }}
+        savedServerId={owner.savedServerId}
+        title="Changes"
+      >
+        {(result, refresh) => {
+          if (result.kind !== "thread.resources") return null;
+          return (
+            <ChangesList
+              changes={result.changes}
+              onClose={close}
+              onRefresh={refresh}
+              onSelectScope={selectScope}
+              scope={scope}
+            />
+          );
+        }}
+      </V2QueryBoundary>
+    </PresentationSheetView>
   );
 }
 
 function ChangesList(props: ChangesListProps): React.JSX.Element {
-  const { changes, onRefresh, onSelectScope, scope } = props;
+  const { changes, onClose, onRefresh, onSelectScope, scope } = props;
   const [refreshing, startRefresh] = useTransition();
   const refresh = useEvent(() => startRefresh(() => onRefresh()));
-  const close = useEvent(() => router.back());
   return (
     <View style={styles.root}>
       <View style={styles.header}>
         <View style={styles.headerIconSlot}>
           <Ionicons color={colors.textMuted} name="git-compare-outline" size={20} />
         </View>
-        <Text numberOfLines={1} style={styles.title}>
-          Changes · {changes.length}
-        </Text>
+        {refreshing ? (
+          <ShimmerText style={styles.title} text={`Changes · ${changes.length}`} />
+        ) : (
+          <Text numberOfLines={1} style={styles.title}>
+            Changes · {changes.length}
+          </Text>
+        )}
         <View style={styles.flex} />
         <Pressable
           accessibilityLabel="Refresh changes"
@@ -97,13 +113,9 @@ function ChangesList(props: ChangesListProps): React.JSX.Element {
           onPress={refresh}
           style={styles.iconButton}
         >
-          {refreshing ? (
-            <ActivityIndicator color={colors.accent} size="small" />
-          ) : (
-            <Ionicons color={colors.text} name="refresh" size={20} />
-          )}
+          <Ionicons color={colors.text} name="refresh" size={20} />
         </Pressable>
-        <Pressable accessibilityLabel="Close changes" onPress={close} style={styles.iconButton}>
+        <Pressable accessibilityLabel="Close changes" onPress={onClose} style={styles.iconButton}>
           <Ionicons color={colors.text} name="close" size={21} />
         </Pressable>
       </View>
@@ -122,6 +134,14 @@ function ChangesList(props: ChangesListProps): React.JSX.Element {
     </View>
   );
 }
+
+const RESOURCE_SHEET_PROPS: PresentationSheetContentProps = {
+  contentContainerClassName: "h-full",
+  enableDynamicSizing: false,
+  enableOverDrag: false,
+  index: 0,
+  snapPoints: ["55%", "90%"],
+};
 
 function ScopePicker(props: ScopePickerProps): React.JSX.Element {
   const { onSelect, selected } = props;

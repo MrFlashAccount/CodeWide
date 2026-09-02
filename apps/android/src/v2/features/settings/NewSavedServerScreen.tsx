@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { type ComponentType, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import type {
   PairingPreview,
@@ -17,6 +17,7 @@ import {
   PresentationText as Text,
   PresentationTextInput as TextInput,
 } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { serverDestination } from "../navigation/routeDestinations";
@@ -488,12 +489,12 @@ function ConnectButton(props: ConnectButtonProps): React.JSX.Element {
       onPress={press}
       style={[styles.pairingPrimaryAction, saving && styles.disabled]}
     >
+      {saving ? null : <Ionicons color={colors.onPrimary} name="link" size={21} />}
       {saving ? (
-        <ActivityIndicator color={colors.onPrimary} size="small" />
+        <ShimmerText style={styles.pairingPrimaryText} text="Securing this device…" />
       ) : (
-        <Ionicons color={colors.onPrimary} name="link" size={21} />
+        <Text style={styles.pairingPrimaryText}>Connect</Text>
       )}
-      <Text style={styles.pairingPrimaryText}>{saving ? "Securing this device…" : "Connect"}</Text>
     </Pressable>
   );
 }

@@ -43,7 +43,8 @@ pub(super) fn query_scope(query: &Query) -> &'static str {
         Query::CapabilitiesRead
         | Query::ModelsList
         | Query::CatalogPage { .. }
-        | Query::HistoryPage { .. } => "threads.read",
+        | Query::HistoryPage { .. }
+        | Query::TurnItems { .. } => "threads.read",
         Query::ThreadResources { .. } | Query::ProjectsList | Query::WorkspaceInspect { .. } => {
             "files.download.workspace"
         }

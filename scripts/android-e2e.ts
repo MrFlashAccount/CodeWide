@@ -91,6 +91,7 @@ const {
   scrollAccessibilityIntoView,
   sendComposerMessage,
   waitForAccessibility,
+  waitForAccessibilityHidden,
   waitForAnyThreadRow,
   waitForApplicationReady,
   waitForConnectionReady,
@@ -160,12 +161,7 @@ async function main(): Promise<void> {
             reversePorts.push(port);
             return `http://127.0.0.1:${port}`;
           });
-      const companionDevicePort = await reverseHostPort(
-        device!,
-        REPO_ROOT,
-        companionPort,
-        18_765,
-      );
+      const companionDevicePort = await reverseHostPort(device!, REPO_ROOT, companionPort, 18_765);
       reversePorts.push(companionDevicePort);
       return { companionDevicePort, metroUrl };
     });
@@ -510,9 +506,38 @@ async function main(): Promise<void> {
       // instead of assuming any catalog position or title is unique.
       await openProjectedThreadContaining(driver!, v2Reply, threadId);
       await waitForAccessibility(driver!, "Message Codex");
-      await waitForAccessibility(driver!, "Full access");
-      await waitForAccessibility(driver!, "No changes");
-      await waitForAccessibility(driver!, "No attachments");
+      const initialPermissionsChip = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Permissions: Full access")',
+      );
+      await initialPermissionsChip.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      await waitForAccessibilityHidden(driver!, "No changes");
+      await waitForAccessibilityHidden(driver!, "No attachments");
+      const modelChip = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Model and thinking: ")',
+      );
+      await modelChip.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      await modelChip.click();
+      await waitForVisibleTextContaining(driver!, "GPT-5.6-Sol");
+      await driver!.back();
+      const permissionsChip = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Permissions: ")',
+      );
+      await permissionsChip.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      await permissionsChip.click();
+      await clickVisibleText(driver!, "Workspace");
+      const workspacePermissionsChip = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Permissions: Workspace")',
+      );
+      await workspacePermissionsChip.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      await workspacePermissionsChip.click();
+      await clickVisibleText(driver!, "Full access");
+      const fullAccessPermissionsChip = await driver!.$(
+        'android=new UiSelector().descriptionStartsWith("Permissions: Full access")',
+      );
+      await fullAccessPermissionsChip.waitForDisplayed({
+        timeout: UI_TIMEOUT_MS,
+        interval: 250,
+      });
       observe(
         "appServerOracleResult",
         "appServer",
@@ -553,11 +578,6 @@ async function main(): Promise<void> {
       await driver!.back();
       await waitForAccessibility(driver!, "Message Codex");
 
-      await clickAccessibility(driver!, "No changes");
-      await waitForVisibleTextContaining(driver!, "No file changes in this scope");
-      await clickAccessibility(driver!, "Refresh changes");
-      await driver!.back();
-      await waitForAccessibility(driver!, "Message Codex");
       await clickAccessibility(driver!, "Composer menu");
       await clickVisibleText(driver!, "Skills");
       await waitForVisibleTextContaining(driver!, "No subagents in this thread");
@@ -583,6 +603,11 @@ async function main(): Promise<void> {
       await discoveredPort.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
       observe("v2PortForwarding", "appium", "discoveredPortsRendered");
       await driver!.back();
+      const settings = await driver!.$("~Settings");
+      if (!(await settings.isDisplayed().catch(() => false))) {
+        await clickAccessibility(driver!, "Back to threads");
+        await clickAccessibility(driver!, "Choose server");
+      }
       await waitForAccessibility(driver!, "Settings");
       await clickAccessibility(driver!, "Settings");
       await waitForAccessibility(driver!, "Close server settings");

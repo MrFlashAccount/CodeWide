@@ -1,12 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useTransition } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import type { V2QueryResult } from "@codewide/sync-client/v2";
 
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
 import { ProductText as Text } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 import {
   colors,
@@ -73,7 +74,11 @@ function AccountList(props: AccountListProps): React.JSX.Element {
           <Ionicons color={colors.text} name="arrow-back" size={21} />
         </Pressable>
         <View style={styles.headerText}>
-          <Text style={styles.title}>Codex accounts</Text>
+          {refreshing ? (
+            <ShimmerText style={styles.title} text="Codex accounts" />
+          ) : (
+            <Text style={styles.title}>Codex accounts</Text>
+          )}
           <Text style={styles.subtitle}>Manual selection · automatic fallback on limit</Text>
         </View>
         <Pressable
@@ -82,11 +87,7 @@ function AccountList(props: AccountListProps): React.JSX.Element {
           onPress={refresh}
           style={styles.iconButton}
         >
-          {refreshing ? (
-            <ActivityIndicator color={colors.textMuted} size="small" />
-          ) : (
-            <Ionicons color={colors.textMuted} name="refresh" size={18} />
-          )}
+          <Ionicons color={colors.textMuted} name="refresh" size={18} />
         </Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.content}>
@@ -205,7 +206,7 @@ function AccountRow(props: AccountRowProps): React.JSX.Element {
         {limitLabel(profile)}
       </Text>
       {busy ? (
-        <ActivityIndicator color={colors.textMuted} size="small" />
+        <ShimmerText style={styles.busyText} text="Updating" />
       ) : (
         <ActionMenu
           accessibilityLabel={`Actions for ${label}`}
@@ -266,6 +267,7 @@ const styles = StyleSheet.create({
   dot: { borderRadius: 4, height: 8, width: 8 },
   empty: { alignItems: "center", gap: spacing.sm, justifyContent: "center", minHeight: 160 },
   error: { color: colors.red, paddingVertical: spacing.sm },
+  busyText: { color: colors.textMuted, ...typeScale.caption },
   header: {
     alignItems: "center",
     flexDirection: "row",

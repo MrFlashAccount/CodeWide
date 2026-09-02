@@ -78,11 +78,11 @@ export class MemoryV2ProjectionStore implements V2ProjectionStore {
   readonly #listeners = new Map<string, Set<() => void>>();
 
   async active(savedServerId: V2SavedServerId): Promise<V2Projection | null> {
-    return clone(this.#active.get(savedServerId) ?? null);
+    return this.#active.get(savedServerId) ?? null;
   }
 
   async retained(savedServerId: V2SavedServerId): Promise<V2Projection | null> {
-    return clone(this.#retained.get(savedServerId) ?? null);
+    return this.#retained.get(savedServerId) ?? null;
   }
 
   subscribe(savedServerId: V2SavedServerId, listener: () => void): V2StoreUnsubscribe {
@@ -107,10 +107,10 @@ export class MemoryV2ProjectionStore implements V2ProjectionStore {
     const previous = this.#retained.get(savedServerId) ?? this.#active.get(savedServerId) ?? null;
     const projection = buildV2Projection(previous, snapshot);
     if (isAborted(signal)) return null;
-    this.#active.set(savedServerId, clone(projection));
-    this.#retained.set(savedServerId, clone(projection));
+    this.#active.set(savedServerId, projection);
+    this.#retained.set(savedServerId, projection);
     this.#publish(savedServerId);
-    return clone(projection);
+    return projection;
   }
 
   async applyChange(
@@ -126,7 +126,7 @@ export class MemoryV2ProjectionStore implements V2ProjectionStore {
       throw new Error("Sync V2 watermark did not advance");
     const next = reduceV2Projection(current, watermark, change);
     this.#active.set(savedServerId, next);
-    this.#retained.set(savedServerId, clone(next));
+    this.#retained.set(savedServerId, next);
     this.#publish(savedServerId);
   }
 
@@ -175,11 +175,11 @@ export function buildV2Projection(
     epochId: snapshot.epochId,
     revision: snapshot.revision,
     watermark: snapshot.includedTail[0]?.watermark ?? snapshot.watermark,
-    scope: clone(snapshot.scope),
-    limits: clone(snapshot.limits),
+    scope: copyScope(snapshot.scope),
+    limits: { ...snapshot.limits },
     catalog: [...entries.values()],
-    currentThread: clone(snapshot.currentThread),
-    pendingRequests: clone(snapshot.pendingRequests),
+    currentThread: snapshot.currentThread,
+    pendingRequests: snapshot.pendingRequests,
     resourceRevisions: {},
     queueRevisions: {},
     accountsRevision: null,
@@ -196,13 +196,16 @@ export function reduceV2Projection(
   watermark: V2U64,
   change: V2ProjectionChange,
 ): V2Projection {
-  const next = clone(projection);
-  next.watermark = watermark;
+  const next: V2Projection = { ...projection, watermark };
   if (change.kind === "threadUpserted") {
+    next.catalog = projection.catalog.map((entry) => ({ ...entry }));
+    next.scope = copyScope(projection.scope);
     upsertScopedThread(next, change.thread);
-    if (next.currentThread?.thread.id === change.thread.id)
-      next.currentThread.thread = clone(change.thread);
+    if (projection.currentThread?.thread.id === change.thread.id)
+      next.currentThread = { ...projection.currentThread, thread: change.thread };
   } else if (change.kind === "threadRemoved") {
+    next.catalog = projection.catalog.map((entry) => ({ ...entry }));
+    next.scope = copyScope(projection.scope);
     const index = next.catalog.findIndex((entry) => entry.thread.id === change.threadId);
     if (index !== -1) {
       if (change.reason === "deleted") next.catalog.splice(index, 1);
@@ -211,25 +214,43 @@ export function reduceV2Projection(
     if (change.reason === "deleted" && next.currentThread?.thread.id === change.threadId)
       next.currentThread = null;
     refreshScopeCounts(next);
+  } else if (change.kind === "currentThreadReplaced") {
+    next.currentThread = change.currentThread;
+    next.pendingRequests = change.pendingRequests;
   } else if (
     change.kind === "turnUpserted" &&
-    next.currentThread?.thread.id === change.turn.threadId
+    projection.currentThread !== null &&
+    projection.currentThread.thread.id === change.turn.threadId
   ) {
-    const index = next.currentThread.turns.findIndex((turn) => turn.id === change.turn.id);
-    if (index === -1) next.currentThread.turns.push(change.turn);
-    else next.currentThread.turns[index] = change.turn;
-    if (next.currentThread.turns.length > next.limits.turnWindowMax)
-      next.currentThread.turns.splice(
+    const currentThread = projection.currentThread;
+    const turns = [...currentThread.turns];
+    const index = turns.findIndex((turn) => turn.id === change.turn.id);
+    if (index === -1) turns.push(change.turn);
+    else turns[index] = change.turn;
+    if (turns.length > next.limits.turnWindowMax)
+      turns.splice(
         0,
-        next.currentThread.turns.length - next.limits.turnWindowMax,
+        turns.length - next.limits.turnWindowMax,
       );
-    next.currentThread.thread.headTurnId =
-      next.currentThread.turns.at(-1)?.id ?? next.currentThread.thread.headTurnId;
+    next.currentThread = {
+      ...currentThread,
+      thread: {
+        ...currentThread.thread,
+        headTurnId: turns.at(-1)?.id ?? currentThread.thread.headTurnId,
+      },
+      turns,
+    };
   } else if (change.kind === "pendingRequestOpened") {
+    if (
+      change.request.threadId !== null &&
+      change.request.threadId !== next.currentThread?.thread.id
+    )
+      return next;
     const index = next.pendingRequests.findIndex(
       (request) =>
         request.id === change.request.id && request.generation === change.request.generation,
     );
+    next.pendingRequests = [...projection.pendingRequests];
     if (index === -1) next.pendingRequests.push(change.request);
     else next.pendingRequests[index] = change.request;
   } else if (change.kind === "pendingRequestClosed") {
@@ -237,16 +258,26 @@ export function reduceV2Projection(
       (request) => request.id !== change.requestId || request.generation !== change.generation,
     );
   } else if (change.kind === "resourcesChanged") {
-    next.resourceRevisions[change.threadId] = change.revision;
+    next.resourceRevisions = { ...projection.resourceRevisions, [change.threadId]: change.revision };
+    next.invalidations = [...projection.invalidations];
     appendInvalidation(next, { ...change, watermark });
   } else if (change.kind === "queueChanged") {
-    next.queueRevisions[change.threadId ?? "*"] = change.revision;
+    next.queueRevisions = {
+      ...projection.queueRevisions,
+      [change.threadId ?? "*"]: change.revision,
+    };
+    next.invalidations = [...projection.invalidations];
     appendInvalidation(next, { ...change, watermark });
   } else if (change.kind === "accountsChanged") {
     next.accountsRevision = change.revision;
+    next.invalidations = [...projection.invalidations];
     appendInvalidation(next, { ...change, watermark });
   }
   return next;
+}
+
+function copyScope(scope: V2CatalogScope): V2CatalogScope {
+  return { active: { ...scope.active }, archived: { ...scope.archived } };
 }
 
 export function compareV2Watermarks(left: string, right: string): number {
@@ -328,11 +359,7 @@ function appendInvalidation(projection: V2Projection, invalidation: V2SemanticIn
 }
 
 export function retainV2ProjectionOutsideCoverage(projection: V2Projection): V2Projection {
-  return clone(projection);
-}
-
-function clone<T>(value: T): T {
-  return structuredClone(value);
+  return projection;
 }
 
 function isAborted(signal: AbortSignal | undefined): boolean {

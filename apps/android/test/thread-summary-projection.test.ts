@@ -148,6 +148,15 @@ describe("thread summary projection", () => {
     expect(result.preview).toBe("Fresh answer");
   });
 
+  it("skips a metadata-only recovery turn when projecting the Conversation preview", () => {
+    const result = projectThreadSummarySnapshot("server", thread([
+      { id: "complete", items: [{ type: "agentMessage", text: "Last complete answer" }] },
+      { id: "metadata-only", status: "completed" },
+    ]), false, summary());
+
+    expect(result.preview).toBe("Last complete answer");
+  });
+
   it("does not project an inherited parent prompt as a subagent preview", () => {
     const child = {
       ...thread([

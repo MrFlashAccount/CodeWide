@@ -36,14 +36,14 @@ use super::{
     normalize,
     protocol::{
         AccountChange, Action, ActionResult, CatalogPartition, CatalogSnapshot, Command,
-        CommandResult, ErrorCode, HistoryDetail, HistoryDirection, InterruptState, OpenIntent,
-        Query, QueryResult, QueueMutation, Recovery, ResolutionState, ResourceScope, ThreadUpdate,
-        V2Error,
+        CommandResult, CurrentThreadIntent, ErrorCode, HistoryDetail, HistoryDirection,
+        InterruptState, OpenIntent, Query, QueryResult, QueueMutation, Recovery, ResolutionState,
+        ResourceScope, ThreadUpdate, V2Error,
     },
     scalar::{Id, OperationId, Timestamp, U64},
     source::{
         AudienceSelector, CommandExecution, SemanticSource, SnapshotData, SourceInvalidationReason,
-        SubscriptionCoordinator, capabilities, ensure_generation,
+        SubscriptionCoordinator, WatchedThreadData, capabilities, ensure_generation,
     },
 };
 
@@ -289,6 +289,17 @@ impl UpstreamSemanticSource {
             })
             .map(|(key, _)| key.context.clone())
             .collect()
+    }
+
+    fn publish_thread_to_authorized_contexts(
+        &self,
+        generation: u64,
+        thread: &super::domain::ThreadSummary,
+    ) {
+        for context in self.authorized_contexts(&thread.id, generation) {
+            self.coordinator
+                .publish_catalog_upsert(generation, &context, thread.clone());
+        }
     }
 
     fn remove_thread_witnesses(&self, thread_id: &Id) {
@@ -645,46 +656,90 @@ impl UpstreamSemanticSource {
         if direction == HistoryDirection::Older {
             turns.reverse();
         }
-        let next_source = result.get("nextCursor").and_then(Value::as_str);
-        let next = if let (Some(source_cursor), Some(last)) = (next_source, turns.first()) {
-            let cursor = HistoryCursor::new(
-                thread_id.clone(),
+        let head_turn_id = turns.last().map(|turn| turn.id.clone());
+        let continuation_anchor = match direction {
+            HistoryDirection::Older => turns.first(),
+            HistoryDirection::Newer => turns.last(),
+        };
+        let reverse_anchor = match direction {
+            HistoryDirection::Older => turns.last(),
+            HistoryDirection::Newer => turns.first(),
+        };
+        let continuation = match (
+            result.get("nextCursor").and_then(Value::as_str),
+            continuation_anchor,
+        ) {
+            (Some(source_cursor), Some(anchor)) => Some(self.wrap_live_history_cursor(
+                context,
+                &thread_id,
                 direction,
-                HistoryAnchor {
-                    turn_id: last.id.clone(),
-                    start_offset: None,
-                    end_offset: None,
-                },
-                SourceWitness::Live {
-                    generation: U64::new(self.generation()),
-                    head_turn_id: turns.last().map(|turn| turn.id.clone()),
-                    updated_at: Timestamp::now(),
-                },
-            )
-            .encode()?;
-            let _ = self
-                .live_history_cursors
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(
-                    retained_cursor_key(context, &cursor),
-                    source_cursor.to_owned(),
-                );
-            self.remember_cursor_owner(context, &cursor);
-            Some(cursor)
-        } else {
-            None
+                source_cursor,
+                &anchor.id,
+                head_turn_id.clone(),
+            )?),
+            _ => None,
+        };
+        let reverse_direction = opposite_history_direction(direction);
+        let reverse = match (
+            result.get("backwardsCursor").and_then(Value::as_str),
+            reverse_anchor,
+        ) {
+            (Some(source_cursor), Some(anchor)) => Some(self.wrap_live_history_cursor(
+                context,
+                &thread_id,
+                reverse_direction,
+                source_cursor,
+                &anchor.id,
+                head_turn_id,
+            )?),
+            _ => None,
+        };
+        let (older_cursor, newer_cursor) = match direction {
+            HistoryDirection::Older => (continuation, reverse),
+            HistoryDirection::Newer => (reverse, continuation),
         };
         Ok(QueryResult::HistoryPage {
             thread_id,
             turns,
-            older_cursor: (direction == HistoryDirection::Older)
-                .then_some(next.clone())
-                .flatten(),
-            newer_cursor: (direction == HistoryDirection::Newer)
-                .then_some(next)
-                .flatten(),
+            older_cursor,
+            newer_cursor,
         })
+    }
+
+    fn wrap_live_history_cursor(
+        &self,
+        context: &AuthenticatedContextKey,
+        thread_id: &Id,
+        direction: HistoryDirection,
+        source_cursor: &str,
+        anchor_turn_id: &Id,
+        head_turn_id: Option<Id>,
+    ) -> Result<String, V2Error> {
+        let cursor = HistoryCursor::new(
+            thread_id.clone(),
+            direction,
+            HistoryAnchor {
+                turn_id: anchor_turn_id.clone(),
+                start_offset: None,
+                end_offset: None,
+            },
+            SourceWitness::Live {
+                generation: U64::new(self.generation()),
+                head_turn_id,
+                updated_at: Timestamp::now(),
+            },
+        )
+        .encode()?;
+        let _ = self
+            .live_history_cursors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                retained_cursor_key(context, &cursor),
+                source_cursor.to_owned(),
+            );
+        self.remember_cursor_owner(context, &cursor);
+        Ok(cursor)
     }
 
     fn rollout_anchor(
@@ -769,6 +824,13 @@ impl UpstreamSemanticSource {
             .is_some()
             .then_some(())
             .ok_or_else(stale_cursor)
+    }
+}
+
+const fn opposite_history_direction(direction: HistoryDirection) -> HistoryDirection {
+    match direction {
+        HistoryDirection::Older => HistoryDirection::Newer,
+        HistoryDirection::Newer => HistoryDirection::Older,
     }
 }
 

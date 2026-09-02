@@ -33,7 +33,7 @@ pub use production::{ProductionServices, UpstreamSemanticSource};
 pub use runtime::SyncV2Runtime;
 pub use source::{
     AudienceSelector, CommandExecution, CoordinatorRecvError, SemanticSource, SnapshotData,
-    SubscriptionCoordinator,
+    SubscriptionCoordinator, WatchedThreadData,
 };
 
 pub const V2_UPSTREAM_MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;

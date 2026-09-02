@@ -1,17 +1,12 @@
 import { useState, type ReactNode } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  type PressableStateCallbackType,
-  StyleSheet,
-  View,
-} from "react-native";
+import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import type { UsageAccountViewModel } from "../usage/UsagePopoverView";
 import { UsagePopoverView } from "../usage/UsagePopoverView";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { PresentationText as Text } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
 import { ThreadListView, type ThreadListRow, type ThreadListVoiceControl } from "./ThreadListView";
 import { useEvent } from "../../../react/useEvent";
 
@@ -72,16 +67,21 @@ export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Elem
           <>
             <View style={styles.titleSlot}>
               {typeof title === "string" ? (
-                <Text numberOfLines={1} style={styles.title}>
-                  {title}
-                </Text>
+                connecting ? (
+                  <ShimmerText
+                    containerStyle={styles.titleShimmer}
+                    style={styles.title}
+                    text={title}
+                  />
+                ) : (
+                  <Text numberOfLines={1} style={styles.title}>
+                    {title}
+                  </Text>
+                )
               ) : (
                 title
               )}
             </View>
-            {connecting && typeof title === "string" ? (
-              <ActivityIndicator color={colors.amber} size={14} />
-            ) : null}
             <HeaderAction label="New thread" name="create" onPress={onNewThread} />
             <UsagePopoverView
               {...(usageAccounts === undefined ? {} : { accounts: usageAccounts })}
@@ -158,4 +158,5 @@ const styles = StyleSheet.create({
   title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
   subtitle: { color: colors.textMuted, ...typeScale.label },
   titleSlot: { flex: 1, minWidth: 0, transform: [{ translateY: -0.5 }] },
+  titleShimmer: { alignSelf: "stretch" },
 });

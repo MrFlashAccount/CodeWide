@@ -144,28 +144,26 @@ export function createAndroidE2eUi(input: {
   const waitForApplicationReady = async (driver: AppiumBrowser): Promise<void> => {
     const deadline = Date.now() + input.timeoutMs * 2;
     while (Date.now() < deadline) {
-      for (const label of [
+      const shellLabels = [
         "Open manual server setup",
         "Scan pairing QR",
         "New thread",
         "Choose server",
-      ]) {
-        const appElement = await driver.$(`~${label}`);
-        if (await appElement.isDisplayed().catch(() => false)) return;
-      }
-      const continueButton = await driver.$('android=new UiSelector().text("Continue")');
-      if (await continueButton.isDisplayed().catch(() => false)) {
+      ];
+      const source = await driver.getPageSource();
+      if (shellLabels.some((label) => source.includes(`content-desc="${label}"`))) return;
+      if (source.includes('text="Continue"')) {
+        const continueButton = await driver.$('android=new UiSelector().text("Continue")');
         await continueButton.click();
         await delay(500);
         continue;
       }
-      const closeButton = await driver.$("~Close");
-      if (await closeButton.isDisplayed().catch(() => false)) {
+      if (source.includes('content-desc="Close"')) {
+        const closeButton = await driver.$("~Close");
         await closeButton.click();
         await delay(500);
         continue;
       }
-      const source = await driver.getPageSource();
       if (source.includes("There was a problem loading the project")) {
         throw new Error("Expo project failed to load from Metro");
       }

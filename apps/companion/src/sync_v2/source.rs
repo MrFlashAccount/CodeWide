@@ -32,6 +32,12 @@ pub struct SnapshotData {
     pub source_witness: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct WatchedThreadData {
+    pub current_thread: ThreadWindow,
+    pub pending_requests: Vec<PendingRequest>,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum CommandExecution {
@@ -421,6 +427,19 @@ impl SubscriptionCoordinator {
             .map(|recipient| recipient.intent.clone())
     }
 
+    pub fn set_current_thread(
+        &self,
+        recipient_id: &Id,
+        current_thread: Option<super::protocol::CurrentThreadIntent>,
+    ) -> Option<super::protocol::CurrentThreadIntent> {
+        let mut recipients = self
+            .recipients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let recipient = recipients.get_mut(recipient_id)?;
+        std::mem::replace(&mut recipient.intent.current_thread, current_thread)
+    }
+
     pub fn current_thread_recipient_count(&self, thread_id: &Id, generation: u64) -> usize {
         self.recipients
             .lock()
@@ -686,6 +705,9 @@ fn projection_thread_id(change: &ProjectionChange) -> Option<&Id> {
         ProjectionChange::ThreadUpserted { thread } => Some(&thread.id),
         ProjectionChange::ThreadRemoved { thread_id, .. }
         | ProjectionChange::ResourcesChanged { thread_id, .. } => Some(thread_id),
+        ProjectionChange::CurrentThreadReplaced { current_thread, .. } => {
+            Some(&current_thread.thread.id)
+        }
         ProjectionChange::TurnUpserted { turn } => Some(&turn.thread_id),
         ProjectionChange::PendingRequestOpened { request } => match request {
             PendingRequest::Approval { thread_id, .. }
@@ -723,6 +745,16 @@ pub trait SemanticSource: Send + Sync {
         generation: u64,
     ) -> Result<(), V2Error>;
     async fn remove_intent(&self, recipient_id: &Id);
+    async fn watch_thread(
+        &self,
+        _recipient_id: &Id,
+        _thread: &super::protocol::CurrentThreadIntent,
+        _authorization: &AuthorizationContext,
+        _context: &AuthenticatedContextKey,
+        _generation: u64,
+    ) -> Result<WatchedThreadData, V2Error> {
+        Err(V2Error::invalid_query())
+    }
     async fn snapshot(
         &self,
         intent: &OpenIntent,

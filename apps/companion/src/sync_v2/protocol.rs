@@ -12,7 +12,7 @@ where
 
 use super::{
     domain::{
-        Attachment, CatalogAnchor, CatalogScope, Effort, FileChangeKind, InputBlock,
+        Attachment, CatalogAnchor, CatalogScope, Effort, FileChangeKind, InputBlock, Item,
         ProjectionChange, SequencedChange, SnapshotLimits, ThreadSettings, ThreadSummary,
         ThreadWindow, TurnView,
     },
@@ -88,6 +88,11 @@ pub enum ClientFrame {
         revision: String,
         watermark: U64,
     },
+    ThreadWatch {
+        request_id: Id,
+        thread_id: Id,
+        turn_limit: u16,
+    },
     Query {
         request_id: Id,
         query: Query,
@@ -129,6 +134,14 @@ pub enum Query {
         limit: u16,
         detail: HistoryDetail,
     },
+    #[serde(rename = "turn.items", rename_all = "camelCase")]
+    TurnItems {
+        thread_id: Id,
+        turn_id: Id,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
+        limit: u16,
+    },
     #[serde(rename = "thread.resources", rename_all = "camelCase")]
     ThreadResources { thread_id: Id, scope: ResourceScope },
     #[serde(rename = "projects.list")]
@@ -154,7 +167,9 @@ impl Query {
     /// Returns `invalidRequest` when the query exceeds negotiated limits.
     pub fn validate(&self, limits: SnapshotLimits) -> Result<(), V2Error> {
         match self {
-            Self::CatalogPage { limit, .. } | Self::HistoryPage { limit, .. }
+            Self::CatalogPage { limit, .. }
+            | Self::HistoryPage { limit, .. }
+            | Self::TurnItems { limit, .. }
                 if *limit == 0 || *limit > limits.history_page_max =>
             {
                 Err(V2Error::invalid_request(
@@ -414,6 +429,14 @@ pub enum QueryResult {
         older_cursor: Option<String>,
         #[serde(deserialize_with = "required_option")]
         newer_cursor: Option<String>,
+    },
+    #[serde(rename = "turn.items", rename_all = "camelCase")]
+    TurnItems {
+        thread_id: Id,
+        turn_id: Id,
+        items: Vec<Item>,
+        #[serde(deserialize_with = "required_option")]
+        next: Option<String>,
     },
     #[serde(rename = "thread.resources", rename_all = "camelCase")]
     ThreadResources {
@@ -776,6 +799,14 @@ pub enum ServerFrame {
     Reinitialize {
         epoch_id: Id,
         reason: ReinitializeReason,
+    },
+    ThreadWatched {
+        request_id: Id,
+        epoch_id: Id,
+    },
+    ThreadWatchFailed {
+        request_id: Id,
+        error: V2Error,
     },
     QueryCompleted {
         request_id: Id,

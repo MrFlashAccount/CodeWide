@@ -198,7 +198,7 @@ fn nonnegative_safe_integer(value: Option<&Value>) -> Option<i64> {
         .filter(|number| (0..=9_007_199_254_740_991).contains(number))
 }
 
-fn item(value: &Value) -> Option<Item> {
+pub fn item(value: &Value) -> Option<Item> {
     let kind = value.get("type")?.as_str()?;
     let id = Id::new(value.get("id")?.as_str()?.to_owned()).ok()?;
     match kind {

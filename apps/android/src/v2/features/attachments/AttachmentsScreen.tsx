@@ -1,12 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useTransition } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import type { V2Attachment } from "@codewide/sync-client/v2";
 
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ProductText as Text } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
+import {
+  PresentationSheetView,
+  type PresentationSheetContentProps,
+} from "../../presentation/surfaces/PresentationSheetView";
 import { useEvent } from "../../../react/useEvent";
+import { attachmentPreviewDestination } from "../navigation/routeDestinations";
 import { colors, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { V2QueryBoundary } from "../shared/V2QueryBoundary";
 import { formatBytes } from "./attachmentDisplay";
@@ -17,6 +23,7 @@ interface AttachmentsScreenProps {
 
 interface AttachmentListProps extends AttachmentsScreenProps {
   attachments: V2Attachment[];
+  onClose(): void;
   onRefresh(): Promise<void>;
 }
 
@@ -26,37 +33,51 @@ interface AttachmentRowProps extends AttachmentsScreenProps {
 
 export function AttachmentsScreen(props: AttachmentsScreenProps): React.JSX.Element {
   const { owner } = props;
+  const close = useEvent(() => router.back());
+  const changeOpen = useEvent((open: boolean) => {
+    if (!open) close();
+  });
   return (
-    <V2QueryBoundary
-      chrome="none"
-      query={{ kind: "thread.resources", scope: "session", threadId: owner.threadId }}
-      savedServerId={owner.savedServerId}
-      title="Attachments"
-    >
-      {(result, refresh) => {
-        if (result.kind !== "thread.resources") return null;
-        return (
-          <AttachmentList attachments={result.attachments} onRefresh={refresh} owner={owner} />
-        );
-      }}
-    </V2QueryBoundary>
+    <PresentationSheetView contentProps={RESOURCE_SHEET_PROPS} isOpen onOpenChange={changeOpen}>
+      <V2QueryBoundary
+        chrome="none"
+        query={{ kind: "thread.resources", scope: "session", threadId: owner.threadId }}
+        savedServerId={owner.savedServerId}
+        title="Attachments"
+      >
+        {(result, refresh) => {
+          if (result.kind !== "thread.resources") return null;
+          return (
+            <AttachmentList
+              attachments={result.attachments}
+              onClose={close}
+              onRefresh={refresh}
+              owner={owner}
+            />
+          );
+        }}
+      </V2QueryBoundary>
+    </PresentationSheetView>
   );
 }
 
 function AttachmentList(props: AttachmentListProps): React.JSX.Element {
-  const { attachments, onRefresh, owner } = props;
+  const { attachments, onClose, onRefresh, owner } = props;
   const [refreshing, startRefresh] = useTransition();
   const refresh = useEvent(() => startRefresh(() => onRefresh()));
-  const close = useEvent(() => router.back());
   return (
     <View style={styles.root}>
       <View style={styles.header}>
         <View style={styles.headerIconSlot}>
           <Ionicons color={colors.textMuted} name="attach-outline" size={21} />
         </View>
-        <Text numberOfLines={1} style={styles.title}>
-          Attachments · {attachments.length}
-        </Text>
+        {refreshing ? (
+          <ShimmerText style={styles.title} text={`Attachments · ${attachments.length}`} />
+        ) : (
+          <Text numberOfLines={1} style={styles.title}>
+            Attachments · {attachments.length}
+          </Text>
+        )}
         <View style={styles.flex} />
         <Pressable
           accessibilityLabel="Refresh session resources"
@@ -64,13 +85,13 @@ function AttachmentList(props: AttachmentListProps): React.JSX.Element {
           onPress={refresh}
           style={styles.iconButton}
         >
-          {refreshing ? (
-            <ActivityIndicator color={colors.accent} size="small" />
-          ) : (
-            <Ionicons color={colors.text} name="refresh" size={20} />
-          )}
+          <Ionicons color={colors.text} name="refresh" size={20} />
         </Pressable>
-        <Pressable accessibilityLabel="Close attachments" onPress={close} style={styles.iconButton}>
+        <Pressable
+          accessibilityLabel="Close attachments"
+          onPress={onClose}
+          style={styles.iconButton}
+        >
           <Ionicons color={colors.text} name="close" size={21} />
         </Pressable>
       </View>
@@ -89,21 +110,27 @@ function AttachmentList(props: AttachmentListProps): React.JSX.Element {
   );
 }
 
+const RESOURCE_SHEET_PROPS: PresentationSheetContentProps = {
+  contentContainerClassName: "h-full",
+  enableDynamicSizing: false,
+  enableOverDrag: false,
+  index: 0,
+  snapPoints: ["55%", "90%"],
+};
+
 function AttachmentRow(props: AttachmentRowProps): React.JSX.Element {
   const { attachment, owner } = props;
   const open = useEvent(() => {
     if (!isLocalUri(attachment.downloadUrl)) return;
-    router.push({
-      pathname: "/servers/[savedServerId]/threads/[threadId]/attachments/[attachmentId]",
-      params: {
+    router.push(
+      attachmentPreviewDestination({
         attachmentId: attachment.id,
         mediaType: attachment.mediaType,
         name: attachment.name,
-        savedServerId: owner.savedServerId,
+        owner,
         sourceUri: attachment.downloadUrl,
-        threadId: owner.threadId,
-      },
-    });
+      }),
+    );
   });
   const enabled = isLocalUri(attachment.downloadUrl);
   return (

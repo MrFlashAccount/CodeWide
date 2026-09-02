@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState, useSyncExternalStore, useTransition } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
 import type { SavedServerId } from "../../domain/ids";
@@ -9,6 +9,7 @@ import {
   PresentationTextInput as TextInput,
   ProductText as Text,
 } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
@@ -158,10 +159,7 @@ export function SavedServerSettingsScreen(
       </View>
       {connection === null || server === undefined ? (
         <View style={styles.center}>
-          <ActivityIndicator
-            accessibilityLabel="Loading server settings"
-            color={colors.textMuted}
-          />
+          <ShimmerText style={styles.loadingText} text="Loading server settings…" />
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
@@ -228,7 +226,7 @@ export function SavedServerSettingsScreen(
                   style={styles.primaryButton}
                 >
                   {pending ? (
-                    <ActivityIndicator color={colors.onPrimary} />
+                    <ShimmerText style={styles.primaryText} text="Save" />
                   ) : (
                     <Text style={styles.primaryText}>Save</Text>
                   )}
@@ -266,7 +264,7 @@ export function SavedServerSettingsScreen(
                     )}
                   </View>
                 </View>
-                {pending ? <ActivityIndicator color={colors.textMuted} size="small" /> : null}
+                {pending ? <ShimmerText style={styles.pendingText} text="Updating" /> : null}
                 <Switch
                   accessibilityLabel={`Enable ${server.displayName}`}
                   disabled={pending}
@@ -384,6 +382,8 @@ const styles = StyleSheet.create({
   },
   identityFields: { flexDirection: "row", gap: spacing.xs },
   menuAnchor: { height: touchTarget, width: touchTarget },
+  loadingText: { color: colors.textMuted, ...typeScale.body },
+  pendingText: { color: colors.textMuted, ...typeScale.caption },
   pinned: { color: colors.textMuted, ...typeScale.caption },
   primaryButton: {
     alignItems: "center",

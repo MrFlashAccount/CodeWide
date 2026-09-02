@@ -13,9 +13,6 @@ patchedDependencies:
   '@expo/ui@57.0.9':
     hash: fb41bc577141be9ff4cbc403c026707e928b6a23c3e0cbcfecafbbfcb7f84cc2
     path: patches/@expo__ui@57.0.9.patch
-  '@legendapp/list@3.3.5':
-    hash: 5e617d2f3814ec9ce69e0c91f9393c8fb8aa625a12839ebfc32cad1a6f6a0ed0
-    path: patches/@legendapp__list@3.3.5.patch
   '@quickdrawjs/react-native@0.2.0':
     hash: 8a0c443b275b3c773c55fe75aa8dce968443bc88844ba665f3c0f2c8b9c7aa16
     path: patches/@quickdrawjs__react-native@0.2.0.patch
@@ -98,7 +95,7 @@ importers:
         version: 5.2.14(c0ee9131f4e209e9d09f9bf502973c26)
       '@legendapp/list':
         specifier: 3.3.5
-        version: 3.3.5(patch_hash=5e617d2f3814ec9ce69e0c91f9393c8fb8aa625a12839ebfc32cad1a6f6a0ed0)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
+        version: 3.3.5(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)
       '@legendapp/state':
         specifier: 2.1.15
         version: 2.1.15(react@19.2.3)
@@ -10076,7 +10073,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@legendapp/list@3.3.5(patch_hash=5e617d2f3814ec9ce69e0c91f9393c8fb8aa625a12839ebfc32cad1a6f6a0ed0)(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)':
+  '@legendapp/list@3.3.5(react-dom@19.2.3(react@19.2.3))(react-native@0.86.2(@babel/core@7.29.7)(@react-native/jest-preset@0.86.2(@babel/core@7.29.7)(react@19.2.3))(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react@19.2.3))(react@19.2.3)':
     dependencies:
       react: 19.2.3
       use-sync-external-store: 1.6.0(react@19.2.3)

@@ -1,8 +1,9 @@
 import { useEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import type { VideoPlayerCapabilityProps } from "../../features/attachments/VideoPreviewScreen";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 
 const ERROR_FONT_SIZE = 15;
 const ERROR_MAX_WIDTH = 420;
@@ -39,7 +40,7 @@ export function ExpoVideoPlayer(props: VideoPlayerCapabilityProps): React.JSX.El
       />
       {isLoading(status) && (
         <View accessibilityLabel="Loading video" pointerEvents="none" style={styles.overlay}>
-          <ActivityIndicator color="#ffffff" size="large" />
+          <ShimmerText style={styles.loading} text="Loading video…" />
         </View>
       )}
       {status === "error" && (
@@ -67,6 +68,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: ERROR_PADDING,
     textAlign: "center",
   },
+  loading: { color: "#ffffff", fontSize: ERROR_FONT_SIZE },
   overlay: {
     alignItems: "center",
     backgroundColor: "rgba(0, 0, 0, 0.64)",

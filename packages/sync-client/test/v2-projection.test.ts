@@ -233,6 +233,41 @@ describe("Sync V2 projection generations", () => {
     session.stop();
   });
 
+  it("changes the watched thread inside the live epoch without reconnecting", async () => {
+    const store = new MemoryV2ProjectionStore();
+    const { session, socket } = setup(store);
+    await makeLive(socket, session, snapshot({ currentThread: null }));
+
+    const watched = session.watchThread("thread-2", 36);
+    await waitFor(() => socket.sent.some((frame) => frame.type === "threadWatch"));
+    const request = socket.sent.find((frame) => frame.type === "threadWatch");
+    socket.emit({
+      type: "change",
+      epochId: "epoch-1",
+      watermark: "1",
+      change: {
+        kind: "currentThreadReplaced",
+        currentThread: {
+          thread: thread("thread-2"),
+          turns: [],
+          olderCursor: null,
+          newerCursor: null,
+        },
+        pendingRequests: [],
+      },
+    });
+    socket.emit({
+      type: "threadWatched",
+      requestId: request?.requestId,
+      epochId: "epoch-1",
+    });
+
+    await expect(watched).resolves.toBeUndefined();
+    expect(socket.closes).toEqual([]);
+    expect((await store.active(savedServerA))?.currentThread?.thread.id).toBe("thread-2");
+    session.stop();
+  });
+
   it("partitions state by saved server and retains older metadata only within that partition", async () => {
     const store = new MemoryV2ProjectionStore();
     await store.commitSnapshot(savedServerA, snapshot({ active: [thread("older")] }));

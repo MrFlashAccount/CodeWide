@@ -94,6 +94,10 @@ impl ConnectionEpoch {
 
     #[cfg(test)]
     pub fn enqueue(&mut self, change: ProjectionChange) -> Result<U64, QueueError> {
+        self.enqueue_local(change)
+    }
+
+    pub(crate) fn enqueue_local(&mut self, change: ProjectionChange) -> Result<U64, QueueError> {
         let bytes = serde_json::to_vec(&change)
             .map_err(|_| QueueError::Serialization)?
             .len();

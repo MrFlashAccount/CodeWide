@@ -13,8 +13,10 @@ import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@codewide/tans
 
 import { getV2SqliteDatabase } from "./v2Database.native";
 
-const TABLE = "codewide_sync_v2_projection_by_saved_server";
-const ACTIVE_TABLE = "codewide_sync_v2_active_by_saved_server";
+const TABLE = "codewide_sync_v2_projection_v2_by_saved_server";
+const ACTIVE_TABLE = "codewide_sync_v2_active_v2_by_saved_server";
+const PREVIOUS_TABLE = "codewide_sync_v2_projection_by_saved_server";
+const PREVIOUS_ACTIVE_TABLE = "codewide_sync_v2_active_by_saved_server";
 const UNAPPROVED_CONTEXT_TABLE = "codewide_sync_v2_projection_by_context";
 const UNAPPROVED_CONTEXT_ACTIVE_TABLE = "codewide_sync_v2_active_by_context";
 const LEGACY_TABLE = "codewide_sync_v2_projection_generations";
@@ -49,6 +51,8 @@ export function createNativeSyncV2ProjectionStoreWithDatabase(
       await executor.execute(
         `CREATE TABLE IF NOT EXISTS ${ACTIVE_TABLE} (saved_server_id TEXT PRIMARY KEY NOT NULL, generation_id TEXT NOT NULL)`,
       );
+      await executor.execute(`DROP TABLE IF EXISTS ${PREVIOUS_ACTIVE_TABLE}`);
+      await executor.execute(`DROP TABLE IF EXISTS ${PREVIOUS_TABLE}`);
       await executor.execute(`DROP TABLE IF EXISTS ${UNAPPROVED_CONTEXT_ACTIVE_TABLE}`);
       await executor.execute(`DROP TABLE IF EXISTS ${UNAPPROVED_CONTEXT_TABLE}`);
       await executor.execute(`DROP TABLE IF EXISTS ${LEGACY_ACTIVE_TABLE}`);

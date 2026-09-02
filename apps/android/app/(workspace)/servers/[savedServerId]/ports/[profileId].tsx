@@ -1,20 +1,15 @@
-import { useLocalSearchParams } from "expo-router";
+import { Redirect, useLocalSearchParams } from "expo-router";
 
 import { PortProfileScreen } from "../../../../../src/v2/features/ports/PortProfileScreen";
 import {
-  requireOpaqueRouteParam,
-  requireSavedServerRouteParam,
+  opaqueRouteParam,
+  savedServerRouteParam,
 } from "../../../../../src/v2/features/navigation/routeParams";
 
 export default function PortRoute(): React.JSX.Element {
-  const params = useLocalSearchParams<{
-    profileId?: string | string[];
-    savedServerId?: string | string[];
-  }>();
-  return (
-    <PortProfileScreen
-      profileId={requireOpaqueRouteParam(params.profileId, "Port profile")}
-      savedServerId={requireSavedServerRouteParam(params.savedServerId)}
-    />
-  );
+  const params = useLocalSearchParams<"/servers/[savedServerId]/ports/[profileId]">();
+  const profileId = opaqueRouteParam(params.profileId);
+  const savedServerId = savedServerRouteParam(params.savedServerId);
+  if (profileId === null || savedServerId === null) return <Redirect href="/servers" />;
+  return <PortProfileScreen profileId={profileId} savedServerId={savedServerId} />;
 }

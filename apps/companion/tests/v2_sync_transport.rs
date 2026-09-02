@@ -16,14 +16,14 @@ use codewide_companion::{
     auth::{AuthorizationChange, AuthorizationChangeReason, AuthorizationContext},
     sync_v2::{
         AudienceSelector, AuthenticatedContextKey, CommandExecution, SemanticSource, SnapshotData,
-        SubscriptionCoordinator, SyncV2Runtime,
+        SubscriptionCoordinator, SyncV2Runtime, WatchedThreadData,
         domain::{
             ApprovalAction, CatalogPartitionScope, CatalogScope, PendingRequest, ProjectionChange,
-            SnapshotLimits,
+            SnapshotLimits, ThreadWindow,
         },
         protocol::{
-            Action, ActionResult, CatalogSnapshot, Command, CommandResult, OpenIntent, Query,
-            QueryResult, ResolutionState, V2Error,
+            Action, ActionResult, CatalogSnapshot, Command, CommandResult, CurrentThreadIntent,
+            OpenIntent, Query, QueryResult, ResolutionState, V2Error,
         },
         scalar::{Id, OperationId, U64},
     },
@@ -162,6 +162,37 @@ impl SemanticSource for FakeSource {
         self.coordinator.remove(recipient_id);
     }
 
+    async fn watch_thread(
+        &self,
+        recipient_id: &Id,
+        thread: &CurrentThreadIntent,
+        _authorization: &AuthorizationContext,
+        context: &AuthenticatedContextKey,
+        _generation: u64,
+    ) -> Result<WatchedThreadData, V2Error> {
+        self.thread_access
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert((context.clone(), thread.thread_id.clone()));
+        self.coordinator
+            .set_current_thread(recipient_id, Some(thread.clone()));
+        let current_thread: ThreadWindow = serde_json::from_value(json!({
+            "thread": {
+                "id": thread.thread_id.as_str(), "parentId": null, "title": "Watched",
+                "preview": "", "workspace": "/tmp", "archived": false, "state": "idle",
+                "settings": null, "createdAt": "2026-08-27T00:00:00Z",
+                "updatedAt": "2026-08-27T00:00:00Z", "lastActivityAt": null,
+                "headTurnId": null
+            },
+            "turns": [], "olderCursor": null, "newerCursor": null
+        }))
+        .map_err(|_| V2Error::source_unavailable("fake watch projection is invalid"))?;
+        Ok(WatchedThreadData {
+            current_thread,
+            pending_requests: Vec::new(),
+        })
+    }
+
     async fn snapshot(
         &self,
         intent: &OpenIntent,
@@ -288,8 +319,60 @@ impl SemanticSource for FakeSource {
     }
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn thread_watch_reuses_the_live_epoch_without_a_snapshot() -> Result<(), Box<dyn Error>> {
+    let directory = tempfile::tempdir()?;
+    let source = FakeSource::new();
+    let runtime = SyncV2Runtime::new(
+        source,
+        directory.path().join("v2-watch-ledger.redb"),
+        TEST_PIN,
+    )?;
+    let (address, server_task) = start_server(directory.path(), runtime).await?;
+    let mut client = connect(&format!("ws://{address}/v2/sync")).await?;
+    let snapshot = open(&mut client, "thread-a").await?;
+    let epoch_id = snapshot["epochId"].clone();
+    send(
+        &mut client,
+        json!({
+            "type": "snapshotCommitted",
+            "epochId": epoch_id,
+            "revision": snapshot["revision"],
+            "watermark": snapshot["watermark"]
+        }),
+    )
+    .await?;
+    assert_eq!(receive(&mut client).await?["type"], "live");
+
+    send(
+        &mut client,
+        json!({
+            "type": "threadWatch",
+            "requestId": "watch-b",
+            "threadId": "thread-b",
+            "turnLimit": 36
+        }),
+    )
+    .await?;
+    let replacement = receive(&mut client).await?;
+    assert_eq!(replacement["type"], "change");
+    assert_eq!(replacement["epochId"], epoch_id);
+    assert_eq!(replacement["change"]["kind"], "currentThreadReplaced");
+    assert_eq!(
+        replacement["change"]["currentThread"]["thread"]["id"],
+        "thread-b"
+    );
+    let watched = receive(&mut client).await?;
+    assert_eq!(watched["type"], "threadWatched");
+    assert_eq!(watched["epochId"], epoch_id);
+
+    client.close(None).await?;
+    server_task.abort();
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn epochs_isolate_clients_reinitialize_and_replay_commands() -> Result<(), Box<dyn Error>> {
+async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let source = FakeSource::new();
     let limits = SnapshotLimits {

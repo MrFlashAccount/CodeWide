@@ -9,7 +9,7 @@ import org.junit.Test
 class SyncV2ContractGeneratedTest {
   @Test
   fun embedsTheExactExecutableContractFingerprint() {
-    assertEquals("d1ed55e56b46bf99f5f36d4771d2d7fbc8e34b7c4d33a31abf41badc49e2ba88", SyncV2ContractGenerated.CONTRACT_SHA256)
+    assertEquals("12578d44b011b2cc6599e4991874263c8cfe125ad859cfaef7d6fbd862e78870", SyncV2ContractGenerated.CONTRACT_SHA256)
   }
 
   @Test

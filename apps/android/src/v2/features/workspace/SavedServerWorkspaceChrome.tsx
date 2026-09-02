@@ -11,7 +11,7 @@ import { qualifiedThread } from "../../domain/qualifiedThread";
 import { useV2Runtime } from "../../V2Application";
 import {
   newThreadDestination,
-  serverDestination,
+  serverPathname,
   threadDestination,
 } from "../navigation/routeDestinations";
 import { useEvent } from "../../../react/useEvent";
@@ -107,7 +107,7 @@ function ProjectedSavedServerWorkspace(
   });
   return (
     <SavedServerWorkspaceView
-      emptyMain={pathname === serverDestination(savedServerId)}
+      emptyMain={pathname === serverPathname(savedServerId)}
       sidebar={
         <ThreadSidebarView
           connectionState={snapshot.value.state}

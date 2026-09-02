@@ -37,6 +37,7 @@ pub(super) fn projection_change_tag(value: &ProjectionChange) -> &'static str {
     match value {
         ProjectionChange::ThreadUpserted { .. } => "threadUpserted",
         ProjectionChange::ThreadRemoved { .. } => "threadRemoved",
+        ProjectionChange::CurrentThreadReplaced { .. } => "currentThreadReplaced",
         ProjectionChange::TurnUpserted { .. } => "turnUpserted",
         ProjectionChange::PendingRequestOpened { .. } => "pendingRequestOpened",
         ProjectionChange::PendingRequestClosed { .. } => "pendingRequestClosed",

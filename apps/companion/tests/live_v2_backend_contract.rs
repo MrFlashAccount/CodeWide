@@ -91,6 +91,62 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
     open_live_thread(&mut second, "shared-thread").await?;
     open_live_thread(&mut disjoint, "other-thread").await?;
     open_live_catalog(&mut catalog_client, 10).await?;
+    verify_fake_v2_bidirectional_pagination(&url).await?;
+
+    send(
+        &mut first,
+        json!({
+            "type": "command",
+            "requestId": "settings-update-request",
+            "operationId": "settings-update-operation",
+            "command": {
+                "kind": "thread.update",
+                "threadId": "shared-thread",
+                "change": {
+                    "kind": "settings",
+                    "settings": {
+                        "model": null,
+                        "effort": null,
+                        "approvalPolicy": "never",
+                        "sandbox": "workspaceWrite"
+                    }
+                }
+            }
+        }),
+    )
+    .await?;
+    require_type(&receive(&mut first).await?, "commandAccepted")?;
+    let mut saw_completed = false;
+    let mut saw_projection = false;
+    while !saw_completed || !saw_projection {
+        let frame = timeout(Duration::from_secs(5), receive(&mut first)).await??;
+        match frame["type"].as_str() {
+            Some("commandCompleted") => {
+                if frame.pointer("/result/thread/settings/sandbox")
+                    != Some(&json!("workspaceWrite"))
+                {
+                    return Err(format!("settings command returned a stale thread: {frame}").into());
+                }
+                saw_completed = true;
+            }
+            Some("change") => {
+                if frame.pointer("/change/thread/settings/sandbox")
+                    != Some(&json!("workspaceWrite"))
+                {
+                    return Err(format!("settings projection was stale: {frame}").into());
+                }
+                saw_projection = true;
+            }
+            _ => return Err(format!("unexpected settings update frame: {frame}").into()),
+        }
+    }
+    let peer_projection = timeout(Duration::from_secs(5), receive(&mut second)).await??;
+    if peer_projection.pointer("/change/thread/settings/sandbox") != Some(&json!("workspaceWrite"))
+    {
+        return Err(
+            format!("peer device missed the settings projection: {peer_projection}").into(),
+        );
+    }
 
     event_tx
         .send(ObserverEvent::ThreadChanged("shared-thread".into()))
@@ -745,6 +801,17 @@ async fn verify_v2_pagination(url: &str, thread_id: &str) -> TestResult<String> 
     if query_turn_id(&older)? == first_id {
         return Err("V2 older pagination repeated the same turn".into());
     }
+    let reverse_cursor = older
+        .pointer("/result/newerCursor")
+        .and_then(Value::as_str)
+        .ok_or("V2 older page omitted its reverse cursor")?;
+    let reversed = client
+        .query(history_query(thread_id, Some(reverse_cursor), "newer"))
+        .await?;
+    require_query_completed(&reversed)?;
+    if query_turn_id(&reversed)? != query_last_turn_id(&older)? {
+        return Err("V2 reverse pagination did not include its anchor turn".into());
+    }
 
     let earliest = client
         .query(history_query(thread_id, None, "newer"))
@@ -819,6 +886,42 @@ async fn verify_v2_pagination(url: &str, thread_id: &str) -> TestResult<String> 
     Ok(older_cursor)
 }
 
+async fn verify_fake_v2_bidirectional_pagination(url: &str) -> TestResult {
+    let mut client = V2LiveClient::connect(url, "observer-device-pagination").await?;
+    let snapshot = client.open(Some("pagination-thread")).await?;
+    let older_cursor = snapshot
+        .pointer("/currentThread/olderCursor")
+        .and_then(Value::as_str)
+        .ok_or("fake V2 snapshot omitted its older cursor")?;
+    let older = client
+        .query(history_query(
+            "pagination-thread",
+            Some(older_cursor),
+            "older",
+        ))
+        .await?;
+    require_query_completed(&older)?;
+    if query_turn_id(&older)? != "pagination-turn-2" {
+        return Err("fake V2 older page returned the wrong turn".into());
+    }
+    let newer_cursor = older
+        .pointer("/result/newerCursor")
+        .and_then(Value::as_str)
+        .ok_or("fake V2 older page omitted its newer cursor")?;
+    let newer = client
+        .query(history_query(
+            "pagination-thread",
+            Some(newer_cursor),
+            "newer",
+        ))
+        .await?;
+    require_query_completed(&newer)?;
+    if query_turn_id(&newer)? != "pagination-turn-2" {
+        return Err("fake V2 newer page did not preserve its inclusive anchor".into());
+    }
+    client.close().await
+}
+
 fn history_query(thread_id: &str, cursor: Option<&str>, direction: &str) -> Value {
     json!({
         "kind": "history.page",
@@ -833,6 +936,16 @@ fn history_query(thread_id: &str, cursor: Option<&str>, direction: &str) -> Valu
 fn query_turn_id(response: &Value) -> TestResult<&str> {
     response
         .pointer("/result/turns/0/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "V2 history page was empty".into())
+}
+
+fn query_last_turn_id(response: &Value) -> TestResult<&str> {
+    response
+        .pointer("/result/turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.last())
+        .and_then(|turn| turn.get("id"))
         .and_then(Value::as_str)
         .ok_or_else(|| "V2 history page was empty".into())
 }
@@ -1379,10 +1492,13 @@ async fn run_observer_app_server(
                         "thread/read" | "thread/resume" => {
                             json!({"thread": observer_thread(thread_id)})
                         }
+                        "thread/turns/list" if thread_id == "pagination-thread" => {
+                            observer_turn_page(&request["params"])
+                        }
                         "thread/list" | "thread/turns/list" => {
                             json!({"data": [], "nextCursor": null})
                         }
-                        "thread/unsubscribe" => json!({}),
+                        "thread/unsubscribe" | "thread/settings/update" => json!({}),
                         _ => return Err(format!("unexpected production adapter method: {method}").into()),
                     };
                     socket.send(Message::Text(json!({"id": id, "result": result}).to_string().into())).await?;
@@ -1417,6 +1533,42 @@ fn observer_thread(thread_id: &str) -> Value {
         "createdAt": 1_787_891_696,
         "updatedAt": 1_787_891_696,
         "turns": []
+    })
+}
+
+fn observer_turn_page(params: &Value) -> Value {
+    let cursor = params.get("cursor").and_then(Value::as_str);
+    let direction = params
+        .get("sortDirection")
+        .and_then(Value::as_str)
+        .unwrap_or("desc");
+    match (direction, cursor) {
+        ("desc", None) => json!({
+            "data": [observer_turn("pagination-turn-3")],
+            "nextCursor": "pagination-desc-2",
+            "backwardsCursor": "pagination-asc-3"
+        }),
+        ("desc", Some("pagination-desc-2")) => json!({
+            "data": [observer_turn("pagination-turn-2")],
+            "nextCursor": "pagination-desc-1",
+            "backwardsCursor": "pagination-asc-2"
+        }),
+        ("asc", Some("pagination-asc-2")) => json!({
+            "data": [observer_turn("pagination-turn-2")],
+            "nextCursor": "pagination-asc-3",
+            "backwardsCursor": "pagination-desc-2"
+        }),
+        _ => json!({"data": [], "nextCursor": null, "backwardsCursor": null}),
+    }
+}
+
+fn observer_turn(turn_id: &str) -> Value {
+    json!({
+        "id": turn_id,
+        "status": "completed",
+        "createdAt": 1_787_891_696,
+        "completedAt": 1_787_891_697,
+        "items": []
     })
 }
 

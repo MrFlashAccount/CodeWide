@@ -2,16 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { TerminalView, type TerminalViewRef } from "expo-libghostty";
 import { useRef, useState, useSyncExternalStore } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-  type ViewStyle,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import type {
   TerminalTransport,
   TerminalTransportEvent,
@@ -74,7 +68,7 @@ export function TerminalScreen(props: TerminalScreenProps): React.JSX.Element {
   if (opened.value === null) {
     return (
       <View style={styles.root}>
-        <ActivityIndicator accessibilityLabel="Loading terminal" color={colors.textMuted} />
+        <ShimmerText style={styles.loadingText} text="Loading terminal…" />
       </View>
     );
   }
@@ -339,7 +333,7 @@ function ActiveTerminal(props: ActiveTerminalProps): React.JSX.Element {
       />
       {tab.status === "connecting" ? (
         <View pointerEvents="none" style={styles.connecting}>
-          <ActivityIndicator color={colors.textMuted} size="small" />
+          <ShimmerText style={styles.loadingText} text="Connecting…" />
         </View>
       ) : null}
     </View>
@@ -360,6 +354,7 @@ const styles = StyleSheet.create({
   activeTab: { backgroundColor: colors.surfaceRaised },
   activeTabText: { color: colors.text },
   connecting: { position: "absolute", right: spacing.md, top: spacing.md },
+  loadingText: { color: colors.textMuted, ...typeScale.caption },
   createButton: {
     alignItems: "center",
     backgroundColor: colors.accent,

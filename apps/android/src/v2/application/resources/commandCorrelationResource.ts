@@ -112,7 +112,7 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
   }
 
   attachSettlementObserver(observer: (settlement: CommandSettlement) => void): void {
-    if (this.#onSettlement !== null && this.#onSettlement !== observer) {
+    if (this.#listenerCount > 0 && this.#onSettlement !== null && this.#onSettlement !== observer) {
       throw new Error("Command settlement observer is immutable");
     }
     this.#onSettlement = observer;

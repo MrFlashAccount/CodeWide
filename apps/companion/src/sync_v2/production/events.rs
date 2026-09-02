@@ -133,7 +133,7 @@ impl UpstreamSemanticSource {
         };
         if method.starts_with("turn/") || method.starts_with("item/") {
             let Ok(turn) = self
-                .latest_turn(&thread_id, 1, HistoryDetail::Full)
+                .latest_turn(&thread_id, 1, HistoryDetail::Summary)
                 .await
                 .and_then(|mut turns| {
                     turns

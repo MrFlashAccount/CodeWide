@@ -1,6 +1,6 @@
 import type { V2CommandTerminalFrame, V2QueryResult } from "@codewide/sync-client/v2";
 import { useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
+import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { TopBarActionView } from "../../presentation/actions/TopBarActionView";
 import { ConversationView } from "../../presentation/conversation/ConversationView";
@@ -11,6 +11,7 @@ import {
   type ProjectPickerRow,
 } from "../../presentation/navigation/ProjectPickerView";
 import { ProductText } from "../../presentation/text/ProductText";
+import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { colors, radii, spacing, typeScale } from "../../presentation/tokens";
 import { useEvent } from "../../../react/useEvent";
 import type { CommandSettlement } from "../../application/commandCorrelation";
@@ -225,11 +226,7 @@ function NewThreadComposer(props: NewThreadComposerProps): React.JSX.Element {
             <ProductText style={styles.chevron}>⌄</ProductText>
           </Pressable>
           {projectResource !== null && projectSnapshot.value === null ? (
-            <ActivityIndicator
-              accessibilityLabel="Reading projects"
-              color={colors.textMuted}
-              size="small"
-            />
+            <ShimmerText style={styles.projectLoading} text="Reading projects…" />
           ) : null}
           {projectStatus === null ? null : (
             <ProductText accessibilityLiveRegion="polite" tone="danger">
@@ -323,5 +320,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   projectText: { color: colors.accent, flexShrink: 1, minWidth: 0, ...typeScale.title },
+  projectLoading: { color: colors.textMuted, ...typeScale.caption },
   prompt: { ...typeScale.heading, textAlign: "center" },
 });

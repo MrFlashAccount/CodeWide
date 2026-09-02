@@ -2,8 +2,8 @@
   "expo": {
     "name": "CodeWide",
     "slug": "codewide",
-    "version": "0.2.100",
-    "runtimeVersion": "0.2.100-native-113",
+    "version": "0.2.103",
+    "runtimeVersion": "0.2.103-native-116",
     "updates": {
       "enabled": true,
       "url": "https://updates.example.invalid/api/updates",
@@ -48,7 +48,7 @@
     ],
     "android": {
       "package": "dev.codexremote.app",
-      "versionCode": 113,
+      "versionCode": 116,
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",

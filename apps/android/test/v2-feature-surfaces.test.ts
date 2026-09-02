@@ -10,12 +10,19 @@ import { formatBytes } from "../src/v2/features/attachments/attachmentDisplay";
 import {
   accountSettingsDestination,
   agentDestination,
+  attachmentPreviewDestination,
   newThreadDestination,
   portDestination,
   portsDestination,
   serverSettingsDestination,
   threadResourceDestination,
 } from "../src/v2/features/navigation/routeDestinations";
+import {
+  opaqueRouteParam,
+  qualifiedThreadRouteParams,
+  savedServerRouteParam,
+  threadRouteParam,
+} from "../src/v2/features/navigation/routeParams";
 
 describe("V2 feature surfaces", () => {
   it("owns nested V2 navigation history inside Expo Router stacks", () => {
@@ -71,6 +78,90 @@ describe("V2 feature surfaces", () => {
     }
   });
 
+  it("keeps workspace content mounted behind route-backed sheets without eager routes", () => {
+    const root = readFileSync(new URL("../app/_layout.tsx", import.meta.url), "utf8");
+    expect(root).toContain('<Stack.Screen name="(modal)"');
+    expect(root).toContain('presentation: "transparentModal"');
+    expect(root).toContain('backgroundColor: "transparent"');
+    const modalLayout = readFileSync(
+      new URL("../app/(modal)/_layout.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(modalLayout).toContain('presentation: "transparentModal"');
+    expect(modalLayout).toContain('backgroundColor: "transparent"');
+    const serverLayout = readFileSync(
+      new URL("../app/(workspace)/servers/[savedServerId]/_layout.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(serverLayout).not.toContain('<Stack.Screen name="ports"');
+    for (const route of [
+      "../app/(workspace)/servers/[savedServerId]/ports/index.tsx",
+      "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/attachments.tsx",
+      "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/changes.tsx",
+    ]) {
+      const source = readFileSync(new URL(route, import.meta.url), "utf8");
+      expect(source).toContain("<Stack.Screen options={SCREEN_OPTIONS}");
+      expect(source).toContain('presentation: "transparentModal"');
+    }
+    for (const feature of ["attachments", "changes", "ports"] as const) {
+      const source = readFileSync(
+        new URL(`../src/v2/features/${feature}/${titleCase(feature)}Screen.tsx`, import.meta.url),
+        "utf8",
+      );
+      expect(source).toContain("<PresentationSheetView");
+    }
+  });
+
+  it("disables V2 route transitions on changing foldable geometry", () => {
+    const root = readFileSync(new URL("../app/_layout.tsx", import.meta.url), "utf8");
+    expect(root).toContain('<Stack.Screen name="(workspace)" options={V2_ROUTE_SCREEN_OPTIONS}');
+    expect(root).toContain('<Stack.Screen name="(modal)" options={V2_MODAL_SCREEN_OPTIONS}');
+    expect(root).toContain('animation: "none"');
+    for (const layout of [
+      "../app/(workspace)/_layout.tsx",
+      "../app/(workspace)/servers/[savedServerId]/_layout.tsx",
+      "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/_layout.tsx",
+      "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/agents/_layout.tsx",
+      "../app/(modal)/_layout.tsx",
+    ]) {
+      const source = readFileSync(new URL(layout, import.meta.url), "utf8");
+      expect(source).toContain('animation: "none"');
+    }
+  });
+
+  it("keeps the application and native window background dark", () => {
+    const root = readFileSync(new URL("../app/_layout.tsx", import.meta.url), "utf8");
+    const nativeTheme = readFileSync(
+      new URL("../android/app/src/main/res/values/styles.xml", import.meta.url),
+      "utf8",
+    );
+    expect(root).toContain('const APPLICATION_BACKGROUND = "#101011"');
+    expect(root).toContain("contentStyle: { backgroundColor: APPLICATION_BACKGROUND }");
+    expect(root).toContain("backgroundColor: APPLICATION_BACKGROUND");
+    expect(nativeTheme).toContain(
+      '<item name="android:windowBackground">@color/codewide_brand</item>',
+    );
+  });
+
+  it("uses text shimmer instead of spinner chrome for V2 progress states", () => {
+    const shimmer = readFileSync(
+      new URL("../src/v2/presentation/text/ShimmerText.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(shimmer).toContain('requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")');
+    for (const surface of [
+      "../src/v2/presentation/conversation/TimelineView.tsx",
+      "../src/v2/presentation/feedback/ResourceStateView.tsx",
+      "../src/v2/presentation/input/ComposerContextStripView.tsx",
+      "../src/v2/presentation/input/ComposerView.tsx",
+      "../src/v2/presentation/navigation/ThreadListView.tsx",
+      "../src/v2/presentation/navigation/ThreadSidebarView.tsx",
+    ]) {
+      const source = readFileSync(new URL(surface, import.meta.url), "utf8");
+      expect(source).not.toContain("ActivityIndicator");
+    }
+  });
+
   it("opens on the aggregate thread catalog instead of a server-picker page", () => {
     const screen = readFileSync(
       new URL("../src/v2/features/serverList/ServerListScreen.tsx", import.meta.url),
@@ -83,21 +174,83 @@ describe("V2 feature surfaces", () => {
     expect(screen).not.toContain("All saved servers");
   });
 
+  it("virtualizes the V2 thread catalog with LegendList", () => {
+    const source = readFileSync(
+      new URL("../src/v2/presentation/navigation/ThreadListView.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain('from "@legendapp/list/react-native"');
+    expect(source).toContain("<LegendList");
+    expect(source).toContain("estimatedItemSize={64}");
+    expect(source).toContain("drawDistance={320}");
+    expect(source).toContain("recycleItems");
+    expect(source).not.toContain("SectionList");
+  });
+
   it("keeps every secondary destination qualified by saved server and thread", () => {
     const server = savedServerId("server/one");
     const owner = qualifiedThread(server, threadId("thread/two"));
-    expect(newThreadDestination(server)).toBe("/servers/server%2Fone/new");
-    expect(portsDestination(server)).toBe("/servers/server%2Fone/ports");
-    expect(portDestination(server, "profile/three")).toBe(
-      "/servers/server%2Fone/ports/profile%2Fthree",
-    );
-    expect(accountSettingsDestination(server)).toBe("/settings/accounts/server%2Fone");
-    expect(serverSettingsDestination(server)).toBe("/settings/servers/server%2Fone");
-    expect(threadResourceDestination(owner, "attachments")).toBe(
-      "/servers/server%2Fone/threads/thread%2Ftwo/attachments",
-    );
-    expect(agentDestination(owner, "agent/three")).toBe(
-      "/servers/server%2Fone/threads/thread%2Ftwo/agents/agent%2Fthree",
+    expect(newThreadDestination(server)).toEqual({
+      params: { savedServerId: "server/one" },
+      pathname: "/servers/[savedServerId]/new",
+    });
+    expect(portsDestination(server)).toEqual({
+      params: { savedServerId: "server/one" },
+      pathname: "/servers/[savedServerId]/ports",
+    });
+    expect(portDestination(server, "profile/three")).toEqual({
+      params: { profileId: "profile/three", savedServerId: "server/one" },
+      pathname: "/servers/[savedServerId]/ports/[profileId]",
+    });
+    expect(accountSettingsDestination(server)).toEqual({
+      params: { savedServerId: "server/one" },
+      pathname: "/settings/accounts/[savedServerId]",
+    });
+    expect(serverSettingsDestination(server)).toEqual({
+      params: { savedServerId: "server/one" },
+      pathname: "/settings/servers/[savedServerId]",
+    });
+    expect(threadResourceDestination(owner, "attachments")).toEqual({
+      params: { savedServerId: "server/one", threadId: "thread/two" },
+      pathname: "/servers/[savedServerId]/threads/[threadId]/attachments",
+    });
+    expect(agentDestination(owner, "agent/three")).toEqual({
+      params: {
+        agentThreadId: "agent/three",
+        savedServerId: "server/one",
+        threadId: "thread/two",
+      },
+      pathname: "/servers/[savedServerId]/threads/[threadId]/agents/[agentThreadId]",
+    });
+    expect(
+      attachmentPreviewDestination({
+        attachmentId: "attachment/four",
+        mediaType: "video/mp4",
+        name: "recording.mp4",
+        owner,
+        sourceUri: "file:///recording.mp4",
+      }),
+    ).toEqual({
+      params: {
+        attachmentId: "attachment/four",
+        mediaType: "video/mp4",
+        name: "recording.mp4",
+        savedServerId: "server/one",
+        sourceUri: "file:///recording.mp4",
+        threadId: "thread/two",
+      },
+      pathname: "/servers/[savedServerId]/threads/[threadId]/attachments/[attachmentId]",
+    });
+  });
+
+  it("rejects malformed runtime route parameters without throwing", () => {
+    expect(savedServerRouteParam(undefined)).toBeNull();
+    expect(savedServerRouteParam(["server-1"])).toBeNull();
+    expect(threadRouteParam("")).toBeNull();
+    expect(opaqueRouteParam("x".repeat(257))).toBeNull();
+    expect(qualifiedThreadRouteParams({ savedServerId: "server-1" })).toBeNull();
+    expect(qualifiedThreadRouteParams({ savedServerId: "server-1", threadId: "thread-1" })).toEqual(
+      { savedServerId: "server-1", threadId: "thread-1" },
     );
   });
 
@@ -174,3 +327,7 @@ describe("V2 feature surfaces", () => {
     expect(newThread).toContain("correlations.isLocked(");
   });
 });
+
+function titleCase(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
