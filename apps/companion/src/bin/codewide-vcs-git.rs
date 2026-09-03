@@ -406,6 +406,7 @@ mod tests {
             json!([
                 CHANGES_CAPABILITY,
                 DIFF_CAPABILITY,
+                DIFF_PAGE_CAPABILITY,
                 WORKSPACE_CREATE_CAPABILITY
             ])
         );
