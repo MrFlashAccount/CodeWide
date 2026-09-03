@@ -44,7 +44,7 @@ export function ProjectPickerAddView(props: ProjectPickerAddViewProps): React.JS
           editable={!pending}
           onChangeText={setPath}
           onSubmitEditing={submit}
-          placeholder="/home/user/project"
+          placeholder="/path/to/project"
           placeholderTextColor={colors.textDim}
           returnKeyType="done"
           style={styles.input}
