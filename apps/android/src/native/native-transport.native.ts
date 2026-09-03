@@ -54,6 +54,7 @@ type NativeBridge = {
   resizeTerminal?(sessionId: string, cols: number, rows: number): Promise<void>;
   readTerminalOutput?(sessionId: string, offset: number, maxBytes: number): Promise<string>;
   closeTerminal?(sessionId: string): void;
+  stopLegacyRuntimeResources?: () => Promise<void>;
   engineEnqueueCommand(connectionId: string, commandId: string, method: string, paramsJson: string): Promise<string>;
   engineListCommands(): Promise<string>;
   engineRetryCommand?(connectionId: string, commandId: string): Promise<string>;
@@ -227,7 +228,9 @@ export async function listNativeConnectionConfigs(): Promise<NativeConnectionCon
 export async function nativeCompanionHttpOrigin(connectionId: string, _endpoint: string): Promise<string> {
   if (bridge === undefined || Platform.OS !== "android") throw new Error("Native pinned HTTP transport is unavailable in this build");
   const origin = await bridge.companionHttpOrigin(connectionId);
-  if (!/^http:\/\/127\.0\.0\.1:\d+$/u.test(origin)) throw new Error("Native pinned HTTP transport returned an invalid origin");
+  if (!/^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}$/u.test(origin)) {
+    throw new Error("Native pinned HTTP transport returned an invalid origin");
+  }
   return origin;
 }
 
@@ -421,6 +424,10 @@ export function closeNativeTerminal(sessionId: string): void {
   bridge?.closeTerminal?.(sessionId);
 }
 
+export function stopLegacyNativeRuntimeResources(): Promise<void> {
+  return bridge?.stopLegacyRuntimeResources?.() ?? Promise.resolve();
+}
+
 export function subscribeNativeTerminal(listener: (event: NativeTerminalEvent) => void): () => void {
   if (emitter === null || Platform.OS !== "android") return () => {};
   const subscription = emitter.addListener("CodeWideTerminalEvent", (raw: unknown) => {
@@ -467,7 +474,7 @@ export function parseNativePortForwardProfile(value: unknown): NativePortForward
     || !(row.localPort === null || isPort(row.localPort))
     || typeof row.enabled !== "boolean"
     || !["stopped", "connecting", "live", "unavailable", "error"].includes(row.status ?? "")
-    || !(row.previewUrl === null || typeof row.previewUrl === "string")
+    || !(row.previewUrl === null || (typeof row.previewUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}\/$/u.test(row.previewUrl)))
     || !(row.error === null || typeof row.error === "string")
     || typeof row.updatedAt !== "number"
   ) throw new Error("Native port-forward projection is invalid");

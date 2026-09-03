@@ -66,6 +66,8 @@
     "/download/*"
   ],
   "deviceScopes": [
+    "accounts.manage",
+    "accounts.read",
     "approvals.respond",
     "files.download.workspace",
     "files.upload.workspace",

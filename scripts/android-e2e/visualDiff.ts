@@ -19,6 +19,10 @@ interface BrowserDiffResult extends VisualDiffResult {
   image: string;
 }
 
+interface BrowserLuminanceResult {
+  luminance: number;
+}
+
 const BROWSER_DIFF_SCRIPT = String.raw`(async () => {
   const baselineImage = document.getElementById("baseline");
   const actualImage = document.getElementById("actual");
@@ -71,6 +75,35 @@ const BROWSER_DIFF_SCRIPT = String.raw`(async () => {
   };
 })()`;
 
+const BROWSER_LUMINANCE_SCRIPT = String.raw`(async () => {
+  const source = document.getElementById("source");
+  await source.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = source.naturalWidth;
+  canvas.height = source.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (context === null) throw new Error("Browser canvas is unavailable");
+  context.drawImage(source, 0, 0);
+  const bandFraction = Number(document.documentElement.dataset.bandFraction);
+  const edge = document.documentElement.dataset.edge;
+  const bandHeight = Math.max(1, Math.floor(canvas.height * bandFraction));
+  const top = edge === "top" ? 0 : canvas.height - bandHeight;
+  const pixels = context.getImageData(
+    0,
+    top,
+    canvas.width,
+    bandHeight,
+  ).data;
+  let total = 0;
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    total +=
+      pixels[offset] * 0.2126 +
+      pixels[offset + 1] * 0.7152 +
+      pixels[offset + 2] * 0.0722;
+  }
+  return { luminance: total / (pixels.length / 4) };
+})()`;
+
 /** Writes an exact RGBA pixel diff for two Android screenshots. */
 export async function writeVisualDiff(input: VisualDiffInput): Promise<VisualDiffResult> {
   const [baseline, actual] = await Promise.all([
@@ -91,6 +124,29 @@ export async function writeVisualDiff(input: VisualDiffInput): Promise<VisualDif
       ratio: result.ratio,
       width: result.width,
     };
+  } finally {
+    await browser.close();
+  }
+}
+
+/** Measures the average perceived luminance of a screenshot edge band. */
+export async function readEdgeLuminance(
+  imagePath: string,
+  edge: "bottom" | "top",
+  fraction: number,
+): Promise<number> {
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
+    throw new Error("Screenshot band fraction must be between 0 and 1");
+  }
+  const image = await readFile(imagePath, "base64");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(
+      `<html data-band-fraction="${fraction}" data-edge="${edge}"><body><img id="source" src="data:image/png;base64,${image}"></body></html>`,
+    );
+    const result = await page.evaluate<BrowserLuminanceResult>(BROWSER_LUMINANCE_SCRIPT);
+    return result.luminance;
   } finally {
     await browser.close();
   }

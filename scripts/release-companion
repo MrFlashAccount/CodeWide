@@ -11,6 +11,17 @@ TMP_ROOT=${TMPDIR:-/tmp}
 BACKUP_DIR=
 DEPLOYMENT_STARTED=0
 SERVICE_WAS_ACTIVE=0
+DRY_RUN=0
+
+case "${1-}" in
+  '') ;;
+  --dry-run) DRY_RUN=1; shift ;;
+  *) printf 'Usage: %s [--dry-run]\n' "$0" >&2; exit 2 ;;
+esac
+if [ "$#" -ne 0 ]; then
+  printf 'Usage: %s [--dry-run]\n' "$0" >&2
+  exit 2
+fi
 
 backup_target() {
   source_path=$1
@@ -82,6 +93,26 @@ CARGO_INCREMENTAL=0 cargo test --workspace --all-features
 printf '%s\n' 'release-companion: building optimized binaries'
 ./scripts/build-companion.sh
 
+printf '%s\n' 'release-companion: validating release payload'
+test -x target/release/codewide-companion
+test -x target/release/codewide-vcs-git
+test -x apps/companion/deploy/memory-watch.sh
+test -r apps/companion/deploy/codewide-companion.service
+test -r apps/companion/deploy/codewide-companion-memory-watch.service
+test -r apps/companion/deploy/codewide-companion-memory-watch.timer
+
+SOURCE_REVISION=$(git rev-parse HEAD)
+SOURCE_DIRTY=false
+if [ -n "$(git status --porcelain)" ]; then
+  SOURCE_DIRTY=true
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  BINARY_SHA256=$(sha256sum target/release/codewide-companion | cut -d ' ' -f 1)
+  printf '%s\n' "{\"release\":\"companion\",\"status\":\"validated\",\"dryRun\":true,\"sourceRevision\":\"$SOURCE_REVISION\",\"sourceDirty\":$SOURCE_DIRTY,\"binarySha256\":\"$BINARY_SHA256\"}"
+  exit 0
+fi
+
 BACKUP_DIR=$(mktemp -d "$TMP_ROOT/codewide-companion-release.XXXXXX")
 if systemctl --user is-active --quiet codewide-companion.service; then
   SERVICE_WAS_ACTIVE=1
@@ -99,11 +130,6 @@ DEPLOYMENT_STARTED=1
 ./apps/companion/deploy/verify.sh
 DEPLOYMENT_STARTED=0
 
-SOURCE_REVISION=$(git rev-parse HEAD)
-SOURCE_DIRTY=false
-if [ -n "$(git status --porcelain)" ]; then
-  SOURCE_DIRTY=true
-fi
 BINARY_SHA256=$(sha256sum "$INSTALL_ROOT/codewide-companion" | cut -d ' ' -f 1)
 MAIN_PID=$(systemctl --user show codewide-companion.service -p MainPID --value)
 RESTARTS=$(systemctl --user show codewide-companion.service -p NRestarts --value)

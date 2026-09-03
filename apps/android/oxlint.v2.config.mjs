@@ -82,8 +82,6 @@ export default {
     "app/_layout.tsx",
     "app/index.tsx",
     "app/legacy.tsx",
-    "app/pair.tsx",
-    "app/thread.tsx",
     "assets/**",
     "coverage/**",
     "dist/**",

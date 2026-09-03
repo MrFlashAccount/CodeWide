@@ -17,14 +17,62 @@
     "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]+)?Z$" },
     "nullableId": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
     "nullableString": { "type": ["string", "null"] },
+    "nullableJsonText": { "oneOf": [{ "type": "string", "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 }, { "type": "null" }] },
+    "effort": { "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] },
+    "granularApprovalConfig": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sandboxApproval", "rules", "skillApproval", "requestPermissions", "mcpElicitations"],
+      "properties": {
+        "sandboxApproval": { "type": "boolean" },
+        "rules": { "type": "boolean" },
+        "skillApproval": { "type": "boolean" },
+        "requestPermissions": { "type": "boolean" },
+        "mcpElicitations": { "type": "boolean" }
+      }
+    },
+    "approvalPolicy": { "oneOf": [
+      { "enum": ["never", "onRequest", "untrusted"] },
+      { "type": "object", "additionalProperties": false, "required": ["granular"], "properties": { "granular": { "$ref": "#/$defs/granularApprovalConfig" } } }
+    ] },
+    "networkPolicyAmendment": { "type": "object", "additionalProperties": false, "required": ["action", "host"], "properties": { "action": { "enum": ["allow", "deny"] }, "host": { "type": "string", "minLength": 1, "maxLength": 1024, "x-maxUtf8Bytes": 4096 } } },
+    "approvalDecision": { "oneOf": [
+      { "enum": ["accept", "acceptForSession", "decline", "cancel"] },
+      { "type": "object", "additionalProperties": false, "required": ["acceptWithExecpolicyAmendment"], "properties": { "acceptWithExecpolicyAmendment": { "type": "object", "additionalProperties": false, "required": ["execpolicy_amendment"], "properties": { "execpolicy_amendment": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 } } } } } },
+      { "type": "object", "additionalProperties": false, "required": ["applyNetworkPolicyAmendment"], "properties": { "applyNetworkPolicyAmendment": { "type": "object", "additionalProperties": false, "required": ["network_policy_amendment"], "properties": { "network_policy_amendment": { "$ref": "#/$defs/networkPolicyAmendment" } } } } }
+    ] },
     "threadSettings": {
       "type": "object", "additionalProperties": false,
-      "required": ["model", "effort", "approvalPolicy", "sandbox"],
+      "required": ["model", "effort", "approvalPolicy", "sandbox", "personality"],
       "properties": {
         "model": { "$ref": "#/$defs/nullableString" },
-        "effort": { "enum": ["low", "medium", "high", "xhigh", null] },
-        "approvalPolicy": { "enum": ["never", "onRequest", "untrusted"] },
-        "sandbox": { "enum": ["readOnly", "workspaceWrite", "unrestricted"] }
+        "effort": { "oneOf": [{ "$ref": "#/$defs/effort" }, { "type": "null" }] },
+        "approvalPolicy": { "$ref": "#/$defs/approvalPolicy" },
+        "sandbox": { "oneOf": [{ "enum": ["readOnly", "workspaceWrite", "unrestricted"] }, { "type": "object", "additionalProperties": false, "required": ["type", "networkAccess"], "properties": { "type": { "const": "externalSandbox" }, "networkAccess": { "enum": ["restricted", "enabled"] } } }] },
+        "personality": { "enum": ["none", "friendly", "pragmatic", null] }
+      }
+    },
+    "threadGoalStatus": { "enum": ["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"] },
+    "threadGoal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["threadId", "objective", "status", "tokenBudget", "tokensUsed", "timeUsedSeconds", "createdAtMs", "updatedAtMs"],
+      "properties": {
+        "threadId": { "$ref": "#/$defs/id" },
+        "objective": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "status": { "$ref": "#/$defs/threadGoalStatus" },
+        "tokenBudget": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] },
+        "tokensUsed": { "$ref": "#/$defs/nonNegativeInteger" },
+        "timeUsedSeconds": { "$ref": "#/$defs/nonNegativeInteger" },
+        "createdAtMs": { "$ref": "#/$defs/nonNegativeInteger" },
+        "updatedAtMs": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "threadGoalUpdate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["objective", "status", "tokenBudget"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1, "maxLength": 1048576 },
+        "status": { "$ref": "#/$defs/threadGoalStatus" },
+        "tokenBudget": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] }
       }
     },
     "attachment": {
@@ -36,21 +84,97 @@
         "downloadUrl": { "$ref": "#/$defs/nullableString" }
       }
     },
+    "attachmentStageRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["workspace", "threadId", "name", "mediaType", "sizeBytes", "sha256"],
+      "properties": {
+        "workspace": { "$ref": "#/$defs/nullableString" },
+        "threadId": { "$ref": "#/$defs/nullableId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 512, "x-maxUtf8Bytes": 2048 },
+        "mediaType": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "sizeBytes": { "$ref": "#/$defs/u64" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "attachmentStageResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attachmentId", "uploadPath", "expiresAt"],
+      "properties": {
+        "attachmentId": { "$ref": "#/$defs/id" },
+        "uploadPath": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "expiresAt": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "attachmentUploadResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attachment", "sha256"],
+      "properties": {
+        "attachment": { "$ref": "#/$defs/attachment" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "threadChangePatch": { "type": "object", "additionalProperties": false, "required": ["turnId", "itemId", "kind", "diff"], "properties": { "turnId": { "type": "string" }, "itemId": { "type": "string" }, "kind": { "enum": ["add", "update", "delete"] }, "diff": { "type": "string", "maxLength": 4194304 } } },
     "inputBlock": {
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["kind", "text"], "properties": { "kind": { "const": "text" }, "text": { "type": "string" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "attachmentId"], "properties": { "kind": { "const": "attachment" }, "attachmentId": { "$ref": "#/$defs/id" } } }
+        { "type": "object", "additionalProperties": false, "required": ["kind", "attachmentId"], "properties": { "kind": { "const": "attachment" }, "attachmentId": { "$ref": "#/$defs/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "name", "path"], "properties": { "kind": { "const": "skill" }, "name": { "type": "string", "minLength": 1, "maxLength": 256 }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 } } }
       ]
     },
+    "queueAttachment": { "type": "object", "additionalProperties": false, "required": ["id", "name"], "properties": { "id": { "$ref": "#/$defs/id" }, "name": { "type": "string", "minLength": 1, "maxLength": 512, "x-maxUtf8Bytes": 2048 } } },
+    "userTextByteRange": {
+      "type": "object", "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "$ref": "#/$defs/nonNegativeInteger" },
+        "end": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "userTextElement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["byteRange", "placeholder"],
+      "properties": {
+        "byteRange": { "$ref": "#/$defs/userTextByteRange" },
+        "placeholder": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "userMessageBlock": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "text", "textElements"], "properties": { "kind": { "const": "text" }, "text": { "type": "string", "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 }, "textElements": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/userTextElement" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "url", "detail"], "properties": { "kind": { "const": "image" }, "url": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 }, "detail": { "enum": ["auto", "low", "high", "original", null] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "path", "detail"], "properties": { "kind": { "const": "localImage" }, "path": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 }, "detail": { "enum": ["auto", "low", "high", "original", null] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "url"], "properties": { "kind": { "const": "audio" }, "url": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "path"], "properties": { "kind": { "const": "localAudio" }, "path": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "name", "path"], "properties": { "kind": { "const": "skill" }, "name": { "type": "string", "minLength": 1, "maxLength": 1024, "x-maxUtf8Bytes": 1024 }, "path": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "name", "path"], "properties": { "kind": { "const": "mention" }, "name": { "type": "string", "minLength": 1, "maxLength": 1024, "x-maxUtf8Bytes": 1024 }, "path": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } }
+      ]
+    },
+    "fileChangeEntry": { "type": "object", "additionalProperties": false, "required": ["path", "change"], "properties": { "path": { "type": "string" }, "change": { "enum": ["add", "update", "delete"] }, "diff": { "type": "string", "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } },
+    "memoryCitationEntry": { "type": "object", "additionalProperties": false, "required": ["path", "lineStart", "lineEnd", "note"], "properties": { "path": { "type": "string", "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 }, "lineStart": { "$ref": "#/$defs/nonNegativeInteger" }, "lineEnd": { "$ref": "#/$defs/nonNegativeInteger" }, "note": { "type": "string", "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } },
+    "memoryCitation": { "type": "object", "additionalProperties": false, "required": ["entries", "threadIds"], "properties": { "entries": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/memoryCitationEntry" } }, "threadIds": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/id" } } } },
+    "toolAppContext": { "type": "object", "additionalProperties": false, "required": ["connectorId"], "properties": { "connectorId": { "type": "string" }, "linkId": { "$ref": "#/$defs/nullableString" }, "resourceUri": { "$ref": "#/$defs/nullableString" }, "appName": { "$ref": "#/$defs/nullableString" }, "actionName": { "$ref": "#/$defs/nullableString" } } },
+    "toolError": { "type": "object", "additionalProperties": false, "required": ["message"], "properties": { "message": { "type": "string", "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } },
+    "itemLifecycle": { "type": "object", "additionalProperties": false, "required": ["item", "phase", "preTurn"], "properties": { "item": { "$ref": "#/$defs/item" }, "phase": { "enum": ["started", "completed"] }, "preTurn": { "type": "boolean" } } },
     "item": {
       "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "text"], "properties": { "kind": { "enum": ["userText", "assistantText"] }, "id": { "$ref": "#/$defs/id" }, "text": { "type": "string" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "summary"], "properties": { "kind": { "const": "reasoning" }, "id": { "$ref": "#/$defs/id" }, "summary": { "type": "string" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "command", "cwd", "status", "exitCode", "outputPreview"], "properties": { "kind": { "const": "command" }, "id": { "$ref": "#/$defs/id" }, "command": { "type": "string" }, "cwd": { "type": "string" }, "status": { "enum": ["running", "completed", "failed"] }, "exitCode": { "oneOf": [{ "$ref": "#/$defs/safeInteger" }, { "type": "null" }] }, "outputPreview": { "type": "string" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "path", "change", "status"], "properties": { "kind": { "const": "fileChange" }, "id": { "$ref": "#/$defs/id" }, "path": { "type": "string" }, "change": { "enum": ["add", "update", "delete"] }, "status": { "enum": ["pending", "applied", "rejected"] } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "name", "status", "summary"], "properties": { "kind": { "const": "tool" }, "id": { "$ref": "#/$defs/id" }, "name": { "type": "string" }, "status": { "enum": ["running", "completed", "failed"] }, "summary": { "type": "string" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "steps"], "properties": { "kind": { "const": "plan" }, "id": { "$ref": "#/$defs/id" }, "steps": { "type": "array", "maxItems": 256, "items": { "type": "object", "additionalProperties": false, "required": ["text", "status"], "properties": { "text": { "type": "string" }, "status": { "enum": ["pending", "running", "completed"] } } } } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "attachment"], "properties": { "kind": { "const": "attachment" }, "id": { "$ref": "#/$defs/id" }, "attachment": { "$ref": "#/$defs/attachment" } } }
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "clientId", "content"], "properties": { "kind": { "const": "userMessage" }, "id": { "$ref": "#/$defs/id" }, "clientId": { "$ref": "#/$defs/nullableString" }, "content": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/userMessageBlock" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "text"], "properties": { "kind": { "const": "assistantText" }, "id": { "$ref": "#/$defs/id" }, "text": { "type": "string" }, "phase": { "enum": ["commentary", "final", null] }, "memoryCitation": { "oneOf": [{ "$ref": "#/$defs/memoryCitation" }, { "type": "null" }] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "summary"], "properties": { "kind": { "const": "reasoning" }, "id": { "$ref": "#/$defs/id" }, "summary": { "type": "string" }, "summaryParts": { "type": "array", "maxItems": 256, "items": { "type": "string" } }, "contentParts": { "type": "array", "maxItems": 256, "items": { "type": "string" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "command", "cwd", "status", "exitCode", "outputPreview"], "properties": { "kind": { "const": "command" }, "id": { "$ref": "#/$defs/id" }, "command": { "type": "string" }, "cwd": { "type": "string" }, "status": { "enum": ["running", "completed", "failed"] }, "exitCode": { "oneOf": [{ "$ref": "#/$defs/safeInteger" }, { "type": "null" }] }, "outputPreview": { "type": "string" }, "durationMs": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "path", "change", "status"], "properties": { "kind": { "const": "fileChange" }, "id": { "$ref": "#/$defs/id" }, "path": { "type": "string" }, "change": { "enum": ["add", "update", "delete"] }, "status": { "enum": ["pending", "applied", "rejected"] }, "changes": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/fileChangeEntry" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "name", "status", "summary"], "properties": { "kind": { "const": "tool" }, "id": { "$ref": "#/$defs/id" }, "name": { "type": "string" }, "status": { "enum": ["running", "completed", "failed"] }, "summary": { "type": "string" }, "server": { "$ref": "#/$defs/nullableString" }, "argumentsJson": { "$ref": "#/$defs/nullableJsonText" }, "resultJson": { "$ref": "#/$defs/nullableJsonText" }, "appContext": { "oneOf": [{ "$ref": "#/$defs/toolAppContext" }, { "type": "null" }] }, "pluginId": { "$ref": "#/$defs/nullableString" }, "readOnlyHint": { "type": ["boolean", "null"] }, "success": { "type": ["boolean", "null"] }, "error": { "oneOf": [{ "$ref": "#/$defs/toolError" }, { "type": "null" }] }, "durationMs": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "steps"], "properties": { "kind": { "const": "plan" }, "id": { "$ref": "#/$defs/id" }, "steps": { "type": "array", "maxItems": 256, "items": { "type": "object", "additionalProperties": false, "required": ["text", "status"], "properties": { "text": { "type": "string" }, "status": { "enum": ["pending", "running", "completed"] } } } }, "text": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "attachment"], "properties": { "kind": { "const": "attachment" }, "id": { "$ref": "#/$defs/id" }, "attachment": { "$ref": "#/$defs/attachment" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "fragments"], "properties": { "kind": { "const": "hookPrompt" }, "id": { "$ref": "#/$defs/id" }, "fragments": { "type": "array", "maxItems": 256, "items": { "type": "string" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "tool", "status", "senderThreadId", "receiverThreadIds", "prompt", "model", "effort"], "properties": { "kind": { "const": "collaboration" }, "id": { "$ref": "#/$defs/id" }, "tool": { "type": "string" }, "status": { "enum": ["running", "completed", "failed"] }, "senderThreadId": { "$ref": "#/$defs/nullableId" }, "receiverThreadIds": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/id" } }, "prompt": { "$ref": "#/$defs/nullableString" }, "model": { "$ref": "#/$defs/nullableString" }, "effort": { "oneOf": [{ "$ref": "#/$defs/effort" }, { "type": "null" }] }, "agentsStatesJson": { "$ref": "#/$defs/nullableJsonText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "activityKind", "agentThreadId", "agentPath"], "properties": { "kind": { "const": "subagentActivity" }, "id": { "$ref": "#/$defs/id" }, "activityKind": { "type": "string" }, "agentThreadId": { "$ref": "#/$defs/id" }, "agentPath": { "type": "array", "maxItems": 64, "items": { "type": "string" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "query"], "properties": { "kind": { "const": "webSearch" }, "id": { "$ref": "#/$defs/id" }, "query": { "type": "string" }, "actionJson": { "$ref": "#/$defs/nullableJsonText" }, "resultsJson": { "$ref": "#/$defs/nullableJsonText" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "path", "sourceUrl"], "properties": { "kind": { "const": "imageView" }, "id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 }, "sourceUrl": { "type": "string", "minLength": 1, "maxLength": 4194304, "x-maxUtf8Bytes": 4194304 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "durationMs"], "properties": { "kind": { "const": "sleep" }, "id": { "$ref": "#/$defs/id" }, "durationMs": { "$ref": "#/$defs/nonNegativeInteger" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "prompt", "status", "result", "savedPath", "sourceUrl"], "properties": { "kind": { "const": "imageGeneration" }, "id": { "$ref": "#/$defs/id" }, "prompt": { "type": "string" }, "status": { "enum": ["running", "completed", "failed"] }, "result": { "type": "string", "maxLength": 16777216, "x-maxUtf8Bytes": 16777216 }, "savedPath": { "$ref": "#/$defs/nullableString" }, "sourceUrl": { "$ref": "#/$defs/nullableString" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "state", "review"], "properties": { "kind": { "const": "reviewMode" }, "id": { "$ref": "#/$defs/id" }, "state": { "enum": ["entered", "exited"] }, "review": { "$ref": "#/$defs/nullableString" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": { "kind": { "const": "contextCompaction" }, "id": { "$ref": "#/$defs/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "sourceKind", "payloadJson", "payloadTruncated"], "properties": { "kind": { "const": "unsupported" }, "id": { "$ref": "#/$defs/id" }, "sourceKind": { "type": "string", "minLength": 1, "maxLength": 128 }, "payloadJson": { "type": "string", "maxLength": 65536, "x-maxUtf8Bytes": 65536 }, "payloadTruncated": { "type": "boolean" } } }
       ]
     },
     "turnActivity": {
@@ -63,17 +187,27 @@
     },
     "turnUsage": {
       "type": "object", "additionalProperties": false,
-      "required": ["inputTokens", "outputTokens", "totalCostUsd", "latestRequestTokens", "modelContextWindow", "threadInputTokens", "threadOutputTokens", "threadTotalTokens", "threadTotalCostUsd"],
+      "required": ["inputTokens", "cachedInputTokens", "cacheWriteInputTokens", "outputTokens", "reasoningOutputTokens", "totalCostUsd", "latestRequestTokens", "modelContextWindow", "threadInputTokens", "threadCachedInputTokens", "threadCacheWriteInputTokens", "threadOutputTokens", "threadReasoningOutputTokens", "threadTotalTokens", "threadTotalCostUsd", "threadCompactionCount", "model", "status", "cacheHit"],
       "properties": {
         "inputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "cachedInputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "cacheWriteInputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
         "outputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "reasoningOutputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
         "totalCostUsd": { "type": ["number", "null"], "minimum": 0 },
         "latestRequestTokens": { "$ref": "#/$defs/nonNegativeInteger" },
         "modelContextWindow": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] },
         "threadInputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "threadCachedInputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "threadCacheWriteInputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
         "threadOutputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
+        "threadReasoningOutputTokens": { "$ref": "#/$defs/nonNegativeInteger" },
         "threadTotalTokens": { "$ref": "#/$defs/nonNegativeInteger" },
-        "threadTotalCostUsd": { "type": ["number", "null"], "minimum": 0 }
+        "threadTotalCostUsd": { "type": ["number", "null"], "minimum": 0 },
+        "threadCompactionCount": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] },
+        "model": { "$ref": "#/$defs/nullableString" },
+        "status": { "enum": ["live", "final"] },
+        "cacheHit": { "type": ["boolean", "null"] }
       }
     },
     "weeklyRateLimit": {
@@ -84,41 +218,67 @@
         "resetsAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }
       }
     },
+    "threadReadState": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind", "latestActivityMarker", "readThroughMarker", "unreadCount"], "properties": { "kind": { "const": "read" }, "latestActivityMarker": { "$ref": "#/$defs/nullableString" }, "readThroughMarker": { "$ref": "#/$defs/nullableString" }, "unreadCount": { "const": 0 } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "latestActivityMarker", "readThroughMarker", "unreadCount"], "properties": { "kind": { "const": "unread" }, "latestActivityMarker": { "$ref": "#/$defs/id" }, "readThroughMarker": { "$ref": "#/$defs/nullableString" }, "unreadCount": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "latestActivityMarker", "readThroughMarker", "unreadCount"], "properties": { "kind": { "const": "unknown" }, "latestActivityMarker": { "$ref": "#/$defs/nullableString" }, "readThroughMarker": { "$ref": "#/$defs/nullableString" }, "unreadCount": { "type": "null" } } }
+    ] },
     "threadSummary": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "parentId", "title", "preview", "workspace", "archived", "state", "settings", "createdAt", "updatedAt", "lastActivityAt", "headTurnId"],
+      "required": ["id", "parentId", "title", "preview", "workspace", "archived", "state", "settings", "readState", "createdAt", "updatedAt", "lastActivityAt", "headTurnId"],
       "properties": {
         "id": { "$ref": "#/$defs/id" }, "parentId": { "$ref": "#/$defs/nullableId" }, "title": { "$ref": "#/$defs/nullableString" },
         "preview": { "type": "string" }, "workspace": { "type": "string" }, "archived": { "type": "boolean" },
         "state": { "enum": ["idle", "running", "waitingForApproval", "waitingForInput", "completed", "failed", "interrupted"] },
-        "settings": { "oneOf": [{ "$ref": "#/$defs/threadSettings" }, { "type": "null" }] }, "createdAt": { "$ref": "#/$defs/timestamp" }, "updatedAt": { "$ref": "#/$defs/timestamp" },
+        "settings": { "oneOf": [{ "$ref": "#/$defs/threadSettings" }, { "type": "null" }] }, "readState": { "$ref": "#/$defs/threadReadState" }, "createdAt": { "$ref": "#/$defs/timestamp" }, "updatedAt": { "$ref": "#/$defs/timestamp" },
         "lastActivityAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "headTurnId": { "$ref": "#/$defs/nullableId" }
       }
     },
     "turnView": {
       "type": "object", "additionalProperties": false,
-      "required": ["id", "threadId", "state", "createdAt", "completedAt", "durationMs", "activity", "usage", "items"],
+      "required": ["id", "threadId", "state", "createdAt", "completedAt", "durationMs", "activity", "usage", "items", "lifecycle"],
       "properties": {
         "id": { "$ref": "#/$defs/id" }, "threadId": { "$ref": "#/$defs/id" },
         "state": { "enum": ["queued", "running", "completed", "failed", "interrupted"] },
-        "createdAt": { "$ref": "#/$defs/timestamp" }, "completedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
+        "createdAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "completedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
         "durationMs": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] },
         "activity": { "oneOf": [{ "$ref": "#/$defs/turnActivity" }, { "type": "null" }] },
         "usage": { "oneOf": [{ "$ref": "#/$defs/turnUsage" }, { "type": "null" }] },
-        "items": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/item" } }
+        "items": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/item" } },
+        "lifecycle": { "type": "array", "maxItems": 2048, "items": { "$ref": "#/$defs/itemLifecycle" } }
       }
     },
     "threadWindow": {
       "type": "object", "additionalProperties": false, "required": ["thread", "turns", "olderCursor", "newerCursor"],
       "properties": { "thread": { "$ref": "#/$defs/threadSummary" }, "turns": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/turnView" } }, "olderCursor": { "$ref": "#/$defs/nullableString" }, "newerCursor": { "$ref": "#/$defs/nullableString" } }
     },
-    "pendingRequest": {
-      "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "action", "summary"], "properties": { "kind": { "const": "approval" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "action": { "enum": ["runCommand", "applyFileChange", "grantPermission"] }, "summary": { "type": "string" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "questions"], "properties": { "kind": { "const": "userInput" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "questions": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["id", "prompt", "choices", "allowFreeText"], "properties": { "id": { "$ref": "#/$defs/id" }, "prompt": { "type": "string" }, "choices": { "type": "array", "maxItems": 64, "items": { "type": "string" } }, "allowFreeText": { "type": "boolean" } } } } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "title", "fields"], "properties": { "kind": { "const": "elicitation" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/nullableId" }, "turnId": { "$ref": "#/$defs/nullableId" }, "title": { "type": "string" }, "fields": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["id", "label", "type", "required"], "properties": { "id": { "$ref": "#/$defs/id" }, "label": { "type": "string" }, "type": { "enum": ["text", "secret", "boolean"] }, "required": { "type": "boolean" } } } } } }
-      ]
-    },
+    "fileSystemSpecialPath": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "enum": ["root", "minimal", "tmpdir", "slashTmp"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "subpath"], "properties": { "kind": { "const": "projectRoots" }, "subpath": { "$ref": "#/$defs/nullableString" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "path", "subpath"], "properties": { "kind": { "const": "unknown" }, "path": { "type": "string" }, "subpath": { "$ref": "#/$defs/nullableString" } } }
+    ] },
+    "fileSystemPath": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind", "path"], "properties": { "kind": { "const": "path" }, "path": { "type": "string" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "pattern"], "properties": { "kind": { "const": "globPattern" }, "pattern": { "type": "string" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "const": "special" }, "value": { "$ref": "#/$defs/fileSystemSpecialPath" } } }
+    ] },
+    "fileSystemPermissionEntry": { "type": "object", "additionalProperties": false, "required": ["path", "access"], "properties": { "path": { "$ref": "#/$defs/fileSystemPath" }, "access": { "enum": ["read", "write", "deny"] } } },
+    "permissionProfile": { "type": "object", "additionalProperties": false, "required": ["network", "fileSystem"], "properties": { "network": { "oneOf": [{ "type": "object", "additionalProperties": false, "required": ["enabled"], "properties": { "enabled": { "type": ["boolean", "null"] } } }, { "type": "null" }] }, "fileSystem": { "oneOf": [{ "type": "object", "additionalProperties": false, "required": ["read", "write", "globScanMaxDepth", "entries"], "properties": { "read": { "oneOf": [{ "type": "array", "maxItems": 256, "items": { "type": "string" } }, { "type": "null" }] }, "write": { "oneOf": [{ "type": "array", "maxItems": 256, "items": { "type": "string" } }, { "type": "null" }] }, "globScanMaxDepth": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] }, "entries": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/fileSystemPermissionEntry" } } } }, { "type": "null" }] } } },
+    "userInputQuestion": { "type": "object", "additionalProperties": false, "required": ["id", "header", "question", "isOther", "isSecret", "options"], "properties": { "id": { "$ref": "#/$defs/id" }, "header": { "type": "string" }, "question": { "type": "string" }, "isOther": { "type": "boolean" }, "isSecret": { "type": "boolean" }, "options": { "oneOf": [{ "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["label", "description"], "properties": { "label": { "type": "string" }, "description": { "type": "string" } } } }, { "type": "null" }] } } },
+    "elicitationValue": { "oneOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }, { "type": "array", "maxItems": 256, "items": { "type": "string" } }, { "type": "null" }] },
+    "elicitationDefault": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "unset" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "const": "value" }, "value": { "$ref": "#/$defs/elicitationValue" } } }
+    ] },
+    "elicitationOption": { "type": "object", "additionalProperties": false, "required": ["value", "label"], "properties": { "value": { "type": "string" }, "label": { "type": "string" } } },
+    "elicitationField": { "type": "object", "additionalProperties": false, "required": ["id", "label", "description", "type", "required", "defaultValue", "options"], "properties": { "id": { "$ref": "#/$defs/id" }, "label": { "type": "string" }, "description": { "$ref": "#/$defs/nullableString" }, "type": { "enum": ["text", "secret", "boolean", "number", "integer", "select", "array"] }, "required": { "type": "boolean" }, "defaultValue": { "$ref": "#/$defs/elicitationDefault" }, "options": { "oneOf": [{ "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/elicitationOption" } }, { "type": "null" }] } } },
+    "pendingRequest": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "itemId", "command", "cwd", "reason", "networkApprovalContextJson", "availableDecisions"], "properties": { "kind": { "const": "commandApproval" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "itemId": { "$ref": "#/$defs/id" }, "command": { "$ref": "#/$defs/nullableString" }, "cwd": { "$ref": "#/$defs/nullableString" }, "reason": { "$ref": "#/$defs/nullableString" }, "networkApprovalContextJson": { "$ref": "#/$defs/nullableJsonText" }, "availableDecisions": { "type": "array", "minItems": 1, "maxItems": 6, "uniqueItems": true, "items": { "$ref": "#/$defs/approvalDecision" } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "itemId", "reason", "grantRoot", "availableDecisions"], "properties": { "kind": { "const": "fileChangeApproval" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "itemId": { "$ref": "#/$defs/id" }, "reason": { "$ref": "#/$defs/nullableString" }, "grantRoot": { "$ref": "#/$defs/nullableString" }, "availableDecisions": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["accept", "acceptForSession", "decline", "cancel"] } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "itemId", "reason", "permissions"], "properties": { "kind": { "const": "permissionApproval" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "itemId": { "$ref": "#/$defs/id" }, "reason": { "$ref": "#/$defs/nullableString" }, "permissions": { "$ref": "#/$defs/permissionProfile" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "itemId", "questions"], "properties": { "kind": { "const": "userInput" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "itemId": { "$ref": "#/$defs/id" }, "questions": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/userInputQuestion" } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "id", "generation", "threadId", "turnId", "serverName", "mode", "message", "url", "elicitationId", "fields", "requestedSchemaJson", "metadataJson"], "properties": { "kind": { "const": "elicitation" }, "id": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "threadId": { "$ref": "#/$defs/nullableId" }, "turnId": { "$ref": "#/$defs/nullableId" }, "serverName": { "type": "string" }, "mode": { "enum": ["form", "openaiForm", "url"] }, "message": { "type": "string" }, "url": { "$ref": "#/$defs/nullableString" }, "elicitationId": { "$ref": "#/$defs/nullableId" }, "fields": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/elicitationField" } }, "requestedSchemaJson": { "$ref": "#/$defs/nullableJsonText" }, "metadataJson": { "$ref": "#/$defs/nullableJsonText" } } }
+    ] },
     "catalogAnchor": { "type": "object", "additionalProperties": false, "required": ["lastActivityAt", "updatedAt", "threadId"], "properties": { "lastActivityAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "updatedAt": { "$ref": "#/$defs/timestamp" }, "threadId": { "$ref": "#/$defs/id" } } },
     "catalogPartitionScope": { "type": "object", "additionalProperties": false, "required": ["limit", "returned", "complete"], "properties": { "limit": { "type": "integer", "minimum": 0, "maximum": 100 }, "returned": { "type": "integer", "minimum": 0, "maximum": 100 }, "complete": { "type": "boolean" } } },
     "catalogScope": { "type": "object", "additionalProperties": false, "required": ["active", "archived"], "properties": { "active": { "$ref": "#/$defs/catalogPartitionScope" }, "archived": { "$ref": "#/$defs/catalogPartitionScope" } } },
@@ -137,25 +297,38 @@
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "reason"], "properties": { "kind": { "const": "threadRemoved" }, "threadId": { "$ref": "#/$defs/id" }, "reason": { "enum": ["deleted", "outsideScope"] } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "currentThread", "pendingRequests"], "properties": { "kind": { "const": "currentThreadReplaced" }, "currentThread": { "$ref": "#/$defs/threadWindow" }, "pendingRequests": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/pendingRequest" } } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "turn"], "properties": { "kind": { "const": "turnUpserted" }, "turn": { "$ref": "#/$defs/turnView" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "lifecycle"], "properties": { "kind": { "const": "itemLifecycleChanged" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "lifecycle": { "$ref": "#/$defs/itemLifecycle" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "request"], "properties": { "kind": { "const": "pendingRequestOpened" }, "request": { "$ref": "#/$defs/pendingRequest" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "requestId", "generation", "reason"], "properties": { "kind": { "const": "pendingRequestClosed" }, "requestId": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "reason": { "enum": ["resolved", "cancelled", "sourceLost"] } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "revision"], "properties": { "kind": { "const": "resourcesChanged" }, "threadId": { "$ref": "#/$defs/id" }, "revision": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "revision"], "properties": { "kind": { "const": "agentsChanged" }, "threadId": { "$ref": "#/$defs/nullableId" }, "revision": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "revision"], "properties": { "kind": { "const": "queueChanged" }, "threadId": { "$ref": "#/$defs/nullableId" }, "revision": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "revision"], "properties": { "kind": { "const": "threadGoalChanged" }, "threadId": { "$ref": "#/$defs/id" }, "revision": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "workspace", "revision"], "properties": { "kind": { "const": "skillsChanged" }, "workspace": { "$ref": "#/$defs/nullableString" }, "revision": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "revision"], "properties": { "kind": { "const": "accountsChanged" }, "revision": { "type": "string" } } }
       ]
     },
     "sequencedChange": { "type": "object", "additionalProperties": false, "required": ["watermark", "change"], "properties": { "watermark": { "$ref": "#/$defs/u64" }, "change": { "$ref": "#/$defs/projectionChange" } } },
-    "openIntent": { "type": "object", "additionalProperties": false, "required": ["catalog", "currentThread"], "properties": { "catalog": { "type": "object", "additionalProperties": false, "required": ["activeLimit", "archivedLimit"], "properties": { "activeLimit": { "type": "integer", "minimum": 0, "maximum": 100 }, "archivedLimit": { "type": "integer", "minimum": 0, "maximum": 100 } } }, "currentThread": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["threadId", "turnLimit"], "properties": { "threadId": { "$ref": "#/$defs/id" }, "turnLimit": { "type": "integer", "minimum": 1, "maximum": 100 } } }] } } },
+    "openIntent": { "type": "object", "additionalProperties": false, "required": ["catalog", "currentThread", "pendingRequests"], "properties": { "catalog": { "type": "object", "additionalProperties": false, "required": ["activeLimit", "archivedLimit"], "properties": { "activeLimit": { "type": "integer", "minimum": 0, "maximum": 100 }, "archivedLimit": { "type": "integer", "minimum": 0, "maximum": 100 } } }, "currentThread": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["threadId", "turnLimit"], "properties": { "threadId": { "$ref": "#/$defs/id" }, "turnLimit": { "type": "integer", "minimum": 1, "maximum": 100 } } }] }, "pendingRequests": { "enum": ["currentThread", "allAccessible"] } } },
     "query": {
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "enum": ["capabilities.read", "models.list", "projects.list", "accounts.list"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "workspace", "forceReload"], "properties": { "kind": { "const": "skills.list" }, "workspace": { "type": "string" }, "forceReload": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId"], "properties": { "kind": { "const": "thread.goal" }, "threadId": { "$ref": "#/$defs/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "cursor", "limit"], "properties": { "kind": { "const": "thread.agents" }, "threadId": { "$ref": "#/$defs/id" }, "cursor": { "$ref": "#/$defs/nullableString" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "partition", "before", "limit"], "properties": { "kind": { "const": "catalog.page" }, "partition": { "enum": ["active", "archived"] }, "before": { "oneOf": [{ "$ref": "#/$defs/catalogAnchor" }, { "type": "null" }] }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "partition", "text", "cursor", "limit"], "properties": { "kind": { "const": "catalog.search" }, "partition": { "enum": ["active", "archived"] }, "text": { "type": "string", "minLength": 1, "maxLength": 256, "x-maxUtf8Bytes": 1024 }, "cursor": { "$ref": "#/$defs/nullableString" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "cursor", "direction", "limit", "detail"], "properties": { "kind": { "const": "history.page" }, "threadId": { "$ref": "#/$defs/id" }, "cursor": { "$ref": "#/$defs/nullableString" }, "direction": { "enum": ["older", "newer"] }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 }, "detail": { "enum": ["summary", "full"] } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "cursor", "limit"], "properties": { "kind": { "const": "turn.items" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "cursor": { "$ref": "#/$defs/nullableString" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "scope"], "properties": { "kind": { "const": "thread.resources" }, "threadId": { "$ref": "#/$defs/id" }, "scope": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "itemId", "cursor", "limitBytes"], "properties": { "kind": { "const": "item.output" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "itemId": { "$ref": "#/$defs/id" }, "cursor": { "$ref": "#/$defs/nullableString" }, "limitBytes": { "type": "integer", "minimum": 4, "maximum": 65536 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "scope", "cursor", "limit"], "properties": { "kind": { "const": "thread.resources" }, "threadId": { "$ref": "#/$defs/id" }, "scope": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] }, "cursor": { "$ref": "#/$defs/nullableString" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "path"], "properties": { "kind": { "const": "workspace.file" }, "threadId": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "path", "scope"], "properties": { "kind": { "const": "thread.change" }, "threadId": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 }, "scope": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "path", "scope", "cursor", "limitBytes"], "properties": { "kind": { "const": "thread.changeOutput" }, "threadId": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 }, "scope": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] }, "cursor": { "$ref": "#/$defs/nullableString" }, "limitBytes": { "type": "integer", "minimum": 4, "maximum": 65536 } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "path"], "properties": { "kind": { "const": "workspace.inspect" }, "path": { "type": "string" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId"], "properties": { "kind": { "const": "queue.list" }, "threadId": { "$ref": "#/$defs/nullableId" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "operationId"], "properties": { "kind": { "const": "operation.get" }, "operationId": { "$ref": "#/$defs/operationId" } } }
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "cursor", "limit"], "properties": { "kind": { "const": "queue.list" }, "threadId": { "$ref": "#/$defs/nullableId" }, "cursor": { "$ref": "#/$defs/nullableString" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "operationId"], "properties": { "kind": { "const": "operation.get" }, "operationId": { "$ref": "#/$defs/operationId" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "cursor", "limit"], "properties": { "kind": { "const": "thread.processes" }, "threadId": { "$ref": "#/$defs/id" }, "cursor": { "$ref": "#/$defs/nullableString" }, "limit": { "type": "integer", "minimum": 1, "maximum": 100 } } }
       ]
     },
     "command": {
@@ -164,68 +337,107 @@
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "throughTurnId"], "properties": { "kind": { "const": "thread.fork" }, "threadId": { "$ref": "#/$defs/id" }, "throughTurnId": { "$ref": "#/$defs/nullableId" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "change"], "properties": { "kind": { "const": "thread.update" }, "threadId": { "$ref": "#/$defs/id" }, "change": { "$ref": "#/$defs/threadUpdate" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId"], "properties": { "kind": { "enum": ["thread.delete", "thread.compact"] }, "threadId": { "$ref": "#/$defs/id" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "workspace", "input", "intent", "settings"], "properties": { "kind": { "const": "turn.submit" }, "threadId": { "$ref": "#/$defs/nullableId" }, "workspace": { "$ref": "#/$defs/nullableString" }, "input": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/inputBlock" } }, "intent": { "enum": ["chat", "review"] }, "settings": { "oneOf": [{ "$ref": "#/$defs/threadSettings" }, { "type": "null" }] } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "throughActivityMarker"], "properties": { "kind": { "const": "thread.markRead" }, "threadId": { "$ref": "#/$defs/id" }, "throughActivityMarker": { "$ref": "#/$defs/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "workspace", "input", "intent", "settings"], "properties": { "kind": { "const": "turn.submit" }, "threadId": { "$ref": "#/$defs/nullableId" }, "workspace": { "$ref": "#/$defs/nullableString" }, "input": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/inputBlock" } }, "intent": { "const": "chat" }, "settings": { "oneOf": [{ "$ref": "#/$defs/threadSettings" }, { "type": "null" }] } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "input"], "properties": { "kind": { "const": "turn.steer" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "input": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/inputBlock" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "target", "delivery"], "properties": { "kind": { "const": "review.start" }, "threadId": { "$ref": "#/$defs/id" }, "target": { "$ref": "#/$defs/reviewTarget" }, "delivery": { "enum": ["inline", "detached", null] } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId"], "properties": { "kind": { "const": "turn.interrupt" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "throughTurnId", "dropFollowingTurns"], "properties": { "kind": { "const": "thread.rollback" }, "threadId": { "$ref": "#/$defs/id" }, "throughTurnId": { "$ref": "#/$defs/id" }, "dropFollowingTurns": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "throughTurnId", "dropFollowingTurns"], "properties": { "kind": { "const": "thread.rollback" }, "threadId": { "$ref": "#/$defs/id" }, "throughTurnId": { "$ref": "#/$defs/nullableId" }, "dropFollowingTurns": { "type": "boolean" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "path", "name", "pinned"], "properties": { "kind": { "const": "project.add" }, "path": { "type": "string" }, "name": { "$ref": "#/$defs/nullableString" }, "pinned": { "type": "boolean" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "provider", "parentPath", "name"], "properties": { "kind": { "const": "workspace.create" }, "provider": { "$ref": "#/$defs/id" }, "parentPath": { "type": "string" }, "name": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["kind", "mutation"], "properties": { "kind": { "const": "queue.mutate" }, "mutation": { "$ref": "#/$defs/queueMutation" } } },
-        { "type": "object", "additionalProperties": false, "required": ["kind", "change"], "properties": { "kind": { "const": "account.update" }, "change": { "$ref": "#/$defs/accountChange" } } }
+        { "type": "object", "additionalProperties": false, "required": ["kind", "change"], "properties": { "kind": { "const": "account.update" }, "change": { "$ref": "#/$defs/accountChange" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "account.login.start" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "loginId"], "properties": { "kind": { "const": "account.login.cancel" }, "loginId": { "$ref": "#/$defs/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "processId"], "properties": { "kind": { "const": "process.terminate" }, "threadId": { "$ref": "#/$defs/id" }, "processId": { "$ref": "#/$defs/id" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "requestId", "generation", "resolution"], "properties": { "kind": { "const": "request.resolve" }, "requestId": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "resolution": { "$ref": "#/$defs/requestResolution" } } }
       ]
     },
+    "reviewTarget": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "uncommittedChanges" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "branch"], "properties": { "kind": { "const": "baseBranch" }, "branch": { "type": "string", "minLength": 1, "maxLength": 1024 } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "sha", "title"], "properties": { "kind": { "const": "commit" }, "sha": { "type": "string", "minLength": 1, "maxLength": 256 }, "title": { "$ref": "#/$defs/nullableString" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "instructions"], "properties": { "kind": { "const": "custom" }, "instructions": { "type": "string", "minLength": 1, "maxLength": 1048576 } } }
+    ] },
+    "reviewCapabilities": { "type": "object", "additionalProperties": false, "required": ["targetKinds", "deliveries"], "properties": { "targetKinds": { "type": "array", "maxItems": 4, "uniqueItems": true, "items": { "enum": ["uncommittedChanges", "baseBranch", "commit", "custom"] } }, "deliveries": { "type": "array", "maxItems": 2, "uniqueItems": true, "items": { "enum": ["inline", "detached"] } } } },
     "threadUpdate": { "oneOf": [
       { "type": "object", "additionalProperties": false, "required": ["kind", "title"], "properties": { "kind": { "const": "title" }, "title": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "archived"], "properties": { "kind": { "const": "archive" }, "archived": { "type": "boolean" } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "goal"], "properties": { "kind": { "const": "goal" }, "goal": { "$ref": "#/$defs/nullableString" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "goal"], "properties": { "kind": { "const": "goal" }, "goal": { "oneOf": [{ "$ref": "#/$defs/threadGoalUpdate" }, { "type": "null" }] } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "settings"], "properties": { "kind": { "const": "settings" }, "settings": { "$ref": "#/$defs/threadSettings" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "sectionId", "position"], "properties": { "kind": { "const": "section" }, "sectionId": { "$ref": "#/$defs/nullableId" }, "position": { "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }] } } }
     ] },
+    "editableInputBlock": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind", "text"], "properties": { "kind": { "const": "text" }, "text": { "type": "string" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "attachmentId"], "properties": { "kind": { "const": "attachment" }, "attachmentId": { "$ref": "#/$defs/id" } } }
+    ] },
     "queueMutation": { "oneOf": [
       { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "input"], "properties": { "kind": { "const": "put" }, "threadId": { "$ref": "#/$defs/id" }, "input": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/inputBlock" } } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId", "input"], "properties": { "kind": { "const": "edit" }, "itemId": { "$ref": "#/$defs/id" }, "input": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/inputBlock" } } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId"], "properties": { "kind": { "enum": ["cancel", "retry"] }, "itemId": { "$ref": "#/$defs/id" } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId", "beforeItemId"], "properties": { "kind": { "const": "move" }, "itemId": { "$ref": "#/$defs/id" }, "beforeItemId": { "$ref": "#/$defs/nullableId" } } }
+      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId", "expectedRevision", "editableInput"], "properties": { "kind": { "const": "edit" }, "itemId": { "$ref": "#/$defs/id" }, "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 1024 }, "editableInput": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/editableInputBlock" } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId", "expectedRevision"], "properties": { "kind": { "enum": ["cancel", "retry"] }, "itemId": { "$ref": "#/$defs/id" }, "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 1024 } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId", "expectedRevision", "beforeItemId"], "properties": { "kind": { "const": "move" }, "itemId": { "$ref": "#/$defs/id" }, "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 1024 }, "beforeItemId": { "$ref": "#/$defs/nullableId" } } }
+      ,{ "type": "object", "additionalProperties": false, "required": ["kind", "itemId", "turnId", "expectedRevision"], "properties": { "kind": { "const": "steer" }, "itemId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "expectedRevision": { "type": "string", "minLength": 1, "maxLength": 1024 } } }
+    ] },
+    "queueMutationOutcome": { "oneOf": [
+      { "type": "object", "additionalProperties": false, "required": ["kind", "item"], "properties": { "kind": { "const": "item" }, "item": { "$ref": "#/$defs/queueItem" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId"], "properties": { "kind": { "const": "cancelled" }, "itemId": { "$ref": "#/$defs/id" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "itemId", "threadId", "turnId"], "properties": { "kind": { "const": "steered" }, "itemId": { "$ref": "#/$defs/id" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" } } }
     ] },
     "accountChange": { "oneOf": [
       { "type": "object", "additionalProperties": false, "required": ["kind", "profileId"], "properties": { "kind": { "enum": ["activate", "remove"] }, "profileId": { "$ref": "#/$defs/id" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "profileId", "enabled", "priority"], "properties": { "kind": { "const": "configure" }, "profileId": { "$ref": "#/$defs/id" }, "enabled": { "type": "boolean" }, "priority": { "$ref": "#/$defs/safeInteger" } } }
     ] },
-    "action": { "type": "object", "additionalProperties": false, "required": ["kind", "requestId", "generation", "resolution"], "properties": { "kind": { "const": "request.resolve" }, "requestId": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "resolution": { "$ref": "#/$defs/requestResolution" } } },
     "requestResolution": { "oneOf": [
-      { "type": "object", "additionalProperties": false, "required": ["kind", "decision"], "properties": { "kind": { "const": "approval" }, "decision": { "enum": ["allowOnce", "allowSession", "deny"] } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "answers"], "properties": { "kind": { "const": "userInput" }, "answers": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["questionId", "value"], "properties": { "questionId": { "$ref": "#/$defs/id" }, "value": { "type": "string" } } } } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "values"], "properties": { "kind": { "const": "elicitation" }, "values": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["fieldId", "value"], "properties": { "fieldId": { "$ref": "#/$defs/id" }, "value": { "type": "string" } } } } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "cancel" } } }
+      { "type": "object", "additionalProperties": false, "required": ["kind", "decision"], "properties": { "kind": { "const": "commandApproval" }, "decision": { "$ref": "#/$defs/approvalDecision" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "decision"], "properties": { "kind": { "const": "fileChangeApproval" }, "decision": { "enum": ["accept", "acceptForSession", "decline", "cancel"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "permissions", "scope", "strictAutoReview"], "properties": { "kind": { "const": "permissionApproval" }, "permissions": { "$ref": "#/$defs/permissionProfile" }, "scope": { "enum": ["turn", "session"] }, "strictAutoReview": { "type": "boolean" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "answers"], "properties": { "kind": { "const": "userInput" }, "answers": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["questionId", "answers"], "properties": { "questionId": { "$ref": "#/$defs/id" }, "answers": { "type": "array", "maxItems": 64, "items": { "type": "string" } } } } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "action", "contentJson", "metadataJson"], "properties": { "kind": { "const": "elicitation" }, "action": { "enum": ["accept", "decline", "cancel"] }, "contentJson": { "$ref": "#/$defs/nullableJsonText" }, "metadataJson": { "$ref": "#/$defs/nullableJsonText" } } }
     ] },
-    "queueItem": { "type": "object", "additionalProperties": false, "required": ["id", "threadId", "position", "state", "summary", "lastError"], "properties": { "id": { "$ref": "#/$defs/id" }, "threadId": { "$ref": "#/$defs/id" }, "position": { "$ref": "#/$defs/u64" }, "state": { "enum": ["queued", "running", "failed", "done"] }, "summary": { "type": "string" }, "lastError": { "$ref": "#/$defs/nullableString" } } },
+    "queueItem": { "type": "object", "additionalProperties": false, "required": ["id", "threadId", "position", "state", "input", "attachments", "summary", "lastError"], "properties": { "id": { "$ref": "#/$defs/id" }, "threadId": { "$ref": "#/$defs/id" }, "position": { "$ref": "#/$defs/u64" }, "state": { "enum": ["queued", "running", "uncertain", "failed", "done"] }, "input": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/inputBlock" } }, "attachments": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/queueAttachment" } }, "summary": { "type": "string" }, "lastError": { "$ref": "#/$defs/nullableString" } } },
+    "skill": { "type": "object", "additionalProperties": false, "required": ["name", "description", "path", "enabled"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 256 }, "description": { "type": "string", "maxLength": 4096 }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 }, "enabled": { "type": "boolean" } } },
     "project": { "type": "object", "additionalProperties": false, "required": ["path", "name", "pinned", "addedAt", "lastUsedAt"], "properties": { "path": { "type": "string" }, "name": { "type": "string" }, "pinned": { "type": "boolean" }, "addedAt": { "$ref": "#/$defs/timestamp" }, "lastUsedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] } } },
+    "backgroundProcess": { "type": "object", "additionalProperties": false, "required": ["itemId", "processId", "command", "cwd", "osPid", "cpuPercent", "rssKiB"], "properties": { "itemId": { "$ref": "#/$defs/id" }, "processId": { "$ref": "#/$defs/id" }, "command": { "type": "string" }, "cwd": { "type": "string" }, "osPid": { "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }] }, "cpuPercent": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "null" }] }, "rssKiB": { "oneOf": [{ "$ref": "#/$defs/u64" }, { "type": "null" }] } } },
     "queryResult": { "oneOf": [
-      { "type": "object", "additionalProperties": false, "required": ["kind", "commands", "queries", "actions", "limits"], "properties": { "kind": { "const": "capabilities.read" }, "commands": { "type": "array", "items": { "type": "string" } }, "queries": { "type": "array", "items": { "type": "string" } }, "actions": { "type": "array", "items": { "type": "string" } }, "limits": { "$ref": "#/$defs/snapshotLimits" } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "models"], "properties": { "kind": { "const": "models.list" }, "models": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["id", "label", "efforts", "defaultEffort"], "properties": { "id": { "$ref": "#/$defs/id" }, "label": { "type": "string" }, "efforts": { "type": "array", "maxItems": 4, "items": { "enum": ["low", "medium", "high", "xhigh"] } }, "defaultEffort": { "$ref": "#/$defs/nullableString" } } } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "commands", "queries", "limits"], "properties": { "kind": { "const": "capabilities.read" }, "commands": { "type": "array", "items": { "type": "string" } }, "queries": { "type": "array", "items": { "type": "string" } }, "limits": { "$ref": "#/$defs/snapshotLimits" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "models"], "properties": { "kind": { "const": "models.list" }, "models": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["id", "label", "efforts", "defaultEffort", "supportsPersonality"], "properties": { "id": { "$ref": "#/$defs/id" }, "label": { "type": "string" }, "efforts": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/effort" } }, "defaultEffort": { "$ref": "#/$defs/nullableString" }, "supportsPersonality": { "type": "boolean" } } } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "workspace", "skills"], "properties": { "kind": { "const": "skills.list" }, "workspace": { "type": "string" }, "skills": { "type": "array", "maxItems": 4096, "items": { "$ref": "#/$defs/skill" } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "goal"], "properties": { "kind": { "const": "thread.goal" }, "threadId": { "$ref": "#/$defs/id" }, "goal": { "oneOf": [{ "$ref": "#/$defs/threadGoal" }, { "type": "null" }] } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "agents", "next"], "properties": { "kind": { "const": "thread.agents" }, "threadId": { "$ref": "#/$defs/id" }, "agents": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/threadSummary" } }, "next": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "threads", "next"], "properties": { "kind": { "const": "catalog.page" }, "threads": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/threadSummary" } }, "next": { "oneOf": [{ "$ref": "#/$defs/catalogAnchor" }, { "type": "null" }] } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threads", "nextCursor"], "properties": { "kind": { "const": "catalog.search" }, "threads": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/threadSummary" } }, "nextCursor": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turns", "olderCursor", "newerCursor"], "properties": { "kind": { "const": "history.page" }, "threadId": { "$ref": "#/$defs/id" }, "turns": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/turnView" } }, "olderCursor": { "$ref": "#/$defs/nullableString" }, "newerCursor": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "items", "next"], "properties": { "kind": { "const": "turn.items" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/item" } }, "next": { "$ref": "#/$defs/nullableString" } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "revision", "changes", "attachments"], "properties": { "kind": { "const": "thread.resources" }, "threadId": { "$ref": "#/$defs/id" }, "revision": { "type": "string" }, "changes": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["path", "change", "additions", "deletions"], "properties": { "path": { "type": "string" }, "change": { "enum": ["add", "update", "delete"] }, "additions": { "$ref": "#/$defs/u64" }, "deletions": { "$ref": "#/$defs/u64" } } } }, "attachments": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/attachment" } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "itemId", "format", "content", "totalBytes", "next"], "properties": { "kind": { "const": "item.output" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "itemId": { "$ref": "#/$defs/id" }, "format": { "enum": ["terminal", "json", "text"] }, "content": { "type": "string", "maxLength": 65536, "x-maxUtf8Bytes": 65536 }, "totalBytes": { "$ref": "#/$defs/u64" }, "next": { "$ref": "#/$defs/nullableString" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "revision", "scope", "availableScopes", "review", "changes", "attachments", "next"], "properties": { "kind": { "const": "thread.resources" }, "threadId": { "$ref": "#/$defs/id" }, "revision": { "type": "string" }, "scope": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] }, "availableScopes": { "type": "array", "maxItems": 5, "uniqueItems": true, "items": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] } }, "review": { "$ref": "#/$defs/reviewCapabilities" }, "changes": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["path", "change", "additions", "deletions"], "properties": { "path": { "type": "string" }, "change": { "enum": ["add", "update", "delete"] }, "additions": { "$ref": "#/$defs/u64" }, "deletions": { "$ref": "#/$defs/u64" } } } }, "attachments": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/attachment" } }, "next": { "$ref": "#/$defs/nullableString" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "path", "file"], "properties": { "kind": { "const": "workspace.file" }, "threadId": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 }, "file": { "$ref": "#/$defs/attachment" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "path", "scope", "patches", "source", "truncated"], "properties": { "kind": { "const": "thread.change" }, "threadId": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 }, "scope": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] }, "patches": { "type": "array", "maxItems": 10000, "items": { "$ref": "#/$defs/threadChangePatch" } }, "source": { "$ref": "#/$defs/nullableString" }, "truncated": { "type": "boolean" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "path", "scope", "content", "totalBytes", "next"], "properties": { "kind": { "const": "thread.changeOutput" }, "threadId": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1, "maxLength": 4096, "x-maxUtf8Bytes": 8192 }, "scope": { "enum": ["session", "lastTurn", "staged", "unstaged", "branch"] }, "content": { "type": "string", "maxLength": 65536, "x-maxUtf8Bytes": 65536 }, "totalBytes": { "$ref": "#/$defs/u64" }, "next": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "projects"], "properties": { "kind": { "const": "projects.list" }, "projects": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/project" } } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "support"], "properties": { "kind": { "const": "workspace.inspect" }, "support": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["provider", "repositoryRoot", "canCreate"], "properties": { "provider": { "$ref": "#/$defs/id" }, "repositoryRoot": { "type": "string" }, "canCreate": { "type": "boolean" } } }] } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": { "kind": { "const": "queue.list" }, "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/queueItem" } } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "items", "revision", "nextCursor"], "properties": { "kind": { "const": "queue.list" }, "items": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/queueItem" } }, "revision": { "type": "string", "minLength": 1, "maxLength": 1024 }, "nextCursor": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "operationId", "receipt"], "properties": { "kind": { "const": "operation.get" }, "operationId": { "$ref": "#/$defs/operationId" }, "receipt": { "$ref": "#/$defs/operationReceipt" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "processes", "nextCursor"], "properties": { "kind": { "const": "thread.processes" }, "threadId": { "$ref": "#/$defs/id" }, "processes": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/backgroundProcess" } }, "nextCursor": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "activeProfileId", "profiles", "allExhausted"], "properties": { "kind": { "const": "accounts.list" }, "activeProfileId": { "$ref": "#/$defs/nullableId" }, "profiles": { "type": "array", "maxItems": 100, "items": { "type": "object", "additionalProperties": false, "required": ["id", "email", "plan", "enabled", "priority", "exhaustedUntil", "exhaustedIndefinitely", "weeklyLimit", "rateLimitsUpdatedAt", "rateLimitsFailed"], "properties": { "id": { "$ref": "#/$defs/id" }, "email": { "$ref": "#/$defs/nullableString" }, "plan": { "$ref": "#/$defs/nullableString" }, "enabled": { "type": "boolean" }, "priority": { "$ref": "#/$defs/safeInteger" }, "exhaustedUntil": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "exhaustedIndefinitely": { "type": "boolean" }, "weeklyLimit": { "oneOf": [{ "$ref": "#/$defs/weeklyRateLimit" }, { "type": "null" }] }, "rateLimitsUpdatedAt": { "oneOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] }, "rateLimitsFailed": { "type": "boolean" } } } }, "allExhausted": { "type": "boolean" } } }
     ] },
     "commandResult": { "oneOf": [
       { "type": "object", "additionalProperties": false, "required": ["kind", "thread"], "properties": { "kind": { "enum": ["thread.create", "thread.fork", "thread.update"] }, "thread": { "$ref": "#/$defs/threadSummary" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "threadId"], "properties": { "kind": { "const": "thread.delete" }, "threadId": { "$ref": "#/$defs/id" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "readState"], "properties": { "kind": { "const": "thread.markRead" }, "threadId": { "$ref": "#/$defs/id" }, "readState": { "$ref": "#/$defs/threadReadState" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId"], "properties": { "kind": { "enum": ["turn.submit", "thread.compact"] }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "itemId"], "properties": { "kind": { "const": "turn.steer" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "itemId": { "$ref": "#/$defs/id" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "reviewThreadId", "turnId"], "properties": { "kind": { "const": "review.start" }, "threadId": { "$ref": "#/$defs/id" }, "reviewThreadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "threadId", "turnId", "state"], "properties": { "kind": { "const": "turn.interrupt" }, "threadId": { "$ref": "#/$defs/id" }, "turnId": { "$ref": "#/$defs/id" }, "state": { "enum": ["interrupted", "alreadyTerminal"] } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "thread", "headTurnId"], "properties": { "kind": { "const": "thread.rollback" }, "thread": { "$ref": "#/$defs/threadSummary" }, "headTurnId": { "$ref": "#/$defs/nullableId" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "project"], "properties": { "kind": { "const": "project.add" }, "project": { "$ref": "#/$defs/project" } } },
       { "type": "object", "additionalProperties": false, "required": ["kind", "path", "repositoryRoot"], "properties": { "kind": { "const": "workspace.create" }, "path": { "type": "string" }, "repositoryRoot": { "type": "string" } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "item"], "properties": { "kind": { "const": "queue.mutate" }, "item": { "oneOf": [{ "$ref": "#/$defs/queueItem" }, { "type": "null" }] } } },
-      { "type": "object", "additionalProperties": false, "required": ["kind", "activeProfileId", "affectedProfileId"], "properties": { "kind": { "const": "account.update" }, "activeProfileId": { "$ref": "#/$defs/nullableId" }, "affectedProfileId": { "$ref": "#/$defs/id" } } }
+      { "type": "object", "additionalProperties": false, "required": ["kind", "outcome"], "properties": { "kind": { "const": "queue.mutate" }, "outcome": { "$ref": "#/$defs/queueMutationOutcome" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "activeProfileId", "affectedProfileId"], "properties": { "kind": { "const": "account.update" }, "activeProfileId": { "$ref": "#/$defs/nullableId" }, "affectedProfileId": { "$ref": "#/$defs/id" } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "loginId", "verificationUrl", "userCode"], "properties": { "kind": { "const": "account.login.start" }, "loginId": { "$ref": "#/$defs/id" }, "verificationUrl": { "type": "string", "minLength": 1, "maxLength": 8192 }, "userCode": { "type": "string", "minLength": 1, "maxLength": 128 } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "loginId", "state"], "properties": { "kind": { "const": "account.login.cancel" }, "loginId": { "$ref": "#/$defs/id" }, "state": { "enum": ["cancelled", "notFound"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "processId", "state"], "properties": { "kind": { "const": "process.terminate" }, "processId": { "$ref": "#/$defs/id" }, "state": { "enum": ["terminated", "notFound"] } } },
+      { "type": "object", "additionalProperties": false, "required": ["kind", "requestId", "state"], "properties": { "kind": { "const": "request.resolve" }, "requestId": { "$ref": "#/$defs/id" }, "state": { "enum": ["resolved", "alreadyResolved"] } } }
     ] },
-    "actionResult": { "type": "object", "additionalProperties": false, "required": ["kind", "requestId", "state"], "properties": { "kind": { "const": "request.resolve" }, "requestId": { "$ref": "#/$defs/id" }, "state": { "enum": ["resolved", "alreadyResolved"] } } },
     "v2Error": { "oneOf": [
       { "type": "object", "additionalProperties": false, "required": ["code", "recovery", "message"], "properties": { "code": { "enum": ["invalidRequest", "invalidQuery", "invalidCursor", "unsupportedCapability"] }, "recovery": { "const": "none" }, "message": { "type": "string", "maxLength": 128 } } },
       { "type": "object", "additionalProperties": false, "required": ["code", "recovery", "message"], "properties": { "code": { "enum": ["unauthorized", "forbidden", "operationIdConflict", "operationExpired"] }, "recovery": { "const": "userAction" }, "message": { "type": "string", "maxLength": 128 } } },
@@ -239,6 +451,8 @@
     "contentLocation": { "type": "object", "additionalProperties": false, "required": ["offset", "limit"], "properties": { "offset": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] }, "limit": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 262144 }, { "type": "null" }] } } },
     "mediaMaterializeRequest": { "type": "object", "additionalProperties": false, "required": ["url"], "properties": { "url": { "type": "string", "minLength": 1, "maxLength": 8192 } } },
     "mediaMaterializeResponse": { "type": "object", "additionalProperties": false, "required": ["id", "expiresAt"], "properties": { "id": { "$ref": "#/$defs/id" }, "expiresAt": { "$ref": "#/$defs/nonNegativeInteger" } } },
+    "mediaStreamCreateRequest": { "type": "object", "additionalProperties": false, "required": ["url"], "properties": { "url": { "type": "string", "minLength": 1, "maxLength": 8192 } } },
+    "mediaStreamCreateResponse": { "type": "object", "additionalProperties": false, "required": ["id", "expiresAt"], "properties": { "id": { "$ref": "#/$defs/id" }, "expiresAt": { "$ref": "#/$defs/nonNegativeInteger" } } },
     "portDescriptor": { "type": "object", "additionalProperties": false, "required": ["port", "name", "group", "details", "process", "pid", "cwd", "kind", "forwardingKey", "defaultForwardingEnabled"], "properties": { "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "name": { "type": "string", "maxLength": 256 }, "group": { "type": "string", "maxLength": 128 }, "details": { "type": "string", "maxLength": 1024 }, "process": { "$ref": "#/$defs/nullableString" }, "pid": { "oneOf": [{ "$ref": "#/$defs/nonNegativeInteger" }, { "type": "null" }] }, "cwd": { "$ref": "#/$defs/nullableString" }, "kind": { "type": "string", "minLength": 1, "maxLength": 64 }, "forwardingKey": { "type": "string", "minLength": 1, "maxLength": 256 }, "defaultForwardingEnabled": { "type": "boolean" } } },
     "portsResponse": { "type": "object", "additionalProperties": false, "required": ["ports", "scannedAt"], "properties": { "ports": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/portDescriptor" } }, "scannedAt": { "$ref": "#/$defs/nonNegativeInteger" } } },
     "tunnelCreateRequest": { "type": "object", "additionalProperties": false, "required": ["port", "ttlSeconds"], "properties": { "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "ttlSeconds": { "oneOf": [{ "type": "integer", "minimum": 30, "maximum": 3600 }, { "type": "null" }] } } },
@@ -253,7 +467,7 @@
     "terminalServerRecord": { "oneOf": [
       { "type": "object", "additionalProperties": false, "required": ["type", "sessionId", "generation", "offset"], "properties": { "type": { "const": "opened" }, "sessionId": { "$ref": "#/$defs/id" }, "generation": { "$ref": "#/$defs/u64" }, "offset": { "$ref": "#/$defs/u64" } } },
       { "type": "object", "additionalProperties": false, "required": ["type", "offset", "data"], "properties": { "type": { "const": "output" }, "offset": { "$ref": "#/$defs/u64" }, "data": { "type": "string", "maxLength": 87384 } } },
-      { "type": "object", "additionalProperties": false, "required": ["type", "offset"], "properties": { "type": { "const": "exited" }, "offset": { "$ref": "#/$defs/u64" } } },
+      { "type": "object", "additionalProperties": false, "required": ["type", "offset", "exitCode", "signal"], "properties": { "type": { "const": "exited" }, "offset": { "$ref": "#/$defs/u64" }, "exitCode": { "oneOf": [{ "type": "integer", "minimum": 0, "maximum": 4294967295 }, { "type": "null" }] }, "signal": { "$ref": "#/$defs/nullableString" } } },
       { "type": "object", "additionalProperties": false, "required": ["type", "error"], "properties": { "type": { "const": "error" }, "error": { "$ref": "#/$defs/transportError" } } }
     ] },
     "voiceInputScope": { "oneOf": [
@@ -278,7 +492,6 @@
       { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "threadId", "turnLimit"], "properties": { "type": { "const": "threadWatch" }, "requestId": { "$ref": "#/$defs/id" }, "threadId": { "$ref": "#/$defs/id" }, "turnLimit": { "type": "integer", "minimum": 1, "maximum": 36 } } },
       { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "query"], "properties": { "type": { "const": "query" }, "requestId": { "$ref": "#/$defs/id" }, "query": { "$ref": "#/$defs/query" } } },
       { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "operationId", "command"], "properties": { "type": { "const": "command" }, "requestId": { "$ref": "#/$defs/id" }, "operationId": { "$ref": "#/$defs/operationId" }, "command": { "$ref": "#/$defs/command" } } },
-      { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "action"], "properties": { "type": { "const": "action" }, "requestId": { "$ref": "#/$defs/id" }, "action": { "$ref": "#/$defs/action" } } },
       { "type": "object", "additionalProperties": false, "required": ["type", "nonce"], "properties": { "type": { "const": "ping" }, "nonce": { "type": "string" } } }
     ] },
     "serverFrame": {
@@ -291,8 +504,7 @@
         { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "error"], "properties": { "type": { "const": "threadWatchFailed" }, "requestId": { "$ref": "#/$defs/id" }, "error": { "$ref": "#/$defs/v2Error" } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "nonce"], "properties": { "type": { "const": "pong" }, "nonce": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "result"], "properties": { "type": { "const": "queryCompleted" }, "requestId": { "$ref": "#/$defs/id" }, "result": { "$ref": "#/$defs/queryResult" } } },
-        { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "result"], "properties": { "type": { "const": "actionCompleted" }, "requestId": { "$ref": "#/$defs/id" }, "result": { "$ref": "#/$defs/actionResult" } } },
-        { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "error"], "properties": { "type": { "enum": ["queryFailed", "actionFailed"] }, "requestId": { "$ref": "#/$defs/id" }, "error": { "$ref": "#/$defs/v2Error" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "error"], "properties": { "type": { "const": "queryFailed" }, "requestId": { "$ref": "#/$defs/id" }, "error": { "$ref": "#/$defs/v2Error" } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "operationId", "error"], "properties": { "type": { "enum": ["commandRejected", "commandExpired"] }, "requestId": { "$ref": "#/$defs/id" }, "operationId": { "$ref": "#/$defs/operationId" }, "error": { "$ref": "#/$defs/v2Error" } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "requestId", "operationId", "acceptedAt"], "properties": { "type": { "const": "commandAccepted" }, "requestId": { "$ref": "#/$defs/id" }, "operationId": { "$ref": "#/$defs/operationId" }, "acceptedAt": { "$ref": "#/$defs/timestamp" } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "operationId", "result"], "properties": { "type": { "const": "commandCompleted" }, "operationId": { "$ref": "#/$defs/operationId" }, "result": { "$ref": "#/$defs/commandResult" } } },
@@ -300,19 +512,18 @@
       ]
     }
   },
-  "x-codewide": {
+    "x-codewide": {
     "closedObjects": true,
     "unknownRecordCloseCode": 1008,
     "malformedJsonCloseCode": 1007,
     "binaryFrameCloseCode": 1003,
-    "paths": { "sync": "/v2/sync", "files": "/v2/files", "media": "/v2/media", "ports": "/v2/ports", "tunnels": "/v2/tunnels", "terminals": "/v2/terminals", "voice": "/v2/voice" },
+    "paths": { "sync": "/v2/sync", "files": "/v2/files", "attachments": "/v2/attachments", "media": "/v2/media", "ports": "/v2/ports", "tunnels": "/v2/tunnels", "terminals": "/v2/terminals", "voice": "/v2/voice" },
     "sharedConnectionSubstrate": { "pairingStart": "/v1/pairing/start", "pairingClaim": "/v1/pairing/claim", "sessionChallenge": "/v1/sessions/challenge", "sessionCreate": "/v1/sessions", "sessionCredential": "/v1/auth", "innerTlsTunnel": "/v1/e2ee-tunnel" },
-    "limits": { "catalogPerPartitionMax": 100, "turnWindowMax": 36, "historyPageMax": 100, "queueMaxEvents": 2048, "queueMaxBytes": 4194304, "terminalInputMaxBytes": 1048576, "terminalOutputChunkMaxBytes": 65536, "terminalReplayMaxBytes": 33554432, "voiceBatchMaxBytes": 1048576, "voiceSessionMaxBytes": 201326592, "voiceUnackedBatchMax": 1 },
+    "limits": { "catalogPerPartitionMax": 100, "turnWindowMax": 36, "historyPageMax": 100, "queueMaxEvents": 2048, "queueMaxBytes": 4194304, "terminalInputMaxBytes": 1048576, "terminalOutputChunkMaxBytes": 65536, "terminalReplayRamBytes": 4194304, "terminalReplayOwnerMaxBytes": 268435456, "terminalReplayGlobalMaxBytes": 1073741824, "voiceBatchMaxBytes": 1048576, "voiceSessionMaxBytes": 201326592, "voiceUnackedBatchMax": 1 },
     "errorRecoveryPairs": {
       "invalidRequest": "none", "invalidQuery": "none", "unauthorized": "userAction", "forbidden": "userAction", "notFound": "requery", "conflict": "requery", "sourceUnavailable": "retry", "rateLimited": "retry", "invalidCursor": "none", "staleCursor": "requery", "operationIdConflict": "userAction", "operationExpired": "userAction", "operationIndeterminate": "requery", "requestExpired": "requery", "generationChanged": "reinitialize", "unsupportedCapability": "none"
     },
-    "queryKinds": ["capabilities.read", "models.list", "catalog.page", "history.page", "turn.items", "thread.resources", "projects.list", "workspace.inspect", "queue.list", "operation.get", "accounts.list"],
-    "commandKinds": ["thread.create", "thread.fork", "thread.update", "thread.delete", "turn.submit", "turn.steer", "turn.interrupt", "thread.compact", "thread.rollback", "project.add", "workspace.create", "queue.mutate", "account.update"],
-    "actionKinds": ["request.resolve"]
+    "queryKinds": ["capabilities.read", "models.list", "skills.list", "thread.goal", "thread.agents", "catalog.page", "catalog.search", "history.page", "turn.items", "item.output", "thread.resources", "workspace.file", "thread.change", "thread.changeOutput", "projects.list", "workspace.inspect", "queue.list", "operation.get", "accounts.list", "thread.processes"],
+    "commandKinds": ["thread.create", "thread.fork", "thread.update", "thread.delete", "thread.markRead", "turn.submit", "turn.steer", "review.start", "turn.interrupt", "thread.compact", "thread.rollback", "project.add", "workspace.create", "queue.mutate", "account.update", "account.login.start", "account.login.cancel", "process.terminate", "request.resolve"]
   }
 }

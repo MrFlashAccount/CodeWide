@@ -1,6 +1,12 @@
 import { selectionAsync } from "expo-haptics";
 import { useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import {
+  Pressable,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type GestureResponderEvent,
+} from "react-native";
 
 import { useEvent } from "../../react/useEvent";
 import type { ActionMenuItem, ActionMenuProps } from "./ActionMenu.types";
@@ -33,12 +39,21 @@ export function ActionMenu(props: ActionMenuProps): React.JSX.Element {
     trigger = "press",
   } = props;
   const [isOpen, setIsOpen] = useState(false);
+  const { width } = useWindowDimensions();
   const setOpen = useEvent((open: boolean) => {
     setIsOpen(open);
     onOpenChange?.(open);
   });
   const open = useEvent(() => setOpen(true));
   const close = useEvent(() => setOpen(false));
+  const press = useEvent((event: GestureResponderEvent) => {
+    children.props.onPress?.(event);
+    if (trigger === "press") open();
+  });
+  const longPress = useEvent((event: GestureResponderEvent) => {
+    children.props.onLongPress?.(event);
+    if (trigger === "long-press") open();
+  });
   const select = useEvent((id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
     if (action === undefined || action.disabled === true) return;
@@ -51,14 +66,17 @@ export function ActionMenu(props: ActionMenuProps): React.JSX.Element {
       <CodeWideMenu
         actions={nativeActions(actions)}
         expanded={isOpen}
-        menuWidth={menuWidth}
+        menuWidth={Math.min(menuWidth, width - 24)}
         onDismiss={close}
         onSelect={select}
       >
         <Pressable
           accessibilityLabel={children.props.accessibilityLabel ?? accessibilityLabel}
-          accessibilityRole="button"
-          {...(trigger === "long-press" ? { onLongPress: open } : { onPress: open })}
+          accessibilityRole={children.props.accessibilityRole}
+          accessibilityState={children.props.accessibilityState}
+          delayLongPress={350}
+          onLongPress={longPress}
+          onPress={press}
         >
           <View
             accessible={false}

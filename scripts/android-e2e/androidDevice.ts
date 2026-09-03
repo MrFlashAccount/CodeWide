@@ -13,7 +13,10 @@ export type AndroidDevice = {
   serial: string;
 };
 
-export async function acquireAndroidDevice(repoRoot: string, artifactDir: string): Promise<AndroidDevice> {
+export async function acquireAndroidDevice(
+  repoRoot: string,
+  artifactDir: string,
+): Promise<AndroidDevice> {
   const sdkRoot = await resolveAndroidSdk();
   const adbPath = path.join(sdkRoot, "platform-tools", "adb");
   const emulatorPath = path.join(sdkRoot, "emulator", "emulator");
@@ -21,21 +24,27 @@ export async function acquireAndroidDevice(repoRoot: string, artifactDir: string
   await runCommand(adbPath, ["start-server"], { cwd: repoRoot });
 
   const requestedSerial = process.env.CODEWIDE_E2E_SERIAL?.trim();
-  let serial = await selectRunningEmulator(adbPath, repoRoot, requestedSerial);
+  let serial = await selectRunningDevice(adbPath, repoRoot, requestedSerial);
   let emulatorProcess: ManagedProcess | null = null;
   if (serial === null) {
     await access(emulatorPath);
-    const avd = process.env.CODEWIDE_E2E_AVD?.trim() || await firstAvd(emulatorPath, repoRoot);
-    emulatorProcess = new ManagedProcess(emulatorPath, [
-      "-avd", avd,
-      "-no-window",
-      "-no-boot-anim",
-      "-no-snapshot-save",
-      "-gpu", "swiftshader_indirect",
-    ], {
-      cwd: repoRoot,
-      logPath: path.join(artifactDir, "emulator.log"),
-    });
+    const avd = process.env.CODEWIDE_E2E_AVD?.trim() || (await firstAvd(emulatorPath, repoRoot));
+    emulatorProcess = new ManagedProcess(
+      emulatorPath,
+      [
+        "-avd",
+        avd,
+        "-no-window",
+        "-no-boot-anim",
+        "-no-snapshot-save",
+        "-gpu",
+        "swiftshader_indirect",
+      ],
+      {
+        cwd: repoRoot,
+        logPath: path.join(artifactDir, "emulator.log"),
+      },
+    );
     serial = await waitForNewEmulator(adbPath, repoRoot, emulatorProcess);
   }
   await waitForBoot(adbPath, repoRoot, serial);
@@ -67,8 +76,18 @@ export async function installFreshApp(
   // The E2E runner installs and clears the APK before Appium opens the session,
   // so Appium's autoGrantPermissions capability does not reliably cover runtime
   // permissions for this preinstalled package.
-  await adb(device, repoRoot, ["shell", "pm", "grant", packageName, "android.permission.RECORD_AUDIO"], { allowFailure: true });
-  await adb(device, repoRoot, ["shell", "pm", "grant", packageName, "android.permission.POST_NOTIFICATIONS"], { allowFailure: true });
+  await adb(
+    device,
+    repoRoot,
+    ["shell", "pm", "grant", packageName, "android.permission.RECORD_AUDIO"],
+    { allowFailure: true },
+  );
+  await adb(
+    device,
+    repoRoot,
+    ["shell", "pm", "grant", packageName, "android.permission.POST_NOTIFICATIONS"],
+    { allowFailure: true },
+  );
 }
 
 export async function openDeepLink(
@@ -77,12 +96,23 @@ export async function openDeepLink(
   packageName: string,
   url: string,
 ): Promise<void> {
-  await adb(device, repoRoot, [
-    "shell", "am", "start", "-W",
-    "-a", "android.intent.action.VIEW",
-    "-d", quoteAndroidShellArgument(url),
-    "-p", quoteAndroidShellArgument(packageName),
-  ], { timeoutMs: 60_000 });
+  await adb(
+    device,
+    repoRoot,
+    [
+      "shell",
+      "am",
+      "start",
+      "-W",
+      "-a",
+      "android.intent.action.VIEW",
+      "-d",
+      quoteAndroidShellArgument(url),
+      "-p",
+      quoteAndroidShellArgument(packageName),
+    ],
+    { timeoutMs: 60_000 },
+  );
 }
 
 function quoteAndroidShellArgument(value: string): string {
@@ -96,11 +126,8 @@ export async function reverseHostPort(
   preferredDevicePort: number,
 ): Promise<number> {
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const devicePort = attempt === 0
-      ? preferredDevicePort
-      : attempt === 1
-        ? hostPort
-        : await findFreePort();
+    const devicePort =
+      attempt === 0 ? preferredDevicePort : attempt === 1 ? hostPort : await findFreePort();
     try {
       await adb(device, repoRoot, ["reverse", `tcp:${devicePort}`, `tcp:${hostPort}`]);
       return devicePort;
@@ -113,16 +140,19 @@ export async function reverseHostPort(
   throw new Error(`Could not allocate an Android reverse port for host port ${hostPort}`);
 }
 
-export async function removeAllReversePorts(device: AndroidDevice, repoRoot: string): Promise<void> {
-  await adb(device, repoRoot, ["reverse", "--remove-all"], { allowFailure: true });
-}
-
-export async function removeReversePort(device: AndroidDevice, repoRoot: string, port: number): Promise<void> {
+export async function removeReversePort(
+  device: AndroidDevice,
+  repoRoot: string,
+  port: number,
+): Promise<void> {
   await adb(device, repoRoot, ["reverse", "--remove", `tcp:${port}`], { allowFailure: true });
 }
 
 export async function captureLogcat(device: AndroidDevice, repoRoot: string): Promise<string> {
-  return adb(device, repoRoot, ["logcat", "-d", "-v", "threadtime"], { allowFailure: true, timeoutMs: 60_000 });
+  return adb(device, repoRoot, ["logcat", "-d", "-v", "threadtime"], {
+    allowFailure: true,
+    timeoutMs: 60_000,
+  });
 }
 
 async function resolveAndroidSdk(): Promise<string> {
@@ -143,25 +173,48 @@ async function resolveAndroidSdk(): Promise<string> {
   throw new Error("Android SDK was not found; set ANDROID_SDK_ROOT");
 }
 
-async function selectRunningEmulator(adbPath: string, repoRoot: string, requestedSerial: string | undefined): Promise<string | null> {
+async function selectRunningDevice(
+  adbPath: string,
+  repoRoot: string,
+  requestedSerial: string | undefined,
+): Promise<string | null> {
   const result = await runCommand(adbPath, ["devices"], { cwd: repoRoot });
   const serials = result.stdout
     .split("\n")
     .map((line) => line.trim().split(/\s+/))
-    .filter((columns) => columns[0]?.startsWith("emulator-") && columns[1] === "device")
+    .filter((columns) => columns[0] !== "List" && columns[1] === "device")
     .map((columns) => columns[0])
     .filter((serial): serial is string => serial !== undefined);
   if (requestedSerial !== undefined) {
-    if (!serials.includes(requestedSerial)) throw new Error(`Requested Android emulator is not connected: ${requestedSerial}`);
+    if (!serials.includes(requestedSerial)) {
+      throw new Error(`Requested Android device is not connected: ${requestedSerial}`);
+    }
+    if (
+      !requestedSerial.startsWith("emulator-") &&
+      process.env.CODEWIDE_E2E_ALLOW_PHYSICAL !== "1"
+    ) {
+      throw new Error(
+        "A physical Android target requires CODEWIDE_E2E_ALLOW_PHYSICAL=1 in addition to CODEWIDE_E2E_SERIAL",
+      );
+    }
     return requestedSerial;
   }
-  if (serials.length > 1) throw new Error("Multiple Android emulators are connected; set CODEWIDE_E2E_SERIAL");
-  return serials[0] ?? null;
+  const emulatorSerials = serials.filter((serial) => serial.startsWith("emulator-"));
+  if (emulatorSerials.length > 1) {
+    throw new Error("Multiple Android emulators are connected; set CODEWIDE_E2E_SERIAL");
+  }
+  // Physical hardware is always an explicit target. The suite installs and
+  // clears its isolated package and temporarily changes system UI state, so a
+  // plugged-in phone must never be selected merely because it is the only one.
+  return emulatorSerials[0] ?? null;
 }
 
 async function firstAvd(emulatorPath: string, repoRoot: string): Promise<string> {
   const result = await runCommand(emulatorPath, ["-list-avds"], { cwd: repoRoot });
-  const avd = result.stdout.split("\n").map((line) => line.trim()).find((line) => line !== "");
+  const avd = result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line !== "");
   if (avd === undefined) throw new Error("No Android virtual device is configured");
   return avd;
 }
@@ -173,9 +226,14 @@ async function waitForNewEmulator(
 ): Promise<string> {
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (process.exitCode !== null) throw new Error(`Android emulator exited during startup: ${process.tail}`);
-    const serial = await selectRunningEmulator(adbPath, repoRoot, undefined);
-    if (serial !== null) return serial;
+    if (process.exitCode !== null)
+      throw new Error(`Android emulator exited during startup: ${process.tail}`);
+    const result = await runCommand(adbPath, ["devices"], { cwd: repoRoot });
+    const serial = result.stdout
+      .split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .find((columns) => columns[0]?.startsWith("emulator-") && columns[1] === "device")?.[0];
+    if (serial !== undefined) return serial;
     await delay(1_000);
   }
   throw new Error(`Timed out waiting for Android emulator: ${process.tail}`);
@@ -184,11 +242,15 @@ async function waitForNewEmulator(
 async function waitForBoot(adbPath: string, repoRoot: string, serial: string): Promise<void> {
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const result = await runCommand(adbPath, ["-s", serial, "shell", "getprop", "sys.boot_completed"], {
-      cwd: repoRoot,
-      allowFailure: true,
-      timeoutMs: 10_000,
-    });
+    const result = await runCommand(
+      adbPath,
+      ["-s", serial, "shell", "getprop", "sys.boot_completed"],
+      {
+        cwd: repoRoot,
+        allowFailure: true,
+        timeoutMs: 10_000,
+      },
+    );
     if (result.stdout.trim() === "1") return;
     await delay(1_000);
   }

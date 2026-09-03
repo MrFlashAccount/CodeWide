@@ -11,6 +11,7 @@ else
   CARGO_ENCODED_RUSTFLAGS=$remap
 fi
 export CARGO_ENCODED_RUSTFLAGS
+export CARGO_INCREMENTAL=0
 
 cd "$repo_root"
 exec cargo build --release -p codewide-companion --bins "$@"

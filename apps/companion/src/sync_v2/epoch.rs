@@ -205,7 +205,7 @@ mod tests {
     use super::*;
     use crate::sync_v2::{
         domain::{ProjectionChange, SnapshotLimits},
-        protocol::{CatalogIntent, CurrentThreadIntent},
+        protocol::{CatalogIntent, CurrentThreadIntent, PendingRequestScope},
     };
 
     fn intent(thread_id: &str) -> OpenIntent {
@@ -218,6 +218,7 @@ mod tests {
                 thread_id: Id::new(thread_id).unwrap(),
                 turn_limit: 1,
             }),
+            pending_requests: PendingRequestScope::CurrentThread,
         }
     }
 

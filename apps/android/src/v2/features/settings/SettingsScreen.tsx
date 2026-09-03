@@ -1,3 +1,4 @@
+import { setStringAsync } from "expo-clipboard";
 import { router, useFocusEffect } from "expo-router";
 import { useState, useSyncExternalStore, useTransition, type ReactNode } from "react";
 
@@ -14,6 +15,7 @@ import { V2PresentationProvider } from "../../platform/rendering/V2PresentationP
 import { serverSettingsDestination } from "../navigation/routeDestinations";
 
 interface SettingsScreenProps {
+  diagnostics: ReactNode;
   generationControl: ReactNode;
   onClose(): void;
   version: string;
@@ -22,7 +24,7 @@ interface SettingsScreenProps {
 type SettingsDestination = ReturnType<typeof serverSettingsDestination>;
 
 export function SettingsScreen(props: SettingsScreenProps): React.JSX.Element {
-  const { generationControl, onClose, version } = props;
+  const { diagnostics, generationControl, onClose, version } = props;
   const runtime = useV2Runtime();
   const appLock = useAppLockSettings();
   const alert = useAppDialog();
@@ -30,6 +32,11 @@ export function SettingsScreen(props: SettingsScreenProps): React.JSX.Element {
     runtime.savedServers.subscribe,
     runtime.savedServers.snapshot,
     runtime.savedServers.snapshot,
+  );
+  const connectionStatuses = useSyncExternalStore(
+    runtime.connectionStatuses.subscribe,
+    runtime.connectionStatuses.snapshot,
+    runtime.connectionStatuses.snapshot,
   );
   const [error, setError] = useState<string | null>(null);
   const [sheetMounted, setSheetMounted] = useState(true);
@@ -72,6 +79,12 @@ export function SettingsScreen(props: SettingsScreenProps): React.JSX.Element {
       navigateFromSheet(serverSettingsDestination(parsedId));
       return;
     }
+    if (action === "copyDiagnostic") {
+      const detail = connectionStatuses.value.get(parsedId)?.detail;
+      if (detail === null || detail === undefined) return;
+      setStringAsync(detail).catch(() => setError("Could not copy the connection error."));
+      return;
+    }
     if (action === "moveUp" || action === "moveDown") {
       const direction = action === "moveUp" ? -1 : 1;
       startTransition(async () => {
@@ -107,21 +120,26 @@ export function SettingsScreen(props: SettingsScreenProps): React.JSX.Element {
         <ConnectionSettingsView
           appLockBusy={pending}
           appLockEnabled={appLock.enabled}
+          diagnostics={diagnostics}
           error={error}
           generationControl={generationControl}
           onAppLockChange={changeAppLock}
           onClose={onClose}
           onServerAction={runServerAction}
           onServerEnabledChange={changeServerEnabled}
-          servers={servers.value.map((server) => ({
-            detail: server.endpoint,
-            emoji: server.emoji,
-            enabled: server.enabled,
-            id: server.id,
-            label: server.displayName,
-            pending,
-            state: server.enabled ? "connected" : "disabled",
-          }))}
+          servers={servers.value.map((server) => {
+            const status = connectionStatuses.value.get(server.id);
+            return {
+              detail: server.endpoint,
+              diagnostic: status?.detail ?? null,
+              emoji: server.emoji,
+              enabled: server.enabled,
+              id: server.id,
+              label: server.displayName,
+              pending,
+              state: server.enabled ? (status?.state ?? "connecting") : "disabled",
+            };
+          })}
           version={version}
         />
       ) : null}

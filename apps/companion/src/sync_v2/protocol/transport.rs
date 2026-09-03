@@ -2,6 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::super::{
+    domain::Attachment,
+    scalar::{Id, U64},
+};
+
 fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -15,6 +20,34 @@ where
 pub struct FileLocation {
     pub root_id: String,
     pub path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttachmentStageRequest {
+    #[serde(deserialize_with = "required_option")]
+    pub workspace: Option<String>,
+    #[serde(deserialize_with = "required_option")]
+    pub thread_id: Option<Id>,
+    pub name: String,
+    pub media_type: String,
+    pub size_bytes: U64,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttachmentStageResponse {
+    pub attachment_id: Id,
+    pub upload_path: String,
+    pub expires_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttachmentUploadResponse {
+    pub attachment: Attachment,
+    pub sha256: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -41,6 +74,19 @@ pub struct MediaMaterializeRequest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MediaMaterializeResponse {
+    pub id: String,
+    pub expires_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MediaStreamCreateRequest {
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MediaStreamCreateResponse {
     pub id: String,
     pub expires_at: u64,
 }
@@ -135,6 +181,10 @@ pub enum TerminalServerRecord {
     },
     Exited {
         offset: String,
+        #[serde(deserialize_with = "required_option")]
+        exit_code: Option<u32>,
+        #[serde(deserialize_with = "required_option")]
+        signal: Option<String>,
     },
     Error {
         error: TransportError,

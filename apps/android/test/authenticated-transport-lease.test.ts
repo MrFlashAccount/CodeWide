@@ -12,6 +12,8 @@ describe("opaque authenticated transport lease", () => {
     expect(contract).toContain("readonly savedServerId: string");
     expect(contract).toContain('operation: "file.download"');
     expect(contract).toContain('operation: "media.materialize"');
+    expect(contract).toContain('operation: "media.streamCreate"');
+    expect(contract).toContain('operation: "media.streamRead"');
     expect(contract).toContain('operation: "ports.list"');
     expect(contract).toContain('operation: "tunnel.create"');
     expect(contract).toContain('operation: "tunnel.delete"');
@@ -39,6 +41,11 @@ describe("opaque authenticated transport lease", () => {
     expect(registry).toContain('"voice-v2" -> "/v2/voice"');
     expect(registry).toContain('"file.download"');
     expect(registry).toContain('"media.materialize"');
+    expect(registry).toContain('"media.streamCreate"');
+    expect(registry).toContain('"media.streamRead"');
+    expect(registry).toContain('route.addPathSegments("v2/media/streams")');
+    expect(registry).toContain("range = boundedByteRange(offset, limit)");
+    expect(registry).toContain("boundedPrefixResponse = true");
     expect(registry).toContain('"ports.list"');
     expect(registry).toContain('"tunnel.create"');
     expect(registry).toContain('"tunnel.delete"');
@@ -49,14 +56,12 @@ describe("opaque authenticated transport lease", () => {
   });
 
   it("starts and awaits the owning connection service on a cold V2 launch", () => {
-    const module = read(
-      "../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt",
-    );
+    const module = read("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
     const acquire = module.slice(
       module.indexOf("fun acquireAuthenticatedTransportLease("),
       module.indexOf("fun openAuthenticatedDuplex("),
     );
-    expect(acquire).toContain("wakeSocket(savedServerId)");
+    expect(acquire).toContain("activateV2ConnectionService()");
     expect(acquire).toContain("acquireAuthenticatedTransportLeaseWhenReady(");
     expect(acquire).toContain("AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS");
     expect(acquire).not.toContain(

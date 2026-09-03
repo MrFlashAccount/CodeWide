@@ -39,6 +39,10 @@ impl AuthenticatedContextKey {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub(crate) fn from_persisted(value: String) -> Option<Self> {
+        value.starts_with(PREFIX).then_some(Self(value))
+    }
 }
 
 #[cfg(test)]

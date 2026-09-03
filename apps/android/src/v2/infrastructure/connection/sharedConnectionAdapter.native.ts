@@ -26,4 +26,4 @@ export async function acquireSharedConnectionLease(
   };
 }
 
-export type { AuthenticatedRequest, AuthenticatedResponse };
+export type { AuthenticatedDuplexChannel, AuthenticatedRequest, AuthenticatedResponse };

@@ -13,19 +13,24 @@ where
 use super::{
     domain::{
         Attachment, CatalogAnchor, CatalogScope, Effort, FileChangeKind, InputBlock, Item,
-        ProjectionChange, SequencedChange, SnapshotLimits, ThreadSettings, ThreadSummary,
-        ThreadWindow, TurnView,
+        ProjectionChange, SequencedChange, SnapshotLimits, ThreadGoal, ThreadReadState,
+        ThreadSummary, ThreadWindow, TurnView,
     },
     scalar::{Id, OperationId, Timestamp, U64},
 };
 
+mod commands;
 mod error;
 mod kinds;
 #[cfg(test)]
 mod tests;
 mod transport;
 
-pub use kinds::{ACTION_KINDS, COMMAND_KINDS, QUERY_KINDS};
+pub use commands::*;
+pub use kinds::{COMMAND_KINDS, QUERY_KINDS};
+pub(crate) use kinds::{
+    command_required_scope, command_scope_for_kind, query_required_scope, query_scope_for_kind,
+};
 pub use transport::*;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -34,6 +39,7 @@ pub struct OpenIntent {
     pub catalog: CatalogIntent,
     #[serde(deserialize_with = "required_option")]
     pub current_thread: Option<CurrentThreadIntent>,
+    pub pending_requests: PendingRequestScope,
 }
 
 impl OpenIntent {
@@ -55,6 +61,13 @@ impl OpenIntent {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PendingRequestScope {
+    CurrentThread,
+    AllAccessible,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -102,10 +115,6 @@ pub enum ClientFrame {
         operation_id: OperationId,
         command: Command,
     },
-    Action {
-        request_id: Id,
-        action: Action,
-    },
     Ping {
         nonce: String,
     },
@@ -118,11 +127,33 @@ pub enum Query {
     CapabilitiesRead,
     #[serde(rename = "models.list")]
     ModelsList,
+    #[serde(rename = "skills.list", rename_all = "camelCase")]
+    SkillsList {
+        workspace: String,
+        force_reload: bool,
+    },
+    #[serde(rename = "thread.goal", rename_all = "camelCase")]
+    ThreadGoal { thread_id: Id },
+    #[serde(rename = "thread.agents", rename_all = "camelCase")]
+    ThreadAgents {
+        thread_id: Id,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
+        limit: u16,
+    },
     #[serde(rename = "catalog.page")]
     CatalogPage {
         partition: CatalogPartition,
         #[serde(deserialize_with = "required_option")]
         before: Option<CatalogAnchor>,
+        limit: u16,
+    },
+    #[serde(rename = "catalog.search", rename_all = "camelCase")]
+    CatalogSearch {
+        partition: CatalogPartition,
+        text: String,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
         limit: u16,
     },
     #[serde(rename = "history.page", rename_all = "camelCase")]
@@ -142,8 +173,40 @@ pub enum Query {
         cursor: Option<String>,
         limit: u16,
     },
+    #[serde(rename = "item.output", rename_all = "camelCase")]
+    ItemOutput {
+        thread_id: Id,
+        turn_id: Id,
+        item_id: Id,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
+        limit_bytes: u32,
+    },
     #[serde(rename = "thread.resources", rename_all = "camelCase")]
-    ThreadResources { thread_id: Id, scope: ResourceScope },
+    ThreadResources {
+        thread_id: Id,
+        scope: ResourceScope,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
+        limit: u16,
+    },
+    #[serde(rename = "workspace.file", rename_all = "camelCase")]
+    WorkspaceFile { thread_id: Id, path: String },
+    #[serde(rename = "thread.change", rename_all = "camelCase")]
+    ThreadChange {
+        thread_id: Id,
+        path: String,
+        scope: ResourceScope,
+    },
+    #[serde(rename = "thread.changeOutput", rename_all = "camelCase")]
+    ThreadChangeOutput {
+        thread_id: Id,
+        path: String,
+        scope: ResourceScope,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
+        limit_bytes: u32,
+    },
     #[serde(rename = "projects.list")]
     ProjectsList,
     #[serde(rename = "workspace.inspect")]
@@ -152,11 +215,21 @@ pub enum Query {
     QueueList {
         #[serde(deserialize_with = "required_option")]
         thread_id: Option<Id>,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
+        limit: u16,
     },
     #[serde(rename = "operation.get", rename_all = "camelCase")]
     OperationGet { operation_id: OperationId },
     #[serde(rename = "accounts.list")]
     AccountsList,
+    #[serde(rename = "thread.processes", rename_all = "camelCase")]
+    ThreadProcesses {
+        thread_id: Id,
+        #[serde(deserialize_with = "required_option")]
+        cursor: Option<String>,
+        limit: u16,
+    },
 }
 
 impl Query {
@@ -168,8 +241,13 @@ impl Query {
     pub fn validate(&self, limits: SnapshotLimits) -> Result<(), V2Error> {
         match self {
             Self::CatalogPage { limit, .. }
+            | Self::CatalogSearch { limit, .. }
+            | Self::ThreadAgents { limit, .. }
             | Self::HistoryPage { limit, .. }
             | Self::TurnItems { limit, .. }
+            | Self::ThreadResources { limit, .. }
+            | Self::QueueList { limit, .. }
+            | Self::ThreadProcesses { limit, .. }
                 if *limit == 0 || *limit > limits.history_page_max =>
             {
                 Err(V2Error::invalid_request(
@@ -178,6 +256,28 @@ impl Query {
             }
             _ => Ok(()),
         }
+        .and_then(|()| match self {
+            Self::CatalogSearch { text, .. }
+                if text.trim().is_empty()
+                    || text.chars().count() > 256
+                    || text.len() > 1_024 =>
+            {
+                Err(V2Error::invalid_request(
+                    "catalog search text must contain between 1 and 256 code points and at most 1024 bytes",
+                ))
+            }
+            _ => Ok(()),
+        })
+        .and_then(|()| match self {
+            Self::ItemOutput { limit_bytes, .. } | Self::ThreadChangeOutput { limit_bytes, .. }
+                if *limit_bytes < 4 || *limit_bytes > 65_536 =>
+            {
+                Err(V2Error::invalid_request(
+                    "output byte limit must be between 4 and 65536",
+                ))
+            }
+            _ => Ok(()),
+        })
     }
 }
 
@@ -209,198 +309,12 @@ pub enum ResourceScope {
     Branch,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all_fields = "camelCase", deny_unknown_fields)]
-pub enum Command {
-    #[serde(rename = "thread.create")]
-    ThreadCreate {
-        workspace: String,
-        #[serde(deserialize_with = "required_option")]
-        title: Option<String>,
-        settings: ThreadSettings,
-    },
-    #[serde(rename = "thread.fork", rename_all = "camelCase")]
-    ThreadFork {
-        thread_id: Id,
-        #[serde(deserialize_with = "required_option")]
-        through_turn_id: Option<Id>,
-    },
-    #[serde(rename = "thread.update", rename_all = "camelCase")]
-    ThreadUpdate { thread_id: Id, change: ThreadUpdate },
-    #[serde(rename = "thread.delete", rename_all = "camelCase")]
-    ThreadDelete { thread_id: Id },
-    #[serde(rename = "turn.submit", rename_all = "camelCase")]
-    TurnSubmit {
-        #[serde(deserialize_with = "required_option")]
-        thread_id: Option<Id>,
-        #[serde(deserialize_with = "required_option")]
-        workspace: Option<String>,
-        input: Vec<InputBlock>,
-        intent: TurnIntent,
-        #[serde(deserialize_with = "required_option")]
-        settings: Option<ThreadSettings>,
-    },
-    #[serde(rename = "turn.steer", rename_all = "camelCase")]
-    TurnSteer {
-        thread_id: Id,
-        turn_id: Id,
-        input: Vec<InputBlock>,
-    },
-    #[serde(rename = "turn.interrupt", rename_all = "camelCase")]
-    TurnInterrupt { thread_id: Id, turn_id: Id },
-    #[serde(rename = "thread.compact", rename_all = "camelCase")]
-    ThreadCompact { thread_id: Id },
-    #[serde(rename = "thread.rollback", rename_all = "camelCase")]
-    ThreadRollback {
-        thread_id: Id,
-        through_turn_id: Id,
-        drop_following_turns: bool,
-    },
-    #[serde(rename = "project.add")]
-    ProjectAdd {
-        path: String,
-        #[serde(deserialize_with = "required_option")]
-        name: Option<String>,
-        pinned: bool,
-    },
-    #[serde(rename = "workspace.create", rename_all = "camelCase")]
-    WorkspaceCreate {
-        provider: Id,
-        parent_path: String,
-        name: String,
-    },
-    #[serde(rename = "queue.mutate")]
-    QueueMutate { mutation: QueueMutation },
-    #[serde(rename = "account.update")]
-    AccountUpdate { change: AccountChange },
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum ThreadUpdate {
-    Title {
-        #[serde(deserialize_with = "required_option")]
-        title: Option<String>,
-    },
-    Archive {
-        archived: bool,
-    },
-    Goal {
-        #[serde(deserialize_with = "required_option")]
-        goal: Option<String>,
-    },
-    Settings {
-        settings: ThreadSettings,
-    },
-    Section {
-        #[serde(deserialize_with = "required_option")]
-        section_id: Option<Id>,
-        #[serde(deserialize_with = "required_option")]
-        position: Option<U64>,
-    },
-}
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum TurnIntent {
-    Chat,
-    Review,
-}
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum QueueMutation {
-    Put {
-        thread_id: Id,
-        input: Vec<InputBlock>,
-    },
-    Edit {
-        item_id: Id,
-        input: Vec<InputBlock>,
-    },
-    Cancel {
-        item_id: Id,
-    },
-    Move {
-        item_id: Id,
-        #[serde(deserialize_with = "required_option")]
-        before_item_id: Option<Id>,
-    },
-    Retry {
-        item_id: Id,
-    },
-}
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum AccountChange {
-    Activate {
-        profile_id: Id,
-    },
-    Configure {
-        profile_id: Id,
-        enabled: bool,
-        priority: i64,
-    },
-    Remove {
-        profile_id: Id,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all_fields = "camelCase", deny_unknown_fields)]
-pub enum Action {
-    #[serde(rename = "request.resolve", rename_all = "camelCase")]
-    RequestResolve {
-        request_id: Id,
-        generation: U64,
-        resolution: RequestResolution,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum RequestResolution {
-    Approval { decision: ApprovalDecision },
-    UserInput { answers: Vec<QuestionAnswer> },
-    Elicitation { values: Vec<FieldValue> },
-    Cancel,
-}
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ApprovalDecision {
-    AllowOnce,
-    AllowSession,
-    Deny,
-}
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct QuestionAnswer {
-    pub question_id: Id,
-    pub value: String,
-}
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FieldValue {
-    pub field_id: Id,
-    pub value: String,
+pub enum ItemOutputFormat {
+    Terminal,
+    Json,
+    Text,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -410,16 +324,39 @@ pub enum QueryResult {
     CapabilitiesRead {
         commands: Vec<String>,
         queries: Vec<String>,
-        actions: Vec<String>,
         limits: SnapshotLimits,
     },
     #[serde(rename = "models.list")]
     ModelsList { models: Vec<Model> },
+    #[serde(rename = "skills.list")]
+    SkillsList {
+        workspace: String,
+        skills: Vec<Skill>,
+    },
+    #[serde(rename = "thread.goal", rename_all = "camelCase")]
+    ThreadGoal {
+        thread_id: Id,
+        #[serde(deserialize_with = "required_option")]
+        goal: Option<ThreadGoal>,
+    },
+    #[serde(rename = "thread.agents", rename_all = "camelCase")]
+    ThreadAgents {
+        thread_id: Id,
+        agents: Vec<ThreadSummary>,
+        #[serde(deserialize_with = "required_option")]
+        next: Option<String>,
+    },
     #[serde(rename = "catalog.page")]
     CatalogPage {
         threads: Vec<ThreadSummary>,
         #[serde(deserialize_with = "required_option")]
         next: Option<CatalogAnchor>,
+    },
+    #[serde(rename = "catalog.search", rename_all = "camelCase")]
+    CatalogSearch {
+        threads: Vec<ThreadSummary>,
+        #[serde(deserialize_with = "required_option")]
+        next_cursor: Option<String>,
     },
     #[serde(rename = "history.page", rename_all = "camelCase")]
     HistoryPage {
@@ -438,12 +375,54 @@ pub enum QueryResult {
         #[serde(deserialize_with = "required_option")]
         next: Option<String>,
     },
+    #[serde(rename = "item.output", rename_all = "camelCase")]
+    ItemOutput {
+        thread_id: Id,
+        turn_id: Id,
+        item_id: Id,
+        format: ItemOutputFormat,
+        content: String,
+        total_bytes: U64,
+        #[serde(deserialize_with = "required_option")]
+        next: Option<String>,
+    },
     #[serde(rename = "thread.resources", rename_all = "camelCase")]
     ThreadResources {
         thread_id: Id,
         revision: String,
+        scope: ResourceScope,
+        available_scopes: Vec<ResourceScope>,
+        review: ReviewCapabilities,
         changes: Vec<ResourceChange>,
         attachments: Vec<Attachment>,
+        #[serde(deserialize_with = "required_option")]
+        next: Option<String>,
+    },
+    #[serde(rename = "workspace.file", rename_all = "camelCase")]
+    WorkspaceFile {
+        thread_id: Id,
+        path: String,
+        file: Attachment,
+    },
+    #[serde(rename = "thread.change", rename_all = "camelCase")]
+    ThreadChange {
+        thread_id: Id,
+        path: String,
+        scope: ResourceScope,
+        patches: Vec<ThreadChangePatch>,
+        #[serde(deserialize_with = "required_option")]
+        source: Option<String>,
+        truncated: bool,
+    },
+    #[serde(rename = "thread.changeOutput", rename_all = "camelCase")]
+    ThreadChangeOutput {
+        thread_id: Id,
+        path: String,
+        scope: ResourceScope,
+        content: String,
+        total_bytes: U64,
+        #[serde(deserialize_with = "required_option")]
+        next: Option<String>,
     },
     #[serde(rename = "projects.list")]
     ProjectsList { projects: Vec<Project> },
@@ -452,8 +431,13 @@ pub enum QueryResult {
         #[serde(deserialize_with = "required_option")]
         support: Option<WorkspaceSupport>,
     },
-    #[serde(rename = "queue.list")]
-    QueueList { items: Vec<QueueItem> },
+    #[serde(rename = "queue.list", rename_all = "camelCase")]
+    QueueList {
+        items: Vec<QueueItem>,
+        revision: String,
+        #[serde(deserialize_with = "required_option")]
+        next_cursor: Option<String>,
+    },
     #[serde(rename = "operation.get", rename_all = "camelCase")]
     OperationGet {
         operation_id: OperationId,
@@ -465,6 +449,13 @@ pub enum QueryResult {
         active_profile_id: Option<Id>,
         profiles: Vec<AccountProfile>,
         all_exhausted: bool,
+    },
+    #[serde(rename = "thread.processes", rename_all = "camelCase")]
+    ThreadProcesses {
+        thread_id: Id,
+        processes: Vec<BackgroundProcess>,
+        #[serde(deserialize_with = "required_option")]
+        next_cursor: Option<String>,
     },
 }
 
@@ -514,6 +505,16 @@ pub struct Model {
     pub efforts: Vec<Effort>,
     #[serde(deserialize_with = "required_option")]
     pub default_effort: Option<String>,
+    pub supports_personality: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Skill {
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub enabled: bool,
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -522,6 +523,30 @@ pub struct ResourceChange {
     pub change: FileChangeKind,
     pub additions: U64,
     pub deletions: U64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReviewCapabilities {
+    pub target_kinds: Vec<ReviewTargetKind>,
+    pub deliveries: Vec<ReviewDelivery>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewTargetKind {
+    UncommittedChanges,
+    BaseBranch,
+    Commit,
+    Custom,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadChangePatch {
+    pub turn_id: String,
+    pub item_id: String,
+    pub kind: FileChangeKind,
+    pub diff: String,
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -547,15 +572,24 @@ pub struct QueueItem {
     pub thread_id: Id,
     pub position: U64,
     pub state: QueueState,
+    pub input: Vec<InputBlock>,
+    pub attachments: Vec<QueueAttachment>,
     pub summary: String,
     #[serde(deserialize_with = "required_option")]
     pub last_error: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QueueAttachment {
+    pub id: Id,
+    pub name: String,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum QueueState {
     Queued,
     Running,
+    Uncertain,
     Failed,
     Done,
 }
@@ -588,6 +622,21 @@ pub struct WeeklyRateLimit {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackgroundProcess {
+    pub item_id: Id,
+    pub process_id: Id,
+    pub command: String,
+    pub cwd: String,
+    #[serde(deserialize_with = "required_option")]
+    pub os_pid: Option<U64>,
+    #[serde(deserialize_with = "required_option")]
+    pub cpu_percent: Option<f64>,
+    #[serde(deserialize_with = "required_option")]
+    pub rss_ki_b: Option<U64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all_fields = "camelCase", deny_unknown_fields)]
 pub enum CommandResult {
     #[serde(rename = "thread.create")]
@@ -598,6 +647,11 @@ pub enum CommandResult {
     ThreadUpdate { thread: ThreadSummary },
     #[serde(rename = "thread.delete", rename_all = "camelCase")]
     ThreadDelete { thread_id: Id },
+    #[serde(rename = "thread.markRead", rename_all = "camelCase")]
+    ThreadMarkRead {
+        thread_id: Id,
+        read_state: ThreadReadState,
+    },
     #[serde(rename = "turn.submit", rename_all = "camelCase")]
     TurnSubmit { thread_id: Id, turn_id: Id },
     #[serde(rename = "turn.steer", rename_all = "camelCase")]
@@ -605,6 +659,12 @@ pub enum CommandResult {
         thread_id: Id,
         turn_id: Id,
         item_id: Id,
+    },
+    #[serde(rename = "review.start", rename_all = "camelCase")]
+    ReviewStart {
+        thread_id: Id,
+        review_thread_id: Id,
+        turn_id: Id,
     },
     #[serde(rename = "turn.interrupt", rename_all = "camelCase")]
     TurnInterrupt {
@@ -628,16 +688,69 @@ pub enum CommandResult {
         repository_root: String,
     },
     #[serde(rename = "queue.mutate")]
-    QueueMutate {
-        #[serde(deserialize_with = "required_option")]
-        item: Option<QueueItem>,
-    },
+    QueueMutate { outcome: QueueMutationOutcome },
     #[serde(rename = "account.update", rename_all = "camelCase")]
     AccountUpdate {
         #[serde(deserialize_with = "required_option")]
         active_profile_id: Option<Id>,
         affected_profile_id: Id,
     },
+    #[serde(rename = "account.login.start", rename_all = "camelCase")]
+    AccountLoginStart {
+        login_id: Id,
+        verification_url: String,
+        user_code: String,
+    },
+    #[serde(rename = "account.login.cancel", rename_all = "camelCase")]
+    AccountLoginCancel {
+        login_id: Id,
+        state: AccountLoginCancelState,
+    },
+    #[serde(rename = "process.terminate", rename_all = "camelCase")]
+    ProcessTerminate {
+        process_id: Id,
+        state: ProcessTerminationState,
+    },
+    #[serde(rename = "request.resolve", rename_all = "camelCase")]
+    RequestResolve {
+        request_id: Id,
+        state: ResolutionState,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProcessTerminationState {
+    Terminated,
+    NotFound,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum QueueMutationOutcome {
+    Item {
+        item: QueueItem,
+    },
+    Cancelled {
+        item_id: Id,
+    },
+    Steered {
+        item_id: Id,
+        thread_id: Id,
+        turn_id: Id,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AccountLoginCancelState {
+    Cancelled,
+    NotFound,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -647,15 +760,6 @@ pub enum InterruptState {
     AlreadyTerminal,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all_fields = "camelCase", deny_unknown_fields)]
-pub enum ActionResult {
-    #[serde(rename = "request.resolve", rename_all = "camelCase")]
-    RequestResolve {
-        request_id: Id,
-        state: ResolutionState,
-    },
-}
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ResolutionState {
@@ -841,14 +945,6 @@ pub enum ServerFrame {
     },
     CommandIndeterminate {
         operation_id: OperationId,
-        error: V2Error,
-    },
-    ActionCompleted {
-        request_id: Id,
-        result: ActionResult,
-    },
-    ActionFailed {
-        request_id: Id,
         error: V2Error,
     },
     Pong {

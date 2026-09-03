@@ -1915,11 +1915,11 @@ fn required_string(params: &Value, key: &str) -> Result<String, AccountPoolError
 }
 
 fn rpc_error_message(response: &Value) -> String {
-    response
-        .get("error")
-        .and_then(|error| error.get("message"))
+    let error = response.get("error").unwrap_or(response);
+    error
+        .get("message")
         .and_then(Value::as_str)
-        .unwrap_or("App Server request failed")
+        .map_or_else(|| error.to_string(), str::to_owned)
         .chars()
         .take(500)
         .collect()
@@ -1946,6 +1946,21 @@ fn unix_time() -> i64 {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_error_without_message_preserves_the_bounded_payload() {
+        let payload = json!({"code": -32001, "details": "account switch rejected"});
+        assert_eq!(
+            rpc_error_message(&json!({"error": payload.clone()})),
+            payload.to_string()
+        );
+        assert_eq!(
+            rpc_error_message(&json!({"error": {"message": "x".repeat(501)}}))
+                .chars()
+                .count(),
+            500
+        );
+    }
 
     fn profile(id: &str, priority: u32, reset: Option<i64>, active: bool) -> AccountProfile {
         AccountProfile {

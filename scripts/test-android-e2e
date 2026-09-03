@@ -1,6 +1,24 @@
 #!/bin/sh
 set -eu
 
+if [ "${CODEWIDE_LIVE_E2E:-1}" != "1" ]; then
+  echo "CODEWIDE_LIVE_E2E must be 1: this command always mutates the real managed App Server." >&2
+  exit 2
+fi
+export CODEWIDE_LIVE_E2E=1
+
+if [ -n "${CODEWIDE_E2E_APP_SERVER_SOCKET:-}" ]; then
+  managed_socket=$CODEWIDE_E2E_APP_SERVER_SOCKET
+elif [ -n "${CODEX_HOME:-}" ]; then
+  managed_socket=$CODEX_HOME/app-server-control/app-server-control.sock
+else
+  managed_socket=$HOME/.codex/app-server-control/app-server-control.sock
+fi
+if [ ! -S "$managed_socket" ]; then
+  echo "Managed App Server socket is unavailable; start Codex or set CODEWIDE_E2E_APP_SERVER_SOCKET." >&2
+  exit 2
+fi
+
 echo "CodeWide Android E2E uses a real Observer and can take several minutes."
 echo "The runner builds Android and Companion, starts Appium, records video, and reports only meaningful progress."
 

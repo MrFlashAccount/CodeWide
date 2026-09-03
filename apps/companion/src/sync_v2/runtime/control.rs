@@ -3,9 +3,9 @@
 use axum::extract::ws::WebSocket;
 use tracing::{info, warn};
 
-use crate::auth::AuthorizationContext;
+use crate::auth::{AuthorizationChange, AuthorizationContext};
 
-use super::{ContextLifecycle, SyncV2Runtime};
+use super::{ContextLifecycle, SyncV2Runtime, recv_authorization_change, wait_for_session_expiry};
 use crate::sync_v2::{
     AuthenticatedContextKey,
     domain::ProjectionChange,
@@ -14,9 +14,84 @@ use crate::sync_v2::{
     wire::{close, send},
 };
 
+enum FrameOutcome {
+    Handled(bool),
+    SessionExpired,
+    LifecycleRevoked,
+    AuthorizationRevoked(&'static str),
+}
+
 impl SyncV2Runtime {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn handle_frame(
+        &self,
+        socket: &mut WebSocket,
+        authorization: &AuthorizationContext,
+        context: &AuthenticatedContextKey,
+        authorization_changes: &mut Option<tokio::sync::broadcast::Receiver<AuthorizationChange>>,
+        lifecycle: &ContextLifecycle,
+        lifecycle_revision: u64,
+        epoch: &mut ConnectionEpoch,
+        frame: ClientFrame,
+    ) -> bool {
+        let Some(dispatch_guard) = self
+            .current_context_dispatch(context, lifecycle, lifecycle_revision)
+            .await
+        else {
+            close(socket, 1008, "authenticated_context_revoked").await;
+            return false;
+        };
+        let mut lifecycle_changes = lifecycle.revisions.subscribe();
+        drop(dispatch_guard);
+
+        // Returning the outcome before handling revocation drops the losing
+        // request future first. That cancels cancellable adapter/RPC work before
+        // context purge begins; an upstream side effect already accepted by the
+        // remote process cannot be rolled back, but it cannot be committed to the
+        // ledger or reported as successful after the revocation boundary.
+        let outcome = tokio::select! {
+            biased;
+            () = wait_for_session_expiry(authorization) => FrameOutcome::SessionExpired,
+            changed = lifecycle_changes.changed() => {
+                let _ = changed;
+                FrameOutcome::LifecycleRevoked
+            }
+            change = recv_authorization_change(
+                authorization_changes,
+                authorization.device_id(),
+            ) => FrameOutcome::AuthorizationRevoked(
+                change.unwrap_or("authorization_context_revoked"),
+            ),
+            handled = self.dispatch_frame(
+                socket,
+                authorization,
+                context,
+                lifecycle,
+                lifecycle_revision,
+                epoch,
+                frame,
+            ) => FrameOutcome::Handled(handled),
+        };
+        match outcome {
+            FrameOutcome::Handled(handled) => handled,
+            FrameOutcome::SessionExpired => {
+                close(socket, 1008, "session_expired").await;
+                false
+            }
+            FrameOutcome::LifecycleRevoked => {
+                close(socket, 1008, "authenticated_context_revoked").await;
+                false
+            }
+            FrameOutcome::AuthorizationRevoked(reason) => {
+                let _ = self.purge_context(context).await;
+                close(socket, 1008, reason).await;
+                false
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_frame(
         &self,
         socket: &mut WebSocket,
         authorization: &AuthorizationContext,
@@ -26,14 +101,6 @@ impl SyncV2Runtime {
         epoch: &mut ConnectionEpoch,
         frame: ClientFrame,
     ) -> bool {
-        let _dispatch_guard = lifecycle.dispatch.read().await;
-        if !self
-            .context_is_current(context, lifecycle, lifecycle_revision)
-            .await
-        {
-            close(socket, 1008, "authenticated_context_revoked").await;
-            return false;
-        }
         match frame {
             ClientFrame::Ping { nonce } => self
                 .send_frame(socket, &ServerFrame::Pong { nonce })
@@ -65,6 +132,47 @@ impl SyncV2Runtime {
                     thread_id,
                     turn_limit,
                 };
+                #[cfg(feature = "e2e-command-fault")]
+                if let Some(effect) = self
+                    .intercept_e2e_surface_fault(super::super::E2ESurfaceFaultTarget::ThreadOpen)
+                    .await
+                {
+                    let error = match effect {
+                        super::super::E2ESurfaceFaultEffect::Continue => None,
+                        super::super::E2ESurfaceFaultEffect::Fail(marker) => Some(
+                            V2Error::source_unavailable(format!("App Server error: {marker}")),
+                        ),
+                        super::super::E2ESurfaceFaultEffect::NotFound => Some(V2Error {
+                            code: super::super::protocol::ErrorCode::NotFound,
+                            recovery: super::super::protocol::Recovery::Requery,
+                            message: "requested thread was not found".into(),
+                        }),
+                        super::super::E2ESurfaceFaultEffect::ReplayUnavailable
+                        | super::super::E2ESurfaceFaultEffect::InvalidCursor
+                        | super::super::E2ESurfaceFaultEffect::VoiceRetry(_)
+                        | super::super::E2ESurfaceFaultEffect::VoiceResult(_)
+                        | super::super::E2ESurfaceFaultEffect::PortExpire { .. }
+                        | super::super::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(
+                            V2Error::source_unavailable("E2E thread open action mismatch"),
+                        ),
+                    };
+                    if let Some(error) = error {
+                        return self
+                            .send_frame(
+                                socket,
+                                &ServerFrame::ThreadWatchFailed { request_id, error },
+                            )
+                            .await
+                            .is_ok();
+                    }
+                }
+                let thread_install_lock = self
+                    .thread_install_lock(epoch.generation, Some(&current.thread_id))
+                    .await;
+                let thread_install_guard = match &thread_install_lock {
+                    Some(lock) => Some(lock.lock().await),
+                    None => None,
+                };
                 let watched = tokio::time::timeout(
                     self.source_deadline,
                     self.source.watch_thread(
@@ -76,6 +184,7 @@ impl SyncV2Runtime {
                     ),
                 )
                 .await;
+                drop(thread_install_guard);
                 let result = match watched {
                     Ok(Ok(watched)) => {
                         epoch.intent.current_thread = Some(current);
@@ -120,35 +229,14 @@ impl SyncV2Runtime {
                     socket,
                     authorization,
                     context,
+                    lifecycle,
+                    lifecycle_revision,
                     epoch.generation,
                     request_id,
                     operation_id,
                     command,
                 )
                 .await
-            }
-            ClientFrame::Action { request_id, action } if epoch.phase == EpochPhase::Live => {
-                let frame = match crate::sync_v2::source::ensure_generation(
-                    self.source.as_ref(),
-                    epoch.generation,
-                ) {
-                    Ok(()) => match tokio::time::timeout(
-                        self.source_deadline,
-                        self.source
-                            .resolve(action, authorization, context, epoch.generation),
-                    )
-                    .await
-                    {
-                        Ok(Ok(result)) => ServerFrame::ActionCompleted { request_id, result },
-                        Ok(Err(error)) => ServerFrame::ActionFailed { request_id, error },
-                        Err(_) => ServerFrame::ActionFailed {
-                            request_id,
-                            error: V2Error::source_unavailable("action source deadline exceeded"),
-                        },
-                    },
-                    Err(error) => ServerFrame::ActionFailed { request_id, error },
-                };
-                self.send_frame(socket, &frame).await.is_ok()
             }
             _ => {
                 close(socket, 1008, "frame_not_legal_in_current_state").await;
@@ -227,7 +315,6 @@ impl SyncV2Runtime {
             ServerFrame::CommandIndeterminate { error, .. } => {
                 Some(("commandIndeterminate", error))
             }
-            ServerFrame::ActionFailed { error, .. } => Some(("actionFailed", error)),
             _ => None,
         };
         if let Some((frame_type, error)) = failure {

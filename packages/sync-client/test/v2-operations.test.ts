@@ -232,6 +232,50 @@ describe("Sync V2 durable operations", () => {
     ).rejects.toThrow("different canonical command");
   });
 
+  it("owns one immutable command graph without copying it across reads and recovery", async () => {
+    const store = new MemoryV2OperationStore();
+    const command: V2Command = {
+      kind: "turn.submit",
+      threadId: "thread",
+      workspace: null,
+      input: [{ kind: "text", text: "original" }],
+      intent: "chat",
+      settings: null,
+    };
+
+    const creation = store.create(savedServerA, "operation", command, 0);
+    expect(Reflect.set(command.input[0]!, "text", "corrupted")).toBe(false);
+    const created = await creation;
+    const replay = await store.create(savedServerA, "operation", command, 0);
+    const read = await store.get(savedServerA, "operation");
+    const transitioned = await store.transition(
+      savedServerA,
+      "operation",
+      ["created"],
+      { state: "sent" },
+      1,
+    );
+    const recoverable = await store.recoverable(savedServerA, 1);
+
+    expect(created.command).toBe(command);
+    expect(replay).toBe(created);
+    expect(read).toBe(created);
+    expect(transitioned.command).toBe(command);
+    expect(recoverable[0]).toBe(transitioned);
+    expect(Object.isFrozen(command)).toBe(true);
+    expect(Object.isFrozen(command.input)).toBe(true);
+    expect(Object.isFrozen(command.input[0])).toBe(true);
+    expect(Reflect.set(created, "state", "completed")).toBe(false);
+    expect((await store.get(savedServerA, "operation"))?.command).toEqual({
+      kind: "turn.submit",
+      threadId: "thread",
+      workspace: null,
+      input: [{ kind: "text", text: "original" }],
+      intent: "chat",
+      settings: null,
+    });
+  });
+
   it("serializes immediate accepted-to-terminal delivery", async () => {
     const operations = new MemoryV2OperationStore();
     const { socket, session } = setup(undefined, operations);
@@ -416,6 +460,36 @@ describe("Sync V2 durable operations", () => {
     second.session.stop();
   });
 
+  it("settles a permanently missing accepted receipt after restart", async () => {
+    const operations = new MemoryV2OperationStore();
+    const command = { kind: "thread.delete", threadId: "thread-1" } as const;
+    await operations.create(savedServerA, "lost-ledger-receipt", command);
+    await operations.transition(savedServerA, "lost-ledger-receipt", ["created"], {
+      state: "sent",
+    });
+    await operations.transition(savedServerA, "lost-ledger-receipt", ["sent"], {
+      state: "accepted",
+      acceptedAt: "2026-08-27T12:00:00Z",
+    });
+
+    const { socket, session } = setup(undefined, operations);
+    await makeLive(socket, session);
+    await waitFor(() => socket.sent.some((frame) => frame.type === "query"));
+    const query = socket.sent.find((frame) => frame.type === "query");
+    socket.emit({
+      type: "queryFailed",
+      requestId: query?.requestId,
+      error: { code: "notFound", recovery: "requery", message: "receipt lost" },
+    });
+
+    await waitFor(
+      async () =>
+        (await operations.get(savedServerA, "lost-ledger-receipt"))?.state === "indeterminate",
+    );
+    expect(socket.sent.filter((frame) => frame.type === "query")).toHaveLength(1);
+    session.stop();
+  });
+
   it("reconciles an accepted operation by receipt after SourceGap without resending it", async () => {
     const operations = new MemoryV2OperationStore();
     const { socket, session } = setup(undefined, operations);
@@ -471,6 +545,155 @@ describe("Sync V2 durable operations", () => {
     session.stop();
   });
 
+  it("rejects a permanently unreadable accepted receipt as durableUnsettled", async () => {
+    const operations = new MemoryV2OperationStore();
+    const { socket, session } = setup(undefined, operations);
+    await makeLive(socket, session);
+    const terminal = session.command("unreadable-receipt", {
+      kind: "thread.delete",
+      threadId: "thread-1",
+    });
+    await waitFor(() => socket.sent.some((frame) => frame.type === "command"));
+    const sent = socket.sent.find((frame) => frame.type === "command");
+    socket.emit({
+      type: "commandAccepted",
+      requestId: sent?.requestId,
+      operationId: "unreadable-receipt",
+      acceptedAt: "2026-08-27T12:00:00Z",
+    });
+    await waitFor(
+      async () => (await operations.get(savedServerA, "unreadable-receipt"))?.state === "accepted",
+    );
+    socket.emit({ type: "reinitialize", epochId: "epoch-1", reason: "sourceGap" });
+    await makeNextEpochLive(socket, session);
+    await waitFor(() => socket.sent.some((frame) => frame.type === "query"));
+    const query = socket.sent.find((frame) => frame.type === "query");
+    socket.emit({
+      type: "queryFailed",
+      requestId: query?.requestId,
+      error: { code: "notFound", recovery: "requery", message: "receipt unreadable" },
+    });
+
+    await expect(terminal).rejects.toBeInstanceOf(SyncV2CommandDurableUnsettledError);
+    expect((await operations.get(savedServerA, "unreadable-receipt"))?.state).toBe("indeterminate");
+    expect(socket.sent.filter((frame) => frame.type === "query")).toHaveLength(1);
+    session.stop();
+  });
+
+  it("retries transient accepted-receipt failures and then settles from the durable receipt", async () => {
+    const operations = new MemoryV2OperationStore();
+    const socket = new FakeV2Socket();
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: { openSync: () => socket },
+      intent: {
+        catalog: { activeLimit: 2, archivedLimit: 1 },
+        currentThread: { threadId: "thread-1", turnLimit: 36 },
+        pendingRequests: "currentThread",
+      },
+      projectionStore: new MemoryV2ProjectionStore(),
+      operationStore: operations,
+      reconnectDelayMs: 0,
+    });
+    await makeLive(socket, session);
+    const terminal = session.command("transient-receipt", {
+      kind: "thread.delete",
+      threadId: "thread-1",
+    });
+    await waitFor(() => socket.sent.some((frame) => frame.type === "command"));
+    const sent = socket.sent.find((frame) => frame.type === "command");
+    socket.emit({
+      type: "commandAccepted",
+      requestId: sent?.requestId,
+      operationId: "transient-receipt",
+      acceptedAt: "2026-08-27T12:00:00Z",
+    });
+    await waitFor(
+      async () => (await operations.get(savedServerA, "transient-receipt"))?.state === "accepted",
+    );
+    socket.emit({ type: "reinitialize", epochId: "epoch-1", reason: "sourceGap" });
+    await makeNextEpochLive(socket, session);
+    await waitFor(() => socket.sent.some((frame) => frame.type === "query"));
+    const firstQuery = socket.sent.find((frame) => frame.type === "query");
+    socket.emit({
+      type: "queryFailed",
+      requestId: firstQuery?.requestId,
+      error: { code: "sourceUnavailable", recovery: "retry", message: "temporary" },
+    });
+    await waitFor(() => socket.sent.filter((frame) => frame.type === "query").length === 2);
+    const secondQuery = socket.sent.filter((frame) => frame.type === "query").at(-1);
+    socket.emit({
+      type: "queryCompleted",
+      requestId: secondQuery?.requestId,
+      result: {
+        kind: "operation.get",
+        operationId: "transient-receipt",
+        receipt: {
+          state: "completed",
+          acceptedAt: "2026-08-27T12:00:00Z",
+          result: { kind: "thread.delete", threadId: "thread-1" },
+        },
+      },
+    });
+
+    await expect(terminal).resolves.toMatchObject({ type: "commandCompleted" });
+    expect((await operations.get(savedServerA, "transient-receipt"))?.state).toBe("completed");
+    session.stop();
+  });
+
+  it("bounds repeated transient receipt failures and settles durableUnsettled", async () => {
+    const operations = new MemoryV2OperationStore();
+    const socket = new FakeV2Socket();
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: { openSync: () => socket },
+      intent: {
+        catalog: { activeLimit: 2, archivedLimit: 1 },
+        currentThread: { threadId: "thread-1", turnLimit: 36 },
+        pendingRequests: "currentThread",
+      },
+      projectionStore: new MemoryV2ProjectionStore(),
+      operationStore: operations,
+      reconnectDelayMs: 0,
+    });
+    await makeLive(socket, session);
+    const terminal = session.command("bounded-transient-receipt", {
+      kind: "thread.delete",
+      threadId: "thread-1",
+    });
+    await waitFor(() => socket.sent.some((frame) => frame.type === "command"));
+    const sent = socket.sent.find((frame) => frame.type === "command");
+    socket.emit({
+      type: "commandAccepted",
+      requestId: sent?.requestId,
+      operationId: "bounded-transient-receipt",
+      acceptedAt: "2026-08-27T12:00:00Z",
+    });
+    await waitFor(
+      async () =>
+        (await operations.get(savedServerA, "bounded-transient-receipt"))?.state === "accepted",
+    );
+    socket.emit({ type: "reinitialize", epochId: "epoch-1", reason: "sourceGap" });
+    await makeNextEpochLive(socket, session);
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      await waitFor(() => socket.sent.filter((frame) => frame.type === "query").length === attempt);
+      const query = socket.sent.filter((frame) => frame.type === "query").at(-1);
+      socket.emit({
+        type: "queryFailed",
+        requestId: query?.requestId,
+        error: { code: "sourceUnavailable", recovery: "retry", message: "temporary" },
+      });
+    }
+
+    await expect(terminal).rejects.toBeInstanceOf(SyncV2CommandDurableUnsettledError);
+    expect((await operations.get(savedServerA, "bounded-transient-receipt"))?.state).toBe(
+      "indeterminate",
+    );
+    expect(socket.sent.filter((frame) => frame.type === "query")).toHaveLength(5);
+    session.stop();
+  });
+
   it("keeps the same durable command promise across an explicit reconnect", async () => {
     const operations = new MemoryV2OperationStore();
     const sockets = [new FakeV2Socket(), new FakeV2Socket()];
@@ -481,6 +704,7 @@ describe("Sync V2 durable operations", () => {
       intent: {
         catalog: { activeLimit: 2, archivedLimit: 1 },
         currentThread: { threadId: "thread-1", turnLimit: 36 },
+        pendingRequests: "currentThread",
       },
       projectionStore: new MemoryV2ProjectionStore(),
       operationStore: operations,
@@ -548,12 +772,13 @@ describe("Sync V2 durable operations", () => {
       intent: {
         catalog: { activeLimit: 2, archivedLimit: 1 },
         currentThread: null,
+        pendingRequests: "currentThread",
       },
       projectionStore: new MemoryV2ProjectionStore(),
       operationStore: operations,
       reconnectDelayMs: 0,
     });
-    await makeLive(sockets[0]!, session);
+    await makeLive(sockets[0]!, session, snapshot({ currentThread: null }));
     const terminal = session.command("accepted-intent-change", {
       kind: "thread.delete",
       threadId: "thread-1",
@@ -574,6 +799,7 @@ describe("Sync V2 durable operations", () => {
     session.updateIntent({
       catalog: { activeLimit: 2, archivedLimit: 1 },
       currentThread: { threadId: "thread-1", turnLimit: 36 },
+      pendingRequests: "currentThread",
     });
     await waitFor(() => sockets[1]!.listenerCount("open") > 0);
     sockets[1]!.open();

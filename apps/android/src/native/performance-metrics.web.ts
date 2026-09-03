@@ -19,10 +19,12 @@ const snapshot: PerformanceMetricsSnapshot = {
   recent: [],
 };
 
-const subscribe = () => () => {};
+export function subscribePerformanceMetrics(_listener: () => void): () => void {
+  return () => undefined;
+}
 
 export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
-  return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
+  return useSyncExternalStore(subscribePerformanceMetrics, () => snapshot, () => snapshot);
 }
 
 export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {

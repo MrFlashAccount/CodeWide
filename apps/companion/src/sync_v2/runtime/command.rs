@@ -5,7 +5,7 @@ use tracing::info;
 
 use crate::auth::AuthorizationContext;
 
-use super::SyncV2Runtime;
+use super::{ContextLifecycle, SyncV2Runtime};
 use crate::sync_v2::{
     auth_context::AuthenticatedContextKey,
     ledger::Admission,
@@ -21,6 +21,8 @@ impl SyncV2Runtime {
         socket: &mut WebSocket,
         authorization: &AuthorizationContext,
         context: &AuthenticatedContextKey,
+        lifecycle: &ContextLifecycle,
+        lifecycle_revision: u64,
         generation: u64,
         request_id: Id,
         operation_id: OperationId,
@@ -40,33 +42,12 @@ impl SyncV2Runtime {
                 .await
                 .is_ok();
         }
-        let authorization_result = tokio::time::timeout(
-            self.source_deadline,
-            self.source
-                .authorize_command(&command, authorization, context, generation),
-        )
-        .await;
-        if !matches!(authorization_result, Ok(Ok(()))) {
-            let error = match authorization_result {
-                Ok(Err(error)) => error,
-                Err(_) => V2Error::source_unavailable("command authorization deadline exceeded"),
-                Ok(Ok(())) => unreachable!(),
-            };
-            return self
-                .send_frame(
-                    socket,
-                    &ServerFrame::CommandRejected {
-                        request_id,
-                        operation_id,
-                        error,
-                    },
-                )
-                .await
-                .is_ok();
-        }
         let operation_lock = self.operation_lock(context, &operation_id).await;
         let _operation_guard = operation_lock.lock().await;
-        let admission = match self.ledger.admit(context, &operation_id, &command) {
+        let retained = match self
+            .ledger
+            .retained_admission(context, &operation_id, &command)
+        {
             Ok(admission) => admission,
             Err(error) => {
                 return self
@@ -80,6 +61,95 @@ impl SyncV2Runtime {
                     )
                     .await
                     .is_ok();
+            }
+        };
+        let admission = if let Some(admission) = retained {
+            admission
+        } else {
+            let authorization_result = tokio::time::timeout(
+                self.source_deadline,
+                self.source
+                    .authorize_command(&command, authorization, context, generation),
+            )
+            .await;
+            if !matches!(authorization_result, Ok(Ok(()))) {
+                let error = match authorization_result {
+                    Ok(Err(error)) => error,
+                    Err(_) => {
+                        V2Error::source_unavailable("command authorization deadline exceeded")
+                    }
+                    Ok(Ok(())) => unreachable!(),
+                };
+                return self
+                    .send_frame(
+                        socket,
+                        &ServerFrame::CommandRejected {
+                            request_id,
+                            operation_id,
+                            error,
+                        },
+                    )
+                    .await
+                    .is_ok();
+            }
+            #[cfg(feature = "e2e-command-fault")]
+            if matches!(&command, Command::TurnSubmit { .. })
+                && let Some(effect) = self
+                    .intercept_e2e_surface_fault(super::super::E2ESurfaceFaultTarget::TurnSubmit)
+                    .await
+            {
+                let error = match effect {
+                    super::super::E2ESurfaceFaultEffect::Continue => None,
+                    super::super::E2ESurfaceFaultEffect::Fail(marker) => Some(
+                        V2Error::source_unavailable(format!("App Server error: {marker}")),
+                    ),
+                    super::super::E2ESurfaceFaultEffect::NotFound
+                    | super::super::E2ESurfaceFaultEffect::ReplayUnavailable
+                    | super::super::E2ESurfaceFaultEffect::InvalidCursor
+                    | super::super::E2ESurfaceFaultEffect::VoiceRetry(_)
+                    | super::super::E2ESurfaceFaultEffect::VoiceResult(_)
+                    | super::super::E2ESurfaceFaultEffect::PortExpire { .. }
+                    | super::super::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(
+                        V2Error::source_unavailable("E2E turn submit action mismatch"),
+                    ),
+                };
+                if let Some(error) = error {
+                    return self
+                        .send_frame(
+                            socket,
+                            &ServerFrame::CommandRejected {
+                                request_id,
+                                operation_id,
+                                error,
+                            },
+                        )
+                        .await
+                        .is_ok();
+                }
+            }
+            let Some(dispatch_guard) = self
+                .current_context_dispatch(context, lifecycle, lifecycle_revision)
+                .await
+            else {
+                return false;
+            };
+            let admitted = self.ledger.admit(context, &operation_id, &command);
+            drop(dispatch_guard);
+            match admitted {
+                Ok(admission) => admission,
+                Err(error) => {
+                    return self
+                        .send_frame(
+                            socket,
+                            &ServerFrame::CommandRejected {
+                                request_id,
+                                operation_id,
+                                error: V2Error::source_unavailable(error.to_string()),
+                            },
+                        )
+                        .await
+                        .is_ok();
+                }
             }
         };
         let admission_name = match &admission {
@@ -207,6 +277,12 @@ impl SyncV2Runtime {
                 let error = V2Error::operation_indeterminate(
                     "command was admitted before restart; adapter dispatch was not repeated",
                 );
+                let Some(dispatch_guard) = self
+                    .current_context_dispatch(context, lifecycle, lifecycle_revision)
+                    .await
+                else {
+                    return false;
+                };
                 if self
                     .ledger
                     .indeterminate(context, &operation_id, error.clone())
@@ -214,6 +290,7 @@ impl SyncV2Runtime {
                 {
                     return false;
                 }
+                drop(dispatch_guard);
                 self.send_frame(
                     socket,
                     &ServerFrame::CommandIndeterminate {
@@ -245,6 +322,12 @@ impl SyncV2Runtime {
                         .execute(&operation_id, command, authorization, context, generation),
                 )
                 .await;
+                let Some(dispatch_guard) = self
+                    .current_context_dispatch(context, lifecycle, lifecycle_revision)
+                    .await
+                else {
+                    return false;
+                };
                 let frame = match execution {
                     Err(_) => {
                         let error = V2Error::operation_indeterminate(
@@ -320,6 +403,7 @@ impl SyncV2Runtime {
                         }
                     },
                 };
+                drop(dispatch_guard);
                 let outcome = match &frame {
                     ServerFrame::CommandCompleted { .. } => "completed",
                     ServerFrame::CommandFailed { .. } => "failed",

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
@@ -6,16 +6,27 @@ import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 import { PresentationSheetView } from "../surfaces/PresentationSheetView";
 import { ProductText } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
 import type { ServerRailRow } from "./ServerRailView";
 
 interface ServerSelectorViewProps {
   activeId?: string;
   detail?: string;
+  error?: string;
   heading?: string;
   onAdd(): void;
   onOpenAll(): void;
   onOpen(id: string): void;
+  onRetry?(): void | Promise<void>;
   onSettings(): void;
+  rows: ServerRailRow[];
+}
+
+interface NewThreadServerPickerViewProps {
+  isOpen: boolean;
+  onAdd(): void;
+  onOpenChange(open: boolean): void;
+  onSelect(id: string): void;
   rows: ServerRailRow[];
 }
 
@@ -33,8 +44,10 @@ interface SelectorActionProps {
 }
 
 export function ServerSelectorView(props: ServerSelectorViewProps): React.JSX.Element {
-  const { activeId, detail, heading, onAdd, onOpenAll, onOpen, onSettings, rows } = props;
+  const { activeId, detail, error, heading, onAdd, onOpenAll, onOpen, onRetry, onSettings, rows } =
+    props;
   const [visible, setVisible] = useState(false);
+  const [retryPending, startRetry] = useTransition();
   const show = useEvent((): void => {
     setVisible(true);
   });
@@ -59,6 +72,12 @@ export function ServerSelectorView(props: ServerSelectorViewProps): React.JSX.El
   });
   const handleOpenChange = useEvent((openState: boolean): void => {
     if (!openState) hide();
+  });
+  const retry = useEvent((): void => {
+    if (onRetry === undefined || retryPending) return;
+    startRetry(async () => {
+      await onRetry();
+    });
   });
   const selectedLabel =
     activeId === undefined
@@ -98,6 +117,28 @@ export function ServerSelectorView(props: ServerSelectorViewProps): React.JSX.El
         <ProductText style={styles.sheetTitle} weight="semibold">
           Server
         </ProductText>
+        {error === undefined ? null : (
+          <View style={styles.errorRow}>
+            <ProductText style={styles.errorCopy} tone="danger">
+              {error}
+            </ProductText>
+            {onRetry === undefined ? null : (
+              <Pressable
+                accessibilityLabel="Retry loading servers"
+                accessibilityRole="button"
+                accessibilityState={{ busy: retryPending }}
+                onPress={retry}
+                style={actionStyle}
+              >
+                {retryPending ? (
+                  <ShimmerText text="Try again" />
+                ) : (
+                  <ProductText weight="semibold">Try again</ProductText>
+                )}
+              </Pressable>
+            )}
+          </View>
+        )}
         <Pressable
           accessibilityLabel={`All servers${activeId === undefined ? ", selected" : ""}`}
           accessibilityRole="button"
@@ -126,6 +167,41 @@ export function ServerSelectorView(props: ServerSelectorViewProps): React.JSX.El
         />
       </PresentationSheetView>
     </>
+  );
+}
+
+export function NewThreadServerPickerView(
+  props: NewThreadServerPickerViewProps,
+): React.JSX.Element {
+  const { isOpen, onAdd, onOpenChange, onSelect, rows } = props;
+  const select = useEvent((id: string): void => {
+    onOpenChange(false);
+    onSelect(id);
+  });
+  const add = useEvent((): void => {
+    onOpenChange(false);
+    onAdd();
+  });
+  return (
+    <PresentationSheetView
+      contentProps={{ enableDynamicSizing: true, index: 0 }}
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
+    >
+      <ProductText style={styles.sheetTitle} weight="semibold">
+        Choose a server for the new thread
+      </ProductText>
+      {rows.length === 0 ? (
+        <ProductText style={styles.emptyCopy} tone="muted">
+          No enabled servers are available.
+        </ProductText>
+      ) : (
+        rows.map((row) => (
+          <ServerSelectorRow key={row.id} onOpen={select} row={row} selected={false} />
+        ))
+      )}
+      <SelectorAction detail="Pair another host" icon="add" label="Add server" onPress={add} />
+    </PresentationSheetView>
   );
 }
 
@@ -219,7 +295,16 @@ const styles = StyleSheet.create({
     width: 40,
   },
   actionTitle: typeScale.title,
+  emptyCopy: { paddingVertical: spacing.sm },
   emoji: { ...typeScale.emoji },
+  errorCopy: { flex: 1, minWidth: 0 },
+  errorRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.sm,
+  },
   option: {
     alignItems: "center",
     borderRadius: radii.selected,

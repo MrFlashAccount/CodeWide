@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 
-import { v2SavedServerId } from "@codewide/sync-client/v2";
+import { v2SavedServerId, type V2Command } from "@codewide/sync-client/v2";
 
 vi.mock("../src/v2/infrastructure/persistence/v2Database.native", () => ({
   getV2SqliteDatabase: () => {
@@ -14,7 +14,12 @@ import { createNativeSyncV2OperationStoreWithDatabase } from "../src/v2/infrastr
 import { createNativeSyncV2ProjectionStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteProjectionStore.native";
 import { createNativeSyncV2SavedServerDeletionStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteSavedServerDeletionStore.native";
 import { createCommandCorrelationStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteCommandCorrelationStore.native";
+import { createThreadPinStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteThreadPinStore.native";
+import { createComposerDraftStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteComposerDraftStore.native";
+import { createTerminalSessionStoreWithDatabase } from "../src/v2/infrastructure/persistence/sqliteTerminalSessionStore.native";
 import { serializeSqliteTransactions } from "../src/v2/infrastructure/persistence/serialSqliteDatabase";
+import { savedServerId, threadId } from "../src/v2/domain/ids";
+import { qualifiedThread } from "../src/v2/domain/qualifiedThread";
 
 const savedServerA = v2SavedServerId("saved-server-native-a");
 const savedServerB = v2SavedServerId("saved-server-native-b");
@@ -25,6 +30,156 @@ afterEach(() => {
 });
 
 describe("native Sync V2 durable stores", () => {
+  it("restores terminal identities and deletes one saved-server namespace", async () => {
+    const database = memoryDatabase();
+    const first = createTerminalSessionStoreWithDatabase(database);
+    const server = savedServerId("terminal-server");
+    await first.upsert({
+      cols: 120,
+      cwd: "/workspace",
+      generation: "7",
+      id: "terminal-a",
+      owner: qualifiedThread(server, threadId("thread-a")),
+      rows: 40,
+      title: "Terminal 1",
+    });
+
+    const restarted = createTerminalSessionStoreWithDatabase(database);
+    expect(await restarted.list()).toStrictEqual([
+      {
+        cols: 120,
+        cwd: "/workspace",
+        generation: "7",
+        id: "terminal-a",
+        owner: { savedServerId: server, threadId: "thread-a" },
+        rows: 40,
+        title: "Terminal 1",
+      },
+    ]);
+    await restarted.deleteSavedServer(server);
+    expect(await restarted.list()).toEqual([]);
+  });
+
+  it("restores complete V2 composer state and quarantines a corrupt draft without its payload", async () => {
+    const database = memoryDatabase();
+    const store = createComposerDraftStoreWithDatabase(database);
+    const server = savedServerId("composer-server");
+    await store.upsert({
+      attachments: [
+        {
+          editor: null,
+          error: null,
+          local: {
+            mediaType: "text/plain",
+            name: "notes.txt",
+            sizeBytes: 7,
+            token: "file:///drafts/notes.txt",
+          },
+          remoteId: "attachment-1",
+          state: "ready",
+        },
+      ],
+      deliveryMode: "queue",
+      draftId: "thread:thread-1",
+      historyAnchorOffsetPx: 18,
+      historyAnchorTurnId: "turn-8",
+      historyGenerationId: "generation-1",
+      historyPageCursor: "cursor-1",
+      historyPageDirection: "older",
+      newThread: {
+        settings: {
+          approvalPolicy: {
+            granular: {
+              mcpElicitations: false,
+              requestPermissions: true,
+              rules: false,
+              sandboxApproval: true,
+              skillApproval: false,
+            },
+          },
+          effort: "ultra",
+          model: "gpt-5.6-sol",
+          personality: "pragmatic",
+          sandbox: { networkAccess: "enabled", type: "externalSandbox" },
+        },
+        workspace: "/workspace/project",
+        workspaceMode: {
+          kind: "isolated",
+          support: { canCreate: true, provider: "git", repositoryRoot: "/workspace/project" },
+        },
+      },
+      savedServerId: server,
+      text: "persist me",
+      updatedAtMs: 10,
+    });
+    expect(await createComposerDraftStoreWithDatabase(database).load()).toMatchObject([
+      {
+        deliveryMode: "queue",
+        draftId: "thread:thread-1",
+        historyAnchorTurnId: "turn-8",
+        newThread: {
+          settings: {
+            approvalPolicy: {
+              granular: {
+                mcpElicitations: false,
+                requestPermissions: true,
+                rules: false,
+                sandboxApproval: true,
+                skillApproval: false,
+              },
+            },
+            sandbox: { networkAccess: "enabled", type: "externalSandbox" },
+          },
+          workspace: "/workspace/project",
+          workspaceMode: { kind: "isolated" },
+        },
+        text: "persist me",
+      },
+    ]);
+
+    const legacyDraftId = "thread:legacy-thread";
+    await database.execute(
+      "INSERT INTO codewide_v2_composer_drafts(saved_server_id, draft_id, payload, updated_at_ms) VALUES (?, ?, ?, ?)",
+      [
+        server,
+        legacyDraftId,
+        JSON.stringify({
+          attachments: [],
+          deliveryMode: "sendNow",
+          draftId: legacyDraftId,
+          savedServerId: server,
+          text: "legacy draft",
+          updatedAtMs: 9,
+        }),
+        9,
+      ],
+    );
+    expect(await createComposerDraftStoreWithDatabase(database).load()).toContainEqual(
+      expect.objectContaining({
+        draftId: legacyDraftId,
+        historyAnchorOffsetPx: null,
+        historyAnchorTurnId: null,
+        historyGenerationId: null,
+        historyPageCursor: null,
+        historyPageDirection: null,
+        text: "legacy draft",
+      }),
+    );
+
+    await database.execute(
+      "UPDATE codewide_v2_composer_drafts SET payload = ? WHERE saved_server_id = ? AND draft_id = ?",
+      ["{broken", server, "thread:thread-1"],
+    );
+    expect(await createComposerDraftStoreWithDatabase(database).load()).toMatchObject([
+      { draftId: legacyDraftId, text: "legacy draft" },
+    ]);
+    const quarantine = await database.execute(
+      "SELECT reason FROM codewide_v2_composer_draft_quarantine WHERE saved_server_id = ?",
+      [server],
+    );
+    expect(quarantine).toEqual({ rows: [{ reason: "invalid_payload" }] });
+  });
+
   it("serializes transactions shared by independent V2 stores", async () => {
     let active = false;
     let releaseFirst!: () => void;
@@ -81,6 +236,8 @@ describe("native Sync V2 durable stores", () => {
     };
     await first.begin(record);
     await first.markDurable(record.correlationId, 2);
+    await first.release(record.correlationId, 3);
+    await first.markDurable(record.correlationId, 4);
 
     const restarted = createCommandCorrelationStoreWithDatabase(database);
     expect(
@@ -89,7 +246,7 @@ describe("native Sync V2 durable stores", () => {
         surface: "threadComposer",
         threadId: "thread-a",
       }),
-    ).toEqual([expect.objectContaining({ operationId: "operation-a", state: "durable" })]);
+    ).toEqual([expect.objectContaining({ operationId: "operation-a", state: "durableReleased" })]);
     await expect(restarted.begin({ ...record, operationId: "operation-b" })).rejects.toThrow(
       "identity is immutable",
     );
@@ -101,6 +258,61 @@ describe("native Sync V2 durable stores", () => {
     expect(columns).not.toContain("command");
     expect(columns).not.toContain("prompt");
     expect(columns).not.toContain("fingerprint");
+  });
+
+  it("quarantines an invalid command correlation and keeps its scope locked", async () => {
+    const database = memoryDatabase();
+    const store = createCommandCorrelationStoreWithDatabase(database);
+    const scope = {
+      savedServerId: savedServerA,
+      surface: "commandAction" as const,
+      threadId: "11:thread.fork|8:thread-a",
+    };
+    await store.begin({
+      ...scope,
+      correlationId: "correlation-corrupt",
+      operationId: "operation-corrupt",
+      state: "durable",
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    });
+    await database.execute(
+      "UPDATE codewide_v2_command_correlations SET operation_id = '' WHERE correlation_id = ?",
+      ["correlation-corrupt"],
+    );
+
+    await expect(store.listUnsettled(scope)).rejects.toThrow("explicit user decision");
+    await expect(store.listUnsettled(scope)).rejects.toThrow("explicit user decision");
+    expect(
+      await database.execute(
+        "SELECT reason FROM codewide_v2_command_correlation_quarantine WHERE scope_key IS NOT NULL",
+      ),
+    ).toEqual({ rows: [{ reason: "invalid_record" }] });
+
+    await store.releaseScope(scope, 2);
+    await expect(store.listUnsettled(scope)).resolves.toEqual([]);
+  });
+
+  it("persists thread pins per saved server and removes their deleted namespace", async () => {
+    const database = memoryDatabase();
+    const first = createThreadPinStoreWithDatabase(database);
+    const serverA = savedServerId("saved-server-native-a");
+    const serverB = savedServerId("saved-server-native-b");
+    const threadA = threadId("thread-a");
+    await first.setPinned(serverA, threadA, true);
+    await first.setPinned(serverB, threadA, true);
+
+    const restarted = createThreadPinStoreWithDatabase(database);
+    expect(await restarted.list()).toEqual([
+      { savedServerId: serverA, threadId: threadA },
+      { savedServerId: serverB, threadId: threadA },
+    ]);
+
+    await restarted.setPinned(serverA, threadA, false);
+    expect(await restarted.list()).toEqual([{ savedServerId: serverB, threadId: threadA }]);
+
+    await restarted.deleteSavedServer(serverA);
+    expect(await restarted.list()).toEqual([{ savedServerId: serverB, threadId: threadA }]);
   });
 
   it("survives restart, isolates saved servers, and deactivates an abandoned generation", async () => {
@@ -164,6 +376,97 @@ describe("native Sync V2 durable stores", () => {
     expect(await store.hasSavedServerData(savedServerA)).toBe(false);
   });
 
+  it("quarantines a malformed current projection instead of publishing unchecked JSON", async () => {
+    const database = memoryDatabase();
+    const store = createNativeSyncV2ProjectionStoreWithDatabase(database);
+    await store.commitSnapshot(savedServerA, snapshot("epoch-a", "thread-a"));
+    const persisted = await store.active(savedServerA);
+    expect(persisted).not.toBeNull();
+    await database.execute(
+      "UPDATE codewide_sync_v2_projection_v2_by_saved_server SET payload = ? WHERE saved_server_id = ?",
+      [
+        JSON.stringify({
+          ...persisted,
+          catalog: persisted?.catalog.map((entry) => ({
+            ...entry,
+            thread: { ...entry.thread, title: 42 },
+          })),
+        }),
+        savedServerA,
+      ],
+    );
+
+    const restarted = createNativeSyncV2ProjectionStoreWithDatabase(database);
+    expect(await restarted.active(savedServerA)).toBeNull();
+    expect(await restarted.retained(savedServerA)).toBeNull();
+    expect(await restarted.hasSavedServerData(savedServerA)).toBe(false);
+  });
+
+  it("commits projection quarantine even when a live change discovers the corruption", async () => {
+    const database = memoryDatabase();
+    const store = createNativeSyncV2ProjectionStoreWithDatabase(database);
+    await store.commitSnapshot(savedServerA, snapshot("epoch-a", "thread-a"));
+    await database.execute(
+      "UPDATE codewide_sync_v2_projection_v2_by_saved_server SET payload = ? WHERE saved_server_id = ?",
+      ["{broken", savedServerA],
+    );
+
+    await expect(
+      store.applyChange(savedServerA, "epoch-a", "1", {
+        kind: "accountsChanged",
+        revision: "accounts:1",
+      }),
+    ).rejects.toThrow("does not belong to the active native generation");
+
+    expect(await store.active(savedServerA)).toBeNull();
+    expect(await store.retained(savedServerA)).toBeNull();
+  });
+
+  it("quarantines an invalid durable operation before recovery", async () => {
+    const database = memoryDatabase();
+    const store = createNativeSyncV2OperationStoreWithDatabase(database);
+    const operation = await store.create(savedServerA, "operation-a", {
+      kind: "thread.delete",
+      threadId: "thread-a",
+    });
+    await database.execute(
+      "UPDATE codewide_sync_v2_operations_by_saved_server SET payload = ? WHERE saved_server_id = ? AND operation_id = ?",
+      [
+        JSON.stringify({
+          ...operation,
+          command: { kind: "thread.delete", threadId: "fingerprint-drift" },
+        }),
+        savedServerA,
+        "operation-a",
+      ],
+    );
+
+    const restarted = createNativeSyncV2OperationStoreWithDatabase(database);
+    expect(await restarted.get(savedServerA, "operation-a")).toBeNull();
+    expect(await restarted.recoverable(savedServerA)).toEqual([]);
+    expect(await restarted.hasSavedServerData(savedServerA)).toBe(false);
+  });
+
+  it("commits operation quarantine even when a transition discovers the corruption", async () => {
+    const database = memoryDatabase();
+    const store = createNativeSyncV2OperationStoreWithDatabase(database);
+    await store.create(savedServerA, "operation-a", {
+      kind: "thread.delete",
+      threadId: "thread-a",
+    });
+    await database.execute(
+      "UPDATE codewide_sync_v2_operations_by_saved_server SET payload = ? WHERE saved_server_id = ? AND operation_id = ?",
+      ["{broken", savedServerA, "operation-a"],
+    );
+
+    await expect(
+      store.transition(savedServerA, "operation-a", ["created"], { state: "sent" }),
+    ).rejects.toThrow("Unknown Sync V2 operation id");
+
+    expect(await store.get(savedServerA, "operation-a")).toBeNull();
+    expect(await store.hasSavedServerData(savedServerA)).toBe(false);
+  });
+
   it("publishes complete content-free native store observations", async () => {
     const database = memoryDatabase();
     const projections = createNativeSyncV2ProjectionStoreWithDatabase(database);
@@ -221,6 +524,47 @@ describe("native Sync V2 durable stores", () => {
     expect(await operations.get(savedServerA, "operation-a")).toMatchObject({
       operationId: "operation-a",
       state: "created",
+    });
+  });
+
+  it("takes immutable command ownership before the first asynchronous persistence boundary", async () => {
+    const operations = createNativeSyncV2OperationStoreWithDatabase(memoryDatabase());
+    const command: Extract<V2Command, { kind: "turn.submit" }> = {
+      input: [{ kind: "text" as const, text: "original" }],
+      intent: "chat" as const,
+      kind: "turn.submit" as const,
+      settings: null,
+      threadId: "thread-a",
+      workspace: null,
+    };
+
+    const creating = operations.create(savedServerA, "operation-a", command);
+    const input = command.input[0];
+    if (input?.kind !== "text") throw new Error("test command must contain text input");
+    expect(Reflect.set(input, "text", "mutated after create")).toBe(false);
+
+    const operation = await creating;
+    expect(operation.command).toBe(command);
+    expect(Object.isFrozen(operation)).toBe(true);
+    expect(Object.isFrozen(command)).toBe(true);
+    expect(Object.isFrozen(command.input)).toBe(true);
+    expect(Object.isFrozen(input)).toBe(true);
+    expect(operation.command).toMatchObject({ input: [{ kind: "text", text: "original" }] });
+    const restored = await operations.get(savedServerA, "operation-a");
+    expect(restored).toMatchObject({
+      command: { input: [{ kind: "text", text: "original" }] },
+    });
+    expect(restored?.command).not.toBe(command);
+    expect(Object.isFrozen(restored)).toBe(true);
+    expect(Object.isFrozen(restored?.command)).toBe(true);
+    if (restored?.command?.kind !== "turn.submit") {
+      throw new Error("restored test command must be turn.submit");
+    }
+    const restoredInput = restored.command.input[0];
+    if (restoredInput?.kind !== "text") throw new Error("restored command must contain text input");
+    expect(Reflect.set(restoredInput, "text", "mutated restored value")).toBe(false);
+    expect(await operations.get(savedServerA, "operation-a")).toMatchObject({
+      command: { input: [{ kind: "text", text: "original" }] },
     });
   });
 
@@ -515,6 +859,13 @@ function snapshot(epochId: string, threadId: string) {
             effort: null,
             approvalPolicy: "onRequest" as const,
             sandbox: "workspaceWrite" as const,
+            personality: null,
+          },
+          readState: {
+            kind: "unknown" as const,
+            latestActivityMarker: null,
+            readThroughMarker: null,
+            unreadCount: null,
           },
           createdAt: "2026-08-27T12:00:00Z",
           updatedAt: "2026-08-27T12:00:00Z",

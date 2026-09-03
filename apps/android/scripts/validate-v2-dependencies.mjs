@@ -18,7 +18,7 @@ if (result.error) {
 }
 
 const terminalManager = readFileSync(
-  "android/app/src/main/java/dev/codewide/app/remote/V2TerminalSessionManager.kt",
+  "src/v2/infrastructure/terminal/closedTerminalTransport.native.ts",
   "utf8",
 );
 for (const forbiddenLegacyCall of [
@@ -34,10 +34,10 @@ for (const forbiddenLegacyCall of [
   }
 }
 for (const requiredLeaseCall of [
-  "acquireAuthenticatedTransportLease",
-  "openAuthenticatedDuplex",
+  "acquireSharedConnectionLease",
+  "openDuplex",
   '"terminal-v2"',
-  "releaseAuthenticatedTransportLease",
+  ".release()",
 ]) {
   if (!terminalManager.includes(requiredLeaseCall)) {
     throw new Error(

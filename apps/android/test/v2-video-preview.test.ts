@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseVideoPreviewRoute } from "../src/v2/features/attachments/videoPreview";
+import {
+  isVideoAttachment,
+  parseVideoPreviewRoute,
+} from "../src/v2/features/attachments/videoPreview";
 
 const BASE_ROUTE = {
   attachmentId: "attachment-1",
@@ -19,6 +22,13 @@ describe("V2 video preview", () => {
   ])("recognizes supported video %s", (name, mediaType) => {
     expect(parseVideoPreviewRoute({ ...BASE_ROUTE, mediaType, name }).ok).toBe(true);
   });
+
+  it.each(["capture.mov", "capture.webm"])(
+    "classifies remote octet-stream %s for the active attachment preview",
+    (name) => {
+      expect(isVideoAttachment(name, "application/octet-stream")).toBe(true);
+    },
+  );
 
   it("rejects a regular file", () => {
     expect(

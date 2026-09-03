@@ -13,6 +13,7 @@ export function createNativeSyncV2SavedServerDeletionStore(): V2SavedServerDelet
   return createNativeSyncV2SavedServerDeletionStoreWithDatabase(getV2SqliteDatabase());
 }
 
+/** @testOnly Injects an isolated database into persistence regression tests. */
 export function createNativeSyncV2SavedServerDeletionStoreWithDatabase(
   database: SqliteDatabase,
 ): V2SavedServerDeletionStore {

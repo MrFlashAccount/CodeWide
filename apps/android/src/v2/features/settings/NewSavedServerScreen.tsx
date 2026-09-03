@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { type ComponentType, useState } from "react";
+import { useState, useSyncExternalStore, type ComponentProps, type ComponentType } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import type {
@@ -20,6 +20,8 @@ import {
 import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
+import type { SavedServerId } from "../../domain/ids";
+import { VoiceTextInput } from "../conversation/VoiceTextInput";
 import { serverDestination } from "../navigation/routeDestinations";
 
 type PairingMode = "choose" | "manual" | "review" | "success";
@@ -30,22 +32,29 @@ export interface PairingScannerProps {
 }
 
 interface NewSavedServerScreenProps {
+  initialError: string | null;
+  initialPairing: PairingPreview | null;
   readClipboard(): Promise<string>;
   Scanner: ComponentType<PairingScannerProps>;
 }
 
 export function NewSavedServerScreen(props: NewSavedServerScreenProps): React.JSX.Element {
-  const { readClipboard, Scanner } = props;
+  const { initialError, initialPairing, readClipboard, Scanner } = props;
   const runtime = useV2Runtime();
-  const [mode, setMode] = useState<PairingMode>("choose");
+  const connectionStatuses = useSyncExternalStore(
+    runtime.connectionStatuses.subscribe,
+    runtime.connectionStatuses.snapshot,
+    runtime.connectionStatuses.snapshot,
+  );
+  const [mode, setMode] = useState<PairingMode>(initialPairing === null ? "choose" : "review");
   const [scannerVisible, setScannerVisible] = useState(false);
-  const [displayName, setDisplayName] = useState("");
-  const [emoji, setEmoji] = useState("🖥️");
-  const [endpoint, setEndpoint] = useState("");
-  const [pairingToken, setPairingToken] = useState("");
-  const [tlsPinSha256, setTlsPinSha256] = useState("");
-  const [expiresAt, setExpiresAt] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState(initialPairing?.displayName ?? "");
+  const [emoji, setEmoji] = useState(initialPairing?.emoji ?? "🖥️");
+  const [endpoint, setEndpoint] = useState(initialPairing?.endpoint ?? "");
+  const [pairingToken, setPairingToken] = useState(initialPairing?.pairingToken ?? "");
+  const [tlsPinSha256, setTlsPinSha256] = useState(initialPairing?.tlsPinSha256 ?? "");
+  const [expiresAt, setExpiresAt] = useState<number | null>(initialPairing?.expiresAt ?? null);
+  const [error, setError] = useState<string | null>(initialError);
   const [saving, setSaving] = useState(false);
 
   const close = useEvent(() => {
@@ -121,6 +130,12 @@ export function NewSavedServerScreen(props: NewSavedServerScreenProps): React.JS
   const endpointLabel = pairingEndpointLabel(endpoint);
   const minutesLeft =
     expiresAt === null ? null : Math.max(0, Math.ceil((expiresAt - runtime.now()) / 60_000));
+  let voiceAudience: SavedServerId | undefined;
+  for (const [savedServerId, status] of connectionStatuses.value) {
+    if (status.state !== "connected") continue;
+    voiceAudience = savedServerId;
+    break;
+  }
   return (
     <PresentationSheetView
       contentProps={PAIRING_SHEET_PROPS}
@@ -186,6 +201,7 @@ export function NewSavedServerScreen(props: NewSavedServerScreenProps): React.JS
             onEmojiChange={setEmoji}
             onSave={save}
             saving={saving}
+            voiceAudience={voiceAudience}
           />
         ) : null}
         {mode === "manual" ? (
@@ -203,6 +219,7 @@ export function NewSavedServerScreen(props: NewSavedServerScreenProps): React.JS
             pairingToken={pairingToken}
             saving={saving}
             tlsPinSha256={tlsPinSha256}
+            voiceAudience={voiceAudience}
           />
         ) : null}
         {mode === "success" ? <SuccessfulPairing displayName={displayName} emoji={emoji} /> : null}
@@ -330,6 +347,7 @@ interface ReviewPairingProps {
   onEmojiChange(value: string): void;
   onSave(): Promise<void>;
   saving: boolean;
+  voiceAudience: SavedServerId | undefined;
 }
 
 function ReviewPairing(props: ReviewPairingProps): React.JSX.Element {
@@ -344,6 +362,7 @@ function ReviewPairing(props: ReviewPairingProps): React.JSX.Element {
     onEmojiChange,
     onSave,
     saving,
+    voiceAudience,
   } = props;
   return (
     <View style={styles.pairingBody}>
@@ -355,12 +374,13 @@ function ReviewPairing(props: ReviewPairingProps): React.JSX.Element {
             style={styles.pairingEmojiInput}
             value={emoji}
           />
-          <TextInput
+          <ServerNameInput
             accessibilityLabel="Server name"
             onChangeText={onDisplayNameChange}
             selectTextOnFocus
             style={styles.pairingNameInput}
             value={displayName}
+            voiceAudience={voiceAudience}
           />
         </View>
         <View style={styles.pairingServerMeta}>
@@ -401,6 +421,7 @@ interface ManualPairingProps extends PairSavedServerInput {
   onSave(): Promise<void>;
   onTlsPinChange(value: string): void;
   saving: boolean;
+  voiceAudience: SavedServerId | undefined;
 }
 
 function ManualPairing(props: ManualPairingProps): React.JSX.Element {
@@ -416,13 +437,14 @@ function ManualPairing(props: ManualPairingProps): React.JSX.Element {
           style={styles.pairingEmojiInput}
           value={props.emoji}
         />
-        <TextInput
+        <ServerNameInput
           accessibilityLabel="Server name"
           onChangeText={props.onDisplayNameChange}
           placeholder="Home workstation"
           placeholderTextColor={colors.textDim}
           style={[styles.fieldInput, styles.flex]}
           value={props.displayName}
+          voiceAudience={props.voiceAudience}
         />
       </View>
       <Text style={styles.fieldLabel}>Secure endpoint</Text>
@@ -467,6 +489,24 @@ function ManualPairing(props: ManualPairingProps): React.JSX.Element {
         saving={props.saving}
       />
     </View>
+  );
+}
+
+interface ServerNameInputProps extends ComponentProps<typeof TextInput> {
+  value: string;
+  voiceAudience: SavedServerId | undefined;
+}
+
+function ServerNameInput(props: ServerNameInputProps): React.JSX.Element {
+  const { voiceAudience, ...inputProps } = props;
+  if (voiceAudience === undefined) return <TextInput {...inputProps} />;
+  return (
+    <VoiceTextInput
+      {...inputProps}
+      audience={voiceAudience}
+      scope={{ id: "server-name:new", kind: "generic" }}
+      thread={null}
+    />
   );
 }
 

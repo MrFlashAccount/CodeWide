@@ -7,7 +7,7 @@ import { PresentationText as Text } from "../text/ProductText";
 import { ShimmerText } from "../text/ShimmerText";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 
-export interface ComposerContextMenu {
+interface ComposerContextMenu {
   accessibilityLabel: string;
   actions: readonly ActionMenuItem[];
   menuWidth?: number;
@@ -69,9 +69,16 @@ function ComposerContextChip(props: ComposerContextChipProps): React.JSX.Element
         <PresentationIcon color={colors.textMuted} name={item.icon} size={15} />
       )}
       {item.loading === true ? (
-        <ShimmerText containerStyle={styles.labelShimmer} style={styles.label} text={item.label} />
+        <ShimmerText
+          containerStyle={styles.labelShimmer}
+          style={styles.label}
+          text={item.label}
+          widthPolicy="intrinsic"
+        />
       ) : (
-        <Text style={styles.label}>{item.label}</Text>
+        <Text numberOfLines={1} style={styles.label}>
+          {item.label}
+        </Text>
       )}
     </Pressable>
   );
@@ -82,6 +89,7 @@ function ComposerContextChip(props: ComposerContextChipProps): React.JSX.Element
       actions={item.menu.actions}
       {...(item.menu.menuWidth === undefined ? {} : { menuWidth: item.menu.menuWidth })}
       onSelect={select}
+      style={styles.menuChip}
     >
       {chip}
     </ActionMenu>
@@ -95,6 +103,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceContainer,
     borderRadius: 12,
     flexDirection: "row",
+    flexGrow: 0,
     flexShrink: 0,
     gap: spacing.xs,
     minHeight: 24,
@@ -116,5 +125,6 @@ const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
   },
   labelShimmer: { alignSelf: "center", flexShrink: 0 },
+  menuChip: { alignSelf: "flex-start", flexGrow: 0, flexShrink: 0 },
   root: { backgroundColor: colors.surface, flexGrow: 0, flexShrink: 0 },
 });

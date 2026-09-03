@@ -2,7 +2,7 @@
 #![allow(clippy::too_many_lines)]
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     error::Error,
     path::{Path, PathBuf},
     sync::Arc,
@@ -108,7 +108,8 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
                         "model": null,
                         "effort": null,
                         "approvalPolicy": "never",
-                        "sandbox": "workspaceWrite"
+                        "sandbox": "workspaceWrite",
+                        "personality": null
                     }
                 }
             }
@@ -147,6 +148,17 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
             format!("peer device missed the settings projection: {peer_projection}").into(),
         );
     }
+    let catalog_settings_projection =
+        timeout(Duration::from_secs(5), receive(&mut catalog_client)).await??;
+    if catalog_settings_projection.pointer("/change/thread/id") != Some(&json!("shared-thread"))
+        || catalog_settings_projection.pointer("/change/thread/settings/sandbox")
+            != Some(&json!("workspaceWrite"))
+    {
+        return Err(format!(
+            "catalog client missed the settings projection: {catalog_settings_projection}"
+        )
+        .into());
+    }
 
     event_tx
         .send(ObserverEvent::ThreadChanged("shared-thread".into()))
@@ -172,12 +184,13 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
     event_tx
         .send(ObserverEvent::ThreadChanged("external-thread".into()))
         .await?;
-    let discovered = receive(&mut catalog_client).await?;
-    if discovered.pointer("/change/thread/id") != Some(&json!("external-thread")) {
-        return Err(
-            format!("external Observer thread was not catalog-routed: {discovered}").into(),
-        );
-    }
+    let discovered = receive_matching_pointer(
+        &mut catalog_client,
+        "/change/thread/id",
+        &json!("external-thread"),
+    )
+    .await?;
+    require_type(&discovered, "change")?;
 
     event_tx
         .send(ObserverEvent::ApprovalOpened {
@@ -186,10 +199,7 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
         })
         .await?;
     for client in [&mut first, &mut second] {
-        let opened = receive(client).await?;
-        if opened.pointer("/change/request/id") != Some(&json!("approval-live")) {
-            return Err(format!("pending request was not routed: {opened}").into());
-        }
+        receive_matching_pointer(client, "/change/request/id", &json!("approval-live")).await?;
     }
     let mut late = connect_live(&url, "observer-device-d").await?;
     let late_snapshot = open_live_thread_snapshot(&mut late, "shared-thread").await?;
@@ -201,19 +211,43 @@ async fn production_observer_routes_same_thread_to_distinct_devices_only() -> Te
     send(
         &mut first,
         json!({
-            "type": "action",
+            "type": "command",
             "requestId": "resolve-live",
-            "action": {
+            "operationId": "resolve-live-operation",
+            "command": {
                 "kind": "request.resolve",
                 "requestId": "approval-live",
                 "generation": "1",
-                "resolution": {"kind": "approval", "decision": "allowOnce"}
+                "resolution": {"kind": "commandApproval", "decision": "accept"}
             }
         }),
     )
     .await?;
-    require_type(&receive(&mut first).await?, "actionCompleted")?;
-    for client in [&mut first, &mut second, &mut late] {
+    require_type(&receive(&mut first).await?, "commandAccepted")?;
+    let mut first_saw_completed = false;
+    let mut first_saw_closed = false;
+    while !first_saw_completed || !first_saw_closed {
+        let frame = receive(&mut first).await?;
+        match frame["type"].as_str() {
+            Some("commandCompleted") => {
+                if frame["operationId"] != json!("resolve-live-operation") {
+                    return Err(format!(
+                        "request resolution completed the wrong operation: {frame}"
+                    )
+                    .into());
+                }
+                first_saw_completed = true;
+            }
+            Some("change") => {
+                if frame.pointer("/change/requestId") != Some(&json!("approval-live")) {
+                    return Err(format!("pending closure had the wrong request: {frame}").into());
+                }
+                first_saw_closed = true;
+            }
+            _ => return Err(format!("unexpected request resolution frame: {frame}").into()),
+        }
+    }
+    for client in [&mut second, &mut late] {
         let closed = receive(client).await?;
         if closed.pointer("/change/requestId") != Some(&json!("approval-live")) {
             return Err(format!("pending closure missed a retaining context: {closed}").into());
@@ -1069,11 +1103,19 @@ fn count_v2_user_text_occurrences(response: &Value, token: &str) -> TestResult<u
         .filter_map(|turn| turn.get("items").and_then(Value::as_array))
         .flatten()
         .filter(|item| {
-            item.get("kind").and_then(Value::as_str) == Some("userText")
+            item.get("kind").and_then(Value::as_str) == Some("userMessage")
                 && item
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .is_some_and(|text| text.contains(token))
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|content| {
+                        content.iter().any(|block| {
+                            block.get("kind").and_then(Value::as_str) == Some("text")
+                                && block
+                                    .get("text")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|text| text.contains(token))
+                        })
+                    })
         })
         .count())
 }
@@ -1130,7 +1172,8 @@ impl V2LiveClient {
                     "currentThread": thread_id.map(|thread_id| json!({
                         "threadId": thread_id,
                         "turnLimit": 36
-                    }))
+                    })),
+                    "pendingRequests": "currentThread"
                 }
             }),
         )
@@ -1340,7 +1383,8 @@ async fn open_live(socket: &mut ClientSocket) -> TestResult {
             "version": 2,
             "intent": {
                 "catalog": {"activeLimit": 0, "archivedLimit": 0},
-                "currentThread": null
+                "currentThread": null,
+                "pendingRequests": "currentThread"
             }
         }),
     )
@@ -1368,7 +1412,8 @@ async fn open_live_catalog(socket: &mut ClientSocket, active_limit: u16) -> Test
             "version": 2,
             "intent": {
                 "catalog": {"activeLimit": active_limit, "archivedLimit": 0},
-                "currentThread": null
+                "currentThread": null,
+                "pendingRequests": "currentThread"
             }
         }),
     )
@@ -1404,7 +1449,8 @@ async fn open_live_thread_snapshot(
             "version": 2,
             "intent": {
                 "catalog": {"activeLimit": 0, "archivedLimit": 0},
-                "currentThread": {"threadId": thread_id, "turnLimit": 1}
+                "currentThread": {"threadId": thread_id, "turnLimit": 1},
+                "pendingRequests": "currentThread"
             }
         }),
     )
@@ -1429,6 +1475,7 @@ async fn run_observer_app_server(
     listener: UnixListener,
     mut events: mpsc::Receiver<ObserverEvent>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut thread_settings = HashMap::new();
     loop {
         let (stream, _) = listener.accept().await?;
         let mut socket = accept_async(stream).await?;
@@ -1460,6 +1507,7 @@ async fn run_observer_app_server(
                             "params": {
                                 "threadId": thread_id,
                                 "turnId": "observer-turn",
+                                "itemId": "observer-item",
                                 "reason": "approval"
                             }
                         }),
@@ -1488,9 +1536,10 @@ async fn run_observer_app_server(
                         }).to_string().into())).await?;
                         continue;
                     }
+                    let mut settings_notification = None;
                     let result = match method {
                         "thread/read" | "thread/resume" => {
-                            json!({"thread": observer_thread(thread_id)})
+                            json!({"thread": observer_thread(thread_id, thread_settings.get(thread_id))})
                         }
                         "thread/turns/list" if thread_id == "pagination-thread" => {
                             observer_turn_page(&request["params"])
@@ -1498,14 +1547,49 @@ async fn run_observer_app_server(
                         "thread/list" | "thread/turns/list" => {
                             json!({"data": [], "nextCursor": null})
                         }
-                        "thread/unsubscribe" | "thread/settings/update" => json!({}),
+                        "thread/settings/update" => {
+                            settings_notification = Some(observer_settings_updated(
+                                thread_id,
+                                &request["params"],
+                            ));
+                            thread_settings.insert(thread_id.to_owned(), request["params"].clone());
+                            json!({})
+                        }
+                        "thread/unsubscribe" => json!({}),
                         _ => return Err(format!("unexpected production adapter method: {method}").into()),
                     };
                     socket.send(Message::Text(json!({"id": id, "result": result}).to_string().into())).await?;
+                    if let Some(notification) = settings_notification {
+                        socket.send(Message::Text(notification.to_string().into())).await?;
+                    }
                 }
             }
         }
     }
+}
+
+fn observer_settings_updated(thread_id: &str, update: &Value) -> Value {
+    json!({
+        "method": "thread/settings/updated",
+        "params": {
+            "threadId": thread_id,
+            "threadSettings": {
+                "cwd": "/tmp",
+                "approvalPolicy": update["approvalPolicy"],
+                "approvalsReviewer": "user",
+                "sandboxPolicy": update["sandboxPolicy"],
+                "activePermissionProfile": null,
+                "model": update.get("model").and_then(Value::as_str).unwrap_or("gpt-5.6-sol"),
+                "modelProvider": "openai",
+                "serviceTier": null,
+                "effort": update["effort"],
+                "summary": null,
+                "collaborationMode": {"mode": "default", "settings": {}},
+                "multiAgentMode": "explicitRequestOnly",
+                "personality": update["personality"]
+            }
+        }
+    })
 }
 
 async fn receive_upstream<S>(
@@ -1518,11 +1602,12 @@ where
     Ok(serde_json::from_str(frame.into_text()?.as_str())?)
 }
 
-fn observer_thread(thread_id: &str) -> Value {
-    json!({
+fn observer_thread(thread_id: &str, settings: Option<&Value>) -> Value {
+    let mut thread = json!({
         "id": thread_id,
         "parentId": null,
         "title": "Observed",
+        "preview": "",
         "cwd": "/tmp",
         "archived": false,
         "status": {"type": "idle"},
@@ -1533,7 +1618,24 @@ fn observer_thread(thread_id: &str) -> Value {
         "createdAt": 1_787_891_696,
         "updatedAt": 1_787_891_696,
         "turns": []
-    })
+    });
+    let Some(settings) = settings else {
+        return thread;
+    };
+    if let Some(thread_object) = thread.as_object_mut() {
+        for (target, source) in [
+            ("model", "model"),
+            ("reasoningEffort", "effort"),
+            ("approvalPolicy", "approvalPolicy"),
+            ("sandbox", "sandboxPolicy"),
+            ("personality", "personality"),
+        ] {
+            if let Some(value) = settings.get(source) {
+                thread_object.insert(target.to_owned(), value.clone());
+            }
+        }
+    }
+    thread
 }
 
 fn observer_turn_page(params: &Value) -> Value {
@@ -1631,6 +1733,22 @@ async fn receive(socket: &mut ClientSocket) -> TestResult<Value> {
             Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
         }
     }
+}
+
+async fn receive_matching_pointer(
+    socket: &mut ClientSocket,
+    pointer: &str,
+    expected: &Value,
+) -> TestResult<Value> {
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let frame = receive(socket).await?;
+            if frame.pointer(pointer) == Some(expected) {
+                return Ok(frame);
+            }
+        }
+    })
+    .await?
 }
 
 fn require_type(value: &Value, expected: &str) -> TestResult {

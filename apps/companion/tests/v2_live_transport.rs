@@ -26,9 +26,7 @@ use codewide_companion::{
         AuthenticatedContextKey, CommandExecution, SemanticSource, SnapshotData,
         SubscriptionCoordinator, SyncV2Mode, SyncV2Runtime,
         domain::{CatalogPartitionScope, CatalogScope},
-        protocol::{
-            Action, ActionResult, CatalogSnapshot, Command, OpenIntent, Query, QueryResult, V2Error,
-        },
+        protocol::{CatalogSnapshot, Command, OpenIntent, Query, QueryResult, V2Error},
         scalar::{Id, OperationId},
     },
     upstream::UpstreamHandle,
@@ -153,15 +151,6 @@ impl SemanticSource for ReadySource {
     ) -> CommandExecution {
         CommandExecution::Failed(V2Error::invalid_request("unused test command"))
     }
-    async fn resolve(
-        &self,
-        _action: Action,
-        _authorization: &AuthorizationContext,
-        _context: &AuthenticatedContextKey,
-        _generation: u64,
-    ) -> Result<ActionResult, V2Error> {
-        Err(V2Error::invalid_request("unused test action"))
-    }
 }
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -260,11 +249,22 @@ async fn authenticated_resources_are_transport_independent_and_device_revocation
     let replay = receive_until(&mut terminal, "output").await?;
     assert_eq!(replay["offset"], "0");
 
+    let mut terminal_loss_seed =
+        connect(&format!("ws://{address}/v2/terminals"), &session_token).await?;
+    send(&mut terminal_loss_seed, json!({"type":"open","version":2,"sessionId":"terminal-32345678-1234-1234-1234-123456789abc","threadId":THREAD_ID,"generation":"1","cwd":null,"cols":120,"rows":40,"offset":"0","create":true})).await?;
+    assert_eq!(receive(&mut terminal_loss_seed).await?["type"], "opened");
+    send(&mut terminal_loss_seed, json!({"type":"input","data":general_purpose::STANDARD.encode(b"printf v2-terminal-replay-loss\n")})).await?;
+    assert_eq!(
+        receive_until(&mut terminal_loss_seed, "output").await?["type"],
+        "output"
+    );
+    terminal_loss_seed.close(None).await?;
+
     let mut terminal_loss_probe =
         connect(&format!("ws://{address}/v2/terminals"), &session_token).await?;
-    send(&mut terminal_loss_probe, json!({"type":"open","version":2,"sessionId":"terminal-12345678-1234-1234-1234-123456789abc","threadId":THREAD_ID,"generation":"1","cwd":null,"cols":120,"rows":40,"offset":"999999999","create":false})).await?;
-    assert_eq!(receive(&mut terminal_loss_probe).await?["type"], "opened");
-    let replay_loss = receive_until(&mut terminal_loss_probe, "error").await?;
+    send(&mut terminal_loss_probe, json!({"type":"open","version":2,"sessionId":"terminal-32345678-1234-1234-1234-123456789abc","threadId":THREAD_ID,"generation":"1","cwd":null,"cols":120,"rows":40,"offset":"999999999","create":false})).await?;
+    let replay_loss = receive(&mut terminal_loss_probe).await?;
+    assert_eq!(replay_loss["type"], "error");
     assert_eq!(replay_loss["error"]["code"], "replayUnavailable");
 
     let mut terminal_bounds =
@@ -334,13 +334,13 @@ async fn authenticated_resources_are_transport_independent_and_device_revocation
     // Two Live Sync epochs for the same device are valid. Opening the second
     // transport must not supersede or revoke the first transport or resources.
     let mut sync_socket = connect(&format!("ws://{address}/v2/sync"), &session_token).await?;
-    send(&mut sync_socket, json!({"type":"open","version":2,"intent":{"catalog":{"activeLimit":1,"archivedLimit":1},"currentThread":{"threadId":THREAD_ID,"turnLimit":1}}})).await?;
+    send(&mut sync_socket, json!({"type":"open","version":2,"intent":{"catalog":{"activeLimit":1,"archivedLimit":1},"currentThread":{"threadId":THREAD_ID,"turnLimit":1},"pendingRequests":"currentThread"}})).await?;
     let snapshot = receive(&mut sync_socket).await?;
     send(&mut sync_socket, json!({"type":"snapshotCommitted","epochId":snapshot["epochId"],"revision":snapshot["revision"],"watermark":snapshot["watermark"]})).await?;
     assert_eq!(receive(&mut sync_socket).await?["type"], "live");
 
     let mut replacement = connect(&format!("ws://{address}/v2/sync"), &session_token).await?;
-    send(&mut replacement, json!({"type":"open","version":2,"intent":{"catalog":{"activeLimit":1,"archivedLimit":1},"currentThread":{"threadId":THREAD_ID,"turnLimit":1}}})).await?;
+    send(&mut replacement, json!({"type":"open","version":2,"intent":{"catalog":{"activeLimit":1,"archivedLimit":1},"currentThread":{"threadId":THREAD_ID,"turnLimit":1},"pendingRequests":"currentThread"}})).await?;
     let replacement_snapshot = receive(&mut replacement).await?;
     send(&mut replacement, json!({"type":"snapshotCommitted","epochId":replacement_snapshot["epochId"],"revision":replacement_snapshot["revision"],"watermark":replacement_snapshot["watermark"]})).await?;
     assert_eq!(receive(&mut replacement).await?["type"], "live");

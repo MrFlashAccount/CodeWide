@@ -1,5 +1,6 @@
 package dev.codewide.app.remote
 
+import android.util.Base64
 import java.io.Closeable
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
@@ -10,8 +11,11 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
+import kotlin.concurrent.thread
 import okhttp3.OkHttpClient
 
 /**
@@ -54,22 +58,42 @@ internal class NativeCompanionHttpProxy(
     private val endpointUri = URI(saved.endpoint)
     private val carrierClient = OkHttpClient()
     private val server = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
-    private val activeSockets = ConcurrentHashMap.newKeySet<Socket>()
-    private val workers = Executors.newCachedThreadPool { task ->
+    private val socketLifetime = NativeProxySocketLifetime()
+    private val capability = newLoopbackCapability()
+    private val clientSlots = Semaphore(MAX_ACTIVE_CLIENTS, true)
+    private val acceptor = Executors.newSingleThreadExecutor { task ->
+      Thread(task, "CodeWidePinnedHttpAccept").apply { isDaemon = true }
+    }
+    private val workers = Executors.newFixedThreadPool(MAX_ACTIVE_CLIENTS) { task ->
       Thread(task, "CodeWidePinnedHttp").apply { isDaemon = true }
     }
     @Volatile private var closed = false
-    val origin = "http://127.0.0.1:${server.localPort}"
+    val origin = "http://127.0.0.1:${server.localPort}/$capability"
 
     init {
-      workers.execute {
+      acceptor.execute {
         while (!closed) {
           val client = try {
             server.accept()
           } catch (_: Throwable) {
             if (closed) break else continue
           }
-          workers.execute { bridge(client, endpointUri) }
+          if (!clientSlots.tryAcquire()) {
+            runCatching { client.close() }
+            continue
+          }
+          try {
+            workers.execute {
+              try {
+                bridge(client, endpointUri)
+              } finally {
+                clientSlots.release()
+              }
+            }
+          } catch (_: Throwable) {
+            clientSlots.release()
+            runCatching { client.close() }
+          }
         }
       }
     }
@@ -77,65 +101,116 @@ internal class NativeCompanionHttpProxy(
     override fun close() {
       closed = true
       runCatching { server.close() }
-      activeSockets.forEach { runCatching { it.close() } }
-      activeSockets.clear()
+      socketLifetime.close()
+      carrierClient.dispatcher.cancelAll()
+      carrierClient.connectionPool.evictAll()
       carrierClient.dispatcher.executorService.shutdown()
+      acceptor.shutdownNow()
       workers.shutdownNow()
     }
 
     private fun bridge(client: Socket, endpoint: URI) {
-      activeSockets.add(client)
-      client.use { downstream ->
-        val upstream = runCatching { connect() }.getOrElse {
-          activeSockets.remove(client)
-          return
-        }
-        activeSockets.add(upstream)
-        upstream.use {
+      if (!socketLifetime.register(client)) return
+      try {
+        client.use { downstream ->
+          downstream.soTimeout = AUTHORIZATION_TIMEOUT_MS
           val downstreamInput = BufferedInputStream(downstream.getInputStream())
-          val upstreamToDownstream = workers.submit {
-            try {
-              upstream.getInputStream().copyTo(downstream.getOutputStream())
-            } catch (_: Throwable) {
-            } finally {
-              runCatching { downstream.close() }
-              runCatching { upstream.close() }
+          val firstRequest = runCatching {
+            val header = readHttpHeader(downstreamInput) ?: error("HTTP request is missing")
+            HttpRequestHeader.parse(header).authorize(capability)
+          }.getOrElse {
+            runCatching { downstream.getOutputStream().write(FORBIDDEN_RESPONSE) }
+            return
+          }
+          val connected = runCatching { connect() }.getOrElse { return }
+          val upstream = connected.socket
+          if (!socketLifetime.register(upstream)) {
+            socketLifetime.remove(connected.carrier)
+            return
+          }
+          try {
+            upstream.use {
+              downstream.soTimeout = HTTP_IDLE_TIMEOUT_MS
+              upstream.soTimeout = HTTP_IDLE_TIMEOUT_MS
+              val upstreamToDownstream = thread(name = "CodeWidePinnedHttpResponse", isDaemon = true) {
+                try {
+                  upstream.getInputStream().copyTo(downstream.getOutputStream())
+                } catch (_: Throwable) {
+                } finally {
+                  runCatching { downstream.close() }
+                  runCatching { upstream.close() }
+                }
+              }
+              runCatching {
+                forwardRequests(
+                  downstreamInput,
+                  upstream.getOutputStream(),
+                  authority(endpoint),
+                  firstRequest,
+                ) {
+                  downstream.soTimeout = 0
+                  upstream.soTimeout = 0
+                }
+              }
+              runCatching { upstream.shutdownOutput() }
+              runCatching { upstreamToDownstream.join() }
             }
+          } finally {
+            socketLifetime.remove(upstream)
+            socketLifetime.remove(connected.carrier)
           }
-          runCatching {
-            forwardRequests(downstreamInput, upstream.getOutputStream(), authority(endpoint))
-          }
-          runCatching { upstream.shutdownOutput() }
-          runCatching { upstreamToDownstream.get() }
         }
-        activeSockets.remove(upstream)
+      } finally {
+        socketLifetime.remove(client)
       }
-      activeSockets.remove(client)
     }
 
-    private fun connect(): Socket =
-      InnerTlsTransport.openSocket(carrierClient, saved, CONNECT_TIMEOUT_MS)
+    private fun connect(): ConnectedSocket {
+      var carrier: Socket? = null
+      return try {
+        val socket = InnerTlsTransport.openSocket(carrierClient, saved, CONNECT_TIMEOUT_MS) { created ->
+          carrier = created
+          check(socketLifetime.register(created)) { "Pinned HTTP authority was revoked" }
+        }
+        ConnectedSocket(socket, requireNotNull(carrier))
+      } catch (error: Throwable) {
+        carrier?.let(socketLifetime::remove)
+        throw error
+      }
+    }
 
-    private fun forwardRequests(input: BufferedInputStream, output: OutputStream, authority: String) {
+    private data class ConnectedSocket(val socket: Socket, val carrier: Socket)
+
+    private fun forwardRequests(
+      input: BufferedInputStream,
+      output: OutputStream,
+      authority: String,
+      firstRequest: HttpRequestHeader,
+      onUpgrade: () -> Unit,
+    ) {
+      var request: HttpRequestHeader? = firstRequest
       while (!closed) {
-        val header = readHttpHeader(input) ?: return
-        val request = HttpRequestHeader.parse(header)
-        output.write(request.withAuthority(authority))
+        val current = requireNotNull(request)
+        output.write(current.withAuthority(authority))
         when {
-          request.upgrade -> {
+          current.upgrade -> {
+            onUpgrade()
             output.flush()
             input.copyTo(output)
             return
           }
-          request.chunked -> copyChunkedBody(input, output)
-          request.contentLength > 0L -> copyExactly(input, output, request.contentLength)
+          current.chunked -> copyChunkedBody(input, output)
+          current.contentLength > 0L -> copyExactly(input, output, current.contentLength)
         }
         output.flush()
-        if (request.close) return
+        if (current.close) return
+        val header = readHttpHeader(input) ?: return
+        request = HttpRequestHeader.parse(header).authorize(capability)
       }
     }
 
     private fun copyChunkedBody(input: BufferedInputStream, output: OutputStream) {
+      var totalBytes = 0L
       while (true) {
         val line = readHttpLine(input)
         output.write(line)
@@ -144,6 +219,8 @@ internal class NativeCompanionHttpProxy(
           .substringBefore(';')
           .trim()
         val size = sizeText.toLongOrNull(16) ?: error("Invalid chunked request body")
+        totalBytes = Math.addExact(totalBytes, size)
+        check(totalBytes <= MAX_REQUEST_BODY_BYTES) { "HTTP request body is too large" }
         if (size == 0L) {
           while (true) {
             val trailer = readHttpLine(input)
@@ -218,9 +295,50 @@ internal class NativeCompanionHttpProxy(
 
   companion object {
     private const val CONNECT_TIMEOUT_MS = 15_000
+    private const val AUTHORIZATION_TIMEOUT_MS = 10_000
+    private const val HTTP_IDLE_TIMEOUT_MS = 60_000
+    private const val MAX_ACTIVE_CLIENTS = 16
+    private const val MAX_REQUEST_BODY_BYTES = 512L * 1024 * 1024
     private const val MAX_HEADER_BYTES = 64 * 1024
     private const val STREAM_BUFFER_BYTES = 16 * 1024
     private val CRLF = byteArrayOf('\r'.code.toByte(), '\n'.code.toByte())
+    private val FORBIDDEN_RESPONSE = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+      .toByteArray(StandardCharsets.ISO_8859_1)
+
+    private fun newLoopbackCapability(): String {
+      val bytes = ByteArray(32)
+      SecureRandom().nextBytes(bytes)
+      return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+    }
+  }
+}
+
+internal class NativeProxySocketLifetime {
+  private val lock = Any()
+  private val sockets = mutableSetOf<Socket>()
+  private var closed = false
+
+  fun register(socket: Socket): Boolean = synchronized(lock) {
+    if (closed) {
+      runCatching { socket.close() }
+      false
+    } else {
+      sockets += socket
+      true
+    }
+  }
+
+  fun remove(socket: Socket) = synchronized(lock) {
+    sockets -= socket
+  }
+
+  fun close() {
+    val retired = synchronized(lock) {
+      if (closed) return
+      closed = true
+      sockets.toList().also { sockets.clear() }
+    }
+    retired.forEach { runCatching { it.close() } }
   }
 }
 
@@ -232,6 +350,26 @@ internal data class HttpRequestHeader(
   val close: Boolean,
   val upgrade: Boolean,
 ) {
+  fun authorize(capability: String): HttpRequestHeader {
+    require(capability.matches(CAPABILITY_PATTERN)) { "Loopback capability is invalid" }
+    val parts = requestLine.split(' ', limit = 3)
+    check(parts.size == 3 && (parts[2] == "HTTP/1.1" || parts[2] == "HTTP/1.0")) {
+      "Invalid HTTP request line"
+    }
+    val prefix = "/$capability"
+    val target = parts[1]
+    check(target.startsWith("$prefix/")) { "Loopback request capability is invalid" }
+    val upstreamTarget = target.removePrefix(prefix)
+    return HttpRequestHeader(
+      requestLine = "${parts[0]} $upstreamTarget ${parts[2]}",
+      fields = fields,
+      contentLength = contentLength,
+      chunked = chunked,
+      close = close,
+      upgrade = upgrade,
+    )
+  }
+
   fun withAuthority(authority: String): ByteArray {
     val rewritten = ArrayList<Pair<String, String>>(fields.size + 1)
     var replacedHost = false
@@ -252,6 +390,8 @@ internal data class HttpRequestHeader(
   }
 
   companion object {
+    private val CAPABILITY_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")
+
     fun parse(bytes: ByteArray): HttpRequestHeader {
       val text = bytes.toString(StandardCharsets.ISO_8859_1)
       check(text.endsWith("\r\n\r\n")) { "Incomplete HTTP request headers" }
@@ -268,10 +408,18 @@ internal data class HttpRequestHeader(
         .map { (_, value) -> value.trim().toLongOrNull() ?: error("Invalid Content-Length") }
         .distinct()
       check(contentLengths.size <= 1) { "Conflicting Content-Length headers" }
+      val contentLength = contentLengths.singleOrNull() ?: 0L
+      check(contentLength in 0..MAX_PROXY_REQUEST_BODY_BYTES) { "HTTP request body is too large" }
       val transferEncoding = fields
         .filter { (name) -> name.equals("transfer-encoding", ignoreCase = true) }
         .flatMap { (_, value) -> value.split(',') }
         .map(String::trim)
+      check(transferEncoding.all { it.equals("chunked", ignoreCase = true) }) {
+        "Unsupported Transfer-Encoding"
+      }
+      check(transferEncoding.isEmpty() || contentLengths.isEmpty()) {
+        "Ambiguous HTTP request body framing"
+      }
       val connection = fields
         .filter { (name) -> name.equals("connection", ignoreCase = true) }
         .flatMap { (_, value) -> value.split(',') }
@@ -279,11 +427,13 @@ internal data class HttpRequestHeader(
       return HttpRequestHeader(
         requestLine = requestLine,
         fields = fields,
-        contentLength = contentLengths.singleOrNull() ?: 0L,
+        contentLength = contentLength,
         chunked = transferEncoding.any { it.equals("chunked", ignoreCase = true) },
         close = connection.any { it.equals("close", ignoreCase = true) },
         upgrade = connection.any { it.equals("upgrade", ignoreCase = true) },
       )
     }
+
+    private const val MAX_PROXY_REQUEST_BODY_BYTES = 512L * 1024 * 1024
   }
 }

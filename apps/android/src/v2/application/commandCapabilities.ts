@@ -12,6 +12,7 @@ import {
 } from "@codewide/sync-client/v2";
 
 import type { SavedServerId } from "../domain/ids";
+import { CommandCorrelationScopeBlockedError } from "./commandCorrelation";
 import type {
   CommandCorrelation,
   CommandCorrelationScope,
@@ -58,14 +59,6 @@ export class CommandCapabilities {
   async subscribe(savedServerId: SavedServerId, listener: () => void): Promise<() => void> {
     const { session } = await this.#sessions.open(savedServerId);
     return session.subscribe(listener);
-  }
-
-  async execute(savedServerId: SavedServerId, command: V2Command): Promise<V2CommandTerminalFrame> {
-    const { session } = await this.#sessions.open(savedServerId);
-    if (session.state !== "live") {
-      throw new Error("This action requires a live V2 connection");
-    }
-    return session.command(this.#operationId(), command);
   }
 
   executeCorrelated(
@@ -128,6 +121,23 @@ export class CommandCapabilities {
     return this.#correlations.listUnsettled(scope);
   }
 
+  async releaseUnsettled(correlationId: string): Promise<void> {
+    const correlation = await this.#correlations.get(correlationId);
+    if (correlation === null) return;
+    if (
+      correlation.state !== "allocating" &&
+      correlation.state !== "durable" &&
+      correlation.state !== "durableReleased"
+    ) {
+      return;
+    }
+    await this.#correlations.release(correlationId, this.#now());
+  }
+
+  async releaseScope(scope: CommandCorrelationScope): Promise<void> {
+    await this.#correlations.releaseScope(scope, this.#now());
+  }
+
   async reconcile(correlationId: string): Promise<CommandSettlement | null> {
     const active = this.#active.get(correlationId);
     if (active !== undefined) return active;
@@ -153,10 +163,16 @@ export class CommandCapabilities {
   }
 
   async #executeRecord(record: CommandCorrelation, command: V2Command): Promise<CommandSettlement> {
+    let claimed: CommandCorrelation;
     try {
-      await this.#correlations.begin(record);
-    } catch {
+      claimed = await this.#correlations.begin(record);
+    } catch (cause: unknown) {
+      if (cause instanceof CommandCorrelationScopeBlockedError) return durableUnsettled(record);
       return notCreated(record);
+    }
+    if (claimed.correlationId !== record.correlationId) {
+      const recovered = (await this.reconcile(claimed.correlationId)) ?? durableUnsettled(claimed);
+      return { ...recovered, recovered: true };
     }
     let session: Awaited<ReturnType<CommandSessionProvider["open"]>>["session"];
     try {
@@ -215,6 +231,7 @@ export class CommandCapabilities {
   }
 
   async #markDurable(record: CommandCorrelation): Promise<CommandCorrelation> {
+    if (record.state === "durableReleased") return record;
     const updatedAtMs = this.#now();
     await this.#correlations.markDurable(record.correlationId, updatedAtMs);
     return { ...record, state: "durable", updatedAtMs };

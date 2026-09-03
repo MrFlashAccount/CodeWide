@@ -24,9 +24,12 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.Collections
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -38,9 +41,16 @@ import kotlin.concurrent.thread
  * and WebSocket CDP protocol without making the abstract Unix socket public.
  */
 class BrowserDevToolsBridge(private val context: ReactApplicationContext) : Closeable {
-  private val workerPool: ExecutorService = Executors.newCachedThreadPool { runnable ->
-    Thread(runnable, "CodeWideBrowserDevToolsProxy").apply { isDaemon = true }
-  }
+  private val workerPool: ExecutorService = ThreadPoolExecutor(
+    WORKER_THREADS,
+    WORKER_THREADS,
+    0L,
+    TimeUnit.MILLISECONDS,
+    ArrayBlockingQueue(WORKER_QUEUE_CAPACITY),
+    { runnable -> Thread(runnable, "CodeWideBrowserDevToolsProxy").apply { isDaemon = true } },
+    ThreadPoolExecutor.AbortPolicy(),
+  )
+  private val connectionGate = BrowserConnectionGate(MAX_OPEN_CONNECTIONS)
   private val traceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
     Thread(runnable, "CodeWideBrowserTrace").apply { isDaemon = true }
   }
@@ -193,7 +203,24 @@ class BrowserDevToolsBridge(private val context: ReactApplicationContext) : Clos
           client.closeQuietly()
           continue
         }
-        workerPool.execute { proxy(client, token) }
+        if (!connectionGate.tryAcquire()) {
+          client.closeQuietly()
+          continue
+        }
+        openConnections += client
+        try {
+          workerPool.execute {
+            try {
+              proxy(client, token)
+            } finally {
+              connectionGate.release()
+            }
+          }
+        } catch (_: Throwable) {
+          openConnections -= client
+          client.closeQuietly()
+          connectionGate.release()
+        }
       }
     } catch (_: Throwable) {
       // Closing the server socket is the normal stop path.
@@ -203,7 +230,6 @@ class BrowserDevToolsBridge(private val context: ReactApplicationContext) : Clos
   private fun proxy(client: Socket, token: String) {
     var backend: LocalSocket? = null
     try {
-      openConnections += client
       client.soTimeout = HEADER_TIMEOUT_MS
       val clientInput = BufferedInputStream(client.getInputStream())
       val header = readHttpHeader(clientInput)
@@ -233,24 +259,25 @@ class BrowserDevToolsBridge(private val context: ReactApplicationContext) : Clos
       upstream.outputStream.flush()
       client.soTimeout = 0
 
-      val finished = CountDownLatch(1)
-      workerPool.execute {
-        try {
-          clientInput.copyTo(upstream.outputStream)
-        } catch (_: Throwable) {
-        } finally {
-          finished.countDown()
-        }
-      }
-      workerPool.execute {
+      val upstreamToClient = thread(
+        name = "CodeWideBrowserDevToolsDownload",
+        isDaemon = true,
+      ) {
         try {
           upstream.inputStream.copyTo(client.getOutputStream())
         } catch (_: Throwable) {
         } finally {
-          finished.countDown()
+          client.closeQuietly()
+          upstream.closeQuietly()
         }
       }
-      finished.await()
+      try {
+        clientInput.copyTo(upstream.outputStream)
+      } finally {
+        client.closeQuietly()
+        upstream.closeQuietly()
+      }
+      upstreamToClient.join(COPY_JOIN_TIMEOUT_MS)
     } catch (_: Throwable) {
       try {
         client.getOutputStream().write(BAD_GATEWAY_RESPONSE)
@@ -352,7 +379,11 @@ class BrowserDevToolsBridge(private val context: ReactApplicationContext) : Clos
   companion object {
     private const val LOOPBACK_HOST = "127.0.0.1"
     private const val BACKLOG = 32
+    private const val MAX_OPEN_CONNECTIONS = 16
+    private const val WORKER_THREADS = 8
+    private const val WORKER_QUEUE_CAPACITY = MAX_OPEN_CONNECTIONS - WORKER_THREADS
     private const val HEADER_TIMEOUT_MS = 5_000
+    private const val COPY_JOIN_TIMEOUT_MS = 1_000L
     private const val UI_THREAD_TIMEOUT_MS = 5_000L
     private const val TOKEN_BYTES = 32
     private const val MAX_HEADER_BYTES = 64 * 1024
@@ -376,6 +407,17 @@ class BrowserDevToolsBridge(private val context: ReactApplicationContext) : Clos
       throw IllegalArgumentException("DevTools request headers are too large")
     }
   }
+}
+
+/** Atomically admits sockets before a worker or upstream resource is allocated. */
+internal class BrowserConnectionGate(maximum: Int) {
+  private val permits = Semaphore(maximum, true)
+
+  fun tryAcquire(): Boolean = permits.tryAcquire()
+
+  fun release() = permits.release()
+
+  fun available(): Int = permits.availablePermits()
 }
 
 internal sealed class BrowserDevToolsAssetResolution {

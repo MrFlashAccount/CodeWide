@@ -131,6 +131,16 @@ async fn tunnel_create(
     let Some(authorization) = authorization else {
         return TunnelError::Unauthorized.into_response();
     };
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) = e2e_v1_surface_fault(
+        &state,
+        crate::sync_v2::E2ESurfaceFaultTarget::PortCreate,
+        "e2e_port_fault_action_mismatch",
+    )
+    .await
+    {
+        return response;
+    }
     tunnels
         .create_for_device(
             request.port,
@@ -155,9 +165,29 @@ async fn tunnel_exact(
     if method != Method::DELETE {
         return TunnelError::NotFound.into_response();
     }
-    if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "localhost.forward").await
+    let authorization = if headers.get("origin").is_some() {
+        None
+    } else {
+        authorization_for_scope(&state, &headers, "localhost.forward").await
+    };
+    let Some(authorization) = authorization else {
+        return TunnelError::Unauthorized.into_response();
+    };
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) = e2e_v1_surface_fault(
+        &state,
+        crate::sync_v2::E2ESurfaceFaultTarget::PortDelete,
+        "e2e_port_fault_action_mismatch",
+    )
+    .await
     {
+        return response;
+    }
+    let tunnel = match tunnels.tunnel(&id).await {
+        Ok(tunnel) => tunnel,
+        Err(error) => return error.into_response(),
+    };
+    if !same_tunnel_owner(tunnel.owner_device_id(), authorization.device_id()) {
         return TunnelError::Unauthorized.into_response();
     }
     let revoked = tunnels.revoke(&id).await;
@@ -167,6 +197,58 @@ async fn tunnel_exact(
         StatusCode::NOT_FOUND
     };
     (status, Json(json!({"revoked": revoked}))).into_response()
+}
+
+#[cfg(feature = "e2e-command-fault")]
+async fn e2e_v1_surface_fault(
+    state: &AppState,
+    target: crate::sync_v2::E2ESurfaceFaultTarget,
+    mismatch_error: &'static str,
+) -> Option<Response> {
+    let runtime = state.services.sync_v2.as_ref()?;
+    match runtime.intercept_e2e_surface_fault(target).await? {
+        crate::sync_v2::E2ESurfaceFaultEffect::Continue => None,
+        crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
+            Some(json_error(StatusCode::SERVICE_UNAVAILABLE, &marker))
+        }
+        crate::sync_v2::E2ESurfaceFaultEffect::NotFound
+        | crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
+        | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor
+        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
+        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
+        | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
+        | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            mismatch_error,
+        )),
+    }
+}
+
+#[cfg(feature = "e2e-command-fault")]
+async fn e2e_v1_terminal_replay_fault(state: &AppState) -> Option<Response> {
+    let runtime = state.services.sync_v2.as_ref()?;
+    match runtime
+        .intercept_e2e_surface_fault(crate::sync_v2::E2ESurfaceFaultTarget::TerminalReplay)
+        .await?
+    {
+        crate::sync_v2::E2ESurfaceFaultEffect::Continue => None,
+        crate::sync_v2::E2ESurfaceFaultEffect::Fail(marker) => {
+            Some(json_error(StatusCode::SERVICE_UNAVAILABLE, &marker))
+        }
+        crate::sync_v2::E2ESurfaceFaultEffect::ReplayUnavailable
+        | crate::sync_v2::E2ESurfaceFaultEffect::InvalidCursor => Some(json_error(
+            StatusCode::CONFLICT,
+            "terminal_replay_unavailable",
+        )),
+        crate::sync_v2::E2ESurfaceFaultEffect::NotFound
+        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceRetry(_)
+        | crate::sync_v2::E2ESurfaceFaultEffect::VoiceResult(_)
+        | crate::sync_v2::E2ESurfaceFaultEffect::PortExpire { .. }
+        | crate::sync_v2::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "e2e_terminal_replay_action_mismatch",
+        )),
+    }
 }
 
 async fn tunnel_proxy_root(
@@ -199,8 +281,14 @@ async fn tunnel_proxy_inner(
         Err(error) => return error.into_response(),
     };
     let (mut parts, body) = request.into_parts();
-    let bearer_authorized = parts.headers.get("origin").is_none()
-        && authorize_scope(&state, &parts.headers, "localhost.forward").await;
+    let bearer = if parts.headers.get("origin").is_none() {
+        authorization_for_scope(&state, &parts.headers, "localhost.forward").await
+    } else {
+        None
+    };
+    let bearer_authorized = bearer.as_ref().is_some_and(|authorization| {
+        same_tunnel_owner(tunnel.owner_device_id(), authorization.device_id())
+    });
     if !bearer_authorized && !tunnels.browser_authorized(&tunnel, &parts.headers) {
         return TunnelError::Unauthorized.into_response();
     }
@@ -235,6 +323,7 @@ async fn tunnel_proxy_inner(
             .max_frame_size(16 * 1024 * 1024)
             .on_upgrade(move |client| crate::tunnels::bridge_websocket(client, upstream, revoked));
     }
+    let browser_cookie_path = bearer_authorized.then(|| format!("/v1/tunnels/{id}/"));
     tunnels
         .proxy_http(
             tunnel,
@@ -242,10 +331,14 @@ async fn tunnel_proxy_inner(
             &target_path,
             &parts.headers,
             body,
-            bearer_authorized,
+            browser_cookie_path.as_deref(),
         )
         .await
         .unwrap_or_else(IntoResponse::into_response)
+}
+
+fn same_tunnel_owner(tunnel_owner: Option<&str>, requester: Option<&str>) -> bool {
+    tunnel_owner == requester
 }
 
 #[derive(Deserialize)]
@@ -261,12 +354,16 @@ async fn media_materialize(
     let Some(media) = state.services.media.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "files.download.workspace").await
-    {
+    if headers.get("origin").is_some() {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
-    match media.materialize(&request.url).await {
+    let Some(authorization) =
+        authorization_for_scope(&state, &headers, "files.download.workspace").await
+    else {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    };
+    let owner = authorization.device_id().unwrap_or("local-admin");
+    match media.materialize_for_owner(owner, &request.url).await {
         Ok(result) => {
             let status = if result.reused {
                 StatusCode::OK
@@ -288,13 +385,17 @@ async fn media_read(
     let Some(media) = state.services.media.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "files.download.workspace").await
-    {
+    if headers.get("origin").is_some() {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
+    let Some(authorization) =
+        authorization_for_scope(&state, &headers, "files.download.workspace").await
+    else {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    };
+    let owner = authorization.device_id().unwrap_or("local-admin");
     media
-        .serve(&id, method == Method::HEAD)
+        .serve_for_owner(owner, &id, method == Method::HEAD)
         .unwrap_or_else(IntoResponse::into_response)
 }
 
@@ -392,6 +493,23 @@ async fn terminal_upgrade(
     let Some(authorization) = authorization else {
         return json_error(StatusCode::FORBIDDEN, "shell_explicit_scope_required");
     };
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) = e2e_v1_surface_fault(
+        &state,
+        crate::sync_v2::E2ESurfaceFaultTarget::TerminalOpen,
+        "e2e_terminal_fault_action_mismatch",
+    )
+    .await
+    {
+        return response;
+    }
+    #[cfg(feature = "e2e-command-fault")]
+    if query.session_id.is_some()
+        && query.offset.unwrap_or_default() > 0
+        && let Some(response) = e2e_v1_terminal_replay_fault(&state).await
+    {
+        return response;
+    }
     let owner = authorization.device_id().unwrap_or("admin").to_owned();
     let authorization_changes = match (&state.authorization, authorization.device_id()) {
         (Authorization::Registry(registry), Some(device_id)) => {
@@ -547,6 +665,16 @@ async fn file_read(
     {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) = e2e_v1_surface_fault(
+        &state,
+        crate::sync_v2::E2ESurfaceFaultTarget::ResourceRead,
+        "e2e_resource_read_action_mismatch",
+    )
+    .await
+    {
+        return response;
+    }
     match files.download(query, &headers, head_only, preview).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
@@ -561,6 +689,9 @@ async fn file_upload_status(
     let Some(files) = state.services.files.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if matches!(&state.authorization, Authorization::Registry(_)) {
+        return crate::sync_v2::files::protected_file_upload_status(state, query, headers).await;
+    }
     if !file_upload_authorized(&state, &headers).await {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
@@ -578,6 +709,9 @@ async fn file_upload_cancel(
     let Some(files) = state.services.files.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if matches!(&state.authorization, Authorization::Registry(_)) {
+        return crate::sync_v2::files::protected_file_upload_cancel(state, query, headers).await;
+    }
     if !file_upload_authorized(&state, &headers).await {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
@@ -596,6 +730,9 @@ async fn file_upload(
     let Some(files) = state.services.files.clone() else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    if matches!(&state.authorization, Authorization::Registry(_)) {
+        return crate::sync_v2::files::protected_file_upload(state, query, headers, body).await;
+    }
     if !file_upload_authorized(&state, &headers).await {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
@@ -609,4 +746,3 @@ async fn file_upload_authorized(state: &AppState, headers: &HeaderMap) -> bool {
     headers.get("origin").is_none()
         && authorize_scope(state, headers, "files.upload.workspace").await
 }
-

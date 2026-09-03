@@ -257,7 +257,10 @@ impl UpstreamHandle {
             }))
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => UpstreamError::Backpressure,
-                mpsc::error::TrySendError::Closed(_) => UpstreamError::Disconnected,
+                // The bounded queue rejected this request before the transport
+                // task could observe or write it. Preserve that proven
+                // not-accepted outcome instead of reporting ambiguous loss.
+                mpsc::error::TrySendError::Closed(_) => UpstreamError::Reconnecting,
             })?;
         receiver.await.map_err(|_| UpstreamError::Disconnected)?
     }
@@ -281,7 +284,9 @@ impl UpstreamHandle {
             }))
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => UpstreamError::Backpressure,
-                mpsc::error::TrySendError::Closed(_) => UpstreamError::Disconnected,
+                // A closed sender is a pre-admission rejection. The caller can
+                // safely distinguish it from a disconnect after queueing.
+                mpsc::error::TrySendError::Closed(_) => UpstreamError::Reconnecting,
             })?;
         receiver.await.map_err(|_| UpstreamError::Disconnected)?
     }
@@ -411,6 +416,9 @@ async fn run_stdio_connection(
                 let Some(outbound) = outbound else { break; };
                 match outbound {
                     UpstreamCommand::Request(mut outbound) => {
+                        if outbound.response.is_closed() {
+                            continue;
+                        }
                         counter = counter.wrapping_add(1);
                         let upstream_id = format!("codewide-stdio:{counter}");
                         let Some(object) = outbound.request.as_object_mut() else {
@@ -497,6 +505,9 @@ async fn run_connection(
                 let Some(outbound) = outbound else { return Ok(()); };
                 match outbound {
                     UpstreamCommand::Request(mut outbound) => {
+                        if outbound.response.is_closed() {
+                            continue;
+                        }
                         counter = counter.wrapping_add(1);
                         let upstream_id = format!("codewide-rs:{counter}");
                         let Some(object) = outbound.request.as_object_mut() else {

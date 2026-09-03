@@ -36,7 +36,7 @@ const { mode, dryRun, requestedVersion } = parseArguments(process.argv.slice(2))
 const lock = await acquireLock();
 try {
   const endpoint = await resolveUpdateEndpoint();
-  await requireHealthyShelf(endpoint);
+  if (!dryRun) await requireHealthyShelf(endpoint);
   if (mode === "ota") await releaseOta(endpoint, dryRun);
   else await releaseApk(endpoint, dryRun, requestedVersion);
 } finally {
@@ -48,12 +48,23 @@ async function releaseOta(endpoint: string, dryRun: boolean): Promise<void> {
   const version = await readCurrentVersion();
   const privateKeyPath = await resolvePrivateKey();
   await validateOtaSigningKey(privateKeyPath);
+  await runReleaseChecks();
   if (dryRun) {
-    printResult({ ok: true, dryRun: true, kind: "ota", runtimeVersion: version.runtimeVersion, updateUrl: endpoint });
+    await run("pnpm", ["ota:publish:raw", "--", "--dry-run"], {
+      CODEWIDE_UPDATE_URL: endpoint,
+      CODEWIDE_OTA_PRIVATE_KEY: privateKeyPath,
+    });
+    printResult({
+      ok: true,
+      dryRun: true,
+      kind: "ota",
+      runtimeVersion: version.runtimeVersion,
+      updateUrl: endpoint,
+      artifact: "built-signed-scanned",
+    });
     return;
   }
 
-  await runReleaseChecks();
   const before = new Set(await otaReleaseDirectories(version.runtimeVersion));
   await run("pnpm", ["ota:publish:raw"], {
     CODEWIDE_UPDATE_URL: endpoint,
@@ -95,19 +106,6 @@ async function releaseApk(endpoint: string, dryRun: boolean, requestedVersion?: 
   const updated = updateAndroidReleaseVersion(source, requestedVersion);
   const signing = await resolveApkSigning();
   await validateApkSigning(signing);
-  if (dryRun) {
-    printResult({
-      ok: true,
-      dryRun: true,
-      kind: "apk",
-      previous: updated.previous,
-      next: updated.next,
-      updateUrl: endpoint,
-      architectures: process.env.CODEWIDE_RELEASE_ARCHITECTURES ?? "arm64-v8a",
-    });
-    return;
-  }
-
   await runReleaseChecks();
   let sourceUpdated = false;
   let published = false;
@@ -125,6 +123,23 @@ async function releaseApk(endpoint: string, dryRun: boolean, requestedVersion?: 
     await run("pnpm", ["security:scan-artifacts", "--", apkPath]);
     const apkBytes = await readFile(apkPath);
     const sha256 = createHash("sha256").update(apkBytes).digest("hex");
+    if (dryRun) {
+      await writeReleaseSourceFiles(source);
+      sourceUpdated = false;
+      printResult({
+        ok: true,
+        dryRun: true,
+        kind: "apk",
+        previous: updated.previous,
+        next: updated.next,
+        updateUrl: endpoint,
+        sha256,
+        size: apkBytes.byteLength,
+        architectures: process.env.CODEWIDE_RELEASE_ARCHITECTURES ?? "arm64-v8a",
+        artifact: "built-signed-scanned",
+      });
+      return;
+    }
     await archiveReleaseApk(updated.next, sha256);
     published = true;
     const artifact = await findPublishedArtifact(endpoint, sha256, updated.next);
@@ -153,11 +168,13 @@ async function releaseApk(endpoint: string, dryRun: boolean, requestedVersion?: 
 }
 
 async function runReleaseChecks(): Promise<void> {
+  await run("pnpm", ["validate:android:v2"]);
   await run("pnpm", ["--filter", "@codewide/android", "typecheck"]);
   await run("pnpm", ["--filter", "@codewide/android", "lint"]);
   await run("pnpm", ["test"]);
   await run("pnpm", ["test:ota"]);
   await run("pnpm", ["security:scan-secrets"]);
+  await run("pnpm", ["validate:android:device-evidence"]);
 }
 
 async function verifyPublicOta(

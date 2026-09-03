@@ -97,6 +97,7 @@ export async function writeNativeTerminal(): Promise<void> { throw new Error("Te
 export async function resizeNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
 export async function readNativeTerminalOutput(): Promise<NativeTerminalOutput> { throw new Error("Terminal is available on Android only"); }
 export function closeNativeTerminal(): void {}
+export function stopLegacyNativeRuntimeResources(): Promise<void> { return Promise.resolve(); }
 export function subscribeNativeTerminal(): () => void { return () => {}; }
 export type NativeCommandMethod =
   | "turn/start" | "turn/steer" | "thread/name/set" | "thread/archive" | "thread/unarchive" | "thread/delete"

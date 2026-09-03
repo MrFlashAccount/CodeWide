@@ -1,99 +1,151 @@
 import type { V2Projection } from "@codewide/sync-client/v2";
-import { useRef, useState } from "react";
+import { useSyncExternalStore } from "react";
 
+import { useProcessBinding } from "../../../boot/useProcessBinding";
 import { useEvent } from "../../../react/useEvent";
-import type {
-  VoiceSessionHandle,
-  VoiceTransportEvent,
-} from "../../application/ports/voiceTransport";
+import {
+  voiceInputScopeKey,
+  type VoiceInputBinding,
+  type VoiceInputState,
+} from "../../application/voiceInputController";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { SavedServerId } from "../../domain/ids";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import type { VoiceInputScope } from "../../domain/voiceInputScope";
 
-export type VoiceInputState = "idle" | "starting" | "recording" | "finishing" | "retry" | "error";
+type VoiceInputControlState = Exclude<VoiceInputState, "cancelling">;
 
 export interface VoiceInputControlModel {
   activate(): Promise<void>;
+  cancel(): Promise<void>;
+  captureState: VoiceInputState;
   disabled: boolean;
+  finishTranscript(): Promise<void>;
   message: string | null;
-  state: VoiceInputState;
+  retry(): Promise<void>;
+  startedAtMs: number | null;
+  state: VoiceInputControlState;
+  submitTranscript(): Promise<void>;
 }
 
 interface UseVoiceInputControlInput {
   audience: SavedServerId;
   live: boolean;
+  onSubmitTranscript?(text: string): Promise<boolean>;
   onTranscript(text: string): void;
   projection: V2Projection | null;
   scope: VoiceInputScope;
   thread: QualifiedThread | null;
 }
 
-/** Binds the composer microphone to one live authoritative V2 generation. */
-export function useVoiceInputControl(input2: UseVoiceInputControlInput): VoiceInputControlModel {
-  const { audience, live, onTranscript, projection, scope, thread } = input2;
-  const runtime = useV2Runtime();
-  const handle = useRef<VoiceSessionHandle | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [state, setState] = useState<VoiceInputState>("idle");
-  const usable = live && projection !== null;
+type UseSavedServerVoiceInputControlInput = Omit<UseVoiceInputControlInput, "live" | "projection">;
 
-  const onEvent = useEvent((event: VoiceTransportEvent): void => {
-    if (event.type === "recording") {
-      setMessage("Listening…");
-      setState("recording");
-      return;
-    }
-    if (event.type === "result") {
-      handle.current = null;
-      onTranscript(event.text);
-      setMessage(null);
-      setState("idle");
-      return;
-    }
-    if (event.type === "retry") {
-      setMessage(`Voice is busy. Try again in ${Math.ceil(event.retryAfterMs / 1e3)} seconds.`);
-      setState("retry");
-      return;
-    }
-    handle.current = null;
-    if (event.type === "cancelled") {
-      setMessage(null);
-      setState("idle");
-      return;
-    }
-    setMessage("Voice input is unavailable. Try again.");
-    setState("error");
+/** Reads the live saved-server generation for a process-owned Voice input binding. */
+export function useSavedServerVoiceInputControl(
+  input: UseSavedServerVoiceInputControlInput,
+): VoiceInputControlModel {
+  const runtime = useV2Runtime();
+  const resource = runtime.sessions.resource(input.audience);
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
+  return useVoiceInputControl({
+    ...input,
+    live: snapshot.value.state === "live" && snapshot.value.projections.live !== null,
+    projection: snapshot.value.projections.live,
   });
+}
+
+/** Binds one composer to process-owned Voice state without owning capture lifetime. */
+export function useVoiceInputControl(input: UseVoiceInputControlInput): VoiceInputControlModel {
+  const runtime = useV2Runtime();
+  const { audience, live, onSubmitTranscript, onTranscript, projection, scope, thread } = input;
+  const usable = live && projection !== null;
+  const binding = (): VoiceInputBinding | null =>
+    projection === null
+      ? null
+      : {
+          audience,
+          onTranscript,
+          scope,
+          sourceGeneration: projection.sourceGeneration,
+          thread,
+          ...(onSubmitTranscript === undefined ? {} : { onSubmitTranscript }),
+        };
+  const bindingIdentity = voiceInputScopeKey(audience, scope);
+  const subscribe = (listener: () => void): (() => void) =>
+    runtime.voice.subscribe(bindingIdentity, listener);
+  const readSnapshot = (): ReturnType<typeof runtime.voice.snapshot> =>
+    runtime.voice.snapshot(bindingIdentity);
+  const scopedSnapshot = useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
+  const subscribeActive = (listener: () => void): (() => void) =>
+    runtime.voice.subscribeActive(listener);
+  const readActiveSnapshot = (): ReturnType<typeof runtime.voice.activeSnapshot> =>
+    runtime.voice.activeSnapshot();
+  const activeSnapshot = useSyncExternalStore(
+    subscribeActive,
+    readActiveSnapshot,
+    readActiveSnapshot,
+  );
+  const snapshot = activeSnapshot.state === "idle" ? scopedSnapshot : activeSnapshot;
+  const bind = useEvent((): (() => void) => {
+    const current = binding();
+    return current === null ? () => undefined : runtime.voice.bind(current);
+  });
+  useProcessBinding(bindingIdentity, bind);
+
   const activate = useEvent(async (): Promise<void> => {
-    if (state === "recording") {
-      setState("finishing");
-      await handle.current?.finish();
+    const active = snapshot.state !== "idle" && snapshot.state !== "error";
+    if ((!usable && !active) || snapshot.state === "finishing" || snapshot.state === "cancelling")
       return;
-    }
-    if (!usable || state === "starting" || state === "finishing" || handle.current !== null) return;
-    setMessage(null);
-    setState("starting");
-    try {
-      handle.current = await runtime.voice.start({
-        audience,
-        onEvent,
-        scope,
-        sourceGeneration: projection.sourceGeneration,
-        thread,
-      });
-    } catch (cause) {
-      handle.current = null;
-      setMessage("Voice input is unavailable. Try again.");
-      setState("error");
-      throw cause;
-    }
+    await runtime.voice.activate(binding());
   });
+  const cancel = useEvent(async (): Promise<void> => {
+    await runtime.voice.cancel();
+  });
+  const finishTranscript = useEvent(async (): Promise<void> => {
+    await runtime.voice.finish(false);
+  });
+  const retry = useEvent(async (): Promise<void> => {
+    await runtime.voice.retry();
+  });
+  const submitTranscript = useEvent(async (): Promise<void> => {
+    await runtime.voice.finish(true);
+  });
+  const active = snapshot.state !== "idle" && snapshot.state !== "error";
 
   return {
     activate,
-    disabled: !usable || state === "starting" || state === "finishing",
-    message: usable ? message : "Voice input requires a live saved-server connection.",
-    state,
+    cancel,
+    captureState: snapshot.state,
+    disabled:
+      snapshot.state === "finishing" || snapshot.state === "cancelling" || (!active && !usable),
+    finishTranscript,
+    message:
+      !active && !usable
+        ? "Voice input requires a live saved-server connection."
+        : snapshot.message,
+    retry,
+    startedAtMs: snapshot.startedAtMs ?? null,
+    state: snapshot.state === "cancelling" ? "finishing" : snapshot.state,
+    submitTranscript,
   };
+}
+
+/** Subscribes only a small meter surface to transient native microphone levels. */
+export function useVoiceInputLevel(audience: SavedServerId, scope: VoiceInputScope): number {
+  const runtime = useV2Runtime();
+  const key = voiceInputScopeKey(audience, scope);
+  const subscribeScoped = (listener: () => void): (() => void) =>
+    runtime.voice.subscribeLevel(key, listener);
+  const readScopedLevel = (): number => runtime.voice.level(key);
+  const scopedLevel = useSyncExternalStore(subscribeScoped, readScopedLevel, readScopedLevel);
+  const subscribeActive = (listener: () => void): (() => void) =>
+    runtime.voice.subscribeActiveLevel(listener);
+  const readActiveLevel = (): number => runtime.voice.activeLevel();
+  const activeLevel = useSyncExternalStore(subscribeActive, readActiveLevel, readActiveLevel);
+  const subscribeActiveState = (listener: () => void): (() => void) =>
+    runtime.voice.subscribeActive(listener);
+  const readActiveState = (): ReturnType<typeof runtime.voice.activeSnapshot> =>
+    runtime.voice.activeSnapshot();
+  const activeState = useSyncExternalStore(subscribeActiveState, readActiveState, readActiveState);
+  return activeState.state === "idle" ? scopedLevel : activeLevel;
 }

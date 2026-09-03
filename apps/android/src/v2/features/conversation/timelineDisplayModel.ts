@@ -1,74 +1,102 @@
-import type { V2Item, V2ThreadWindow, V2TurnView } from "@codewide/sync-client/v2";
+import type { V2Item, V2ThreadWindow, V2TurnView, V2Attachment } from "@codewide/sync-client/v2";
 
 import type {
   TimelineDisplayActivity,
+  TimelineDisplayResponseRow,
   TimelineDisplayTurn,
-} from "../../presentation/conversation/TimelineView";
+} from "../../presentation/conversation/timelineTypes";
+import {
+  activityDisplayModel,
+  lifecycleActivityDisplayModel,
+} from "./timelineActivityDisplayModel";
+import { userInputDisplayModel } from "./userInputDisplayModel";
+
+/** @testOnly Exposes rich activity normalization to its black-box rendering regressions. */
+export { activityDisplayModel } from "./timelineActivityDisplayModel";
 
 export function timelineDisplayModel(window: V2ThreadWindow | null): TimelineDisplayTurn[] {
   return timelineTurnsDisplayModel(window?.turns ?? []);
 }
 
-export function timelineTurnsDisplayModel(turns: V2TurnView[]): TimelineDisplayTurn[] {
+export function timelineTurnsDisplayModel(
+  turns: V2TurnView[],
+  attachments: readonly V2Attachment[] = [],
+): TimelineDisplayTurn[] {
   return turns.map((turn) => {
-    const activities = turn.items.flatMap(activityDisplayModel);
+    const lifecycle = latestPreTurnLifecycle(turn);
+    const lifecycleIds = new Set(lifecycle.map((item) => item.id));
+    const lifecycleByItem = latestLifecycleByItem(turn);
+    const responseRows = responseRowsDisplayModel(turn.items, lifecycleIds, lifecycleByItem);
+    const activities = responseRows.flatMap((row) =>
+      row.kind === "activity" ? [row.activity] : [],
+    );
+    const assistantRows = responseRows.flatMap((row) => (row.kind === "assistant" ? [row] : []));
+    const latestAssistantItem = assistantRows.at(-1);
+    const userInput = userInputDisplayModel(turn.items, attachments);
     return {
-      activityCount: turn.activity?.count ?? activities.length,
+      activityCount:
+        turn.activity === null
+          ? activities.length
+          : Math.max(0, turn.activity.count - lifecycle.length),
       activities,
-      assistantText: turn.items.flatMap((item) =>
-        item.kind === "assistantText" ? [item.text] : [],
-      ),
+      ...(latestAssistantItem === undefined ? {} : { assistantItemId: latestAssistantItem.id }),
+      assistantText: assistantRows.map((item) => item.text),
       completedAt: turn.completedAt,
       createdAt: turn.createdAt,
       durationMs: turn.durationMs,
       id: turn.id,
-      lifecycle: [],
+      lifecycle,
+      responseRows,
       state: turn.state,
       usage: turn.usage,
-      userText: turn.items.flatMap((item) => (item.kind === "userText" ? [item.text] : [])),
+      userInput,
+      userText: userInput.flatMap((block) => (block.kind === "text" ? [block.text] : [])),
     };
   });
 }
 
-export function activityDisplayModel(item: V2Item): TimelineDisplayActivity[] {
-  if (item.kind === "userText" || item.kind === "assistantText") return [];
-  if (item.kind === "reasoning") {
-    return [{ detail: item.summary, id: item.id, label: "Thinking" }];
-  }
-  if (item.kind === "command") {
-    return [
-      {
-        detail: `$ ${item.command}\n${item.outputPreview}`,
+export function timelineResponseRowsDisplayModel(items: V2Item[]): TimelineDisplayResponseRow[] {
+  return responseRowsDisplayModel(items, new Set(), new Map());
+}
+
+function responseRowsDisplayModel(
+  items: V2Item[],
+  excludedItemIds: ReadonlySet<string>,
+  lifecycleByItem: ReadonlyMap<string, V2TurnView["lifecycle"][number]>,
+): TimelineDisplayResponseRow[] {
+  const rows: TimelineDisplayResponseRow[] = [];
+  for (const item of items) {
+    if (item.kind === "userMessage" || excludedItemIds.has(item.id)) continue;
+    if (item.kind === "assistantText") {
+      rows.push({
         id: item.id,
-        label: "Command",
-        state: item.status,
-      },
-    ];
+        kind: "assistant",
+        memoryCitation: item.memoryCitation ?? null,
+        text: item.text,
+      });
+      continue;
+    }
+    const lifecycle = lifecycleByItem.get(item.id);
+    for (const activity of lifecycle === undefined
+      ? activityDisplayModel(item)
+      : lifecycleActivityDisplayModel(lifecycle)) {
+      rows.push({ activity, id: activity.id, kind: "activity" });
+    }
   }
-  if (item.kind === "fileChange") {
-    return [
-      {
-        detail: `${item.change}: ${item.path}`,
-        id: item.id,
-        label: "Changes",
-        state: item.status,
-      },
-    ];
+  return rows;
+}
+
+function latestPreTurnLifecycle(turn: V2TurnView): TimelineDisplayActivity[] {
+  const lifecycleByItem = new Map<string, V2TurnView["lifecycle"][number]>();
+  for (const lifecycle of turn.lifecycle) {
+    if (!lifecycle.preTurn) continue;
+    lifecycleByItem.set(lifecycle.item.id, lifecycle);
   }
-  if (item.kind === "tool") {
-    return [{ detail: item.summary, id: item.id, label: item.name, state: item.status }];
-  }
-  if (item.kind === "plan") {
-    return [
-      {
-        detail: item.steps.map((step) => `${step.status}: ${step.text}`).join("\n"),
-        id: item.id,
-        label: "Plan",
-      },
-    ];
-  }
-  if (item.kind === "attachment") {
-    return [{ detail: item.attachment.name, id: item.id, label: "Attachment" }];
-  }
-  return [];
+  return [...lifecycleByItem.values()].flatMap(lifecycleActivityDisplayModel);
+}
+
+function latestLifecycleByItem(turn: V2TurnView): Map<string, V2TurnView["lifecycle"][number]> {
+  const lifecycleByItem = new Map<string, V2TurnView["lifecycle"][number]>();
+  for (const lifecycle of turn.lifecycle) lifecycleByItem.set(lifecycle.item.id, lifecycle);
+  return lifecycleByItem;
 }

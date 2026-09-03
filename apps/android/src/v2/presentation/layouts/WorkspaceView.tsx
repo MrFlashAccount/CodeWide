@@ -2,7 +2,24 @@ import type { PropsWithChildren, ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { colors, spacing, typeScale } from "../../theme";
+import { ShimmerText } from "../text/ShimmerText";
 import { PresentationText as Text } from "../text/ProductText";
+
+interface WorkspaceSubtitleViewProps {
+  text: string;
+  updating?: boolean;
+}
+
+export function WorkspaceSubtitleView(props: WorkspaceSubtitleViewProps): React.JSX.Element {
+  const { text, updating = false } = props;
+  if (updating)
+    return <ShimmerText style={styles.subtitleText} text="Updating" widthPolicy="intrinsic" />;
+  return (
+    <Text ellipsizeMode="middle" numberOfLines={1} style={styles.subtitleText}>
+      {text}
+    </Text>
+  );
+}
 
 export function WorkspaceView(
   props: PropsWithChildren<{
@@ -27,13 +44,7 @@ export function WorkspaceView(
           )}
           {subtitle === undefined ? null : (
             <View style={styles.subtitle}>
-              {typeof subtitle === "string" ? (
-                <Text ellipsizeMode="middle" numberOfLines={1} style={styles.subtitleText}>
-                  {subtitle}
-                </Text>
-              ) : (
-                subtitle
-              )}
+              {typeof subtitle === "string" ? <WorkspaceSubtitleView text={subtitle} /> : subtitle}
             </View>
           )}
         </View>

@@ -2,10 +2,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
-import type { V2PortDescriptor, V2TunnelCreateResponse } from "@codewide/sync-client/v2";
 
 import { useV2Runtime } from "../../V2Application";
-import type { PortsResource } from "../../application/resources/portsResource";
+import type { PortProfile, PortsResource } from "../../application/resources/portsResource";
 import type { SavedServerId } from "../../domain/ids";
 import {
   PresentationTextInput as TextInput,
@@ -13,7 +12,8 @@ import {
 } from "../../presentation/text/ProductText";
 import { ShimmerText } from "../../presentation/text/ShimmerText";
 import { useEvent } from "../../../react/useEvent";
-import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
+import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import { VoiceTextInput } from "../conversation/VoiceTextInput";
 
 interface PortProfileScreenProps {
   profileId: string;
@@ -21,9 +21,25 @@ interface PortProfileScreenProps {
 }
 
 interface PortFormProps {
-  port: V2PortDescriptor;
+  initial: PortFormModel;
   resource: PortsResource;
+  savedServerId: SavedServerId;
   serverName: string;
+}
+
+interface PortFormModel {
+  forwardingKey: string | null;
+  label: string;
+  port: number | null;
+  profile: PortProfile | null;
+}
+
+interface PortFieldProps {
+  hint: string;
+  label: string;
+  onChange(value: string): void;
+  placeholder?: string;
+  value: string;
 }
 
 export function PortProfileScreen(props: PortProfileScreenProps): React.JSX.Element {
@@ -36,10 +52,12 @@ export function PortProfileScreen(props: PortProfileScreenProps): React.JSX.Elem
     runtime.savedServers.snapshot,
     runtime.savedServers.snapshot,
   );
+  const profile = snapshot.value.profiles.find((candidate) => candidate.id === profileId) ?? null;
   const port = snapshot.value.ports.find((candidate) => candidate.forwardingKey === profileId);
+  const initial = formModel(profile, port, profileId === "manual");
   const serverName =
     servers.value.find((server) => server.id === savedServerId)?.displayName ?? "Server";
-  if (port === undefined) {
+  if (initial === null) {
     return (
       <View style={styles.center}>
         {snapshot.status === "loading" ? (
@@ -51,50 +69,68 @@ export function PortProfileScreen(props: PortProfileScreenProps): React.JSX.Elem
     );
   }
   return (
-    <PortForm key={port.forwardingKey} port={port} resource={resource} serverName={serverName} />
+    <PortForm
+      key={profile?.id ?? port?.forwardingKey ?? "manual"}
+      initial={initial}
+      resource={resource}
+      savedServerId={savedServerId}
+      serverName={serverName}
+    />
   );
 }
 
 function PortForm(props: PortFormProps): React.JSX.Element {
-  const { port, resource, serverName } = props;
-  const [label, setLabel] = useState(port.name === "" ? `Port ${port.port}` : port.name);
-  const [remotePort, setRemotePort] = useState(String(port.port));
-  const [localPort, setLocalPort] = useState("");
-  const [startImmediately, setStartImmediately] = useState(true);
-  const [tunnel, setTunnel] = useState<V2TunnelCreateResponse | null>(null);
+  const { initial, resource, savedServerId, serverName } = props;
+  const [label, setLabel] = useState(initial.label);
+  const [remotePort, setRemotePort] = useState(initial.port === null ? "" : String(initial.port));
+  const [localPort, setLocalPort] = useState(
+    initial.profile?.preferredLocalPort === null || initial.profile === null
+      ? ""
+      : String(initial.profile.preferredLocalPort),
+  );
+  const [startImmediately, setStartImmediately] = useState(initial.profile?.enabled ?? true);
   const [error, setError] = useState<string | null>(null);
   const [pending, startAction] = useTransition();
   const back = useEvent(() => router.back());
   const submit = useEvent(() => {
-    const parsedPort = Number(remotePort);
-    if (!Number.isSafeInteger(parsedPort) || parsedPort < 1 || parsedPort > 65_535) {
+    const parsedPort = parsePort(remotePort);
+    if (parsedPort === null) {
       setError("Remote port must be between 1 and 65535.");
       return;
     }
-    setError(null);
-    if (!startImmediately) {
-      router.back();
+    const parsedLocalPort = localPort.trim() === "" ? null : parsePort(localPort);
+    if (localPort.trim() !== "" && parsedLocalPort === null) {
+      setError("Phone port must be between 1 and 65535.");
       return;
     }
+    const normalizedLabel = label.trim();
+    const input = {
+      forwardingKey: initial.forwardingKey,
+      label: normalizedLabel === "" ? `Port ${parsedPort}` : normalizedLabel,
+      port: parsedPort,
+      preferredLocalPort: parsedLocalPort,
+      profileId: initial.profile === null ? null : initial.profile.id,
+      start: startImmediately,
+    };
+    setError(null);
     startAction(async () => {
       try {
-        setTunnel(await resource.createTunnel(parsedPort));
+        await resource.create(input);
+        router.back();
       } catch {
         setError("Could not start secure forwarding.");
       }
     });
   });
   const remove = useEvent(() => {
-    if (tunnel === null) {
-      router.back();
-      return;
-    }
+    if (initial.profile === null) return;
+    const profileId = initial.profile.id;
     startAction(async () => {
       try {
-        await resource.deleteTunnel(tunnel.id);
+        await resource.remove(profileId);
         router.back();
       } catch {
-        setError("Could not stop secure forwarding.");
+        setError("Could not remove secure forwarding.");
       }
     });
   });
@@ -105,66 +141,54 @@ function PortForm(props: PortFormProps): React.JSX.Element {
           <Ionicons color={colors.text} name="arrow-back" size={20} />
         </Pressable>
         <View style={styles.titleBlock}>
-          <Text style={styles.title}>{tunnel === null ? "Manual port" : label}</Text>
+          <Text style={styles.title}>{initial.profile === null ? "Manual port" : "Edit port"}</Text>
           <Text numberOfLines={1} style={styles.subtitle}>
             {serverName}
           </Text>
         </View>
       </View>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {tunnel === null ? (
-          <>
-            <Text style={styles.fieldLabel}>Name</Text>
-            <TextInput
-              accessibilityLabel="Forwarding name"
-              onChangeText={setLabel}
-              placeholder="Frontend"
-              placeholderTextColor={colors.textDim}
-              style={styles.textInput}
-              value={label}
-            />
-            <View style={styles.formGroup}>
-              <PortField
-                hint="server localhost"
-                label="Remote port"
-                onChange={setRemotePort}
-                value={remotePort}
-              />
-              <View style={styles.divider} />
-              <PortField
-                hint="automatic if empty"
-                label="Phone port"
-                onChange={setLocalPort}
-                placeholder="Auto"
-                value={localPort}
-              />
-              <View style={styles.divider} />
-              <View style={styles.switchRow}>
-                <View style={styles.rowText}>
-                  <Text style={styles.rowTitle}>Start now</Text>
-                  <Text style={styles.rowSubtitle}>Keep available on this phone</Text>
-                </View>
-                <Switch onValueChange={setStartImmediately} value={startImmediately} />
-              </View>
-            </View>
-          </>
-        ) : (
-          <View style={styles.liveCard}>
-            <View style={styles.liveDot} />
+        <Text style={styles.fieldLabel}>Name</Text>
+        <VoiceTextInput
+          accessibilityLabel="Forwarding name"
+          audience={savedServerId}
+          onChangeText={setLabel}
+          placeholder="Frontend"
+          placeholderTextColor={colors.textDim}
+          scope={{ id: `port-name:${initial.profile?.id ?? "new"}`, kind: "generic" }}
+          style={styles.textInput}
+          thread={null}
+          value={label}
+        />
+        <View style={styles.formGroup}>
+          <PortField
+            hint="server localhost"
+            label="Remote port"
+            onChange={setRemotePort}
+            value={remotePort}
+          />
+          <View style={styles.divider} />
+          <PortField
+            hint="automatic through secure transport"
+            label="Phone port"
+            onChange={setLocalPort}
+            placeholder="Auto"
+            value={localPort}
+          />
+          <View style={styles.divider} />
+          <View style={styles.switchRow}>
             <View style={styles.rowText}>
-              <Text style={styles.rowTitle}>{label}</Text>
-              <Text selectable style={styles.rowSubtitle}>
-                {tunnel.basePath}
-              </Text>
+              <Text style={styles.rowTitle}>Start now</Text>
+              <Text style={styles.rowSubtitle}>Open after secure forwarding starts</Text>
             </View>
-            <Text style={styles.liveLabel}>Live</Text>
+            <Switch onValueChange={setStartImmediately} value={startImmediately} />
           </View>
-        )}
+        </View>
         {error === null ? null : <Text style={styles.error}>{error}</Text>}
         <View style={styles.actions}>
-          {tunnel === null ? null : (
+          {initial.profile === null ? null : (
             <Pressable
-              accessibilityLabel="Close tunnel"
+              accessibilityLabel="Remove forwarding"
               disabled={pending}
               onPress={remove}
               style={styles.removeButton}
@@ -173,29 +197,21 @@ function PortForm(props: PortFormProps): React.JSX.Element {
             </Pressable>
           )}
           <Pressable
-            accessibilityLabel={tunnel === null ? "Create secure tunnel" : "Tunnel active"}
-            disabled={pending || tunnel !== null}
+            accessibilityLabel="Save forwarding"
+            disabled={pending}
             onPress={submit}
             style={styles.primaryButton}
           >
             {pending ? (
-              <ShimmerText style={styles.primaryText} text="Adding" />
+              <ShimmerText style={styles.primaryText} text="Saving" />
             ) : (
-              <Text style={styles.primaryText}>{tunnel === null ? "Add" : "Active"}</Text>
+              <Text style={styles.primaryText}>Save</Text>
             )}
           </Pressable>
         </View>
       </ScrollView>
     </View>
   );
-}
-
-interface PortFieldProps {
-  hint: string;
-  label: string;
-  onChange(value: string): void;
-  placeholder?: string;
-  value: string;
 }
 
 function PortField(props: PortFieldProps): React.JSX.Element {
@@ -218,6 +234,46 @@ function PortField(props: PortFieldProps): React.JSX.Element {
       />
     </View>
   );
+}
+
+function formModel(
+  profile: PortProfile | null,
+  port:
+    | { forwardingKey: string; group: string; kind: string; name: string; port: number }
+    | undefined,
+  manual: boolean,
+): PortFormModel | null {
+  if (profile !== null) {
+    return {
+      forwardingKey: profile.forwardingKey,
+      label: profile.label,
+      port: profile.port,
+      profile,
+    };
+  }
+  if (port !== undefined) {
+    return {
+      forwardingKey: port.forwardingKey,
+      label: port.name === "" ? `Port ${port.port}` : port.name,
+      port: port.port,
+      profile: null,
+    };
+  }
+  return manual
+    ? {
+        forwardingKey: null,
+        label: "",
+        port: null,
+        profile: null,
+      }
+    : null;
+}
+
+function parsePort(raw: string): number | null {
+  const port = Number(raw);
+  return /^\d{1,5}$/u.test(raw.trim()) && Number.isSafeInteger(port) && port >= 1 && port <= 65_535
+    ? port
+    : null;
 }
 
 const styles = StyleSheet.create({
@@ -261,17 +317,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: touchTarget,
   },
-  liveCard: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainerLow,
-    borderRadius: radii.selected,
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: 64,
-    paddingHorizontal: spacing.sm,
-  },
-  liveDot: { backgroundColor: colors.green, borderRadius: 5, height: 10, width: 10 },
-  liveLabel: { color: colors.green, ...typeScale.label },
   muted: { color: colors.textMuted },
   portField: {
     alignItems: "center",
@@ -298,12 +343,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flex: 1,
     maxWidth: 560,
-    minHeight: 0,
     width: "100%",
   },
   rowSubtitle: { color: colors.textMuted, ...typeScale.label },
   rowText: { flex: 1, minWidth: 0 },
-  rowTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
+  rowTitle: { color: colors.text, ...typeScale.body },
   subtitle: { color: colors.textMuted, ...typeScale.caption },
   switchRow: {
     alignItems: "center",
@@ -318,6 +362,6 @@ const styles = StyleSheet.create({
     minHeight: touchTarget,
     paddingHorizontal: spacing.sm,
   },
-  title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
+  title: { color: colors.text, ...typeScale.title },
   titleBlock: { flex: 1, minWidth: 0 },
 });

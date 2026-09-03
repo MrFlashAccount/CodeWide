@@ -11,15 +11,19 @@ interface ThreadCatalogWorkspaceViewProps {
   catalog: ReactNode;
 }
 
+interface SavedServerIndexViewProps {
+  catalog: ReactNode;
+}
+
 export function ServerWorkspaceView(
   props: PropsWithChildren<{ rail: ReactNode }>,
 ): React.JSX.Element {
   const { children, rail } = props;
   const window = useWindowDimensions();
-  if (!isDesktopWindow(window)) return <View style={styles.root}>{children}</View>;
+  const desktop = isDesktopWindow(window);
   return (
     <View style={styles.row}>
-      {rail}
+      <View style={desktop ? undefined : styles.hidden}>{rail}</View>
       <View style={styles.main}>{children}</View>
     </View>
   );
@@ -29,7 +33,17 @@ export function WorkspaceSafeAreaView(props: PropsWithChildren): React.JSX.Eleme
   const { children } = props;
   const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.safeArea, { paddingBottom: insets.bottom, paddingTop: insets.top }]}>
+    <View
+      style={[
+        styles.safeArea,
+        {
+          paddingBottom: insets.bottom,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+          paddingTop: insets.top,
+        },
+      ]}
+    >
       {children}
     </View>
   );
@@ -37,28 +51,36 @@ export function WorkspaceSafeAreaView(props: PropsWithChildren): React.JSX.Eleme
 
 export function SavedServerWorkspaceView(
   props: PropsWithChildren<{
-    emptyMain: boolean;
     sidebar: ReactNode;
   }>,
 ): React.JSX.Element {
-  const { children, emptyMain, sidebar } = props;
+  const { children, sidebar } = props;
   const window = useWindowDimensions();
-  if (!isDesktopWindow(window)) return <View style={styles.root}>{children}</View>;
+  const desktop = isDesktopWindow(window);
   return (
     <View style={styles.row}>
-      <View style={[styles.sidebar, { width: desktopThreadSidebarWidth(window.width) }]}>
+      <View
+        style={[
+          styles.sidebar,
+          { width: desktopThreadSidebarWidth(window.width) },
+          desktop ? undefined : styles.hidden,
+        ]}
+      >
         {sidebar}
       </View>
-      <View style={styles.main}>
-        {emptyMain ? (
-          <View style={styles.empty}>
-            <PresentationIcon color={colors.textDim} name="chat" size={28} />
-            <ProductText tone="muted">Select a thread</ProductText>
-          </View>
-        ) : (
-          children
-        )}
-      </View>
+      <View style={styles.main}>{children}</View>
+    </View>
+  );
+}
+
+export function SavedServerIndexView(props: SavedServerIndexViewProps): React.JSX.Element {
+  const { catalog } = props;
+  const window = useWindowDimensions();
+  if (!isDesktopWindow(window)) return <View style={styles.root}>{catalog}</View>;
+  return (
+    <View style={styles.empty}>
+      <PresentationIcon color={colors.textDim} name="chat" size={28} />
+      <ProductText tone="muted">Select a thread</ProductText>
     </View>
   );
 }
@@ -68,13 +90,18 @@ export function ThreadCatalogWorkspaceView(
 ): React.JSX.Element {
   const { catalog } = props;
   const window = useWindowDimensions();
-  if (!isDesktopWindow(window)) return <View style={styles.root}>{catalog}</View>;
+  const desktop = isDesktopWindow(window);
   return (
     <View style={styles.row}>
-      <View style={[styles.sidebar, { width: desktopThreadSidebarWidth(window.width) }]}>
+      <View
+        style={[
+          styles.sidebar,
+          desktop ? { width: desktopThreadSidebarWidth(window.width) } : styles.narrowCatalog,
+        ]}
+      >
         {catalog}
       </View>
-      <View style={styles.main}>
+      <View style={[styles.main, desktop ? undefined : styles.hidden]}>
         <View style={styles.empty}>
           <PresentationIcon color={colors.textDim} name="chat" size={28} />
           <ProductText tone="muted">Select a thread</ProductText>
@@ -86,7 +113,9 @@ export function ThreadCatalogWorkspaceView(
 
 const styles = StyleSheet.create({
   empty: { alignItems: "center", flex: 1, gap: spacing.sm, justifyContent: "center" },
+  hidden: { display: "none" },
   main: { backgroundColor: colors.background, flex: 1, minWidth: 0 },
+  narrowCatalog: { flex: 1 },
   root: { flex: 1, minHeight: 0 },
   row: { flex: 1, flexDirection: "row", minHeight: 0 },
   safeArea: { backgroundColor: colors.background, flex: 1 },

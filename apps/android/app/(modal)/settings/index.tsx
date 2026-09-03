@@ -9,6 +9,7 @@ import {
 import { SettingsScreen } from "../../../src/v2/features/settings/SettingsScreen";
 import { useEvent } from "../../../src/react/useEvent";
 import appConfig from "../../../app.json";
+import { V2PerformanceDiagnostics } from "../../../src/boot/UiGenerationDiagnosticsHost";
 
 export default function SettingsRoute(): React.JSX.Element {
   const close = useEvent(() => router.back());
@@ -19,6 +20,7 @@ export default function SettingsRoute(): React.JSX.Element {
   );
   return (
     <SettingsScreen
+      diagnostics={<V2PerformanceDiagnostics />}
       generationControl={
         snapshot.status === "ready" ? <UiGenerationControl current={snapshot.generation} /> : null
       }

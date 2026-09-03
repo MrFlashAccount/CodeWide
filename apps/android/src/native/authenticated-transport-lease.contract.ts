@@ -22,6 +22,14 @@ export type AuthenticatedRequest =
       head: boolean;
     }
   | { operation: "media.materialize"; sourceUrl: string }
+  | { operation: "media.streamCreate"; sourceUrl: string }
+  | {
+      operation: "media.streamRead";
+      id: string;
+      offset: number;
+      limit: number;
+      head: boolean;
+    }
   | { operation: "media.read"; id: string; head: boolean }
   | { operation: "ports.list" }
   | { operation: "tunnel.create"; port: number; ttlSeconds: number | null }

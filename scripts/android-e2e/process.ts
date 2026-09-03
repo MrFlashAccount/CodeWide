@@ -63,7 +63,11 @@ export class ManagedProcess {
   }
 }
 
-export function runCommand(command: string, args: string[], options: RunOptions): Promise<CommandResult> {
+export function runCommand(
+  command: string,
+  args: string[],
+  options: RunOptions,
+): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
@@ -72,11 +76,18 @@ export function runCommand(command: string, args: string[], options: RunOptions)
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-    const timeout = options.timeoutMs === undefined ? null : setTimeout(() => child.kill("SIGTERM"), options.timeoutMs);
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    const timeout =
+      options.timeoutMs === undefined
+        ? null
+        : setTimeout(() => child.kill("SIGTERM"), options.timeoutMs);
     child.once("error", reject);
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       if (timeout !== null) clearTimeout(timeout);
       const exitCode = code ?? 128;
       const result = { stdout, stderr, exitCode };
@@ -84,7 +95,11 @@ export function runCommand(command: string, args: string[], options: RunOptions)
         resolve(result);
       } else {
         const detail = `${stderr}\n${stdout}`.trim().slice(-8_000);
-        reject(new Error(`${command} exited with ${exitCode}${signal === null ? "" : ` (${signal})`}: ${detail}`));
+        reject(
+          new Error(
+            `${command} exited with ${exitCode}${signal === null ? "" : ` (${signal})`}: ${detail}`,
+          ),
+        );
       }
     });
   });
@@ -101,19 +116,32 @@ export async function findFreePort(): Promise<number> {
     server.close();
     throw new Error("Could not allocate a local TCP port");
   }
-  await new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error)));
+  await new Promise<void>((resolve, reject) =>
+    server.close((error) => (error === undefined ? resolve() : reject(error))),
+  );
   return address.port;
 }
 
-export async function waitForTcpPort(port: number, process: ManagedProcess, timeoutMs: number): Promise<void> {
+export async function waitForTcpPort(
+  port: number,
+  process: ManagedProcess,
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (process.exitCode !== null) throw new Error(`Managed process exited before port ${port} opened: ${process.tail}`);
+    if (process.exitCode !== null)
+      throw new Error(`Managed process exited before port ${port} opened: ${process.tail}`);
     const connected = await new Promise<boolean>((resolve) => {
       const socket = net.connect({ host: "127.0.0.1", port });
-      socket.once("connect", () => { socket.destroy(); resolve(true); });
+      socket.once("connect", () => {
+        socket.destroy();
+        resolve(true);
+      });
       socket.once("error", () => resolve(false));
-      socket.setTimeout(500, () => { socket.destroy(); resolve(false); });
+      socket.setTimeout(500, () => {
+        socket.destroy();
+        resolve(false);
+      });
     });
     if (connected) return;
     await delay(250);
@@ -121,7 +149,11 @@ export async function waitForTcpPort(port: number, process: ManagedProcess, time
   throw new Error(`Timed out waiting for TCP port ${port}: ${process.tail}`);
 }
 
-export async function waitForHttpStatus(port: number, process: ManagedProcess, timeoutMs: number): Promise<void> {
+export async function waitForHttpStatus(
+  port: number,
+  process: ManagedProcess,
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (process.exitCode !== null) throw new Error(`Appium exited during startup: ${process.tail}`);
@@ -136,10 +168,15 @@ export async function waitForHttpStatus(port: number, process: ManagedProcess, t
   throw new Error(`Timed out waiting for Appium: ${process.tail}`);
 }
 
-export async function waitForFile(filePath: string, process: ManagedProcess, timeoutMs: number): Promise<void> {
+export async function waitForFile(
+  filePath: string,
+  process: ManagedProcess,
+  timeoutMs: number,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (process.exitCode !== null) throw new Error(`Managed process exited before creating ${filePath}: ${process.tail}`);
+    if (process.exitCode !== null)
+      throw new Error(`Managed process exited before creating ${filePath}: ${process.tail}`);
     try {
       await access(filePath);
       return;

@@ -96,6 +96,53 @@ describe("V2 command correlation resource", () => {
     unsubscribe();
   });
 
+  it("blocks a recovered scope until the user explicitly accepts duplicate risk", async () => {
+    const releaseScope = vi.fn(async () => undefined);
+    const resource = new CommandCorrelationResource(
+      capabilities({ listUnsettled: async () => [durable], releaseScope }),
+      scope,
+    );
+
+    await resource.refresh();
+    expect(resource.isScopeLocked()).toBe(true);
+    expect(resource.blockingCount()).toBe(1);
+
+    await resource.releaseBlocking();
+
+    expect(releaseScope).toHaveBeenCalledWith(scope);
+    expect(resource.isScopeLocked()).toBe(false);
+    expect(resource.blockingCount()).toBe(0);
+    expect(resource.pendingCount()).toBe(1);
+    expect(resource.snapshot().value).toEqual([
+      expect.objectContaining({ state: "durableReleased" }),
+    ]);
+  });
+
+  it("does not let an older refresh reactively relock an explicitly released scope", async () => {
+    const staleRead = deferred<CommandCorrelation[]>();
+    let read = 0;
+    const resource = new CommandCorrelationResource(
+      capabilities({
+        listUnsettled: () => {
+          read += 1;
+          return read === 1 ? Promise.resolve([durable]) : staleRead.promise;
+        },
+      }),
+      scope,
+    );
+
+    await resource.refresh();
+    const stale = resource.refresh();
+    await resource.releaseBlocking();
+    staleRead.resolve([durable]);
+    await stale;
+
+    expect(resource.isScopeLocked()).toBe(false);
+    expect(resource.snapshot().value).toEqual([
+      expect.objectContaining({ state: "durableReleased" }),
+    ]);
+  });
+
   it("prevents an older overlapping refresh from publishing after a newer read", async () => {
     const first = deferred<CommandCorrelation[]>();
     const second = deferred<CommandCorrelation[]>();
@@ -175,12 +222,14 @@ function capabilities(overrides: {
   reconcile?(
     correlationId: string,
   ): Promise<ReturnType<typeof durableUnsettled> | ReturnType<typeof completed> | null>;
+  releaseScope?(scopeValue: typeof scope): Promise<void>;
   subscribe?(savedServerId: string, listener: () => void): Promise<() => void>;
 }): CommandCapabilities {
   return {
     listLocalUnsettled: overrides.listUnsettled,
     listUnsettled: overrides.listUnsettled,
     reconcile: overrides.reconcile ?? (async () => null),
+    releaseScope: overrides.releaseScope ?? (async () => undefined),
     subscribe:
       overrides.subscribe ??
       (async () => {

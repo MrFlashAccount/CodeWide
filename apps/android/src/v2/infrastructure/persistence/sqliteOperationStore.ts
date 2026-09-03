@@ -1,4 +1,1 @@
-export {
-  createNativeSyncV2OperationStore,
-  createNativeSyncV2OperationStoreWithDatabase,
-} from "./sqliteOperationStore.native";
+export { createNativeSyncV2OperationStore } from "./sqliteOperationStore.native";

@@ -27,26 +27,30 @@ export interface AgentWorkspaceRow {
 }
 
 interface AgentsWorkspaceProps {
+  actionable: boolean;
   detail: ReactNode;
   onClose(): void;
   onSelect(id: string): void;
   rows: AgentWorkspaceRow[];
   selectedId: string | null;
+  statusMessage: string | null;
 }
 
 interface AgentRowProps {
+  actionable: boolean;
   onSelect(id: string): void;
   row: AgentWorkspaceRow;
   selected: boolean;
 }
 
 interface RenderableAgentWorkspaceRow extends AgentWorkspaceRow {
+  actionable: boolean;
   onSelect(id: string): void;
   selected: boolean;
 }
 
 export function AgentsWorkspace(props: AgentsWorkspaceProps): React.JSX.Element {
-  const { detail, onClose, onSelect, rows, selectedId } = props;
+  const { actionable, detail, onClose, onSelect, rows, selectedId, statusMessage } = props;
   const window = useWindowDimensions();
   const [measuredWidth, setMeasuredWidth] = useState(0);
   const width = measuredWidth > 0 ? measuredWidth : window.width;
@@ -62,6 +66,7 @@ export function AgentsWorkspace(props: AgentsWorkspaceProps): React.JSX.Element 
   });
   const renderableRows = rows.map((row): RenderableAgentWorkspaceRow => ({
     ...row,
+    actionable,
     onSelect,
     selected: row.id === selectedId,
   }));
@@ -83,7 +88,7 @@ export function AgentsWorkspace(props: AgentsWorkspaceProps): React.JSX.Element 
                 Subagents
               </Text>
               <Text numberOfLines={1} style={styles.headerSubtitle}>
-                {rows.length} · newest activity first
+                {statusMessage ?? `${String(rows.length)} · newest activity first`}
               </Text>
             </View>
           </View>
@@ -92,7 +97,7 @@ export function AgentsWorkspace(props: AgentsWorkspaceProps): React.JSX.Element 
             data={renderableRows}
             drawDistance={360}
             estimatedItemSize={66}
-            extraData={selectedId}
+            extraData={`${selectedId ?? ""}:${actionable ? "live" : "retained"}`}
             itemsAreEqual={agentRowsEqual}
             keyExtractor={agentKey}
             ListEmptyComponent={<EmptyAgents />}
@@ -114,18 +119,28 @@ function renderAgent(
   value: LegendListRenderItemProps<RenderableAgentWorkspaceRow>,
 ): React.JSX.Element {
   const { item } = value;
-  return <AgentRow onSelect={item.onSelect} row={item} selected={item.selected} />;
+  return (
+    <AgentRow
+      actionable={item.actionable}
+      onSelect={item.onSelect}
+      row={item}
+      selected={item.selected}
+    />
+  );
 }
 
 function AgentRow(props: AgentRowProps): React.JSX.Element {
-  const { onSelect, row, selected } = props;
-  const open = useEvent(() => onSelect(row.id));
+  const { actionable, onSelect, row, selected } = props;
+  const open = useEvent(() => {
+    if (actionable) onSelect(row.id);
+  });
   const style = selected ? selectedRowStyle : rowStyle;
   return (
     <Pressable
       accessibilityLabel={`Open subagent ${row.title}`}
       accessibilityRole="button"
-      accessibilityState={{ selected }}
+      accessibilityState={{ disabled: !actionable, selected }}
+      disabled={!actionable}
       onPress={open}
       style={style}
     >
@@ -173,14 +188,18 @@ function agentKey(row: AgentWorkspaceRow): string {
   return row.id;
 }
 
-function agentRowsEqual(left: AgentWorkspaceRow, right: AgentWorkspaceRow): boolean {
+function agentRowsEqual(
+  left: RenderableAgentWorkspaceRow,
+  right: RenderableAgentWorkspaceRow,
+): boolean {
   return (
     left === right ||
     (left.id === right.id &&
       left.title === right.title &&
       left.subtitle === right.subtitle &&
       left.active === right.active &&
-      left.time === right.time)
+      left.time === right.time &&
+      left.actionable === right.actionable)
   );
 }
 

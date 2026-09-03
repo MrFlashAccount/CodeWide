@@ -16,19 +16,35 @@ export function uiGenerationSnapshot(): UiGenerationSnapshot {
 
 export function subscribeUiGeneration(listener: () => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  loadUiGeneration();
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
-export function loadUiGeneration(): void {
+function loadUiGeneration(): void {
   if (loading !== null || snapshot.status !== "loading") return;
-  loading = readUiGeneration()
-    .then((generation) => publish({ status: "ready", generation }))
-    .catch(() => publish({ status: "error", message: "Could not read UI generation" }));
+  const pending = readUiGeneration().then(
+    (generation) => {
+      loading = null;
+      publish({ status: "ready", generation });
+    },
+    () => {
+      loading = null;
+      publish({ status: "error", message: "Could not read UI generation" });
+    },
+  );
+  loading = pending;
+}
+
+export function retryUiGeneration(): void {
+  if (loading !== null) return;
+  publish({ status: "loading" });
+  loadUiGeneration();
 }
 
 export async function selectUiGeneration(generation: UiGeneration): Promise<void> {
   await writeUiGeneration(generation);
-  publish({ status: "ready", generation });
 }
 
 function publish(next: UiGenerationSnapshot): void {

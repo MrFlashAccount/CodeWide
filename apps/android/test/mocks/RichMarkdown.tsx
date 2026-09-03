@@ -1,5 +1,11 @@
 import { Text } from "react-native";
 
-export function RichMarkdown({ source }: { source: string }): React.JSX.Element {
-  return <Text>{source}</Text>;
+interface RichMarkdownProps {
+  maxLines?: number;
+  source: string;
+}
+
+export function RichMarkdown(props: RichMarkdownProps): React.JSX.Element {
+  const { maxLines, source } = props;
+  return <Text {...(maxLines === undefined ? {} : { numberOfLines: maxLines })}>{source}</Text>;
 }

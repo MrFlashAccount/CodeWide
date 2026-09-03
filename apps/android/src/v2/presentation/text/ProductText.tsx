@@ -1,4 +1,4 @@
-import type { ComponentProps } from "react";
+import { forwardRef, type ComponentProps } from "react";
 import {
   StyleSheet,
   Text as NativeText,
@@ -10,6 +10,7 @@ import {
 import { productFonts } from "../../ui/productFonts";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "../../ui/typographyPolicy";
 import { typeScale, typeWeight } from "../../theme";
+import { useProductTextScale } from "./TextScaleContext";
 
 type ProductTextTone = "default" | "dim" | "muted" | "danger" | "success" | "warning";
 type ProductTextWeight = "medium" | "regular" | "semibold";
@@ -25,6 +26,7 @@ export function ProductText(
 }
 
 export function PresentationText(textProps: ComponentProps<typeof NativeText>): React.JSX.Element {
+  const readerScale = useProductTextScale();
   const {
     allowFontScaling = true,
     maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
@@ -36,14 +38,24 @@ export function PresentationText(textProps: ComponentProps<typeof NativeText>): 
       {...props}
       allowFontScaling={allowFontScaling}
       maxFontSizeMultiplier={maxFontSizeMultiplier}
-      style={[style, presentationFontStyle(style)]}
+      style={[style, readerTextScaleStyle(style, readerScale), presentationFontStyle(style)]}
     />
   );
 }
 
-export function PresentationTextInput(
-  inputProps: ComponentProps<typeof NativeTextInput>,
-): React.JSX.Element {
+function readerTextScaleStyle(style: StyleProp<TextStyle>, scale: number): TextStyle | null {
+  if (scale === 1) return null;
+  const flattened = StyleSheet.flatten(style);
+  return {
+    ...(flattened?.fontSize === undefined ? {} : { fontSize: flattened.fontSize * scale }),
+    ...(flattened?.lineHeight === undefined ? {} : { lineHeight: flattened.lineHeight * scale }),
+  };
+}
+
+export const PresentationTextInput = forwardRef<
+  NativeTextInput,
+  ComponentProps<typeof NativeTextInput>
+>(function PresentationTextInput(inputProps, forwardedRef): React.JSX.Element {
   const {
     allowFontScaling = true,
     maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
@@ -52,13 +64,14 @@ export function PresentationTextInput(
   } = inputProps;
   return (
     <NativeTextInput
+      ref={forwardedRef}
       {...props}
       allowFontScaling={allowFontScaling}
       maxFontSizeMultiplier={maxFontSizeMultiplier}
       style={[style, presentationFontStyle(style)]}
     />
   );
-}
+});
 
 function presentationFontStyle(style: StyleProp<TextStyle>): TextStyle | null {
   const flattened = StyleSheet.flatten(style);

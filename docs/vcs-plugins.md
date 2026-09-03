@@ -1,7 +1,7 @@
 # VCS providers
 
 The companion owns VCS discovery and diff delivery. Android receives
-source-neutral `vcs.changes@2` and `vcs.diff@2` results and does not execute
+source-neutral `vcs.changes@2`, `vcs.diff@2`, and `vcs.diffPage@1` results and does not execute
 Git, Arc, or provider-specific commands.
 The application also owns the generic isolated-workspace flow. A provider may
 add that option by advertising `workspace.create@1`; the Android client never
@@ -65,6 +65,21 @@ caller which working-tree state produced the result.
 The companion first resolves workspace ownership through `vcs.changes` and
 then asks that same provider for `vcs.diff`. Provider errors are terminal and
 must never expose a Git or rollout diff for an Arc-owned workspace.
+
+### `vcs.diffPage`
+
+Providers advertise `vcs.diffPage@1` when they can stream a full unified diff
+as bounded UTF-8 pages. The request adds byte `offset` and `limit` to the same
+workspace, path, snapshot, and scope identity used by `vcs.diff`. The result
+contains at most `limit` bytes plus `totalBytes`, `nextOffset`, and a revision
+hash of the complete diff. The provider must not materialize the complete diff
+to serve one page.
+
+The companion binds each continuation cursor to the authenticated device,
+thread, path, scope, and returned revision. It rejects the continuation when
+the provider snapshot or full-diff revision changes between pages. Providers
+without this capability can still serve the bounded ordinary preview through
+`vcs.diff@2`, but cannot serve the explicit full-output action.
 
 ### `workspace.inspect`
 

@@ -5,9 +5,9 @@ import { qualifiedThreadRouteParams } from "../../../../../../src/v2/features/na
 
 const SCREEN_OPTIONS = {
   animation: "none",
-  contentStyle: { backgroundColor: "transparent" },
+  contentStyle: { backgroundColor: "#0F0F0F" },
   headerShown: false,
-  presentation: "transparentModal",
+  presentation: "fullScreenModal",
 } as const;
 
 export default function ThreadChangesRoute(): React.JSX.Element {

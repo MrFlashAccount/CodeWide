@@ -18,18 +18,21 @@ use codewide_companion::{
         AudienceSelector, AuthenticatedContextKey, CommandExecution, SemanticSource, SnapshotData,
         SubscriptionCoordinator, SyncV2Runtime, WatchedThreadData,
         domain::{
-            ApprovalAction, CatalogPartitionScope, CatalogScope, PendingRequest, ProjectionChange,
-            SnapshotLimits, ThreadWindow,
+            ApprovalDecision, CatalogPartitionScope, CatalogScope, PendingRequest,
+            ProjectionChange, SnapshotLimits, ThreadWindow,
         },
         protocol::{
-            Action, ActionResult, CatalogSnapshot, Command, CommandResult, CurrentThreadIntent,
-            OpenIntent, Query, QueryResult, ResolutionState, V2Error,
+            CatalogSnapshot, Command, CommandResult, CurrentThreadIntent, OpenIntent, Query,
+            QueryResult, V2Error,
         },
         scalar::{Id, OperationId, U64},
     },
 };
 use serde_json::json;
-use tokio::{sync::watch, time::timeout};
+use tokio::{
+    sync::{Notify, watch},
+    time::timeout,
+};
 
 const TEST_PIN: &str = "sha256/test-companion-pin";
 
@@ -45,35 +48,58 @@ struct FakeSource {
     generation_tx: watch::Sender<u64>,
     generation_value: AtomicU64,
     executions: AtomicUsize,
+    completed_executions: watch::Receiver<usize>,
+    completed_executions_tx: watch::Sender<usize>,
+    execute_entered: Notify,
+    execute_cancelled: Notify,
+    query_entered: Notify,
+    remove_entered: Notify,
     hang_snapshot: AtomicBool,
     hang_install: AtomicBool,
     hang_query: AtomicBool,
     hang_authorize: AtomicBool,
     hang_execute: AtomicBool,
-    hang_resolve: AtomicBool,
     hang_remove: AtomicBool,
     fail_purge: AtomicBool,
     thread_access: Mutex<HashSet<(AuthenticatedContextKey, Id)>>,
+    block_first_install: AtomicBool,
+    first_install_started: Notify,
+    release_first_install: Notify,
+    later_install_started: Notify,
+    install_invocations: AtomicUsize,
+    install_recipient_counts: Mutex<Vec<usize>>,
 }
 
 impl FakeSource {
     fn new() -> Arc<Self> {
         let (generation_tx, generation) = watch::channel(1);
+        let (completed_executions_tx, completed_executions) = watch::channel(0);
         Arc::new(Self {
             coordinator: SubscriptionCoordinator::default(),
             generation,
             generation_tx,
             generation_value: AtomicU64::new(1),
             executions: AtomicUsize::new(0),
+            completed_executions,
+            completed_executions_tx,
+            execute_entered: Notify::new(),
+            execute_cancelled: Notify::new(),
+            query_entered: Notify::new(),
+            remove_entered: Notify::new(),
             hang_snapshot: AtomicBool::new(false),
             hang_install: AtomicBool::new(false),
             hang_query: AtomicBool::new(false),
             hang_authorize: AtomicBool::new(false),
             hang_execute: AtomicBool::new(false),
-            hang_resolve: AtomicBool::new(false),
             hang_remove: AtomicBool::new(false),
             fail_purge: AtomicBool::new(false),
             thread_access: Mutex::new(HashSet::new()),
+            block_first_install: AtomicBool::new(false),
+            first_install_started: Notify::new(),
+            release_first_install: Notify::new(),
+            later_install_started: Notify::new(),
+            install_invocations: AtomicUsize::new(0),
+            install_recipient_counts: Mutex::new(Vec::new()),
         })
     }
 
@@ -104,6 +130,14 @@ impl FakeSource {
                     revision: revision.into(),
                 },
             );
+        }
+        Ok(())
+    }
+
+    async fn wait_for_completed_execution(&self, expected: usize) -> Result<(), Box<dyn Error>> {
+        let mut completed = self.completed_executions.clone();
+        while *completed.borrow_and_update() < expected {
+            timeout(Duration::from_secs(1), completed.changed()).await??;
         }
         Ok(())
     }
@@ -138,15 +172,29 @@ impl SemanticSource for FakeSource {
     async fn install_intent(
         &self,
         _recipient_id: &Id,
-        _intent: &OpenIntent,
+        intent: &OpenIntent,
         _authorization: &AuthorizationContext,
         context: &AuthenticatedContextKey,
-        _generation: u64,
+        generation: u64,
     ) -> Result<(), V2Error> {
         if self.hang_install.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
         }
-        if let Some(current) = &_intent.current_thread {
+        let invocation = self.install_invocations.fetch_add(1, Ordering::SeqCst);
+        if invocation == 0 && self.block_first_install.swap(false, Ordering::SeqCst) {
+            self.first_install_started.notify_one();
+            self.release_first_install.notified().await;
+        } else {
+            self.later_install_started.notify_one();
+        }
+        if let Some(current) = &intent.current_thread {
+            self.install_recipient_counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(
+                    self.coordinator
+                        .current_thread_recipient_count(&current.thread_id, generation),
+                );
             self.thread_access
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -157,6 +205,7 @@ impl SemanticSource for FakeSource {
 
     async fn remove_intent(&self, recipient_id: &Id) {
         if self.hang_remove.load(Ordering::SeqCst) {
+            self.remove_entered.notify_one();
             std::future::pending::<()>().await;
         }
         self.coordinator.remove(recipient_id);
@@ -180,7 +229,12 @@ impl SemanticSource for FakeSource {
             "thread": {
                 "id": thread.thread_id.as_str(), "parentId": null, "title": "Watched",
                 "preview": "", "workspace": "/tmp", "archived": false, "state": "idle",
-                "settings": null, "createdAt": "2026-08-27T00:00:00Z",
+                "settings": null,
+                "readState": {
+                    "kind": "unknown", "latestActivityMarker": null,
+                    "readThroughMarker": null, "unreadCount": null
+                },
+                "createdAt": "2026-08-27T00:00:00Z",
                 "updatedAt": "2026-08-27T00:00:00Z", "lastActivityAt": null,
                 "headTurnId": null
             },
@@ -234,6 +288,7 @@ impl SemanticSource for FakeSource {
         _generation: u64,
     ) -> Result<QueryResult, V2Error> {
         if self.hang_query.load(Ordering::SeqCst) {
+            self.query_entered.notify_one();
             std::future::pending::<()>().await;
         }
         match query {
@@ -282,10 +337,19 @@ impl SemanticSource for FakeSource {
     ) -> CommandExecution {
         self.executions.fetch_add(1, Ordering::SeqCst);
         if self.hang_execute.load(Ordering::SeqCst) {
+            struct CancellationWitness<'a>(&'a Notify);
+
+            impl Drop for CancellationWitness<'_> {
+                fn drop(&mut self) {
+                    self.0.notify_one();
+                }
+            }
+
+            let _cancellation_witness = CancellationWitness(&self.execute_cancelled);
+            self.execute_entered.notify_one();
             std::future::pending::<()>().await;
         }
-        tokio::time::sleep(Duration::from_millis(40)).await;
-        match command {
+        let execution = match command {
             Command::ThreadDelete { thread_id } => {
                 CommandExecution::Completed(CommandResult::ThreadDelete { thread_id })
             }
@@ -298,24 +362,10 @@ impl SemanticSource for FakeSource {
                 CommandExecution::Completed(CommandResult::ThreadDelete { thread_id })
             }
             _ => CommandExecution::Failed(V2Error::invalid_request("unsupported fake command")),
-        }
-    }
-
-    async fn resolve(
-        &self,
-        action: Action,
-        _authorization: &AuthorizationContext,
-        _context: &AuthenticatedContextKey,
-        _generation: u64,
-    ) -> Result<ActionResult, V2Error> {
-        if self.hang_resolve.load(Ordering::SeqCst) {
-            std::future::pending::<()>().await;
-        }
-        let Action::RequestResolve { request_id, .. } = action;
-        Ok(ActionResult::RequestResolve {
-            request_id,
-            state: ResolutionState::AlreadyResolved,
-        })
+        };
+        self.completed_executions_tx
+            .send_modify(|completed| *completed = completed.saturating_add(1));
+        execution
     }
 }
 
@@ -372,6 +422,162 @@ async fn thread_watch_reuses_the_live_epoch_without_a_snapshot() -> Result<(), B
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_first_opens_serialize_registration_and_thread_installation()
+-> Result<(), Box<dyn Error>> {
+    let directory = tempfile::tempdir()?;
+    let source = FakeSource::new();
+    source.block_first_install.store(true, Ordering::SeqCst);
+    let runtime = SyncV2Runtime::new(
+        source.clone(),
+        directory.path().join("v2-install-race-ledger.redb"),
+        TEST_PIN,
+    )?;
+    let (address, server_task) = start_server(directory.path(), runtime).await?;
+    let url = format!("ws://{address}/v2/sync");
+    let mut first = connect_as(&url, "same-device", "threads.read").await?;
+    send(
+        &mut first,
+        json!({
+            "type": "open",
+            "version": 2,
+            "intent": {
+                "catalog": {"activeLimit": 1, "archivedLimit": 1},
+                "currentThread": {"threadId": "same-thread", "turnLimit": 1},
+                "pendingRequests": "currentThread"
+            }
+        }),
+    )
+    .await?;
+    timeout(
+        Duration::from_secs(1),
+        source.first_install_started.notified(),
+    )
+    .await?;
+
+    let mut second = connect_as(&url, "other-device", "threads.read").await?;
+    send(
+        &mut second,
+        json!({
+            "type": "open",
+            "version": 2,
+            "intent": {
+                "catalog": {"activeLimit": 1, "archivedLimit": 1},
+                "currentThread": {"threadId": "same-thread", "turnLimit": 1},
+                "pendingRequests": "currentThread"
+            }
+        }),
+    )
+    .await?;
+    assert!(
+        timeout(
+            Duration::from_millis(100),
+            source.later_install_started.notified()
+        )
+        .await
+        .is_err(),
+        "a second installation entered before the first installation completed"
+    );
+    source.release_first_install.notify_one();
+
+    assert_eq!(receive(&mut first).await?["type"], "snapshot");
+    assert_eq!(receive(&mut second).await?["type"], "snapshot");
+    assert_eq!(
+        *source
+            .install_recipient_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![1, 2]
+    );
+
+    first.close(None).await?;
+    second.close(None).await?;
+    server_task.abort();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn retained_command_receipt_precedes_source_authorization_but_new_command_does_not()
+-> Result<(), Box<dyn Error>> {
+    let directory = tempfile::tempdir()?;
+    let source = FakeSource::new();
+    let runtime = SyncV2Runtime::new(
+        source.clone(),
+        directory.path().join("v2-retained-auth-ledger.redb"),
+        TEST_PIN,
+    )?;
+    let (address, server_task) = start_server(directory.path(), runtime).await?;
+    let url = format!("ws://{address}/v2/sync");
+    let command = json!({
+        "type": "command",
+        "requestId": "delete-initial",
+        "operationId": "delete-operation",
+        "command": {"kind": "thread.delete", "threadId": "deleted-thread"}
+    });
+
+    let mut authorized = connect_as(&url, "retained-device", "threads.read,threads.write").await?;
+    open_and_commit(&mut authorized, "deleted-thread").await?;
+    send(&mut authorized, command.clone()).await?;
+    assert_eq!(receive(&mut authorized).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut authorized).await?["type"], "commandCompleted");
+    authorized.close(None).await?;
+
+    let mut reduced = connect_as(&url, "retained-device", "threads.read").await?;
+    open_and_commit(&mut reduced, "deleted-thread").await?;
+    let mut retry = command;
+    retry["requestId"] = json!("delete-retry-after-scope-loss");
+    send(&mut reduced, retry).await?;
+    assert_eq!(receive(&mut reduced).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut reduced).await?["type"], "commandCompleted");
+    assert_eq!(source.executions.load(Ordering::SeqCst), 1);
+
+    send(
+        &mut reduced,
+        json!({
+            "type": "query",
+            "requestId": "operation-without-scope",
+            "query": {"kind": "operation.get", "operationId": "delete-operation"}
+        }),
+    )
+    .await?;
+    let denied_query = receive(&mut reduced).await?;
+    assert_eq!(denied_query["type"], "queryFailed");
+    assert_eq!(denied_query["error"]["code"], "forbidden");
+
+    let fresh = json!({
+        "type": "command",
+        "requestId": "fresh-without-scope",
+        "operationId": "fresh-operation",
+        "command": {"kind": "thread.delete", "threadId": "deleted-thread"}
+    });
+    send(&mut reduced, fresh.clone()).await?;
+    let rejected = receive(&mut reduced).await?;
+    assert_eq!(rejected["type"], "commandRejected");
+    assert_eq!(rejected["error"]["code"], "forbidden");
+    reduced.close(None).await?;
+
+    let mut restored = connect_as(&url, "retained-device", "threads.read,threads.write").await?;
+    open_and_commit(&mut restored, "deleted-thread").await?;
+    send(
+        &mut restored,
+        json!({
+            "type": "query",
+            "requestId": "operation-with-original-scope",
+            "query": {"kind": "operation.get", "operationId": "delete-operation"}
+        }),
+    )
+    .await?;
+    assert_eq!(receive(&mut restored).await?["type"], "queryCompleted");
+    send(&mut restored, fresh).await?;
+    assert_eq!(receive(&mut restored).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut restored).await?["type"], "commandCompleted");
+    assert_eq!(source.executions.load(Ordering::SeqCst), 2);
+
+    restored.close(None).await?;
+    server_task.abort();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let source = FakeSource::new();
@@ -395,14 +601,17 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
         json!({
             "type": "open",
             "version": 2,
-            "intent": {"catalog": {"activeLimit": 0, "archivedLimit": 0}}
+            "intent": {
+                "catalog": {"activeLimit": 0, "archivedLimit": 0},
+                "pendingRequests": "currentThread"
+            }
         }),
     )
     .await?;
     expect_close_code(&mut missing_nullable, 1008).await?;
 
-    let mut first = connect(&url).await?;
-    let mut second = connect_as(&url, "device-b", "threads.read,threads.write").await?;
+    let mut first = connect_as(&url, "device-a", "threads.read,threads.write,turns.start").await?;
+    let mut second = connect_as(&url, "device-b", "threads.read,threads.write,turns.start").await?;
     open_and_commit(&mut first, "thread-a").await?;
     open_and_commit(&mut second, "thread-b").await?;
     let mut shared = connect(&url).await?;
@@ -435,13 +644,17 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
         1,
         current_thread_audience("device-a", "thread-a")?,
         ProjectionChange::PendingRequestOpened {
-            request: PendingRequest::Approval {
+            request: PendingRequest::CommandApproval {
                 id: Id::new("approval-a")?,
                 generation: U64::new(1),
                 thread_id: Id::new("thread-a")?,
                 turn_id: Id::new("turn-a")?,
-                action: ApprovalAction::RunCommand,
-                summary: "approval".into(),
+                item_id: Id::new("item-a")?,
+                command: Some("echo approval".into()),
+                cwd: Some("/tmp".into()),
+                reason: Some("approval".into()),
+                network_approval_context_json: None,
+                available_decisions: vec![ApprovalDecision::Accept, ApprovalDecision::Decline],
             },
         },
     );
@@ -630,7 +843,8 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
                     "model": null,
                     "effort": null,
                     "approvalPolicy": "never",
-                    "sandbox": "readOnly"
+                    "sandbox": "readOnly",
+                    "personality": null
                 }
             }
         }),
@@ -696,7 +910,9 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
         "commandAccepted"
     );
     response_lost.close(None).await?;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    source
+        .wait_for_completed_execution(executions_before_loss + 1)
+        .await?;
     let mut recovered = connect(&url).await?;
     open_and_commit(&mut recovered, "thread-a").await?;
     send(

@@ -23,7 +23,9 @@ const CHALLENGE_TTL_MS: u64 = 60 * 1_000;
 const MAX_SESSIONS_PER_DEVICE: usize = 16;
 const MAX_CHALLENGES_PER_DEVICE: usize = 8;
 const REGISTRY_VERSION: u8 = 4;
-const DEVICE_SCOPES: [&str; 11] = [
+const DEVICE_SCOPES: [&str; 13] = [
+    "accounts.manage",
+    "accounts.read",
     "approvals.respond",
     "files.download.workspace",
     "files.upload.workspace",
@@ -932,6 +934,24 @@ mod tests {
         assert!(valid_name("Android Fold"));
         assert!(!valid_name("bad\nname"));
         assert!(valid_scopes(&default_scopes()));
+        assert!(
+            !default_scopes()
+                .iter()
+                .any(|scope| scope == "accounts.read")
+        );
+        assert!(
+            !default_scopes()
+                .iter()
+                .any(|scope| scope == "accounts.manage")
+        );
+        assert!(valid_scopes(&[
+            "threads.read".into(),
+            "accounts.read".into()
+        ]));
+        assert!(valid_scopes(&[
+            "threads.read".into(),
+            "accounts.manage".into()
+        ]));
         assert!(!valid_scopes(&["root".into()]));
     }
 

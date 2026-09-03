@@ -9,12 +9,13 @@ pub(super) fn input_block_tag(value: &InputBlock) -> &'static str {
     match value {
         InputBlock::Text { .. } => "text",
         InputBlock::Attachment { .. } => "attachment",
+        InputBlock::Skill { .. } => "skill",
     }
 }
 
 pub(super) fn item_tag(value: &Item) -> &'static str {
     match value {
-        Item::UserText { .. } => "userText",
+        Item::UserMessage { .. } => "userMessage",
         Item::AssistantText { .. } => "assistantText",
         Item::Reasoning { .. } => "reasoning",
         Item::Command { .. } => "command",
@@ -22,12 +23,24 @@ pub(super) fn item_tag(value: &Item) -> &'static str {
         Item::Tool { .. } => "tool",
         Item::Plan { .. } => "plan",
         Item::Attachment { .. } => "attachment",
+        Item::HookPrompt { .. } => "hookPrompt",
+        Item::Collaboration { .. } => "collaboration",
+        Item::SubagentActivity { .. } => "subagentActivity",
+        Item::WebSearch { .. } => "webSearch",
+        Item::ImageView { .. } => "imageView",
+        Item::Sleep { .. } => "sleep",
+        Item::ImageGeneration { .. } => "imageGeneration",
+        Item::ReviewMode { .. } => "reviewMode",
+        Item::ContextCompaction { .. } => "contextCompaction",
+        Item::Unsupported { .. } => "unsupported",
     }
 }
 
 pub(super) fn pending_request_tag(value: &PendingRequest) -> &'static str {
     match value {
-        PendingRequest::Approval { .. } => "approval",
+        PendingRequest::CommandApproval { .. } => "commandApproval",
+        PendingRequest::FileChangeApproval { .. } => "fileChangeApproval",
+        PendingRequest::PermissionApproval { .. } => "permissionApproval",
         PendingRequest::UserInput { .. } => "userInput",
         PendingRequest::Elicitation { .. } => "elicitation",
     }
@@ -39,10 +52,14 @@ pub(super) fn projection_change_tag(value: &ProjectionChange) -> &'static str {
         ProjectionChange::ThreadRemoved { .. } => "threadRemoved",
         ProjectionChange::CurrentThreadReplaced { .. } => "currentThreadReplaced",
         ProjectionChange::TurnUpserted { .. } => "turnUpserted",
+        ProjectionChange::ItemLifecycleChanged { .. } => "itemLifecycleChanged",
         ProjectionChange::PendingRequestOpened { .. } => "pendingRequestOpened",
         ProjectionChange::PendingRequestClosed { .. } => "pendingRequestClosed",
         ProjectionChange::ResourcesChanged { .. } => "resourcesChanged",
+        ProjectionChange::AgentsChanged { .. } => "agentsChanged",
         ProjectionChange::QueueChanged { .. } => "queueChanged",
+        ProjectionChange::ThreadGoalChanged { .. } => "threadGoalChanged",
+        ProjectionChange::SkillsChanged { .. } => "skillsChanged",
         ProjectionChange::AccountsChanged { .. } => "accountsChanged",
     }
 }
@@ -64,6 +81,7 @@ pub(super) fn queue_mutation_tag(value: &QueueMutation) -> &'static str {
         QueueMutation::Cancel { .. } => "cancel",
         QueueMutation::Move { .. } => "move",
         QueueMutation::Retry { .. } => "retry",
+        QueueMutation::Steer { .. } => "steer",
     }
 }
 
@@ -77,10 +95,11 @@ pub(super) fn account_change_tag(value: &AccountChange) -> &'static str {
 
 pub(super) fn request_resolution_tag(value: &RequestResolution) -> &'static str {
     match value {
-        RequestResolution::Approval { .. } => "approval",
+        RequestResolution::CommandApproval { .. } => "commandApproval",
+        RequestResolution::FileChangeApproval { .. } => "fileChangeApproval",
+        RequestResolution::PermissionApproval { .. } => "permissionApproval",
         RequestResolution::UserInput { .. } => "userInput",
         RequestResolution::Elicitation { .. } => "elicitation",
-        RequestResolution::Cancel => "cancel",
     }
 }
 

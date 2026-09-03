@@ -7,6 +7,7 @@ import type {
 import { ObservableResource } from "./resource";
 
 interface RetainedLock {
+  blocking: boolean;
   operationId: string;
 }
 
@@ -60,7 +61,10 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
         const existing = this.#retainedLocks.get(record.correlationId);
         if (existing !== undefined && existing.operationId !== record.operationId) continue;
         if (existing === undefined) loadedAuthority = true;
-        this.#retainedLocks.set(record.correlationId, { operationId: record.operationId });
+        this.#retainedLocks.set(record.correlationId, {
+          blocking: record.state !== "durableReleased",
+          operationId: record.operationId,
+        });
       }
       if (loadedAuthority) this.#authorityGeneration += 1;
       this.publish({ status: "ready", value });
@@ -124,7 +128,10 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
     if (existing !== undefined && existing.operationId !== settlement.operationId) {
       throw new Error("Command correlation identity is immutable");
     }
-    this.#retainedLocks.set(settlement.correlationId, { operationId: settlement.operationId });
+    this.#retainedLocks.set(settlement.correlationId, {
+      blocking: true,
+      operationId: settlement.operationId,
+    });
     this.#settlements.delete(settlement.correlationId);
     this.#authorityGeneration += 1;
     this.#publishCurrent();
@@ -133,7 +140,29 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
 
   isLocked(correlationId: string, operationId?: string): boolean {
     const lock = this.#retainedLocks.get(correlationId);
-    return lock !== undefined && (operationId === undefined || lock.operationId === operationId);
+    return (
+      lock?.blocking === true && (operationId === undefined || lock.operationId === operationId)
+    );
+  }
+
+  isScopeLocked(): boolean {
+    if (this.snapshot().status !== "ready") return true;
+    for (const lock of this.#retainedLocks.values()) {
+      if (lock.blocking) return true;
+    }
+    return false;
+  }
+
+  async releaseBlocking(): Promise<void> {
+    await this.#commands.releaseScope(this.#scope);
+    this.#refreshGeneration += 1;
+    this.#authorityGeneration += 1;
+    for (const lock of this.#retainedLocks.values()) lock.blocking = false;
+    const snapshot = this.snapshot();
+    this.publish({
+      status: "ready",
+      value: snapshot.value.map((record) => ({ ...record, state: "durableReleased" })),
+    });
   }
 
   settlement(correlationId: string, operationId: string): CommandSettlement | null {
@@ -156,6 +185,14 @@ export class CommandCorrelationResource extends ObservableResource<CommandCorrel
       }),
       ...this.#retainedLocks.keys(),
     ]).size;
+  }
+
+  blockingCount(): number {
+    let count = 0;
+    for (const lock of this.#retainedLocks.values()) {
+      if (lock.blocking) count += 1;
+    }
+    return count;
   }
 
   async #start(): Promise<void> {

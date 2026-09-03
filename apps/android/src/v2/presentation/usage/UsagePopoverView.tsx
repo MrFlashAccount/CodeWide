@@ -1,44 +1,19 @@
 import type { ComponentProps, ReactNode } from "react";
 import { Pressable } from "react-native";
 
-import type { PresentationIconName } from "../icons/PresentationIcon";
+import type {
+  UsageAccountViewModel,
+  UsageContextViewModel,
+  UsagePopoverActionViewModel,
+  UsageSessionViewModel,
+} from "./usageTypes";
 
-export interface UsageAccountViewModel {
-  active: boolean;
-  detail: string;
-  enabled: boolean;
-  exhausted: boolean;
-  id: string;
-  label: string;
-  limitState: "disabled" | "limitReached" | "ready" | "refreshRequired" | "unavailable";
-  remainingPercent: number | null;
-  resetAt: string | null;
-  resetIn: string | null;
-}
-
-export interface UsageContextViewModel {
-  availableTokens: number;
-  model: string | null;
-  percent: number;
-  totalTokens: number;
-  usedTokens: number;
-}
-
-export interface UsageSessionViewModel {
-  compactions: number | null;
-  costUsd: number | null;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
-
-export interface UsagePopoverActionViewModel {
-  description?: string;
-  icon: PresentationIconName;
-  id: string;
-  label: string;
-  onPress(): void;
-}
+export type {
+  UsageAccountViewModel,
+  UsageContextViewModel,
+  UsagePopoverActionViewModel,
+  UsageSessionViewModel,
+} from "./usageTypes";
 
 interface UsagePopoverViewProps {
   accounts?: readonly UsageAccountViewModel[];

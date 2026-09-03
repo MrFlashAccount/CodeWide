@@ -1,13 +1,11 @@
-import {
-  BottomSheet,
-  BottomSheetScrollView,
-  BottomSheetView,
-  type BottomSheetProps,
-} from "@expo/ui/community/bottom-sheet";
+import type { BottomSheetProps } from "@expo/ui/community/bottom-sheet";
+import { Host, ModalBottomSheet, RNHostView } from "@expo/ui/jetpack-compose";
 import type { ReactNode } from "react";
 import {
+  ScrollView,
   StyleSheet,
   View,
+  useWindowDimensions,
   type ScrollViewProps,
   type StyleProp,
   type ViewStyle,
@@ -41,52 +39,74 @@ interface PresentationSheetViewProps {
   onOpenChange(isOpen: boolean): void;
 }
 
-export function PresentationSheetView(props: PresentationSheetViewProps): React.JSX.Element {
+export function PresentationSheetView(props: PresentationSheetViewProps): React.JSX.Element | null {
   const { children, contentProps, isOpen, onOpenChange } = props;
+  const { width } = useWindowDimensions();
   const expanded = contentProps.enableDynamicSizing === false;
   const detached = contentProps.detached ?? true;
-  const close = useEvent(() => onOpenChange(false));
+  const fitToContents =
+    contentProps.enableDynamicSizing !== false &&
+    (contentProps.snapPoints === undefined || contentProps.snapPoints.length === 0);
+  const hasMultipleSnapPoints = (contentProps.snapPoints?.length ?? 0) > 1;
+  const maxIndex = Math.max(0, (contentProps.snapPoints?.length ?? 1) - 1);
+  const initialFullyExpanded = hasMultipleSnapPoints && (contentProps.index ?? 0) === maxIndex;
+  const dismiss = useEvent(() => onOpenChange(false));
+
+  if (!isOpen) return null;
+
   return (
-    <BottomSheet
-      backgroundStyle={styles.sheetBackground}
-      enableDynamicSizing={contentProps.enableDynamicSizing ?? true}
-      enablePanDownToClose={contentProps.enablePanDownToClose ?? true}
-      handleComponent={null}
-      index={isOpen ? (contentProps.index ?? 0) : -1}
-      onClose={close}
-      {...(contentProps.enableOverDrag === undefined
-        ? {}
-        : { enableOverDrag: contentProps.enableOverDrag })}
-      {...(contentProps.snapPoints === undefined ? {} : { snapPoints: contentProps.snapPoints })}
-    >
-      <BottomSheetView style={[styles.frame, expanded && styles.expandedFrame]}>
-        <View style={[styles.inset, expanded && styles.expandedInset]}>
+    <Host colorScheme="dark" pointerEvents="none" style={{ position: "absolute", width }}>
+      <ModalBottomSheet
+        containerColor={colors.surfaceContainerHigh}
+        contentColor={colors.text}
+        initialFullyExpanded={initialFullyExpanded}
+        onDismissRequest={dismiss}
+        properties={{
+          shouldDismissOnBackPress: contentProps.enablePanDownToClose ?? true,
+          shouldDismissOnClickOutside: contentProps.enablePanDownToClose ?? true,
+        }}
+        scrimColor={colors.scrim}
+        sheetGesturesEnabled={contentProps.enablePanDownToClose ?? true}
+        showDragHandle={false}
+        skipPartiallyExpanded={fitToContents || !hasMultipleSnapPoints}
+      >
+        <RNHostView matchContents={fitToContents}>
           <View
             style={[
-              styles.surface,
-              detached && styles.detachedSurface,
-              expanded && styles.expandedSurface,
-              contentProps.style,
+              styles.frame,
+              expanded && styles.expandedFrame,
+              !fitToContents && styles.fixedHostContent,
             ]}
           >
-            <View
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-              style={styles.handleArea}
-            >
-              <View style={styles.handle} />
+            <View style={[styles.inset, expanded && styles.expandedInset]}>
+              <View
+                style={[
+                  styles.surface,
+                  detached && styles.detachedSurface,
+                  expanded && styles.expandedSurface,
+                  contentProps.style,
+                ]}
+              >
+                <View
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                  style={styles.handleArea}
+                >
+                  <View style={styles.handle} />
+                </View>
+                {children}
+              </View>
             </View>
-            {children}
           </View>
-        </View>
-      </BottomSheetView>
-    </BottomSheet>
+        </RNHostView>
+      </ModalBottomSheet>
+    </Host>
   );
 }
 
 export function PresentationSheetScrollView(props: ScrollViewProps): React.JSX.Element {
   const { nestedScrollEnabled = true, ...scrollViewProps } = props;
-  return <BottomSheetScrollView nestedScrollEnabled={nestedScrollEnabled} {...scrollViewProps} />;
+  return <ScrollView nestedScrollEnabled={nestedScrollEnabled} {...scrollViewProps} />;
 }
 
 const styles = StyleSheet.create({
@@ -94,8 +114,14 @@ const styles = StyleSheet.create({
   expandedFrame: { flex: 1, minHeight: 0 },
   expandedInset: { flex: 1, minHeight: 0 },
   expandedSurface: { flex: 1, minHeight: 0 },
+  fixedHostContent: { flexGrow: 1, height: 0 },
   frame: { minWidth: 0, width: "100%" },
-  handle: { backgroundColor: colors.textDim, borderRadius: 2, height: 4, width: 36 },
+  handle: {
+    backgroundColor: colors.textDim,
+    borderRadius: 2,
+    height: 4,
+    width: 36,
+  },
   handleArea: {
     alignItems: "center",
     flexShrink: 0,
@@ -110,7 +136,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     width: "100%",
   },
-  sheetBackground: { backgroundColor: colors.surfaceContainerHigh },
   surface: {
     alignSelf: "center",
     backgroundColor: colors.surfaceContainerHigh,

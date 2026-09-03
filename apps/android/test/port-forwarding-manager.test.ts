@@ -22,7 +22,8 @@ describe("port forwarding manager", () => {
   it("keeps unavailable distinct from stopped and transport errors", () => {
     expect(manager).toContain('"stopped" | "connecting" | "live" | "unavailable" | "error"');
     expect(manager).toContain('unavailable ? "Unavailable"');
-    expect(nativeManager).toContain('if (confirmedPorts != null && profile.remotePort !in confirmedPorts) "unavailable"');
+    expect(nativeManager).toContain("val error = portAvailabilityError(profile, discovered)");
+    expect(nativeManager).toContain("profile.serviceKey != currentKey");
     expect(nativeManager).toContain('if (response?.code == 502) "unavailable" else "error"');
   });
 

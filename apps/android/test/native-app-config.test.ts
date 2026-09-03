@@ -64,6 +64,7 @@ const nativeCodeHighlighter = readFileSync(new URL("../android/app/src/main/java
 const nativeShimmerView = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeShimmerTextView.kt", import.meta.url), "utf8");
 const performanceModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt", import.meta.url), "utf8");
 const nativeCodeBlock = readFileSync(new URL("../src/rendering/NativeCodeBlock.tsx", import.meta.url), "utf8");
+const nativeCodeBlockHost = readFileSync(new URL("../src/presentation/nativeCodeBlockHost.tsx", import.meta.url), "utf8");
 const nativeTransport = readFileSync(new URL("../src/native/native-transport.native.ts", import.meta.url), "utf8");
 const nativeTransportWeb = readFileSync(new URL("../src/native/native-transport.web.ts", import.meta.url), "utf8");
 const nativeEngine = readFileSync(new URL("../src/native/native-engine.native.ts", import.meta.url), "utf8");
@@ -74,6 +75,7 @@ const projectPicker = readFileSync(new URL("../src/ui/ProjectPickerSheet.tsx", i
 const heroUIRoot = readFileSync(new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url), "utf8");
 const accountPoolEditor = screen.slice(screen.indexOf("function AccountPoolEditor("), screen.indexOf("function protocolIcon("));
 const waveText = readFileSync(new URL("../src/ui/WaveText.tsx", import.meta.url), "utf8");
+const nativeShimmerTextHost = readFileSync(new URL("../src/presentation/text/nativeShimmerText.tsx", import.meta.url), "utf8");
 const richMarkdown = readFileSync(new URL("../src/rendering/RichMarkdown.tsx", import.meta.url), "utf8");
 const bubble = readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8");
 const documentPreviewHost = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
@@ -950,7 +952,8 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('<NativeCodeBlock value={projection.renderSource} language={nativeCodeLanguageForPath(path)} variant="diff"');
     expect(screen).toContain("language={nativeCodeLanguageForPath(document.request.path)}");
     expect(nativeCodeHighlighter).toContain('val sourceDiff = diff != null && language != "diff"');
-    expect(nativeCodeBlock).toContain('requireNativeComponent<NativeCodeBlockViewProps>("CodexNativeCodeBlock")');
+    expect(nativeCodeBlock).toContain('import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";');
+    expect(nativeCodeBlockHost).toContain('requireNativeComponent<NativeCodeBlockHostProps>("CodexNativeCodeBlock")');
     expect(nativePackage).toContain("listOf(NativeCodeBlockManager(), AnimatedNumberManager(), NativeShimmerTextManager(), NativeRevealManager())");
     expect(nativeCodeManager).toContain('override fun getName(): String = "CodexNativeCodeBlock"');
     expect(nativeCodeView).toContain("Paint source immediately");
@@ -1544,9 +1547,11 @@ describe("checked-in Android project mirrors app config", () => {
     expect(reducedMotionStore).toContain('AccessibilityInfo.addEventListener("reduceMotionChanged"');
     expect(waveText).toContain('useReducedMotionPreference()');
     expect(screen).toContain("durationMs={3_000}");
-    expect(waveText).toContain('requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")');
+    const shimmerRegistration = 'requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")';
+    expect(nativeShimmerTextHost).toContain(shimmerRegistration);
+    expect((`${waveText}\n${nativeShimmerTextHost}`.match(/requireNativeComponent<NativeShimmerTextProps>\("CodexShimmerText"\)/gu) ?? [])).toHaveLength(1);
     expect(waveText).toContain('usePerformanceExperiment("disableTextShimmer")');
-    expect(waveText).toContain("const animated = !reducedMotion && !textShimmerDisabled && NativeShimmerText !== null");
+    expect(waveText).toContain("const animated = !reducedMotion && !textShimmerDisabled");
     expect(screen).toContain("borderTopColor: \"transparent\"");
     expect(screen).toContain("<ActivityIndicator");
     expect(screen).not.toContain("withRepeat(");
@@ -1563,6 +1568,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(waveText).not.toContain("useSharedValue");
     expect(waveText).toContain("styles.measure");
     expect(nativePackage).toContain("NativeShimmerTextManager()");
+    expect((nativePackage.match(/NativeShimmerTextManager\(\)/gu) ?? [])).toHaveLength(1);
     expect(nativeShimmerView).toContain("LinearGradient(");
     expect(nativeShimmerView).toContain("class NativeShimmerTextView(context: Context) : ViewGroup(context)");
     expect(nativeShimmerView).toContain("canvas.clipPath(textPath)");

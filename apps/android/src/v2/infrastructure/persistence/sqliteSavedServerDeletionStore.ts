@@ -1,4 +1,1 @@
-export {
-  createNativeSyncV2SavedServerDeletionStore,
-  createNativeSyncV2SavedServerDeletionStoreWithDatabase,
-} from "./sqliteSavedServerDeletionStore.native";
+export { createNativeSyncV2SavedServerDeletionStore } from "./sqliteSavedServerDeletionStore.native";

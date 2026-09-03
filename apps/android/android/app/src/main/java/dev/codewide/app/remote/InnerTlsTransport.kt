@@ -9,10 +9,12 @@ import java.net.Socket
 import java.net.SocketAddress
 import java.net.SocketException
 import java.net.URI
+import java.util.ArrayDeque
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import javax.net.SocketFactory
 import javax.net.ssl.SSLSocket
 import okhttp3.OkHttpClient
@@ -65,13 +67,24 @@ internal object InnerTlsTransport {
     return URI(scheme, uri.rawAuthority, uri.rawPath, uri.rawQuery, uri.rawFragment).toString()
   }
 
-  fun openSocket(base: OkHttpClient, saved: StoredNativeSession, timeoutMs: Int): Socket {
+  fun openSocket(
+    base: OkHttpClient,
+    saved: StoredNativeSession,
+    timeoutMs: Int,
+    onCarrierCreated: (Socket) -> Unit = {},
+  ): Socket {
     val carrier = PinnedTls.client(base, saved.endpoint, null)
     val raw = TunnelSocket(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH))
-    raw.connect(InetSocketAddress(requireNotNull(URI(saved.endpoint).host), 443), timeoutMs)
-    return (PinnedTls.innerTlsSocketFactory(saved.innerTlsPinSha256, DeviceKeyStore.clientKeyManager(saved.id))
-      .createSocket(raw, requireNotNull(URI(saved.endpoint).host), 443, true) as SSLSocket).apply {
-      startHandshake()
+    onCarrierCreated(raw)
+    return try {
+      raw.connect(InetSocketAddress(requireNotNull(URI(saved.endpoint).host), 443), timeoutMs)
+      (PinnedTls.innerTlsSocketFactory(saved.innerTlsPinSha256, DeviceKeyStore.clientKeyManager(saved.id))
+        .createSocket(raw, requireNotNull(URI(saved.endpoint).host), 443, true) as SSLSocket).apply {
+        startHandshake()
+      }
+    } catch (error: Throwable) {
+      runCatching { raw.close() }
+      throw error
     }
   }
 
@@ -94,10 +107,83 @@ private class TunnelSocketFactory(
     createSocket(address, port)
 }
 
-private sealed interface TunnelChunk {
+internal sealed interface TunnelChunk {
   data class Bytes(val value: ByteArray) : TunnelChunk
   data class Failed(val error: IOException) : TunnelChunk
   data object End : TunnelChunk
+}
+
+/** Byte-bounded carrier queue. Overflow becomes a terminal failure instead of retaining frames. */
+internal class TunnelInboundQueue(
+  private val maximumBytes: Int,
+  private val maximumChunks: Int = DEFAULT_MAXIMUM_CHUNKS,
+) {
+  init {
+    require(maximumBytes > 0) { "Inbound queue capacity must be positive" }
+    require(maximumChunks > 0) { "Inbound queue chunk limit must be positive" }
+  }
+
+  private val lock = ReentrantLock()
+  private val available = lock.newCondition()
+  private val chunks = ArrayDeque<TunnelChunk>()
+  private var queuedBytes = 0
+  private var terminalChunk: TunnelChunk? = null
+
+  fun offer(bytes: ByteArray): Boolean = lock.withLock {
+    if (
+      terminalChunk != null ||
+      chunks.size >= maximumChunks ||
+      bytes.size > maximumBytes - queuedBytes
+    ) return@withLock false
+    chunks.addLast(TunnelChunk.Bytes(bytes))
+    queuedBytes += bytes.size
+    available.signal()
+    true
+  }
+
+  fun fail(error: IOException) = lock.withLock {
+    if (terminalChunk != null) return@withLock
+    chunks.clear()
+    queuedBytes = 0
+    terminalChunk = TunnelChunk.Failed(error)
+    available.signalAll()
+  }
+
+  fun end(discardQueued: Boolean = false) = lock.withLock {
+    if (terminalChunk != null) return@withLock
+    if (discardQueued) {
+      chunks.clear()
+      queuedBytes = 0
+    }
+    terminalChunk = TunnelChunk.End
+    available.signalAll()
+  }
+
+  fun take(timeoutMs: Int): TunnelChunk = lock.withLock {
+    if (timeoutMs > 0) {
+      var remaining = TimeUnit.MILLISECONDS.toNanos(timeoutMs.toLong())
+      while (chunks.isEmpty() && terminalChunk == null) {
+        if (remaining <= 0L) throw java.net.SocketTimeoutException("Secure tunnel read timed out")
+        remaining = available.awaitNanos(remaining)
+      }
+    } else {
+      while (chunks.isEmpty() && terminalChunk == null) available.await()
+    }
+    if (chunks.isEmpty()) return@withLock requireNotNull(terminalChunk)
+    return@withLock chunks.removeFirst().also { chunk ->
+      if (chunk is TunnelChunk.Bytes) queuedBytes -= chunk.value.size
+    }
+  }
+
+  fun queuedByteCount(): Int = lock.withLock { queuedBytes }
+
+  fun queuedChunkCount(): Int = lock.withLock { chunks.size }
+
+  fun isTerminal(): Boolean = lock.withLock { terminalChunk != null }
+
+  companion object {
+    private const val DEFAULT_MAXIMUM_CHUNKS = 1_024
+  }
 }
 
 private class TunnelSocket(
@@ -105,7 +191,7 @@ private class TunnelSocket(
   private val tunnelUrl: String,
 ) : Socket() {
   private val opened = CountDownLatch(1)
-  private val incoming = LinkedBlockingQueue<TunnelChunk>()
+  private val incoming = TunnelInboundQueue(MAX_INBOUND_QUEUED_BYTES)
   private val closed = AtomicBoolean(false)
   @Volatile private var failure: IOException? = null
   @Volatile private var connected = false
@@ -127,7 +213,11 @@ private class TunnelSocket(
       }
 
       override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-        if (bytes.size > 0) incoming.offer(TunnelChunk.Bytes(bytes.toByteArray()))
+        if (bytes.size == 0) return
+        if (bytes.size > MAX_INBOUND_QUEUED_BYTES || !incoming.offer(bytes.toByteArray())) {
+          fail(IOException("Secure tunnel inbound buffer overflow"))
+          webSocket.cancel()
+        }
       }
 
       override fun onMessage(webSocket: WebSocket, text: String) {
@@ -178,20 +268,20 @@ private class TunnelSocket(
     if (!closed.compareAndSet(false, true)) return
     connected = false
     webSocket?.close(1000, "inner_tls_closed")
-    incoming.offer(TunnelChunk.End)
+    incoming.end(discardQueued = true)
     opened.countDown()
   }
 
   private fun fail(error: IOException) {
     failure = error
     connected = false
-    incoming.offer(TunnelChunk.Failed(error))
+    incoming.fail(error)
     opened.countDown()
   }
 
   private fun end() {
     connected = false
-    incoming.offer(TunnelChunk.End)
+    incoming.end()
     opened.countDown()
   }
 
@@ -222,12 +312,7 @@ private class TunnelSocket(
       return count
     }
 
-    private fun takeChunk(): TunnelChunk = if (readTimeoutMs > 0) {
-      incoming.poll(readTimeoutMs.toLong(), TimeUnit.MILLISECONDS)
-        ?: throw java.net.SocketTimeoutException("Secure tunnel read timed out")
-    } else {
-      incoming.take()
-    }
+    private fun takeChunk(): TunnelChunk = incoming.take(readTimeoutMs)
   }
 
   private inner class TunnelOutputStream : OutputStream() {
@@ -253,5 +338,6 @@ private class TunnelSocket(
     private const val DEFAULT_CONNECT_TIMEOUT_MS = 15_000
     private const val MAX_FRAME_BYTES = 64 * 1024
     private const val MAX_QUEUED_BYTES = 4L * 1024 * 1024
+    private const val MAX_INBOUND_QUEUED_BYTES = 4 * 1024 * 1024
   }
 }

@@ -1,48 +1,31 @@
-import {
-  Platform,
-  requireNativeComponent,
-  StyleSheet,
-  View,
-  type ColorValue,
-  type StyleProp,
-  type TextStyle,
-  type ViewStyle,
-} from "react-native";
+import { StyleSheet, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 
+import { NativeShimmerText } from "../../../presentation/text/nativeShimmerText";
 import { productFonts } from "../../ui/productFonts";
 import { PresentationText } from "./ProductText";
-
-interface NativeShimmerTextProps {
-  animate: boolean;
-  color?: ColorValue;
-  fontFamily?: string;
-  fontSize: number;
-  fontWeight?: string;
-  pointerEvents?: "auto" | "box-none" | "box-only" | "none";
-  style: StyleProp<ViewStyle>;
-  text: string;
-  textAlign?: "auto" | "center" | "justify" | "left" | "right";
-}
 
 interface ShimmerTextProps {
   containerStyle?: StyleProp<ViewStyle>;
   style?: StyleProp<TextStyle>;
   testID?: string;
   text: string;
+  widthPolicy?: "bounded" | "intrinsic";
 }
 
-const NativeShimmerText =
-  Platform.OS === "android"
-    ? requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")
-    : null;
-
 export function ShimmerText(props: ShimmerTextProps): React.JSX.Element {
-  const { containerStyle, style, testID = "v2-progress-shimmer", text } = props;
+  const {
+    containerStyle,
+    style,
+    testID = "v2-progress-shimmer",
+    text,
+    widthPolicy = "bounded",
+  } = props;
   const resolved = StyleSheet.flatten(style) ?? {};
   const fontSize = typeof resolved.fontSize === "number" ? resolved.fontSize : 13;
   const color = resolved.color;
   const fontFamily = resolved.fontFamily ?? productFontFamily(resolved.fontWeight);
   const fontWeight = resolved.fontFamily === undefined ? "400" : resolved.fontWeight;
+  const widthStyle = widthPolicy === "intrinsic" ? styles.intrinsicWidth : styles.boundedWidth;
   if (NativeShimmerText === null) {
     return (
       <View
@@ -50,7 +33,7 @@ export function ShimmerText(props: ShimmerTextProps): React.JSX.Element {
         accessibilityLiveRegion="polite"
         accessibilityRole="text"
         accessible
-        style={[styles.shell, containerStyle]}
+        style={[styles.shell, widthStyle, containerStyle]}
         testID={testID}
       >
         <PresentationText ellipsizeMode="tail" numberOfLines={1} style={style}>
@@ -65,7 +48,7 @@ export function ShimmerText(props: ShimmerTextProps): React.JSX.Element {
       accessibilityLiveRegion="polite"
       accessibilityRole="text"
       accessible
-      style={[styles.shell, containerStyle]}
+      style={[styles.shell, widthStyle, containerStyle]}
       testID={testID}
     >
       <PresentationText
@@ -100,13 +83,11 @@ function productFontFamily(weight: TextStyle["fontWeight"]): string {
 }
 
 const styles = StyleSheet.create({
+  boundedWidth: { flexShrink: 1, maxWidth: "100%", minWidth: 0, overflow: "hidden" },
+  intrinsicWidth: { flexGrow: 0, flexShrink: 0 },
   measure: { opacity: 0 },
   shell: {
     alignSelf: "center",
-    flexShrink: 1,
     justifyContent: "center",
-    maxWidth: "100%",
-    minWidth: 0,
-    overflow: "hidden",
   },
 });

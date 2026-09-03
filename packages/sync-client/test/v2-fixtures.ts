@@ -61,6 +61,7 @@ export const savedServerB = v2SavedServerId("saved-server-b");
 export const defaultIntent = {
   catalog: { activeLimit: 2, archivedLimit: 1 },
   currentThread: { threadId: "thread-1", turnLimit: 36 },
+  pendingRequests: "currentThread",
 } as const;
 
 export function setup(
@@ -124,7 +125,14 @@ export function snapshot(
       archived: { limit: 1, returned: archived.length, complete: archived.length < 1 },
     },
     catalog: { active, archived },
-    currentThread: overrides.currentThread ?? null,
+    currentThread: Object.hasOwn(overrides, "currentThread")
+      ? (overrides.currentThread ?? null)
+      : {
+          thread: active[0] ?? thread("thread-1"),
+          turns: [],
+          olderCursor: null,
+          newerCursor: null,
+        },
     pendingRequests: [],
     includedTail: overrides.includedTail ?? [],
     limits: {
@@ -147,6 +155,12 @@ export function thread(id: string, overrides: Partial<V2ThreadSummary> = {}): V2
     archived: false,
     state: "idle",
     settings: null,
+    readState: {
+      kind: "unknown",
+      latestActivityMarker: null,
+      readThroughMarker: null,
+      unreadCount: null,
+    },
     createdAt: "2026-08-27T12:00:00Z",
     updatedAt: "2026-08-27T12:00:00Z",
     lastActivityAt: null,

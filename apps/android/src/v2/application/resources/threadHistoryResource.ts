@@ -13,6 +13,20 @@ export interface ThreadHistorySnapshot {
   canLoadNewer: boolean;
   canLoadOlder: boolean;
   loading: "newer" | "older" | null;
+  restoreCursor: ThreadHistoryRestoreCursor | null;
+  turns: V2TurnView[];
+}
+
+export interface ThreadHistoryRestoreCursor {
+  cursor: string;
+  direction: "newer" | "older";
+  generationId: string;
+}
+
+export interface ThreadHistorySearchSeed {
+  generationId: string | null;
+  newerCursor: string | null;
+  olderCursor: string | null;
   turns: V2TurnView[];
 }
 
@@ -27,6 +41,7 @@ interface ThreadHistoryProjectionSource {
 
 interface ThreadHistoryResourceInput {
   execute(query: V2Query): Promise<V2QueryResult>;
+  restoreCursor?: ThreadHistoryRestoreCursor | null;
   source: ThreadHistoryProjectionSource;
   threadId: string;
 }
@@ -45,6 +60,9 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
   readonly #threadId: string;
   #resident: ResidentWindow;
   #expandedDirection: "newer" | "older" | null = null;
+  #restoreCursor: ThreadHistoryRestoreCursor | null = null;
+  readonly #restoreCursorsByTurnId = new Map<string, ThreadHistoryRestoreCursor>();
+  #restoreRequest: ThreadHistoryRestoreCursor | null;
   #unsubscribe: (() => void) | null = null;
   readonly #inFlight = new Map<"newer" | "older", Promise<void>>();
   #subscriberCount = 0;
@@ -54,6 +72,7 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
       projectionWindow(input.source.snapshot().value, input.threadId) ?? emptyWindow();
     super(presentation(resident, null));
     this.#execute = input.execute;
+    this.#restoreRequest = input.restoreCursor ?? null;
     this.#source = input.source;
     this.#threadId = input.threadId;
     this.#resident = resident;
@@ -62,6 +81,7 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
   start(): void {
     this.#unsubscribe ??= this.#source.subscribe(() => this.#synchronize());
     this.#synchronize();
+    this.#restore().catch(() => undefined);
   }
 
   stop(): void {
@@ -70,10 +90,14 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
   }
 
   override subscribe = (listener: () => void): (() => void) => {
-    const unsubscribe = this.addListener(listener);
+    const subscription = (): void => listener();
+    const unsubscribe = this.addListener(subscription);
+    let subscribed = true;
     this.#subscriberCount += 1;
     if (this.#subscriberCount === 1) this.start();
     return () => {
+      if (!subscribed) return;
+      subscribed = false;
       unsubscribe();
       this.#subscriberCount -= 1;
       if (this.#subscriberCount === 0) this.stop();
@@ -88,6 +112,34 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
     await this.#load("newer");
   }
 
+  /** Exposes the current bounded range and its server cursors to independent readers such as search. */
+  searchSeed(): ThreadHistorySearchSeed {
+    return {
+      generationId: this.#resident.generationId,
+      newerCursor: this.#resident.newerCursor,
+      olderCursor: this.#resident.olderCursor,
+      turns: this.#resident.turns,
+    };
+  }
+
+  /** Returns the opaque bounded-page cursor that can restore a specific resident turn. */
+  restoreCursorFor(turnId: string): ThreadHistoryRestoreCursor | null {
+    return this.#restoreCursorsByTurnId.get(turnId) ?? null;
+  }
+
+  /** Replaces any historical range with the already-materialized authoritative tail. */
+  jumpToLatest(): string | null {
+    const incoming = projectionWindow(this.#source.snapshot().value, this.#threadId);
+    if (incoming === null) throw new Error("Authoritative thread tail is unavailable");
+    this.#resident = incoming;
+    this.#expandedDirection = null;
+    this.#restoreCursor = null;
+    this.#restoreCursorsByTurnId.clear();
+    this.#inFlight.clear();
+    this.#publishReady();
+    return incoming.turns.at(-1)?.id ?? null;
+  }
+
   settle(direction: "newer" | "older"): void {
     if (this.#expandedDirection !== null && this.#expandedDirection !== direction) return;
     this.#expandedDirection = null;
@@ -96,7 +148,8 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
       direction === "older"
         ? this.#resident.turns.slice(0, THREAD_HISTORY_RESIDENT_LIMIT)
         : this.#resident.turns.slice(-THREAD_HISTORY_RESIDENT_LIMIT);
-    this.publish({ status: "ready", value: presentation(this.#resident, null) });
+    this.#retainResidentRestoreCursors();
+    this.#publishReady();
   }
 
   async #load(direction: "newer" | "older"): Promise<void> {
@@ -105,8 +158,9 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
     if (this.#expandedDirection !== null) this.settle(this.#expandedDirection);
     const cursor = direction === "older" ? this.#resident.olderCursor : this.#resident.newerCursor;
     if (cursor === null) return;
-    const generationId = this.#resident.generationId;
-    this.publish({ status: "ready", value: presentation(this.#resident, direction) });
+    const residentAtStart = this.#resident;
+    const generationId = residentAtStart.generationId;
+    this.publish({ status: "ready", value: this.#presentation(direction) });
     const operation = this.#execute({
       cursor,
       detail: "summary",
@@ -119,7 +173,8 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
         if (
           result.kind !== "history.page" ||
           result.threadId !== this.#threadId ||
-          this.#resident.generationId !== generationId
+          this.#resident !== residentAtStart ||
+          residentAtStart.generationId !== generationId
         ) {
           return;
         }
@@ -132,18 +187,27 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
               ? mergeTurns(result.turns, this.#resident.turns)
               : mergeTurns(this.#resident.turns, result.turns),
         };
+        this.#recordRestoreCursors({
+          cursor,
+          direction,
+          generationId,
+          previous: residentAtStart,
+          result,
+        });
         this.#expandedDirection = direction;
-        this.publish({ status: "ready", value: presentation(this.#resident, null) });
+        this.#publishReady();
       })
       .catch((cause: unknown) => {
+        if (this.#resident !== residentAtStart) return;
         this.publish({
           message: cause instanceof Error ? cause.message : "Could not load thread history",
           status: "error",
-          value: presentation(this.#resident, null),
+          value: this.#presentation(null),
         });
+        throw cause;
       })
       .finally(() => {
-        this.#inFlight.delete(direction);
+        if (this.#inFlight.get(direction) === operation) this.#inFlight.delete(direction);
       });
     this.#inFlight.set(direction, operation);
     await operation;
@@ -155,7 +219,11 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
     if (incoming.generationId !== this.#resident.generationId) {
       this.#resident = incoming;
       this.#expandedDirection = null;
-      this.publish({ status: "ready", value: presentation(this.#resident, null) });
+      this.#restoreCursor = null;
+      this.#restoreCursorsByTurnId.clear();
+      this.#restoreRequest = null;
+      this.#inFlight.clear();
+      this.#publishReady();
       return;
     }
     if (this.#resident.newerCursor !== null) {
@@ -169,17 +237,122 @@ export class ThreadHistoryResource extends ObservableResource<ThreadHistorySnaps
       });
       if (!changed) return;
       this.#resident.turns = turns;
-      this.publish({ status: "ready", value: presentation(this.#resident, null) });
+      this.#publishReady();
       return;
     }
-    this.#resident = {
-      generationId: incoming.generationId,
-      newerCursor: incoming.newerCursor,
-      olderCursor: incoming.olderCursor,
-      turns: mergeTurns(this.#resident.turns, incoming.turns).slice(-THREAD_HISTORY_RESIDENT_LIMIT),
-    };
-    this.publish({ status: "ready", value: presentation(this.#resident, null) });
+    this.#resident.generationId = incoming.generationId;
+    this.#resident.newerCursor = incoming.newerCursor;
+    this.#resident.olderCursor = incoming.olderCursor;
+    this.#resident.turns = mergeTurns(this.#resident.turns, incoming.turns).slice(
+      -THREAD_HISTORY_RESIDENT_LIMIT,
+    );
+    this.#restoreCursor = null;
+    this.#restoreCursorsByTurnId.clear();
+    this.#publishReady();
   }
+
+  async #restore(): Promise<void> {
+    const request = this.#restoreRequest;
+    this.#restoreRequest = null;
+    if (
+      request === null ||
+      request.generationId !== this.#resident.generationId ||
+      this.#inFlight.size > 0
+    ) {
+      return;
+    }
+    this.publish({ status: "ready", value: this.#presentation(request.direction) });
+    try {
+      const result = await this.#execute({
+        cursor: request.cursor,
+        detail: "summary",
+        direction: request.direction,
+        kind: "history.page",
+        limit: THREAD_HISTORY_RESIDENT_LIMIT,
+        threadId: this.#threadId,
+      });
+      if (
+        result.kind !== "history.page" ||
+        result.threadId !== this.#threadId ||
+        request.generationId !== this.#resident.generationId
+      ) {
+        return;
+      }
+      this.#resident = {
+        generationId: request.generationId,
+        newerCursor: result.newerCursor,
+        olderCursor: result.olderCursor,
+        turns: result.turns,
+      };
+      this.#restoreCursor = request;
+      this.#restoreCursorsByTurnId.clear();
+      for (const turn of result.turns) this.#restoreCursorsByTurnId.set(turn.id, request);
+      this.#publishReady();
+    } catch (cause: unknown) {
+      this.publish({
+        message: cause instanceof Error ? cause.message : "Could not restore thread history",
+        status: "error",
+        value: this.#presentation(null),
+      });
+    }
+  }
+
+  #presentation(loading: ThreadHistorySnapshot["loading"]): ThreadHistorySnapshot {
+    return presentation(this.#resident, loading, this.#restoreCursor);
+  }
+
+  #publishReady(): void {
+    this.publish({ status: "ready", value: this.#presentation(null) });
+  }
+
+  #recordRestoreCursors(input: RecordRestoreCursorsInput): void {
+    if (input.generationId === null) {
+      this.#restoreCursor = null;
+      this.#restoreCursorsByTurnId.clear();
+      return;
+    }
+    const fetched = {
+      cursor: input.cursor,
+      direction: input.direction,
+      generationId: input.generationId,
+    };
+    const previousCursor = previousPageCursor(input);
+    if (previousCursor !== null) {
+      for (const turn of input.previous.turns) {
+        if (!this.#restoreCursorsByTurnId.has(turn.id)) {
+          this.#restoreCursorsByTurnId.set(turn.id, previousCursor);
+        }
+      }
+    }
+    for (const turn of input.result.turns) this.#restoreCursorsByTurnId.set(turn.id, fetched);
+    this.#restoreCursor = fetched;
+  }
+
+  #retainResidentRestoreCursors(): void {
+    const residentIds = new Set(this.#resident.turns.map((turn) => turn.id));
+    for (const turnId of this.#restoreCursorsByTurnId.keys()) {
+      if (!residentIds.has(turnId)) this.#restoreCursorsByTurnId.delete(turnId);
+    }
+  }
+}
+
+interface RecordRestoreCursorsInput {
+  cursor: string;
+  direction: "newer" | "older";
+  generationId: string | null;
+  previous: ResidentWindow;
+  result: Extract<V2QueryResult, { kind: "history.page" }>;
+}
+
+function previousPageCursor(input: RecordRestoreCursorsInput): ThreadHistoryRestoreCursor | null {
+  if (input.generationId === null) return null;
+  const cursor = input.direction === "older" ? input.result.newerCursor : input.result.olderCursor;
+  if (cursor === null) return null;
+  return {
+    cursor,
+    direction: input.direction === "older" ? "newer" : "older",
+    generationId: input.generationId,
+  };
 }
 
 function emptyWindow(): ResidentWindow {
@@ -210,11 +383,13 @@ function projectionWindow(
 function presentation(
   window: ResidentWindow,
   loading: ThreadHistorySnapshot["loading"],
+  restoreCursor: ThreadHistoryRestoreCursor | null = null,
 ): ThreadHistorySnapshot {
   return {
     canLoadNewer: window.newerCursor !== null,
     canLoadOlder: window.olderCursor !== null,
     loading,
+    restoreCursor,
     turns: window.turns,
   };
 }

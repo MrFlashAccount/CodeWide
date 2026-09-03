@@ -285,6 +285,21 @@ impl DictationService {
         }
     }
 
+    #[cfg(feature = "e2e-command-fault")]
+    /// Validates that a V1 finish request owns a live dictation session before an E2E result is
+    /// injected at the transport boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same ownership/parameter error as a normal finish request.
+    pub(crate) async fn validate_e2e_finish_session(
+        &self,
+        client_id: &str,
+        params: &Value,
+    ) -> Result<(), DictationError> {
+        self.owned_session(client_id, params).await.map(|_| ())
+    }
+
     async fn start(&self, client_id: &str, params: &Value) -> Result<Value, DictationError> {
         let candidates = self
             .sessions

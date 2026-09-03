@@ -1,33 +1,15 @@
 import {
-  Platform,
-  requireNativeComponent,
   StyleSheet,
   View,
-  type ColorValue,
   type StyleProp,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
 
 import { usePerformanceExperiment } from "../data/performance-experiments";
+import { NativeShimmerText } from "../presentation/text/nativeShimmerText";
 import { useReducedMotionPreference } from "../rendering/reduced-motion-store";
 import { AppText as Text, productFontStyle } from "./Typography";
-
-type NativeShimmerTextProps = {
-  text: string;
-  color?: ColorValue;
-  fontSize: number;
-  fontFamily?: string;
-  fontWeight?: string;
-  textAlign?: "auto" | "left" | "right" | "center" | "justify";
-  animate: boolean;
-  pointerEvents?: "auto" | "none" | "box-none" | "box-only";
-  style: StyleProp<ViewStyle>;
-};
-
-const NativeShimmerText = Platform.OS === "android"
-  ? requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")
-  : null;
 
 export function WaveText({
   text,
@@ -42,8 +24,8 @@ export function WaveText({
 }) {
   const reducedMotion = useReducedMotionPreference();
   const textShimmerDisabled = usePerformanceExperiment("disableTextShimmer");
-  const animated = !reducedMotion && !textShimmerDisabled && NativeShimmerText !== null;
-  if (!animated) {
+  const animated = !reducedMotion && !textShimmerDisabled;
+  if (!animated || NativeShimmerText === null) {
     return (
       <View testID={testID} accessible accessibilityRole="text" accessibilityLabel={text} style={[styles.shell, containerStyle]}>
         <Text accessible={false} numberOfLines={1} ellipsizeMode="tail" style={style}>{text}</Text>

@@ -13,13 +13,27 @@ use super::{
     protocol::*,
 };
 
+mod frame_tags;
 mod variant_tags;
+use frame_tags::*;
 use variant_tags::*;
 
 const SCHEMA: &str = include_str!("../../contract/v2.json");
 
 #[test]
 fn every_auxiliary_transport_variant_round_trips_through_the_schema() {
+    assert_case::<AttachmentStageRequest>(
+        "attachmentStageRequest",
+        &json!({"workspace":null,"threadId":null,"name":"file.txt","mediaType":"text/plain","sizeBytes":"4","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+    );
+    assert_case::<AttachmentStageResponse>(
+        "attachmentStageResponse",
+        &json!({"attachmentId":"attachment","uploadPath":"/v2/attachments/attachment","expiresAt":1}),
+    );
+    assert_case::<AttachmentUploadResponse>(
+        "attachmentUploadResponse",
+        &json!({"attachment":{"id":"attachment","name":"file.txt","mediaType":"text/plain","sizeBytes":"4","downloadUrl":null},"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+    );
     assert_case::<FileLocation>("fileLocation", &json!({"rootId":"root","path":"file.txt"}));
     assert_case::<PreviewLocation>("previewLocation", &json!({"path":"file.txt"}));
     assert_case::<ContentLocation>("contentLocation", &json!({"offset":0,"limit":1024}));
@@ -30,6 +44,14 @@ fn every_auxiliary_transport_variant_round_trips_through_the_schema() {
     assert_case::<MediaMaterializeResponse>(
         "mediaMaterializeResponse",
         &json!({"id":"media","expiresAt":1}),
+    );
+    assert_case::<MediaStreamCreateRequest>(
+        "mediaStreamCreateRequest",
+        &json!({"url":"https://example.test/video.mp4"}),
+    );
+    assert_case::<MediaStreamCreateResponse>(
+        "mediaStreamCreateResponse",
+        &json!({"id":"stream","expiresAt":1}),
     );
     assert_case::<PortDescriptor>(
         "portDescriptor",
@@ -43,6 +65,10 @@ fn every_auxiliary_transport_variant_round_trips_through_the_schema() {
     assert_case::<TunnelCreateResponse>(
         "tunnelCreateResponse",
         &json!({"id":"tunnel","expiresAt":1,"basePath":"/v2/tunnels/tunnel/"}),
+    );
+    assert_case::<ThreadChangePatch>(
+        "threadChangePatch",
+        &json!({"turnId":"turn","itemId":"item","kind":"update","diff":"@@ -1 +1 @@"}),
     );
 
     let terminal_clients = [
@@ -59,7 +85,7 @@ fn every_auxiliary_transport_variant_round_trips_through_the_schema() {
     let terminal_servers = [
         json!({"type":"opened","sessionId":"terminal-session","generation":"1","offset":"0"}),
         json!({"type":"output","offset":"0","data":"YQ=="}),
-        json!({"type":"exited","offset":"1"}),
+        json!({"type":"exited","offset":"1","exitCode":0,"signal":null}),
         json!({"type":"error","error":{"code":"replayUnavailable","message":"replay unavailable"}}),
     ];
     assert_registry::<TerminalServerRecord>(
@@ -94,6 +120,21 @@ fn every_auxiliary_transport_variant_round_trips_through_the_schema() {
 }
 
 #[test]
+fn terminal_exit_code_schema_matches_the_u32_transport_domain() {
+    for exit_code in [0_u64, u64::from(u32::MAX)] {
+        assert_case::<TerminalServerRecord>(
+            "terminalServerRecord",
+            &json!({"type":"exited","offset":"1","exitCode":exit_code,"signal":null}),
+        );
+    }
+    for exit_code in [-1_i64, i64::from(u32::MAX) + 1] {
+        let value = json!({"type":"exited","offset":"1","exitCode":exit_code,"signal":null});
+        assert!(!contract::valid_definition("terminalServerRecord", &value));
+        assert!(serde_json::from_value::<TerminalServerRecord>(value).is_err());
+    }
+}
+
+#[test]
 fn every_sync_variant_round_trips_through_the_schema() {
     assert_generated_registry::<InputBlock>("inputBlock", input_block_tag);
     assert_generated_registry::<Item>("item", item_tag);
@@ -102,11 +143,9 @@ fn every_sync_variant_round_trips_through_the_schema() {
     assert_generated_registry::<ClientFrame>("clientFrame", client_frame_tag);
     assert_generated_registry::<Query>("query", query_tag);
     assert_generated_registry::<Command>("command", command_tag);
-    assert_generated_registry::<Action>("action", action_tag);
     assert_generated_registry::<ServerFrame>("serverFrame", server_frame_tag);
     assert_generated_registry::<QueryResult>("queryResult", query_result_tag);
     assert_generated_registry::<CommandResult>("commandResult", command_result_tag);
-    assert_generated_registry::<ActionResult>("actionResult", action_result_tag);
     assert_generated_registry::<OperationReceipt>("operationReceipt", operation_receipt_tag);
     assert_generated_registry::<ThreadUpdate>("threadUpdate", thread_update_tag);
     assert_generated_registry::<QueueMutation>("queueMutation", queue_mutation_tag);
@@ -125,22 +164,30 @@ fn schema_variant_registries_match_rust_owned_exhaustive_registries() {
             "threadWatch",
             "query",
             "command",
-            "action",
             "ping",
         ],
     );
     let queries = &[
         "capabilities.read",
         "models.list",
+        "skills.list",
+        "thread.goal",
+        "thread.agents",
         "catalog.page",
+        "catalog.search",
         "history.page",
         "turn.items",
+        "item.output",
         "thread.resources",
+        "workspace.file",
+        "thread.change",
+        "thread.changeOutput",
         "projects.list",
         "workspace.inspect",
         "queue.list",
         "operation.get",
         "accounts.list",
+        "thread.processes",
     ];
     assert_schema_tags("query", queries);
     assert_schema_tags("queryResult", queries);
@@ -149,8 +196,10 @@ fn schema_variant_registries_match_rust_owned_exhaustive_registries() {
         "thread.fork",
         "thread.update",
         "thread.delete",
+        "thread.markRead",
         "turn.submit",
         "turn.steer",
+        "review.start",
         "turn.interrupt",
         "thread.compact",
         "thread.rollback",
@@ -158,11 +207,13 @@ fn schema_variant_registries_match_rust_owned_exhaustive_registries() {
         "workspace.create",
         "queue.mutate",
         "account.update",
+        "account.login.start",
+        "account.login.cancel",
+        "process.terminate",
+        "request.resolve",
     ];
     assert_schema_tags("command", commands);
     assert_schema_tags("commandResult", commands);
-    assert_schema_tags("action", &["request.resolve"]);
-    assert_schema_tags("actionResult", &["request.resolve"]);
     assert_schema_tags(
         "serverFrame",
         &[
@@ -180,8 +231,6 @@ fn schema_variant_registries_match_rust_owned_exhaustive_registries() {
             "commandCompleted",
             "commandFailed",
             "commandIndeterminate",
-            "actionCompleted",
-            "actionFailed",
             "pong",
         ],
     );
@@ -617,166 +666,4 @@ fn resolve_ref<'a>(schema: &'a Value, branch: &'a Value) -> &'a Value {
         .strip_prefix("#/$defs/")
         .expect("local contract definition reference");
     &schema["$defs"][name]
-}
-
-fn terminal_client_tag(value: &TerminalClientRecord) -> &'static str {
-    match value {
-        TerminalClientRecord::Open { .. } => "open",
-        TerminalClientRecord::Input { .. } => "input",
-        TerminalClientRecord::Resize { .. } => "resize",
-        TerminalClientRecord::Close => "close",
-    }
-}
-
-fn terminal_server_tag(value: &TerminalServerRecord) -> &'static str {
-    match value {
-        TerminalServerRecord::Opened { .. } => "opened",
-        TerminalServerRecord::Output { .. } => "output",
-        TerminalServerRecord::Exited { .. } => "exited",
-        TerminalServerRecord::Error { .. } => "error",
-    }
-}
-
-fn voice_client_tag(value: &VoiceClientRecord) -> &'static str {
-    match value {
-        VoiceClientRecord::Start { .. } => "start",
-        VoiceClientRecord::Batch { .. } => "batch",
-        VoiceClientRecord::Finish { .. } => "finish",
-        VoiceClientRecord::Cancel { .. } => "cancel",
-    }
-}
-
-fn voice_server_tag(value: &VoiceServerRecord) -> &'static str {
-    match value {
-        VoiceServerRecord::Started { .. } => "started",
-        VoiceServerRecord::Ack { .. } => "ack",
-        VoiceServerRecord::Result { .. } => "result",
-        VoiceServerRecord::Retry { .. } => "retry",
-        VoiceServerRecord::Cancelled { .. } => "cancelled",
-        VoiceServerRecord::Error { .. } => "error",
-    }
-}
-
-fn client_frame_tag(value: &ClientFrame) -> &'static str {
-    match value {
-        ClientFrame::Open { .. } => "open",
-        ClientFrame::SnapshotCommitted { .. } => "snapshotCommitted",
-        ClientFrame::ThreadWatch { .. } => "threadWatch",
-        ClientFrame::Query { .. } => "query",
-        ClientFrame::Command { .. } => "command",
-        ClientFrame::Action { .. } => "action",
-        ClientFrame::Ping { .. } => "ping",
-    }
-}
-
-fn query_tag(value: &Query) -> &'static str {
-    match value {
-        Query::CapabilitiesRead => "capabilities.read",
-        Query::ModelsList => "models.list",
-        Query::CatalogPage { .. } => "catalog.page",
-        Query::HistoryPage { .. } => "history.page",
-        Query::TurnItems { .. } => "turn.items",
-        Query::ThreadResources { .. } => "thread.resources",
-        Query::ProjectsList => "projects.list",
-        Query::WorkspaceInspect { .. } => "workspace.inspect",
-        Query::QueueList { .. } => "queue.list",
-        Query::OperationGet { .. } => "operation.get",
-        Query::AccountsList => "accounts.list",
-    }
-}
-
-fn command_tag(value: &Command) -> &'static str {
-    match value {
-        Command::ThreadCreate { .. } => "thread.create",
-        Command::ThreadFork { .. } => "thread.fork",
-        Command::ThreadUpdate { .. } => "thread.update",
-        Command::ThreadDelete { .. } => "thread.delete",
-        Command::TurnSubmit { .. } => "turn.submit",
-        Command::TurnSteer { .. } => "turn.steer",
-        Command::TurnInterrupt { .. } => "turn.interrupt",
-        Command::ThreadCompact { .. } => "thread.compact",
-        Command::ThreadRollback { .. } => "thread.rollback",
-        Command::ProjectAdd { .. } => "project.add",
-        Command::WorkspaceCreate { .. } => "workspace.create",
-        Command::QueueMutate { .. } => "queue.mutate",
-        Command::AccountUpdate { .. } => "account.update",
-    }
-}
-
-fn action_tag(value: &Action) -> &'static str {
-    match value {
-        Action::RequestResolve { .. } => "request.resolve",
-    }
-}
-
-fn server_frame_tag(value: &ServerFrame) -> &'static str {
-    match value {
-        ServerFrame::Snapshot { .. } => "snapshot",
-        ServerFrame::Change { .. } => "change",
-        ServerFrame::Live { .. } => "live",
-        ServerFrame::Reinitialize { .. } => "reinitialize",
-        ServerFrame::ThreadWatched { .. } => "threadWatched",
-        ServerFrame::ThreadWatchFailed { .. } => "threadWatchFailed",
-        ServerFrame::QueryCompleted { .. } => "queryCompleted",
-        ServerFrame::QueryFailed { .. } => "queryFailed",
-        ServerFrame::CommandRejected { .. } => "commandRejected",
-        ServerFrame::CommandExpired { .. } => "commandExpired",
-        ServerFrame::CommandAccepted { .. } => "commandAccepted",
-        ServerFrame::CommandCompleted { .. } => "commandCompleted",
-        ServerFrame::CommandFailed { .. } => "commandFailed",
-        ServerFrame::CommandIndeterminate { .. } => "commandIndeterminate",
-        ServerFrame::ActionCompleted { .. } => "actionCompleted",
-        ServerFrame::ActionFailed { .. } => "actionFailed",
-        ServerFrame::Pong { .. } => "pong",
-    }
-}
-
-fn query_result_tag(value: &QueryResult) -> &'static str {
-    match value {
-        QueryResult::CapabilitiesRead { .. } => "capabilities.read",
-        QueryResult::ModelsList { .. } => "models.list",
-        QueryResult::CatalogPage { .. } => "catalog.page",
-        QueryResult::HistoryPage { .. } => "history.page",
-        QueryResult::TurnItems { .. } => "turn.items",
-        QueryResult::ThreadResources { .. } => "thread.resources",
-        QueryResult::ProjectsList { .. } => "projects.list",
-        QueryResult::WorkspaceInspect { .. } => "workspace.inspect",
-        QueryResult::QueueList { .. } => "queue.list",
-        QueryResult::OperationGet { .. } => "operation.get",
-        QueryResult::AccountsList { .. } => "accounts.list",
-    }
-}
-
-fn command_result_tag(value: &CommandResult) -> &'static str {
-    match value {
-        CommandResult::ThreadCreate { .. } => "thread.create",
-        CommandResult::ThreadFork { .. } => "thread.fork",
-        CommandResult::ThreadUpdate { .. } => "thread.update",
-        CommandResult::ThreadDelete { .. } => "thread.delete",
-        CommandResult::TurnSubmit { .. } => "turn.submit",
-        CommandResult::TurnSteer { .. } => "turn.steer",
-        CommandResult::TurnInterrupt { .. } => "turn.interrupt",
-        CommandResult::ThreadCompact { .. } => "thread.compact",
-        CommandResult::ThreadRollback { .. } => "thread.rollback",
-        CommandResult::ProjectAdd { .. } => "project.add",
-        CommandResult::WorkspaceCreate { .. } => "workspace.create",
-        CommandResult::QueueMutate { .. } => "queue.mutate",
-        CommandResult::AccountUpdate { .. } => "account.update",
-    }
-}
-
-fn action_result_tag(value: &ActionResult) -> &'static str {
-    match value {
-        ActionResult::RequestResolve { .. } => "request.resolve",
-    }
-}
-
-fn operation_receipt_tag(value: &OperationReceipt) -> &'static str {
-    match value {
-        OperationReceipt::Admitted { .. } => "admitted",
-        OperationReceipt::Completed { .. } => "completed",
-        OperationReceipt::Failed { .. } => "failed",
-        OperationReceipt::Indeterminate { .. } => "indeterminate",
-        OperationReceipt::Expired { .. } => "expired",
-    }
 }

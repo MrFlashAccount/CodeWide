@@ -4,6 +4,22 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal enum class PortForwardIdentityMode(val wireValue: String) {
+  MANUAL("manual"),
+  DISCOVERED("discovered"),
+  ;
+
+  companion object {
+    fun fromWireValue(value: String): PortForwardIdentityMode = entries.firstOrNull { it.wireValue == value }
+      ?: error("Port forward identity mode is invalid")
+  }
+}
+
+internal fun portForwardIdentityTransitionAllowed(
+  previous: PortForwardIdentityMode?,
+  next: PortForwardIdentityMode,
+): Boolean = previous != PortForwardIdentityMode.DISCOVERED || next == PortForwardIdentityMode.DISCOVERED
+
 internal data class StoredPortForward(
   val id: String,
   val connectionId: String,
@@ -14,6 +30,11 @@ internal data class StoredPortForward(
   val preference: String,
   val enabled: Boolean,
   val updatedAt: Long,
+  val identityMode: PortForwardIdentityMode = if (serviceKey == null) {
+    PortForwardIdentityMode.MANUAL
+  } else {
+    PortForwardIdentityMode.DISCOVERED
+  },
 )
 
 /** Durable configuration only; live sockets and status remain service-owned. */
@@ -32,6 +53,9 @@ internal class NativePortForwardStore(context: Context) {
     validate(profile)
     val profiles = readUnlocked().associateByTo(linkedMapOf()) { it.id }
     if (!profiles.containsKey(profile.id)) require(profiles.size < MAX_PROFILES) { "Too many saved port forwards" }
+    require(portForwardIdentityTransitionAllowed(profiles[profile.id]?.identityMode, profile.identityMode)) {
+      "A discovered port profile cannot be downgraded to manual"
+    }
     profiles[profile.id] = profile
     writeUnlocked(profiles.values.toList())
     profile
@@ -79,6 +103,13 @@ internal class NativePortForwardStore(context: Context) {
             preference = value.optString("preference", "included"),
             enabled = value.optBoolean("enabled", false),
             updatedAt = value.getLong("updatedAt"),
+            identityMode = if (value.has("identityMode")) {
+              PortForwardIdentityMode.fromWireValue(value.getString("identityMode"))
+            } else if (value.has("serviceKey") && !value.isNull("serviceKey")) {
+              PortForwardIdentityMode.DISCOVERED
+            } else {
+              PortForwardIdentityMode.MANUAL
+            },
           )
           validate(profile)
           add(profile)
@@ -107,6 +138,7 @@ internal class NativePortForwardStore(context: Context) {
         put("preference", profile.preference)
         put("enabled", profile.enabled)
         put("updatedAt", profile.updatedAt)
+        put("identityMode", profile.identityMode.wireValue)
       })
     }
     val envelope = JSONObject().put("version", FORMAT_VERSION).put("profiles", values)
@@ -129,6 +161,10 @@ internal class NativePortForwardStore(context: Context) {
       require(profile.remotePort in 1..65_535) { "Remote port is invalid" }
       require(profile.preferredLocalPort == null || profile.preferredLocalPort in 1..65_535) { "Local port is invalid" }
       require(profile.serviceKey == null || profile.serviceKey.matches(Regex("^[a-f0-9]{64}$"))) { "Service key is invalid" }
+      require(
+        (profile.identityMode == PortForwardIdentityMode.MANUAL && profile.serviceKey == null) ||
+          (profile.identityMode == PortForwardIdentityMode.DISCOVERED && profile.serviceKey != null)
+      ) { "Port forward identity does not match its service key" }
       require(profile.preference in setOf("automatic", "included", "excluded")) { "Forwarding preference is invalid" }
     }
   }

@@ -1,17 +1,25 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 
-import type { V2Query, V2QueryResult } from "@codewide/sync-client/v2";
+import type { V2Query, V2QueryResult, V2TurnView } from "@codewide/sync-client/v2";
 import type { V2Runtime } from "../src/v2/application/v2Runtime";
+import { ComposerAttachmentController } from "../src/v2/application/composer/composerAttachmentController";
+import type { ComposerAttachmentTransport } from "../src/v2/application/ports/composerAttachmentTransport";
 import { V2RuntimeProvider } from "../src/v2/application/react/V2RuntimeContext";
 import { CommandCorrelationResource } from "../src/v2/application/resources/commandCorrelationResource";
 import { ObservableResource } from "../src/v2/application/resources/resource";
+import { ThreadPinsResource } from "../src/v2/application/resources/threadPinsResource";
+import { VoiceInputController } from "../src/v2/application/voiceInputController";
 import { savedServerId, threadId } from "../src/v2/domain/ids";
 import { ChatComposer } from "../src/v2/features/composer/ChatComposer";
 import { ConversationScreen } from "../src/v2/features/conversation/ConversationScreen";
 import { NewThreadForm } from "../src/v2/features/threadList/NewThreadForm";
 import { ActionPressable } from "../src/v2/ui/actions/ActionPressable";
 import { ActionRunner } from "../src/v2/ui/actions/ActionRunner";
+
+jest.mock("../src/v2/platform/drawing/quickdrawImageSource", () => ({
+  quickdrawImageSource: { load: jest.fn() },
+}));
 
 const serverId = savedServerId("saved-server-a");
 const conversationThreadId = threadId("thread-a");
@@ -26,6 +34,7 @@ describe("V2 rendered action surfaces", () => {
       .mockImplementationOnce(() => second.promise);
     renderNewThread(runtimeWith({ executeCorrelated }));
 
+    await waitForComposerUnlocked();
     fillNewThread();
     fireEvent.press(screen.getByLabelText("Send message"));
 
@@ -43,10 +52,9 @@ describe("V2 rendered action surfaces", () => {
         operationId: "operation-a",
       });
       await first.promise;
-      await flushAsyncWork();
     });
 
-    expect(screen.getByLabelText("Message Codex").props.editable).toBe(true);
+    await waitFor(() => expect(screen.getByLabelText("Message Codex").props.editable).toBe(true));
     expect(screen.getByLabelText("Send message").props.accessibilityState).toEqual({
       busy: false,
       disabled: false,
@@ -56,7 +64,7 @@ describe("V2 rendered action surfaces", () => {
     );
 
     fireEvent.press(screen.getByLabelText("Send message"));
-    expect(executeCorrelated).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(executeCorrelated).toHaveBeenCalledTimes(2));
     await act(async () => {
       second.resolve({
         correlationId: "correlation-b",
@@ -65,7 +73,6 @@ describe("V2 rendered action surfaces", () => {
         operationId: "operation-b",
       });
       await second.promise;
-      await flushAsyncWork();
     });
   });
 
@@ -81,6 +88,7 @@ describe("V2 rendered action surfaces", () => {
       onThreadCreated,
     );
 
+    await waitForComposerUnlocked();
     fillNewThread();
     fireEvent.press(screen.getByLabelText("Send message"));
     await screen.findByText("Saved. Waiting for the server.");
@@ -106,6 +114,7 @@ describe("V2 rendered action surfaces", () => {
       const executeCorrelated = jest.fn(async () => terminalSettlement(type));
       renderNewThread(runtimeWith({ executeCorrelated }));
 
+      await waitForComposerUnlocked();
       fillNewThread();
       fireEvent.press(screen.getByLabelText("Send message"));
       await screen.findByText(/Change the draft before trying again\./);
@@ -131,6 +140,7 @@ describe("V2 rendered action surfaces", () => {
       }),
     );
 
+    await waitForComposerUnlocked();
     fireEvent.changeText(screen.getByLabelText("Message Codex"), "keep this message");
     fireEvent.press(screen.getByLabelText("Send message"));
     await screen.findByText("Saved. Waiting for the server.");
@@ -154,6 +164,7 @@ describe("V2 rendered action surfaces", () => {
       }),
     );
 
+    await waitForComposerUnlocked();
     const composer = screen.getByLabelText("Message Codex");
     fireEvent.changeText(composer, "uncertain message");
     fireEvent.press(screen.getByLabelText("Send message"));
@@ -175,27 +186,34 @@ describe("V2 rendered action surfaces", () => {
     expect(screen.getByLabelText("Send message").props.accessibilityState.disabled).toBe(false);
   });
 
-  it("restores process-death status without attaching it to a fresh Conversation draft", async () => {
+  it("locks a fresh Conversation draft after process death until explicit user release", async () => {
+    const executeCorrelated = jest.fn(async () => durableSettlement());
     const controller = correlationController("threadComposer", true);
     renderConversation(
       runtimeWith({
         correlationResource: controller.resource,
-        executeCorrelated: jest.fn(async () => durableSettlement()),
+        executeCorrelated,
         projection: conversationProjection(),
       }),
     );
 
     await screen.findByText("1 saved message is waiting for the server");
-    expect(screen.getByLabelText("Message Codex").props.editable).toBe(true);
+    expect(screen.getByLabelText("Message Codex").props.editable).toBe(false);
+    expect(executeCorrelated).not.toHaveBeenCalled();
+
+    fireEvent.press(screen.getByLabelText("Send another anyway"));
+    await waitFor(() => expect(screen.getByLabelText("Message Codex").props.editable).toBe(true));
+    fireEvent.changeText(screen.getByLabelText("Message Codex"), "fresh draft");
 
     controller.setSettlement(completedSettlement());
     await act(async () => controller.resource.refresh());
 
     expect(screen.queryByText("1 saved message is waiting for the server")).toBeNull();
     expect(screen.getByLabelText("Message Codex").props.editable).toBe(true);
+    expect(screen.getByLabelText("Message Codex").props.value).toBe("fresh draft");
   });
 
-  it("shows the authoritative V2 port count in the conversation context", () => {
+  it("shows the authoritative V2 port count in the conversation context", async () => {
     renderConversation(
       runtimeWith({
         executeCorrelated: jest.fn(async () => durableSettlement()),
@@ -203,21 +221,56 @@ describe("V2 rendered action surfaces", () => {
         projection: conversationProjection(),
       }),
     );
+    await act(async () => undefined);
 
     expect(screen.getByLabelText("Ports: 1")).toBeTruthy();
     expect(screen.queryByLabelText("Ports: 2")).toBeNull();
   });
 
-  it("omits empty changes and attachments from the conversation context", () => {
+  it("omits empty changes and attachments from the conversation context", async () => {
     renderConversation(
       runtimeWith({
         executeCorrelated: jest.fn(async () => durableSettlement()),
         projection: conversationProjection(),
       }),
     );
+    await act(async () => undefined);
 
     expect(screen.queryByLabelText(/Changes/)).toBeNull();
     expect(screen.queryByLabelText(/Attachments/)).toBeNull();
+  });
+
+  it("sends one authoritative queue command while the thread is running", async () => {
+    const executeCorrelated = jest.fn(async () => durableSettlement());
+    renderConversation(
+      runtimeWith({
+        executeCorrelated,
+        projection: conversationProjection([runningTurn()]),
+      }),
+    );
+
+    await waitForComposerUnlocked();
+    expect(screen.getByLabelText("Delivery mode: Queue")).toBeTruthy();
+    fireEvent.changeText(screen.getByLabelText("Message Codex"), "Queue this message");
+    fireEvent.press(screen.getByLabelText("Send message"));
+
+    await waitFor(() =>
+      expect(executeCorrelated).toHaveBeenCalledWith(
+        {
+          savedServerId: serverId,
+          surface: "threadComposer",
+          threadId: conversationThreadId,
+        },
+        {
+          kind: "queue.mutate",
+          mutation: {
+            input: [{ kind: "text", text: "Queue this message" }],
+            kind: "put",
+            threadId: conversationThreadId,
+          },
+        },
+      ),
+    );
   });
 
   it("updates model and thinking through the V2 model chip", async () => {
@@ -242,12 +295,182 @@ describe("V2 rendered action surfaces", () => {
             approvalPolicy: "never",
             effort: "high",
             model: "gpt-5.6-terra",
+            personality: null,
             sandbox: "unrestricted",
           },
         },
         kind: "thread.update",
         threadId: conversationThreadId,
       }),
+    );
+  });
+
+  it("updates the thinking level through the V2 conversation model chip", async () => {
+    const execute = jest.fn(async () => completedThreadUpdate());
+    renderConversation(
+      runtimeWith({
+        execute,
+        executeCorrelated: jest.fn(async () => durableSettlement()),
+        models: modelCatalog(),
+        projection: conversationProjection(),
+      }),
+    );
+
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high"));
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high: Extra high"));
+
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledWith(serverId, {
+        change: {
+          kind: "settings",
+          settings: {
+            approvalPolicy: "never",
+            effort: "xhigh",
+            model: "gpt-5.6-sol",
+            personality: null,
+            sandbox: "unrestricted",
+          },
+        },
+        kind: "thread.update",
+        threadId: conversationThreadId,
+      }),
+    );
+  });
+
+  it("updates personality through the existing-thread model chip", async () => {
+    const execute = jest.fn(async () => completedThreadUpdate());
+    renderConversation(
+      runtimeWith({
+        execute,
+        executeCorrelated: jest.fn(async () => durableSettlement()),
+        models: modelCatalog(),
+        projection: conversationProjection(),
+      }),
+    );
+
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high"));
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high: Friendly"));
+
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledWith(serverId, {
+        change: {
+          kind: "settings",
+          settings: {
+            approvalPolicy: "never",
+            effort: "high",
+            model: "gpt-5.6-sol",
+            personality: "friendly",
+            sandbox: "unrestricted",
+          },
+        },
+        kind: "thread.update",
+        threadId: conversationThreadId,
+      }),
+    );
+  });
+
+  it("renames a V2 thread through the authoritative thread.update command", async () => {
+    const execute = jest.fn(async () => completedThreadUpdate());
+    renderConversation(
+      runtimeWith({
+        execute,
+        executeCorrelated: jest.fn(async () => durableSettlement()),
+        projection: conversationProjection(),
+      }),
+    );
+
+    const voiceActionCount = screen.getAllByLabelText("Voice input").length;
+    fireEvent.press(screen.getByLabelText("Thread menu"));
+    fireEvent.press(screen.getByLabelText("Thread menu: Rename"));
+    expect(screen.getAllByLabelText("Voice input")).toHaveLength(voiceActionCount + 1);
+    fireEvent.changeText(screen.getByLabelText("Thread name"), "Renamed conversation");
+    fireEvent.press(screen.getByLabelText("Rename thread"));
+
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledWith(serverId, {
+        change: { kind: "title", title: "Renamed conversation" },
+        kind: "thread.update",
+        threadId: conversationThreadId,
+      }),
+    );
+  });
+
+  it("submits a new thread with selected model, personality, and permissions", async () => {
+    const executeCorrelated = jest.fn(async () => completedSettlement());
+    renderNewThread(runtimeWith({ executeCorrelated, models: modelCatalog() }));
+
+    await waitForComposerUnlocked();
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high"));
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, high: Extra high"));
+    fireEvent.press(screen.getByLabelText("Model and thinking: GPT-5.6 Sol, xhigh: Friendly"));
+    fireEvent.press(screen.getByLabelText("Permissions: Workspace · Ask"));
+    fireEvent.press(screen.getByLabelText("Permissions: Workspace · Ask: Full access"));
+    fireEvent.press(screen.getByLabelText("Permissions: Full access · Ask: Never ask"));
+    fillNewThread();
+    fireEvent.press(screen.getByLabelText("Send message"));
+
+    await waitFor(() =>
+      expect(executeCorrelated).toHaveBeenCalledWith(
+        {
+          savedServerId: serverId,
+          surface: "newThread",
+          threadId: null,
+        },
+        expect.objectContaining({
+          kind: "turn.submit",
+          settings: {
+            approvalPolicy: "never",
+            effort: "xhigh",
+            model: "gpt-5.6-sol",
+            personality: "friendly",
+            sandbox: "unrestricted",
+          },
+        }),
+      ),
+    );
+  });
+
+  it("creates an isolated workspace before submitting a new thread", async () => {
+    const execute = jest.fn(async () => completedWorkspaceCreate());
+    const executeCorrelated = jest.fn(async () => completedSettlement());
+    renderNewThread(
+      runtimeWith({
+        execute,
+        executeCorrelated,
+        workspaceSupport: {
+          canCreate: true,
+          provider: "git",
+          repositoryRoot: "/workspace/project",
+        },
+      }),
+    );
+
+    await waitForComposerUnlocked();
+    fireEvent.press(await screen.findByLabelText("Workspace mode, in this folder"));
+    fireEvent.press(screen.getByLabelText("Choose workspace mode: New workspace"));
+    fillNewThread();
+    fireEvent.press(screen.getByLabelText("Send message"));
+
+    await waitFor(() =>
+      expect(execute).toHaveBeenCalledWith(serverId, {
+        kind: "workspace.create",
+        name: "project",
+        parentPath: "/workspace",
+        provider: "git",
+      }),
+    );
+    await waitFor(() =>
+      expect(executeCorrelated).toHaveBeenCalledWith(
+        {
+          savedServerId: serverId,
+          surface: "newThread",
+          threadId: null,
+        },
+        expect.objectContaining({
+          kind: "turn.submit",
+          workspace: "/isolated/project",
+        }),
+      ),
     );
   });
 
@@ -273,6 +496,7 @@ describe("V2 rendered action surfaces", () => {
             approvalPolicy: "never",
             effort: "high",
             model: "gpt-5.6-sol",
+            personality: null,
             sandbox: "readOnly",
           },
         },
@@ -280,6 +504,33 @@ describe("V2 rendered action surfaces", () => {
         threadId: conversationThreadId,
       }),
     );
+  });
+
+  it("pins a conversation through the durable V2 thread pin resource", async () => {
+    const pins = new ThreadPinsResource({
+      deleteSavedServer: async () => undefined,
+      list: async () => [],
+      setPinned: async () => undefined,
+    });
+    await pins.start();
+    renderConversation(
+      runtimeWith({
+        executeCorrelated: jest.fn(async () => durableSettlement()),
+        projection: conversationProjection(),
+        threadPins: pins,
+      }),
+    );
+
+    fireEvent.press(screen.getByLabelText("Thread menu"));
+    fireEvent.press(screen.getByLabelText("Thread menu: Pin thread"));
+
+    await waitFor(() => expect(pins.isPinned(serverId, conversationThreadId)).toBe(true));
+    expect(screen.getByText("Unpin thread")).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText("Thread menu: Unpin thread"));
+
+    await waitFor(() => expect(pins.isPinned(serverId, conversationThreadId)).toBe(false));
+    expect(screen.getByText("Pin thread")).toBeTruthy();
   });
 
   it("retains Composer input while pending and rejected, then clears it on terminal success", async () => {
@@ -381,6 +632,10 @@ function fillNewThread(): void {
   fireEvent.changeText(screen.getByLabelText("Message Codex"), "Create the feature");
 }
 
+async function waitForComposerUnlocked(): Promise<void> {
+  await waitFor(() => expect(screen.getByLabelText("Message Codex").props.editable).toBe(true));
+}
+
 function correlationResource(listUnsettled: () => Promise<never[]>): CommandCorrelationResource {
   return new CommandCorrelationResource(
     {
@@ -406,8 +661,11 @@ function runtimeWith(input: {
     port: number;
   }>;
   projection?: ObservableResource<unknown>;
+  threadPins?: ThreadPinsResource;
+  workspaceSupport?: Extract<V2QueryResult, { kind: "workspace.inspect" }>["support"];
 }): V2Runtime {
   const resource = input.correlationResource ?? correlationResource(async () => []);
+  const projection = input.projection ?? conversationProjection();
   const savedServers = new ObservableResource([
     {
       displayName: "Server",
@@ -417,19 +675,63 @@ function runtimeWith(input: {
       id: serverId,
     },
   ]);
+  const attachmentTransport: ComposerAttachmentTransport = {
+    createBytes: (name, mediaType, value) => ({
+      handle: name,
+      mediaType,
+      name,
+      sizeBytes: value.byteLength,
+    }),
+    createText: (name, mediaType, value) => ({
+      handle: name,
+      mediaType,
+      name,
+      sizeBytes: value.length,
+    }),
+    pick: async () => null,
+    reference: (attachment) => ({
+      mediaType: attachment.mediaType,
+      name: attachment.name,
+      sizeBytes: attachment.sizeBytes,
+      token: attachment.handle,
+    }),
+    release: () => undefined,
+    restore: () => null,
+    upload: () => ({
+      cancel: () => undefined,
+      promise: Promise.resolve({
+        attachmentId: "attachment-a",
+        discard: async () => undefined,
+      }),
+    }),
+  };
+  const terminalContext = { errorCount: 0, liveCount: 0, sessionCount: 0 };
   return {
+    composerAttachments: new ComposerAttachmentController({
+      now: () => Date.parse("2026-08-31T22:00:00Z"),
+      store: {
+        delete: async () => undefined,
+        deleteSavedServer: async () => undefined,
+        load: async () => [],
+        upsert: async () => undefined,
+      },
+      transport: attachmentTransport,
+    }),
     commandCorrelations: (_scope: unknown, onSettlement?: (settlement: never) => void) => {
       if (onSettlement !== undefined) resource.attachSettlementObserver(onSettlement);
       return resource;
     },
-    commands: {
+    commandActivations: {
       execute: input.execute ?? (async () => completedThreadUpdate()),
+    },
+    commands: {
       executeCorrelated: input.executeCorrelated,
     },
     now: () => Date.parse("2026-08-31T22:00:00Z"),
     ports: () => new ObservableResource({ ports: input.ports ?? [], scannedAt: 0 }),
-    projection: () => input.projection,
-    query: (_savedServerId: unknown, query: V2Query) => projectQuery(query, input.models),
+    projection: () => projection,
+    query: (_savedServerId: unknown, query: V2Query) =>
+      projectQuery(query, input.models, input.workspaceSupport),
     queries: {
       execute: async () => ({
         kind: "history.page",
@@ -440,17 +742,38 @@ function runtimeWith(input: {
       }),
     },
     savedServers,
+    sessions: {
+      resource: () => projection.snapshot().value,
+    },
+    threadPins:
+      input.threadPins ??
+      new ThreadPinsResource({
+        deleteSavedServer: async () => undefined,
+        list: async () => [],
+        setPinned: async () => undefined,
+      }),
+    terminal: {
+      contextSnapshot: () => terminalContext,
+      subscribe: () => () => undefined,
+    },
+    voice: new VoiceInputController({
+      start: async () => ({ cancel: async () => undefined, finish: async () => undefined }),
+    }),
   } as unknown as V2Runtime;
 }
 
 function projectQuery(
   query: V2Query,
   models: Extract<V2QueryResult, { kind: "models.list" }>["models"] = [],
+  workspaceSupport: Extract<V2QueryResult, { kind: "workspace.inspect" }>["support"] = null,
 ): ObservableResource<unknown> {
-  const inner = new ObservableResource<unknown>(null);
+  const inner = Object.assign(new ObservableResource<unknown>(null), {
+    actionable: () => true,
+    refresh: async () => undefined,
+  });
   inner.publish({
     status: "ready",
-    value: queryResult(query, models),
+    value: queryResult(query, models, workspaceSupport),
   });
   const outer = new ObservableResource<unknown>(null);
   outer.publish({ status: "ready", value: inner });
@@ -460,6 +783,7 @@ function projectQuery(
 function queryResult(
   query: V2Query,
   models: Extract<V2QueryResult, { kind: "models.list" }>["models"],
+  workspaceSupport: Extract<V2QueryResult, { kind: "workspace.inspect" }>["support"],
 ): V2QueryResult {
   if (query.kind === "models.list") return { kind: "models.list", models };
   if (query.kind === "accounts.list") {
@@ -468,11 +792,20 @@ function queryResult(
   if (query.kind === "thread.resources") {
     return {
       attachments: [],
+      availableScopes: [query.scope],
       changes: [],
       kind: "thread.resources",
       revision: "resources:1",
+      review: { deliveries: [], targetKinds: [] },
+      scope: query.scope,
       threadId: query.threadId,
     };
+  }
+  if (query.kind === "workspace.inspect") {
+    return { kind: "workspace.inspect", support: workspaceSupport };
+  }
+  if (query.kind === "queue.list") {
+    return { items: [], kind: "queue.list", nextCursor: null, revision: "revision-1" };
   }
   return {
     kind: "projects.list",
@@ -496,11 +829,19 @@ function correlationController(
     | ReturnType<typeof durableSettlement>
     | ReturnType<typeof completedSettlement>
     | ReturnType<typeof terminalSettlement> = durableSettlement();
+  let released = false;
+  const record = () => ({
+    ...correlationRecord(surface),
+    state: released ? ("durableReleased" as const) : ("durable" as const),
+  });
   const resource = new CommandCorrelationResource(
     {
-      listLocalUnsettled: async () => (recovered ? [correlationRecord(surface)] : []),
-      listUnsettled: async () => (recovered ? [correlationRecord(surface)] : []),
+      listLocalUnsettled: async () => (recovered ? [record()] : []),
+      listUnsettled: async () => (recovered ? [record()] : []),
       reconcile: async () => settlement,
+      releaseScope: async () => {
+        released = true;
+      },
       subscribe: async () => () => undefined,
     } as never,
     {
@@ -574,36 +915,64 @@ function terminalSettlement(type: "commandFailed" | "commandIndeterminate" | "co
   } as const;
 }
 
-function conversationProjection(): ObservableResource<unknown> {
-  const inner = new ObservableResource({
-    operations: [],
-    projections: {
-      live: {
-        currentThread: {
-          newerCursor: null,
-          olderCursor: null,
-          thread: {
-            id: "thread-a",
-            settings: {
-              approvalPolicy: "never",
-              effort: "high",
-              model: "gpt-5.6-sol",
-              sandbox: "unrestricted",
+function conversationProjection(turns: V2TurnView[] = []): ObservableResource<unknown> {
+  const idleRefreshSnapshot = { status: "idle" as const };
+  const inner = Object.assign(
+    new ObservableResource({
+      operations: [],
+      projections: {
+        live: {
+          currentThread: {
+            newerCursor: null,
+            olderCursor: null,
+            thread: {
+              id: "thread-a",
+              settings: {
+                approvalPolicy: "never",
+                effort: "high",
+                model: "gpt-5.6-sol",
+                personality: null,
+                sandbox: "unrestricted",
+              },
+              title: "Conversation",
             },
-            title: "Conversation",
+            turns,
           },
-          turns: [],
         },
+        retained: null,
       },
-      retained: null,
+      state: "live",
+      version: 1,
+    }),
+    {
+      refreshSnapshot: () => idleRefreshSnapshot,
+      requestedThreadAuthority: () => ({
+        message: null,
+        status: "ready" as const,
+        threadId: conversationThreadId,
+      }),
+      subscribeRefresh: () => () => undefined,
     },
-    state: "live",
-    version: 1,
-  });
+  );
   inner.publish({ status: "ready", value: inner.snapshot().value });
   const outer = new ObservableResource<unknown>(null);
   outer.publish({ status: "ready", value: inner });
   return outer;
+}
+
+function runningTurn(): V2TurnView {
+  return {
+    activity: null,
+    completedAt: null,
+    createdAt: "2026-08-31T22:00:00Z",
+    durationMs: null,
+    id: "turn-running",
+    items: [],
+    lifecycle: [],
+    state: "running",
+    threadId: conversationThreadId,
+    usage: null,
+  };
 }
 
 function modelCatalog(): Extract<V2QueryResult, { kind: "models.list" }>["models"] {
@@ -613,12 +982,14 @@ function modelCatalog(): Extract<V2QueryResult, { kind: "models.list" }>["models
       efforts: ["medium", "high", "xhigh"],
       id: "gpt-5.6-sol",
       label: "GPT-5.6 Sol",
+      supportsPersonality: true,
     },
     {
       defaultEffort: "medium",
       efforts: ["low", "medium", "high"],
       id: "gpt-5.6-terra",
       label: "GPT-5.6 Terra",
+      supportsPersonality: false,
     },
   ];
 }
@@ -634,14 +1005,22 @@ function completedThreadUpdate() {
   };
 }
 
+function completedWorkspaceCreate() {
+  return {
+    operationId: "operation-workspace",
+    result: {
+      kind: "workspace.create" as const,
+      path: "/isolated/project",
+      repositoryRoot: "/workspace/project",
+    },
+    type: "commandCompleted" as const,
+  };
+}
+
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => {
     resolve = complete;
   });
   return { promise, resolve };
-}
-
-async function flushAsyncWork(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }

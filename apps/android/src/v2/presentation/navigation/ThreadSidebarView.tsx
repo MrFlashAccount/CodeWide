@@ -2,24 +2,43 @@ import { useState, type ReactNode } from "react";
 import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
-import type { UsageAccountViewModel } from "../usage/UsagePopoverView";
+import type { UsageAccountViewModel, UsagePopoverActionViewModel } from "../usage/UsagePopoverView";
 import { UsagePopoverView } from "../usage/UsagePopoverView";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { PresentationText as Text } from "../text/ProductText";
 import { ShimmerText } from "../text/ShimmerText";
-import { ThreadListView, type ThreadListRow, type ThreadListVoiceControl } from "./ThreadListView";
+import {
+  ThreadListView,
+  type ThreadListPagingControl,
+  type ThreadListRow,
+  type ThreadListRowActions,
+  type ThreadListVoiceControl,
+} from "./ThreadListView";
 import { useEvent } from "../../../react/useEvent";
 
+type ThreadListPartition = "active" | "archived";
+
+interface ThreadSidebarPagingControl {
+  active: Omit<ThreadListPagingControl, "loadMore">;
+  archived: Omit<ThreadListPagingControl, "loadMore">;
+  loadMore(partition: ThreadListPartition): Promise<void>;
+}
+
 interface ThreadSidebarViewProps {
+  actions?: ThreadListRowActions;
   connectionState: string;
+  onActionError?(message: string): void;
   onChangeQuery?(query: string): void;
   onNewThread(): void;
   onOpen(id: string): void;
+  onPrewarm?(id: string): void;
+  paging?: ThreadSidebarPagingControl;
   query?: string;
   rows: ThreadListRow[];
   selectedId?: string;
   title: ReactNode;
   usageAccounts?: readonly UsageAccountViewModel[];
+  usageActions?: readonly UsagePopoverActionViewModel[];
   voice?: ThreadListVoiceControl;
 }
 
@@ -31,15 +50,20 @@ interface HeaderActionProps {
 
 export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Element {
   const {
+    actions,
     connectionState,
+    onActionError,
     onChangeQuery,
     onNewThread,
     onOpen,
+    onPrewarm,
+    paging,
     query,
     rows,
     selectedId,
     title,
     usageAccounts,
+    usageActions,
     voice,
   } = props;
   const connecting = connectionState !== "live";
@@ -48,6 +72,22 @@ export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Elem
   const visibleRows = rows.filter((row) => (row.archived === true) === archived);
   const backToThreads = useEvent(() => setArchived(false));
   const openArchived = useEvent(() => setArchived(true));
+  const loadMore = useEvent(async (): Promise<void> => {
+    await paging?.loadMore(archived ? "archived" : "active");
+  });
+  const partitionPaging = paging?.[archived ? "archived" : "active"];
+  const listPaging =
+    partitionPaging === undefined
+      ? undefined
+      : {
+          canLoadMore: partitionPaging.canLoadMore,
+          error: partitionPaging.error,
+          loading: partitionPaging.loading,
+          loadMore,
+          ...(partitionPaging.loadingLabel === undefined
+            ? {}
+            : { loadingLabel: partitionPaging.loadingLabel }),
+        };
   return (
     <View style={styles.root}>
       <View style={styles.header}>
@@ -93,6 +133,7 @@ export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Elem
                   label: "Archived threads",
                   onPress: openArchived,
                 },
+                ...(usageActions ?? []),
               ]}
               align="end"
               placement="bottom"
@@ -106,8 +147,12 @@ export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Elem
       </View>
       <ThreadListView
         onOpen={onOpen}
+        {...(onPrewarm === undefined ? {} : { onPrewarm })}
         rows={visibleRows}
         showSections={!archived}
+        {...(actions === undefined ? {} : { actions })}
+        {...(onActionError === undefined ? {} : { onActionError })}
+        {...(listPaging === undefined ? {} : { paging: listPaging })}
         {...(onChangeQuery === undefined ? {} : { onChangeQuery })}
         {...(query === undefined ? {} : { query })}
         {...(selectedId === undefined ? {} : { selectedId })}

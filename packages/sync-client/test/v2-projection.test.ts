@@ -233,9 +233,159 @@ describe("Sync V2 projection generations", () => {
     session.stop();
   });
 
+  it("escapes a synchronous transport-open failure through the normal reconnect path", async () => {
+    const socket = new FakeV2Socket();
+    let attempts = 0;
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: {
+        openSync: () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("transport unavailable");
+          return socket;
+        },
+      },
+      intent: defaultIntent,
+      projectionStore: new MemoryV2ProjectionStore(),
+      operationStore: new MemoryV2OperationStore(),
+      reconnectDelayMs: 0,
+    });
+
+    session.start();
+
+    await waitFor(() => socket.listenerCount("open") > 0);
+    expect(attempts).toBe(2);
+    session.stop();
+  });
+
+  it("reconnects when the protocol Open frame cannot be sent", async () => {
+    const first = new FakeV2Socket();
+    first.send = () => {
+      throw new Error("send failed");
+    };
+    const second = new FakeV2Socket();
+    let attempt = 0;
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: { openSync: () => (attempt++ === 0 ? first : second) },
+      intent: defaultIntent,
+      projectionStore: new MemoryV2ProjectionStore(),
+      operationStore: new MemoryV2OperationStore(),
+      reconnectDelayMs: 0,
+    });
+    session.start();
+    await waitFor(() => first.listenerCount("open") > 0);
+    first.open();
+
+    expect(first.closes.at(-1)).toEqual({ code: 1011, reason: "open_send_failed" });
+    await waitFor(() => second.listenerCount("open") > 0);
+    session.stop();
+  });
+
+  it.each([
+    ["snapshot", "snapshot_timeout"],
+    ["commit", "snapshot_commit_timeout"],
+    ["live", "live_timeout"],
+  ] as const)(
+    "reconnects a pong-responsive connection stalled before %s progress",
+    async (stage, expectedReason) => {
+      const projections = new MemoryV2ProjectionStore();
+      let releaseCommit: () => void = () => undefined;
+      const commitBarrier = new Promise<void>((resolve) => {
+        if (stage === "commit") releaseCommit = resolve;
+        else resolve();
+      });
+      const store: V2ProjectionStore = {
+        abandonEpoch: (savedServerId, epochId) => projections.abandonEpoch(savedServerId, epochId),
+        active: (savedServerId) => projections.active(savedServerId),
+        applyChange: (savedServerId, epochId, watermark, change) =>
+          projections.applyChange(savedServerId, epochId, watermark, change),
+        commitSnapshot: async (savedServerId, value, signal) => {
+          await commitBarrier;
+          return projections.commitSnapshot(savedServerId, value, signal);
+        },
+        deleteSavedServer: (savedServerId) => projections.deleteSavedServer(savedServerId),
+        hasSavedServerData: (savedServerId) => projections.hasSavedServerData(savedServerId),
+        retained: (savedServerId) => projections.retained(savedServerId),
+        subscribe: (savedServerId, listener) => projections.subscribe(savedServerId, listener),
+      };
+      const socket = new FakeV2Socket();
+      const session = new SyncV2Session({
+        savedServerId: savedServerA,
+        transportLease: { openSync: () => socket },
+        intent: { ...defaultIntent, currentThread: null },
+        projectionStore: store,
+        operationStore: new MemoryV2OperationStore(),
+        reconnectDelayMs: 0,
+        heartbeatIntervalMs: 2,
+        heartbeatTimeoutMs: 100,
+        initializationTimeoutMs: 20,
+      });
+      session.start();
+      await waitFor(() => socket.listenerCount("open") > 0);
+      socket.open();
+      if (stage !== "snapshot") socket.emit(snapshot({ currentThread: null }));
+      if (stage === "live") {
+        await waitFor(() => socket.sent.some((frame) => frame.type === "snapshotCommitted"));
+      }
+      let answeredPings = 0;
+      const pongResponder = setInterval(() => {
+        const pings = socket.sent.filter((frame) => frame.type === "ping");
+        const ping = pings[answeredPings];
+        if (ping === undefined) return;
+        answeredPings += 1;
+        socket.emit({ type: "pong", nonce: ping.nonce });
+      }, 1);
+
+      await waitFor(() => socket.closes.at(-1)?.reason === expectedReason);
+      clearInterval(pongResponder);
+      releaseCommit();
+      await waitFor(() => socket.listenerCount("open") > 1);
+      expect(answeredPings).toBeGreaterThan(0);
+      session.stop();
+    },
+  );
+
+  it.each([
+    [defaultIntent, snapshot({ currentThread: null })],
+    [
+      { ...defaultIntent, currentThread: null },
+      snapshot({
+        currentThread: {
+          newerCursor: null,
+          olderCursor: null,
+          thread: thread("thread-1"),
+          turns: [],
+        },
+      }),
+    ],
+  ] as const)(
+    "rejects a snapshot outside the requested thread authority",
+    async (intent, value) => {
+      const socket = new FakeV2Socket();
+      const session = new SyncV2Session({
+        savedServerId: savedServerA,
+        transportLease: { openSync: () => socket },
+        intent,
+        projectionStore: new MemoryV2ProjectionStore(),
+        operationStore: new MemoryV2OperationStore(),
+        reconnectDelayMs: 60_000,
+        heartbeatIntervalMs: 60_000,
+      });
+      session.start();
+      await waitFor(() => socket.listenerCount("open") > 0);
+      socket.open();
+      socket.emit(value);
+
+      expect(socket.closes.at(-1)).toEqual({ code: 1008, reason: "snapshot_thread_mismatch" });
+      session.stop();
+    },
+  );
+
   it("changes the watched thread inside the live epoch without reconnecting", async () => {
     const store = new MemoryV2ProjectionStore();
     const { session, socket } = setup(store);
+    session.updateIntent({ ...defaultIntent, currentThread: null });
     await makeLive(socket, session, snapshot({ currentThread: null }));
 
     const watched = session.watchThread("thread-2", 36);
@@ -268,6 +418,28 @@ describe("Sync V2 projection generations", () => {
     session.stop();
   });
 
+  it("rejects a thread-watch acknowledgement that did not publish the requested thread", async () => {
+    const store = new MemoryV2ProjectionStore();
+    const { session, socket } = setup(store);
+    await makeLive(socket, session);
+
+    const watched = session.watchThread("thread-2", 36);
+    await waitFor(() => socket.sent.some((frame) => frame.type === "threadWatch"));
+    const request = socket.sent.find((frame) => frame.type === "threadWatch");
+    socket.emit({
+      type: "threadWatched",
+      requestId: request?.requestId,
+      epochId: "epoch-1",
+    });
+
+    await expect(watched).rejects.toThrow("did not publish its requested thread");
+    expect(socket.closes.at(-1)).toEqual({
+      code: 1008,
+      reason: "thread_watch_projection_mismatch",
+    });
+    session.stop();
+  });
+
   it("partitions state by saved server and retains older metadata only within that partition", async () => {
     const store = new MemoryV2ProjectionStore();
     await store.commitSnapshot(savedServerA, snapshot({ active: [thread("older")] }));
@@ -288,6 +460,42 @@ describe("Sync V2 projection generations", () => {
       ]),
     );
     expect(await store.active(savedServerB)).toBeNull();
+  });
+
+  it("rebuilds reconnect catalog order from the authoritative snapshot before retained rows", async () => {
+    const store = new MemoryV2ProjectionStore();
+    const equalTimestamp = "2026-08-27T12:00:00Z";
+    const first = thread("first", {
+      lastActivityAt: equalTimestamp,
+      updatedAt: equalTimestamp,
+    });
+    const second = thread("second", {
+      lastActivityAt: equalTimestamp,
+      updatedAt: equalTimestamp,
+    });
+    const retained = thread("retained", { archived: true });
+    await store.commitSnapshot(
+      savedServerA,
+      snapshot({ active: [first, second], archived: [retained] }),
+    );
+
+    await store.commitSnapshot(
+      savedServerA,
+      snapshot({
+        active: [second, first],
+        archived: [],
+        epochId: "epoch-2",
+        revision: "sync-v2-revision:2",
+      }),
+    );
+
+    expect(
+      (await store.active(savedServerA))?.catalog.map((entry) => [entry.thread.id, entry.coverage]),
+    ).toEqual([
+      ["second", "current"],
+      ["first", "current"],
+      ["retained", "outsideCurrentScope"],
+    ]);
   });
 
   it("enforces declared catalog limits and keeps current-thread metadata coherent", async () => {
@@ -325,6 +533,80 @@ describe("Sync V2 projection generations", () => {
     expect((await store.active(savedServerA))?.currentThread).toBeNull();
   });
 
+  it("moves an updated tail thread to the front of its catalog partition", async () => {
+    const store = new MemoryV2ProjectionStore();
+    await store.commitSnapshot(
+      savedServerA,
+      snapshot({ active: [thread("front"), thread("tail")] }),
+    );
+
+    await store.applyChange(savedServerA, "epoch-1", "1", {
+      kind: "threadUpserted",
+      thread: thread("tail", {
+        lastActivityAt: "2026-08-27T12:01:00Z",
+        updatedAt: "2026-08-27T12:01:00Z",
+      }),
+    });
+
+    const currentActive = (await store.active(savedServerA))?.catalog.filter(
+      (entry) => entry.coverage === "current" && !entry.thread.archived,
+    );
+    expect(currentActive?.map((entry) => entry.thread.id)).toEqual(["tail", "front"]);
+    expect(currentActive?.at(-1)?.thread.id).toBe("front");
+  });
+
+  it("idempotently advances live item lifecycle and preserves it across turn refreshes", async () => {
+    const store = new MemoryV2ProjectionStore();
+    const baseTurn = {
+      id: "turn-1",
+      threadId: "thread-1",
+      state: "running" as const,
+      createdAt: "2026-08-27T12:00:00Z",
+      completedAt: null,
+      durationMs: null,
+      activity: null,
+      usage: null,
+      items: [],
+      lifecycle: [],
+    };
+    await store.commitSnapshot(
+      savedServerA,
+      snapshot({
+        currentThread: {
+          thread: thread("thread-1"),
+          turns: [baseTurn],
+          olderCursor: null,
+          newerCursor: null,
+        },
+      }),
+    );
+    const started = {
+      item: { kind: "contextCompaction" as const, id: "compaction-1" },
+      phase: "started" as const,
+      preTurn: true,
+    };
+    await store.applyChange(savedServerA, "epoch-1", "1", {
+      kind: "itemLifecycleChanged",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      lifecycle: started,
+    });
+    await store.applyChange(savedServerA, "epoch-1", "2", {
+      kind: "itemLifecycleChanged",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      lifecycle: { ...started, phase: "completed" },
+    });
+    await store.applyChange(savedServerA, "epoch-1", "3", {
+      kind: "turnUpserted",
+      turn: { ...baseTurn, items: [{ kind: "contextCompaction", id: "compaction-1" }] },
+    });
+
+    expect((await store.active(savedServerA))?.currentThread?.turns[0]?.lifecycle).toEqual([
+      { ...started, phase: "completed" },
+    ]);
+  });
+
   it("exposes every semantic invalidation to projection consumers", async () => {
     const store = new MemoryV2ProjectionStore();
     await store.commitSnapshot(savedServerA, snapshot());
@@ -342,6 +624,16 @@ describe("Sync V2 projection generations", () => {
       kind: "accountsChanged",
       revision: "accounts:1",
     });
+    await store.applyChange(savedServerA, "epoch-1", "4", {
+      kind: "threadGoalChanged",
+      threadId: "thread-1",
+      revision: "goal:1",
+    });
+    await store.applyChange(savedServerA, "epoch-1", "5", {
+      kind: "skillsChanged",
+      workspace: null,
+      revision: "skills:1",
+    });
     const projection = await store.active(savedServerA);
     expect(projection?.resourceRevisions).toEqual({ "thread-1": "resources:1" });
     expect(projection?.queueRevisions).toEqual({ "*": "queue:1" });
@@ -350,6 +642,8 @@ describe("Sync V2 projection generations", () => {
       ["resourcesChanged", "1"],
       ["queueChanged", "2"],
       ["accountsChanged", "3"],
+      ["threadGoalChanged", "4"],
+      ["skillsChanged", "5"],
     ]);
   });
 
@@ -496,6 +790,120 @@ describe("Sync V2 projection generations", () => {
     sockets[1]!.emit(snapshot({ epochId: "epoch-2", revision: "sync-v2-revision:2" }));
     await waitFor(() => sockets[1]!.sent.some((frame) => frame.type === "snapshotCommitted"));
     expect((await base.active(savedServerA))?.epochId).toBe("epoch-2");
+    session.stop();
+  });
+
+  it("closes an authority that never answers a query", async () => {
+    const socket = new FakeV2Socket();
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: { openSync: () => socket },
+      intent: defaultIntent,
+      projectionStore: new MemoryV2ProjectionStore(),
+      operationStore: new MemoryV2OperationStore(),
+      reconnectDelayMs: 60_000,
+      requestTimeoutMs: 5,
+      heartbeatIntervalMs: 60_000,
+    });
+    await makeLive(socket, session);
+
+    const request = session.query({ kind: "models.list" });
+
+    await expect(request).rejects.toThrow("timed out");
+    expect(socket.closes.at(-1)).toEqual({ code: 1011, reason: "query_timeout" });
+    session.stop();
+  });
+
+  it("times out a thread watch while the connection never reaches Live", async () => {
+    const socket = new FakeV2Socket();
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: { openSync: () => socket },
+      intent: { ...defaultIntent, currentThread: null },
+      projectionStore: new MemoryV2ProjectionStore(),
+      operationStore: new MemoryV2OperationStore(),
+      reconnectDelayMs: 60_000,
+      requestTimeoutMs: 5,
+      heartbeatIntervalMs: 60_000,
+    });
+    session.start();
+    await waitFor(() => socket.listenerCount("open") > 0);
+
+    await expect(session.watchThread("thread-2", 36)).rejects.toThrow("timed out");
+    expect(socket.closes.at(-1)).toEqual({ code: 1011, reason: "thread_watch_timeout" });
+    session.stop();
+  });
+
+  it("keeps the thread-watch deadline armed until preceding projection work settles", async () => {
+    let releaseApply!: () => void;
+    const blockedApply = new Promise<void>((resolve) => {
+      releaseApply = resolve;
+    });
+    const projections = new MemoryV2ProjectionStore();
+    const store: V2ProjectionStore = {
+      abandonEpoch: (savedServerId, epochId) => projections.abandonEpoch(savedServerId, epochId),
+      active: (savedServerId) => projections.active(savedServerId),
+      applyChange: async (savedServerId, epochId, watermark, change) => {
+        await blockedApply;
+        await projections.applyChange(savedServerId, epochId, watermark, change);
+      },
+      commitSnapshot: (savedServerId, value, signal) =>
+        projections.commitSnapshot(savedServerId, value, signal),
+      deleteSavedServer: (savedServerId) => projections.deleteSavedServer(savedServerId),
+      hasSavedServerData: (savedServerId) => projections.hasSavedServerData(savedServerId),
+      retained: (savedServerId) => projections.retained(savedServerId),
+      subscribe: (savedServerId, listener) => projections.subscribe(savedServerId, listener),
+    };
+    const socket = new FakeV2Socket();
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: { openSync: () => socket },
+      intent: defaultIntent,
+      projectionStore: store,
+      operationStore: new MemoryV2OperationStore(),
+      reconnectDelayMs: 60_000,
+      requestTimeoutMs: 5,
+      heartbeatIntervalMs: 60_000,
+    });
+    await makeLive(socket, session);
+    const watched = session.watchThread("thread-2", 36);
+    await waitFor(() => socket.sent.some((frame) => frame.type === "threadWatch"));
+    const request = socket.sent.find((frame) => frame.type === "threadWatch");
+    socket.emit({
+      type: "change",
+      epochId: "epoch-1",
+      watermark: "1",
+      change: { kind: "threadUpserted", thread: thread("thread-2") },
+    });
+    socket.emit({ type: "threadWatched", requestId: request?.requestId, epochId: "epoch-1" });
+
+    await expect(watched).rejects.toThrow("timed out");
+    expect(socket.closes.at(-1)?.reason).toBe("thread_watch_timeout");
+    releaseApply();
+    session.stop();
+  });
+
+  it("requires a matching pong before the heartbeat deadline", async () => {
+    const socket = new FakeV2Socket();
+    const diagnostics: string[] = [];
+    const session = new SyncV2Session({
+      savedServerId: savedServerA,
+      transportLease: { openSync: () => socket },
+      intent: defaultIntent,
+      projectionStore: new MemoryV2ProjectionStore(),
+      operationStore: new MemoryV2OperationStore(),
+      reconnectDelayMs: 60_000,
+      requestTimeoutMs: 60_000,
+      heartbeatIntervalMs: 5,
+      heartbeatTimeoutMs: 5,
+      onState: (_state, diagnostic) => {
+        if (diagnostic !== null) diagnostics.push(diagnostic.detail);
+      },
+    });
+    await makeLive(socket, session);
+
+    await waitFor(() => socket.closes.at(-1)?.reason === "heartbeat_timeout");
+    expect(diagnostics).toContain("heartbeat_timeout");
     session.stop();
   });
 });

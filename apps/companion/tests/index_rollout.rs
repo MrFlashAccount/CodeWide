@@ -344,7 +344,7 @@ fn schema_upgrade_rebuilds_only_derived_rollout_tables() -> Result<(), Box<dyn s
     }
 
     let migrated = IndexStore::open(&state_path)?;
-    assert_eq!(migrated.schema_version(), 6);
+    assert_eq!(migrated.schema_version(), 7);
     assert_eq!(migrated.turn_count()?, 0);
     assert_eq!(migrated.replay_after(Some(0))?.entries.len(), 1);
     Ok(())

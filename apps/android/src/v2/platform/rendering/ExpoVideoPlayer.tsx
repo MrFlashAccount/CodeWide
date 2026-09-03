@@ -1,36 +1,35 @@
-import { useEvent } from "expo";
+import { useEvent as useExpoEvent } from "expo";
 import { useVideoPlayer, VideoView } from "expo-video";
-import { StyleSheet, Text, View } from "react-native";
+import { useTransition } from "react";
+import { Pressable, StyleSheet, View } from "react-native";
 
-import type { VideoPlayerCapabilityProps } from "../../features/attachments/VideoPreviewScreen";
+import type { VideoPlayerCapabilityProps } from "../../features/attachments/previewCapabilities";
+import { ProductText as Text } from "../../presentation/text/ProductText";
 import { ShimmerText } from "../../presentation/text/ShimmerText";
+import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import { useEvent } from "../../../react/useEvent";
 
-const ERROR_FONT_SIZE = 15;
-const ERROR_MAX_WIDTH = 420;
-const ERROR_PADDING = 24;
 const FULLSCREEN_OPTIONS = { enable: true } as const;
 
 export function ExpoVideoPlayer(props: VideoPlayerCapabilityProps): React.JSX.Element {
-  const { autoplay, source, title } = props;
-  const player = useVideoPlayer(
-    {
-      metadata: { title },
-      uri: source.uri,
-    },
-    (createdPlayer) => {
-      if (autoplay) {
-        createdPlayer.play();
-      }
-    },
-  );
-  const statusEvent = useEvent(player, "statusChange", {
-    status: player.status,
+  const { autoplay, onRefreshSource, source, title } = props;
+  const [retrying, startRetry] = useTransition();
+  const accessibilityState = { busy: retrying, disabled: retrying };
+  const player = useVideoPlayer(videoSource(source, title), (createdPlayer) => {
+    if (autoplay) createdPlayer.play();
   });
-  const { error, status } = statusEvent;
-
+  const statusEvent = useExpoEvent(player, "statusChange", { status: player.status });
+  const playbackState = videoPlaybackState(statusEvent.status);
+  const retry = useEvent((): void => {
+    if (onRefreshSource === undefined || retrying) return;
+    startRetry(async () => onRefreshSource());
+  });
   return (
     <View style={styles.root}>
       <VideoView
+        accessibilityLabel={`Video player · ${playbackState}`}
+        accessibilityState={{ busy: playbackState === "loading" }}
+        accessible
         allowsPictureInPicture={false}
         contentFit="contain"
         fullscreenOptions={FULLSCREEN_OPTIONS}
@@ -38,52 +37,78 @@ export function ExpoVideoPlayer(props: VideoPlayerCapabilityProps): React.JSX.El
         player={player}
         style={styles.video}
       />
-      {isLoading(status) && (
+      {isLoading(statusEvent.status) ? (
         <View accessibilityLabel="Loading video" pointerEvents="none" style={styles.overlay}>
-          <ShimmerText style={styles.loading} text="Loading video…" />
+          <ShimmerText style={styles.message} text="Loading video…" />
         </View>
-      )}
-      {status === "error" && (
-        <View
-          accessibilityLabel="Video playback failed"
-          pointerEvents="none"
-          style={styles.overlay}
-        >
-          <Text style={styles.error}>{error?.message ?? "Could not play this video"}</Text>
+      ) : null}
+      {statusEvent.status === "error" ? (
+        <View accessibilityLiveRegion="polite" style={styles.overlay}>
+          <Text style={styles.error}>
+            {statusEvent.error?.message ?? "Could not play this video"}
+          </Text>
+          {onRefreshSource === undefined ? null : (
+            <Pressable
+              accessibilityLabel="Retry video playback"
+              accessibilityRole="button"
+              accessibilityState={accessibilityState}
+              disabled={retrying}
+              onPress={retry}
+              style={styles.retry}
+            >
+              {retrying ? (
+                <ShimmerText text="Retrying…" />
+              ) : (
+                <Text style={styles.retryText}>Retry</Text>
+              )}
+            </Pressable>
+          )}
         </View>
-      )}
+      ) : null}
     </View>
   );
+}
+
+function videoSource(source: VideoPlayerCapabilityProps["source"], title: string) {
+  return {
+    metadata: { title },
+    ...(source.headers === null ? {} : { headers: source.headers }),
+    uri: source.uri,
+  };
 }
 
 function isLoading(status: string): boolean {
   return status === "idle" || status === "loading";
 }
 
+function videoPlaybackState(status: string): "error" | "loading" | "ready" {
+  if (status === "error") return "error";
+  return isLoading(status) ? "loading" : "ready";
+}
+
 const styles = StyleSheet.create({
-  error: {
-    color: "#ffffff",
-    fontSize: ERROR_FONT_SIZE,
-    maxWidth: ERROR_MAX_WIDTH,
-    paddingHorizontal: ERROR_PADDING,
-    textAlign: "center",
-  },
-  loading: { color: "#ffffff", fontSize: ERROR_FONT_SIZE },
+  error: { color: colors.text, ...typeScale.body, maxWidth: "80%", textAlign: "center" },
+  message: { color: colors.text, ...typeScale.body },
   overlay: {
     alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.64)",
+    backgroundColor: colors.scrim,
     bottom: 0,
+    gap: spacing.sm,
     justifyContent: "center",
     left: 0,
     position: "absolute",
     right: 0,
     top: 0,
   },
-  root: {
-    backgroundColor: "#000000",
-    flex: 1,
+  retry: {
+    alignItems: "center",
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radii.pill,
+    justifyContent: "center",
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.md,
   },
-  video: {
-    flex: 1,
-  },
+  retryText: { color: colors.text, ...typeScale.label },
+  root: { backgroundColor: colors.background, flex: 1 },
+  video: { flex: 1 },
 });

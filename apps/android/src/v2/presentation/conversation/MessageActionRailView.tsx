@@ -4,27 +4,30 @@ import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "re
 import { useEvent } from "../../../react/useEvent";
 import { colors, spacing, typeScale } from "../../theme";
 import { useMessageActionMenu } from "../../ui/MessageActionMenu";
+import type { MessageActionMenuRequest } from "../../ui/MessageActionMenu.types";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { ProductText } from "../text/ProductText";
+import type { TimelineTurnActions } from "./timelineTypes";
 
 interface MessageActionRailViewProps {
+  actions?: TimelineTurnActions;
   completedAt: string | null;
   copyText: string;
 }
 
 export function MessageActionRailView(props: MessageActionRailViewProps): React.JSX.Element {
-  const { completedAt, copyText } = props;
+  const { actions, completedAt, copyText } = props;
   const openMessageActions = useMessageActionMenu();
   const actionButtonRef = useRef<View>(null);
   const openActions = useEvent(() => {
     actionButtonRef.current?.measureInWindow((pageX, pageY, width, height) => {
-      openMessageActions({ copyText }, { height, pageX, pageY, width });
+      openMessageActions(messageActionRequest(copyText, actions), { height, pageX, pageY, width });
     });
   });
 
   return (
     <View style={styles.rail}>
-      {copyText === "" ? null : (
+      {copyText === "" && actions === undefined ? null : (
         <Pressable
           ref={actionButtonRef}
           accessibilityLabel="Message actions"
@@ -46,6 +49,20 @@ export function MessageActionRailView(props: MessageActionRailViewProps): React.
       )}
     </View>
   );
+}
+
+export function messageActionRequest(
+  copyText: string,
+  actions: TimelineTurnActions | undefined,
+): MessageActionMenuRequest {
+  return {
+    copyText,
+    ...(actions?.onEdit === undefined ? {} : { onEdit: actions.onEdit }),
+    ...(actions?.onFork === undefined ? {} : { onFork: actions.onFork }),
+    ...(actions?.onInterrupt === undefined ? {} : { onInterrupt: actions.onInterrupt }),
+    ...(actions?.onReview === undefined ? {} : { onReview: actions.onReview }),
+    ...(actions?.onRollback === undefined ? {} : { onRollback: actions.onRollback }),
+  };
 }
 
 function messageActionStyle(state: PressableStateCallbackType) {

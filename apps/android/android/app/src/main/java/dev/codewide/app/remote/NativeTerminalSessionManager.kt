@@ -16,7 +16,6 @@ import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -107,7 +106,7 @@ internal class NativeTerminalSessionManager(
     @Volatile var finished: Boolean = false,
   )
 
-  private val sessions = ConcurrentHashMap<String, Session>()
+  private val sessions = NativeTerminalSessionSlots<Session>(MAX_SESSIONS)
   private val transcriptDirectory = File(cacheDirectory, "terminal-sessions")
   private val reconnectExecutor = ScheduledThreadPoolExecutor(1).apply {
     removeOnCancelPolicy = true
@@ -124,19 +123,21 @@ internal class NativeTerminalSessionManager(
     require(threadId.isNotBlank() && threadId.length <= MAX_THREAD_ID_CHARS) { "Thread id is invalid" }
     require(cwd == null || cwd.length in 1..MAX_CWD_CHARS) { "Terminal working directory is invalid" }
     require(cols in MIN_COLS..MAX_COLS && rows in MIN_ROWS..MAX_ROWS) { "Terminal size is invalid" }
-    require(sessions.size < MAX_SESSIONS) { "Too many terminal sessions are open" }
     val saved = credentialsStore.get(connectionId) ?: error("Saved server credentials are missing")
     require(saved.enabled) { "Server connection is disabled" }
-    val session = Session(
-      id = sessionId,
-      connectionId = connectionId,
-      threadId = threadId,
-      cwd = cwd,
-      cols = cols,
-      rows = rows,
-      transcript = Transcript(transcriptDirectory, sessionId),
-    )
-    check(sessions.putIfAbsent(session.id, session) == null) { "Could not allocate terminal session" }
+    var allocated: Session? = null
+    check(sessions.allocate(sessionId) {
+      Session(
+        id = sessionId,
+        connectionId = connectionId,
+        threadId = threadId,
+        cwd = cwd,
+        cols = cols,
+        rows = rows,
+        transcript = Transcript(transcriptDirectory, sessionId),
+      ).also { allocated = it }
+    } == null) { "Could not allocate terminal session" }
+    val session = checkNotNull(allocated)
     beginConnect(session, 0)
   }
 
@@ -213,8 +214,16 @@ internal class NativeTerminalSessionManager(
     sessions.keys.toList().forEach(::close)
   }
 
+  fun activateGeneration() {
+    sessions.activate()
+  }
+
+  fun deactivateGeneration() {
+    sessions.deactivate().forEach(::close)
+  }
+
   fun destroy() {
-    closeAll()
+    deactivateGeneration()
     reconnectExecutor.shutdownNow()
   }
 

@@ -7,19 +7,31 @@ use std::{
     sync::Arc,
 };
 
+use base64::{Engine as _, engine::general_purpose};
 use codewide_companion::{
+    auth::{DeviceRegistry, PairingClaim, SessionProof, pairing_claim_message},
     catalog::SessionCatalog,
     files::FileService,
     history_service::HistoryService,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
+    sync_v2::WorkspaceUploadStore,
     upstream::UpstreamHandle,
+};
+use p256::{
+    ecdsa::{Signature, SigningKey, signature::Signer},
+    pkcs8::EncodePublicKey,
 };
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 
 const TOKEN: &str = "file-test-admin-token-that-is-long-enough";
+
+struct PairedFileDevice {
+    id: String,
+    session: String,
+}
 
 #[tokio::test]
 async fn scoped_file_transport_matches_v1_safety_and_resume_contract()
@@ -192,6 +204,148 @@ async fn managed_attachments_are_scoped_by_thread_and_share_cas_blobs()
 
     task.abort();
     Ok(())
+}
+
+#[tokio::test]
+async fn v1_registry_upload_cannot_publish_after_device_revoke()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("workspace");
+    tokio::fs::create_dir_all(&root).await?;
+    let files = Arc::new(
+        FileService::open(
+            HashMap::from([("workspace".to_owned(), root.clone())]),
+            Vec::new(),
+            None,
+            Some(1024),
+        )
+        .await?,
+    );
+    let staging = WorkspaceUploadStore::open(
+        directory.path().join("workspace-uploads.redb"),
+        files.clone(),
+    )?;
+    let registry = Arc::new(
+        DeviceRegistry::open(
+            Arc::from(TOKEN),
+            directory.path().join("devices.json"),
+            None,
+        )
+        .await?,
+    );
+    staging.start_revocation_cleanup(registry.subscribe_authorization_changes());
+    let device = pair_file_device(&registry, 31, "file-device").await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::new(
+        UpstreamHandle::spawn(directory.path().join("missing.sock")),
+        store.clone(),
+        history,
+    );
+    let app = server::router_with_registry_and_services(
+        store,
+        registry.clone(),
+        sync,
+        CompanionServices {
+            files: Some(files),
+            workspace_upload_staging: Some(staging),
+            ..CompanionServices::default()
+        },
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    sender.send(Ok::<bytes::Bytes, std::io::Error>(
+        bytes::Bytes::from_static(b"he"),
+    ))?;
+    let stream = futures_util::stream::unfold(receiver, |mut receiver| async {
+        receiver.recv().await.map(|item| (item, receiver))
+    });
+    let expected_hash = sha256(b"hello");
+    let client = reqwest::Client::new();
+    let request = client
+        .put(format!(
+            "http://{address}/v1/files/upload?rootId=workspace&path=revoked.txt"
+        ))
+        .bearer_auth(&device.session)
+        .header("content-length", "5")
+        .header("x-content-sha256", &expected_hash)
+        .body(reqwest::Body::wrap_stream(stream));
+    let upload = tokio::spawn(async move { request.send().await });
+    let temporary = root.join(format!(".revoked.txt.upload-simple-{expected_hash}"));
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    while tokio::fs::symlink_metadata(&temporary).await.is_err() {
+        if tokio::time::Instant::now() >= deadline {
+            return Err("upload temporary file was not created".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(registry.revoke(&device.id).await?);
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), upload).await???;
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert!(
+        tokio::fs::symlink_metadata(root.join("revoked.txt"))
+            .await
+            .is_err()
+    );
+    assert!(tokio::fs::symlink_metadata(&temporary).await.is_err());
+    drop(sender);
+    server_task.abort();
+    Ok(())
+}
+
+async fn pair_file_device(
+    registry: &DeviceRegistry,
+    seed: u8,
+    name: &str,
+) -> Result<PairedFileDevice, Box<dyn std::error::Error + Send + Sync>> {
+    let signing = SigningKey::from_bytes((&[seed; 32]).into())?;
+    let public_key_spki =
+        general_purpose::STANDARD.encode(signing.verifying_key().to_public_key_der()?.as_bytes());
+    let pairing = registry.create_pairing().await?;
+    let proof: Signature = signing.sign(&pairing_claim_message(
+        &pairing.pairing_token,
+        name,
+        &public_key_spki,
+    ));
+    let claim = registry
+        .claim(PairingClaim {
+            pairing_token: pairing.pairing_token,
+            device_name: name.to_owned(),
+            public_key_spki,
+            proof: general_purpose::STANDARD.encode(proof.to_der().as_bytes()),
+        })
+        .await?;
+    registry
+        .update_scopes(
+            &claim.device_id,
+            vec!["threads.read".into(), "files.upload.workspace".into()],
+        )
+        .await?;
+    let bearer = format!("Bearer {}", claim.capability_token);
+    let challenge = registry.challenge(Some(&bearer)).await?;
+    let signature: Signature =
+        signing.sign(&general_purpose::URL_SAFE_NO_PAD.decode(&challenge.challenge)?);
+    let session = registry
+        .create_session(
+            Some(&bearer),
+            SessionProof {
+                challenge_id: challenge.challenge_id,
+                signature: general_purpose::STANDARD.encode(signature.to_der().as_bytes()),
+            },
+        )
+        .await?
+        .session_token;
+    Ok(PairedFileDevice {
+        id: claim.device_id,
+        session,
+    })
 }
 
 async fn assert_downloads(

@@ -1,6 +1,8 @@
 #![allow(clippy::expect_used)]
 
-use codewide_companion::store::{IndexStore, OutboxPresentation, OutboxState};
+use codewide_companion::store::{
+    IndexStore, OutboxClaimOutcome, OutboxClaimResolution, OutboxPresentation, OutboxState,
+};
 use serde_json::json;
 
 #[test]
@@ -72,6 +74,107 @@ fn durable_delivery_is_not_presented_as_an_explicit_user_queue()
     assert_eq!(
         store.outbox_list(Some("thread-1"))?[0].presentation,
         OutboxPresentation::Delivery
+    );
+    Ok(())
+}
+
+#[test]
+fn v2_queue_owner_is_durable_isolated_and_emits_every_delivery_transition()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("state.redb");
+    {
+        let store = IndexStore::open(&path)?;
+        let mut changes = store.subscribe_outbox_changes();
+        let queued = store.outbox_put_turn_start_for_owner(
+            "operation-1",
+            "thread-1",
+            json!({
+                "threadId": "thread-1",
+                "clientUserMessageId": "operation-1",
+                "input": [{"type": "text", "text": "hello"}]
+            }),
+            Some(10),
+            OutboxPresentation::Queue,
+            "sync-v2-server-principal:v1:owner-a",
+        )?;
+        assert_eq!(
+            changes.try_recv()?.owner_context.as_deref(),
+            Some("sync-v2-server-principal:v1:owner-a")
+        );
+        assert_eq!(
+            store.outbox_list_for_owner("sync-v2-server-principal:v1:owner-a", None)?,
+            [queued]
+        );
+        assert!(
+            store
+                .outbox_list_for_owner("sync-v2-server-principal:v1:owner-b", None)?
+                .is_empty()
+        );
+
+        let OutboxClaimOutcome::Acquired { token, .. } =
+            store.outbox_claim_dispatch("operation-1")?
+        else {
+            return Err("queue dispatch was not claimed".into());
+        };
+        assert_eq!(changes.try_recv()?.command_id, "operation-1");
+        store.outbox_resolve_claim("operation-1", token, OutboxClaimResolution::Delivered)?;
+        assert_eq!(changes.try_recv()?.command_id, "operation-1");
+    }
+
+    let reopened = IndexStore::open(&path)?;
+    let owned =
+        reopened.outbox_list_for_owner("sync-v2-server-principal:v1:owner-a", Some("thread-1"))?;
+    assert_eq!(owned.len(), 1);
+    assert_eq!(owned[0].state, OutboxState::Delivered);
+    assert_eq!(owned[0].params["clientUserMessageId"], owned[0].command_id);
+    Ok(())
+}
+
+#[test]
+fn v2_queue_reorder_does_not_mutate_another_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let store = IndexStore::open(directory.path().join("state.redb"))?;
+    for (command_id, owner) in [
+        ("a-one", "sync-v2-server-principal:v1:owner-a"),
+        ("b-one", "sync-v2-server-principal:v1:owner-b"),
+        ("a-two", "sync-v2-server-principal:v1:owner-a"),
+    ] {
+        store.outbox_put_turn_start_for_owner(
+            command_id,
+            "thread-1",
+            json!({
+                "threadId": "thread-1",
+                "clientUserMessageId": command_id,
+                "input": [{"type": "text", "text": command_id}]
+            }),
+            None,
+            OutboxPresentation::Queue,
+            owner,
+        )?;
+    }
+    let before = store
+        .outbox_list_for_owner("sync-v2-server-principal:v1:owner-b", None)?
+        .remove(0);
+    let mut changes = store.subscribe_outbox_changes();
+    assert!(store.outbox_place("a-two", Some("a-one"))?);
+    while let Ok(change) = changes.try_recv() {
+        assert_eq!(
+            change.owner_context.as_deref(),
+            Some("sync-v2-server-principal:v1:owner-a")
+        );
+    }
+    let after = store
+        .outbox_list_for_owner("sync-v2-server-principal:v1:owner-b", None)?
+        .remove(0);
+    assert_eq!(after, before);
+    assert_eq!(
+        store
+            .outbox_list_for_owner("sync-v2-server-principal:v1:owner-a", None)?
+            .into_iter()
+            .map(|command| command.command_id)
+            .collect::<Vec<_>>(),
+        ["a-two", "a-one"]
     );
     Ok(())
 }

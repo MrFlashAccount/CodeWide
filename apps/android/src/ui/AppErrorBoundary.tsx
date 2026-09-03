@@ -43,7 +43,7 @@ function errorReport(error: Error, componentStack: string): string {
 }
 
 export class AppErrorBoundary extends Component<Props, State> {
-  state: State = {
+  override state: State = {
     componentStack: "",
     error: null,
   };
@@ -52,7 +52,7 @@ export class AppErrorBoundary extends Component<Props, State> {
     return { error: normalizeError(value) };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
     // Keep the complete stack in logcat/Metro and in the local recovery UI.
     // The boundary deliberately has no dependency on application databases:
     // a broken persistence layer must not be able to break crash recovery.
@@ -64,7 +64,7 @@ export class AppErrorBoundary extends Component<Props, State> {
     this.setState({ componentStack: "", error: null });
   };
 
-  render(): ReactNode {
+  override render(): ReactNode {
     const { error, componentStack } = this.state;
     if (error === null) return this.props.children;
     return <RootFailure error={error} componentStack={componentStack} onRetry={this.retry} />;

@@ -1,5 +1,4 @@
 import {
-  Pressable,
   type PressableStateCallbackType,
   StyleSheet,
   type StyleProp,
@@ -8,34 +7,13 @@ import {
 } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 
-import { useEvent } from "../../../react/useEvent";
 import { colors, radii, touchTarget, typeWeight } from "../../theme";
 import { ProductText } from "../text/ProductText";
-
-interface ContextRingActionViewProps {
-  onPress?(): void;
-  percent: number;
-}
 
 interface ContextRingViewProps {
   percent: number;
   showValue?: boolean;
   size?: number;
-}
-
-export function ContextRingActionView(props: ContextRingActionViewProps): React.JSX.Element {
-  const { onPress, percent } = props;
-  const activate = useEvent(() => onPress?.());
-  return (
-    <Pressable
-      accessibilityLabel="Context usage and account limits"
-      accessibilityRole="button"
-      onPress={activate}
-      style={contextRingActionStyle}
-    >
-      <ContextRingView percent={percent} />
-    </Pressable>
-  );
 }
 
 export function ContextRingView(props: ContextRingViewProps): React.JSX.Element {

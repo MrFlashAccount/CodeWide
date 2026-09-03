@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Response, StatusCode, header},
     response::IntoResponse,
 };
-use futures_util::StreamExt;
+use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use rand::{TryRngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,41 @@ pub struct FileService {
 }
 
 #[derive(Clone)]
+pub(crate) struct UploadCommitGuard {
+    authorize: Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>,
+    temporary_upload_id: Option<Arc<str>>,
+}
+
+impl UploadCommitGuard {
+    pub(crate) fn new<F, Fut>(authorize: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = bool> + Send + 'static,
+    {
+        Self {
+            authorize: Arc::new(move || authorize().boxed()),
+            temporary_upload_id: None,
+        }
+    }
+
+    pub(crate) fn with_temporary_upload_id(mut self, upload_id: &str) -> Self {
+        self.temporary_upload_id = Some(Arc::from(upload_id));
+        self
+    }
+
+    async fn authorize(&self) -> Result<(), FileError> {
+        if (self.authorize)().await {
+            Ok(())
+        } else {
+            Err(client(
+                StatusCode::UNAUTHORIZED,
+                "upload_authorization_expired",
+            ))
+        }
+    }
+}
+
+#[derive(Clone)]
 struct PreviewPathMapping {
     reported_root: PathBuf,
     readable_root: PathBuf,
@@ -63,6 +98,14 @@ struct CompletedUpload<'a> {
     target: &'a Path,
     sha256: &'a str,
     bytes: u64,
+    overwrite: bool,
+}
+
+struct SimpleUpload<'a> {
+    root: &'a str,
+    path: &'a str,
+    expected_hash: &'a str,
+    content_length: u64,
     overwrite: bool,
 }
 
@@ -309,6 +352,32 @@ impl FileService {
         self.record_observed_preview_paths(canonical).await;
     }
 
+    /// Resolves one reported workspace path, rejects symlink escapes, and
+    /// grants the exact canonical file to the private preview endpoint.
+    pub(crate) async fn preview_metadata_within(
+        &self,
+        root: PathBuf,
+        path: PathBuf,
+    ) -> Result<(u64, String), FileError> {
+        let canonical_root = self
+            .canonical_preview_path(&root)
+            .await
+            .ok_or_else(|| client(StatusCode::NOT_FOUND, "workspace_not_found"))?;
+        let canonical = self
+            .canonical_preview_path(&path)
+            .await
+            .ok_or_else(|| client(StatusCode::NOT_FOUND, "file_not_found"))?;
+        if !is_child(&canonical_root, &canonical) {
+            return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
+        }
+        let metadata = tokio::fs::metadata(&canonical).await?;
+        if !metadata.is_file() {
+            return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
+        }
+        self.record_observed_preview_paths(vec![canonical]).await;
+        Ok((metadata.len(), content_type(&path).to_owned()))
+    }
+
     async fn canonical_preview_path(&self, path: &Path) -> Option<PathBuf> {
         let readable = self.readable_preview_path(path);
         if let Ok(canonical) = tokio::fs::canonicalize(&readable).await {
@@ -537,6 +606,34 @@ impl FileService {
         headers: &HeaderMap,
         body: Body,
     ) -> Result<Response<Body>, FileError> {
+        self.upload_with_commit_guard(query, headers, body, None)
+            .await
+    }
+
+    /// Streams one V2 upload and revalidates its authorization immediately before publish.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same transfer errors as [`Self::upload`] and rejects publication when the
+    /// authenticated capability was revoked or expired while bytes were in flight.
+    pub(crate) async fn upload_authorized(
+        &self,
+        query: FileQuery,
+        headers: &HeaderMap,
+        body: Body,
+        guard: &UploadCommitGuard,
+    ) -> Result<Response<Body>, FileError> {
+        self.upload_with_commit_guard(query, headers, body, Some(guard))
+            .await
+    }
+
+    async fn upload_with_commit_guard(
+        &self,
+        query: FileQuery,
+        headers: &HeaderMap,
+        body: Body,
+        guard: Option<&UploadCommitGuard>,
+    ) -> Result<Response<Body>, FileError> {
         let (root, path) = required_root_path(query)?;
         let expected_hash = string_header(headers, "x-content-sha256")
             .filter(|value| valid_sha256(value))
@@ -563,16 +660,20 @@ impl FileService {
                     range,
                     overwrite(headers),
                     body,
+                    guard,
                 )
                 .await;
         }
         self.upload_complete(
-            &root,
-            &path,
-            expected_hash,
-            content_length,
-            overwrite(headers),
+            SimpleUpload {
+                root: &root,
+                path: &path,
+                expected_hash,
+                content_length,
+                overwrite: overwrite(headers),
+            },
             body,
+            guard,
         )
         .await
     }
@@ -645,19 +746,19 @@ impl FileService {
 
     async fn upload_complete(
         &self,
-        root: &str,
-        path: &str,
-        expected_hash: &str,
-        content_length: u64,
-        overwrite: bool,
+        upload: SimpleUpload<'_>,
         body: Body,
+        guard: Option<&UploadCommitGuard>,
     ) -> Result<Response<Body>, FileError> {
-        let target = self.resolve_upload_target(root, path).await?;
+        let target = self.resolve_upload_target(upload.root, upload.path).await?;
         let existed = tokio::fs::symlink_metadata(&target).await.is_ok();
-        if existed && !overwrite {
+        if existed && !upload.overwrite {
             return Err(client(StatusCode::CONFLICT, "target_exists"));
         }
-        let temporary = temporary_upload_path(&target)?;
+        let temporary = match guard.and_then(|guard| guard.temporary_upload_id.as_deref()) {
+            Some(upload_id) => resumable_path(&target, upload_id),
+            None => temporary_upload_path(&target)?,
+        };
         let result = async {
             let file = OpenOptions::new()
                 .create_new(true)
@@ -665,19 +766,22 @@ impl FileService {
                 .mode(0o600)
                 .open(&temporary)
                 .await?;
-            stream_body(body, file, content_length).await?;
+            stream_body(body, file, upload.content_length).await?;
             let actual_hash = hash_file(&temporary).await?;
-            if actual_hash != expected_hash {
+            if actual_hash != upload.expected_hash {
                 return Err(client(StatusCode::UNPROCESSABLE_ENTITY, "sha256_mismatch"));
             }
+            if let Some(guard) = guard {
+                guard.authorize().await?;
+            }
             self.publish_completed_upload(CompletedUpload {
-                root_id: root,
-                relative_path: path,
+                root_id: upload.root,
+                relative_path: upload.path,
                 temporary: &temporary,
                 target: &target,
                 sha256: &actual_hash,
-                bytes: content_length,
-                overwrite,
+                bytes: upload.content_length,
+                overwrite: upload.overwrite,
             })
             .await?;
             json_response(
@@ -686,7 +790,7 @@ impl FileService {
                 } else {
                     StatusCode::CREATED
                 },
-                &json!({"ok": true, "bytes": content_length, "sha256": actual_hash}),
+                &json!({"ok": true, "bytes": upload.content_length, "sha256": actual_hash}),
             )
         }
         .await;
@@ -705,6 +809,7 @@ impl FileService {
         range: ContentRange,
         overwrite: bool,
         body: Body,
+        guard: Option<&UploadCommitGuard>,
     ) -> Result<Response<Body>, FileError> {
         if range.end - range.start + 1 != content_length {
             return Err(client(
@@ -767,6 +872,9 @@ impl FileService {
         }
         if !overwrite && tokio::fs::symlink_metadata(&target).await.is_ok() {
             return Err(client(StatusCode::CONFLICT, "target_exists"));
+        }
+        if let Some(guard) = guard {
+            guard.authorize().await?;
         }
         self.publish_completed_upload(CompletedUpload {
             root_id: root,

@@ -11,20 +11,28 @@ import {
   PresentationSheetView,
 } from "../surfaces/PresentationSheetView";
 import { ProductText } from "../text/ProductText";
+import {
+  connectionStateColor,
+  connectionStateLabel,
+  isActiveConnectionState,
+  type PresentedConnectionState,
+} from "./connectionStatusPresentation";
 
-export interface ConnectionSettingsServerRow {
+interface ConnectionSettingsServerRow {
   detail: string;
+  diagnostic: string | null;
   emoji: string;
   enabled: boolean;
   id: string;
   label: string;
   pending?: boolean;
-  state: "connected" | "connecting" | "disabled" | "error";
+  state: PresentedConnectionState;
 }
 
 interface ConnectionSettingsViewProps {
   appLockBusy: boolean;
   appLockEnabled: boolean;
+  diagnostics: ReactNode;
   error: string | null;
   generationControl: ReactNode;
   onAppLockChange(enabled: boolean): void;
@@ -36,6 +44,7 @@ interface ConnectionSettingsViewProps {
 }
 
 export type ConnectionSettingsServerAction =
+  | "copyDiagnostic"
   | "delete"
   | "edit"
   | "moveDown"
@@ -64,6 +73,7 @@ export function ConnectionSettingsView(props: ConnectionSettingsViewProps): Reac
   const {
     appLockBusy,
     appLockEnabled,
+    diagnostics,
     error,
     generationControl,
     onAppLockChange,
@@ -142,6 +152,7 @@ export function ConnectionSettingsView(props: ConnectionSettingsViewProps): Reac
             />
           ))
         )}
+        {diagnostics}
         <ProductText selectable style={styles.version} tone="dim">
           Version {version}
         </ProductText>
@@ -182,13 +193,20 @@ function SettingsControlRow(props: SettingsControlRowProps): React.JSX.Element {
 
 function SettingsServerRow(props: SettingsServerRowProps): React.JSX.Element {
   const { onAction, onEnabledChange, row } = props;
-  const actions: readonly ActionMenuItem[] = [
-    { disabled: !row.enabled, icon: "refresh", id: "reconnect", label: "Reconnect" },
+  const actions: ActionMenuItem[] = [
+    { disabled: !row.enabled, icon: "refresh", id: "reconnect", label: "Retry connection" },
     { icon: "pencil-outline", id: "edit", label: "Edit server" },
     { icon: "arrow-up", id: "moveUp", label: "Move up" },
     { icon: "arrow-down", id: "moveDown", label: "Move down" },
     { destructive: true, icon: "trash-outline", id: "delete", label: "Delete server" },
   ];
+  if (row.diagnostic !== null) {
+    actions.splice(2, 0, {
+      icon: "copy-outline",
+      id: "copyDiagnostic",
+      label: "Copy connection error",
+    });
+  }
   const selectAction = useEvent((action: string) => {
     if (isConnectionSettingsServerAction(action)) onAction(row.id, action);
   });
@@ -205,20 +223,27 @@ function SettingsServerRow(props: SettingsServerRowProps): React.JSX.Element {
             {row.detail}
           </ProductText>
           <View style={styles.stateRow}>
-            {row.pending === true ? (
+            {row.pending === true || isActiveConnectionState(row.state) ? (
               <ShimmerText
-                style={[styles.stateText, { color: stateColor(row.state) }]}
-                text={stateLabel(row.state)}
+                style={[styles.stateText, { color: connectionStateColor(row.state) }]}
+                text={connectionStateLabel(row.state)}
               />
             ) : (
               <>
-                <View style={[styles.stateDot, { backgroundColor: stateColor(row.state) }]} />
-                <ProductText style={[styles.stateText, { color: stateColor(row.state) }]}>
-                  {stateLabel(row.state)}
+                <View
+                  style={[styles.stateDot, { backgroundColor: connectionStateColor(row.state) }]}
+                />
+                <ProductText style={[styles.stateText, { color: connectionStateColor(row.state) }]}>
+                  {connectionStateLabel(row.state)}
                 </ProductText>
               </>
             )}
           </View>
+          {row.diagnostic === null ? null : (
+            <ProductText accessibilityLiveRegion="polite" selectable style={styles.diagnostic}>
+              {row.diagnostic}
+            </ProductText>
+          )}
         </View>
         <Switch
           accessibilityLabel={`Enable ${row.label}`}
@@ -243,26 +268,13 @@ function SettingsServerRow(props: SettingsServerRowProps): React.JSX.Element {
 
 function isConnectionSettingsServerAction(value: string): value is ConnectionSettingsServerAction {
   return (
+    value === "copyDiagnostic" ||
     value === "delete" ||
     value === "edit" ||
     value === "moveDown" ||
     value === "moveUp" ||
     value === "reconnect"
   );
-}
-
-function stateColor(state: ConnectionSettingsServerRow["state"]): string {
-  if (state === "connected") return colors.green;
-  if (state === "connecting") return colors.amber;
-  if (state === "error") return colors.red;
-  return colors.textDim;
-}
-
-function stateLabel(state: ConnectionSettingsServerRow["state"]): string {
-  if (state === "connected") return "Connected";
-  if (state === "connecting") return "Connecting";
-  if (state === "error") return "Connection error";
-  return "Disabled";
 }
 
 function iconStyle(state: PressableStateCallbackType) {
@@ -288,6 +300,7 @@ const styles = StyleSheet.create({
   },
   controlTitle: typeScale.title,
   copy: { flex: 1, minWidth: 0 },
+  diagnostic: { color: colors.red, ...typeScale.caption, marginTop: spacing.optical },
   empty: { paddingVertical: spacing.md },
   error: { color: colors.red, ...typeScale.body, paddingVertical: spacing.sm },
   header: {

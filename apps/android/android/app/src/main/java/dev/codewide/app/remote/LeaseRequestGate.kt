@@ -1,7 +1,11 @@
 package dev.codewide.app.remote
 
 /** Atomic bounded ownership gate for asynchronous requests attached to one lease. */
-internal class LeaseRequestGate<T>(private val maximum: Int) {
+internal class LeaseRequestGate<T>(
+  private val maximum: Int,
+  private val onReserved: () -> Unit = {},
+  private val onReleased: () -> Unit = {},
+) {
   private val lock = Any()
   private val requests = mutableMapOf<String, T?>()
   private var released = false
@@ -11,6 +15,7 @@ internal class LeaseRequestGate<T>(private val maximum: Int) {
       check(!released) { "Authenticated lease is released" }
       check(requests.size < maximum) { "Too many authenticated requests are open" }
       check(!requests.containsKey(requestId)) { "Authenticated request already exists" }
+      onReserved()
       requests[requestId] = null
     }
   }
@@ -23,14 +28,20 @@ internal class LeaseRequestGate<T>(private val maximum: Int) {
 
   fun complete(requestId: String, request: T? = null) {
     synchronized(lock) {
-      if (request === null || requests[requestId] === request) requests.remove(requestId)
+      val exists = requests.containsKey(requestId)
+      if (exists && (request === null || requests[requestId] === request)) {
+        requests.remove(requestId)
+        onReleased()
+      }
     }
   }
 
   fun release(): List<T> = synchronized(lock) {
     released = true
     val active = requests.values.filterNotNull()
+    val releasedCount = requests.size
     requests.clear()
+    repeat(releasedCount) { onReleased() }
     active
   }
 

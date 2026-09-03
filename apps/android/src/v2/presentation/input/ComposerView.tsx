@@ -1,5 +1,11 @@
-import { useState } from "react";
-import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
+import type { ComponentProps, ComponentType, ReactNode } from "react";
+import {
+  Pressable,
+  type PressableStateCallbackType,
+  StyleSheet,
+  type TextInput as NativeTextInput,
+  View,
+} from "react-native";
 
 import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 import { useEvent } from "../../../react/useEvent";
@@ -7,57 +13,115 @@ import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { PresentationTextInput, ProductText } from "../text/ProductText";
 import { ShimmerText } from "../text/ShimmerText";
+import {
+  ComposerPrimaryActionView,
+  type ComposerPrimaryActionMode,
+} from "./ComposerPrimaryActionView";
+import { VoiceCaptureStatusView } from "./VoiceCaptureStatusView";
+
+export interface ComposerTextInputProps extends ComponentProps<typeof NativeTextInput> {
+  largePasteThreshold: number;
+  onLargePaste(event: ComposerLargePasteEvent): void;
+}
+
+interface ComposerLargePasteEvent {
+  end: number;
+  start: number;
+  text: string;
+}
 
 interface ComposerViewProps {
+  attachmentTray?: ReactNode;
   disabled: boolean;
   error?: string | null;
+  hasAttachments?: boolean;
+  InputComponent?: ComponentType<ComposerTextInputProps>;
+  largePasteThreshold?: number;
   menuActions?: readonly ActionMenuItem[];
   onChangeText(text: string): void;
+  onLargePaste?(event: ComposerLargePasteEvent): void;
   onSelectMenu?(id: string): void;
   onSubmit(): void;
   onVoice?(): Promise<void>;
+  onVoiceCancel?(): Promise<void>;
   pending: boolean;
+  primaryAction?: ComposerPrimaryActionMode;
   retryBlocked: boolean;
   text: string;
   voiceDisabled?: boolean;
+  voiceCancelDisabled?: boolean;
+  voiceElapsedSeconds?: number;
+  voiceLevel?: number;
   voiceMessage?: string | null;
-  voiceState?: "idle" | "starting" | "recording" | "finishing" | "retry" | "error";
+  voiceState?: "idle" | "starting" | "recording" | "finishing" | "cancelling" | "retry" | "error";
 }
 
 export function ComposerView(props: ComposerViewProps): React.JSX.Element {
   const {
     disabled,
+    attachmentTray,
     error,
+    hasAttachments = false,
+    InputComponent,
+    largePasteThreshold,
     menuActions,
     onChangeText,
+    onLargePaste,
     onSelectMenu,
     onSubmit,
     onVoice,
+    onVoiceCancel,
     pending,
+    primaryAction = "send",
     retryBlocked,
     text,
     voiceDisabled = false,
+    voiceCancelDisabled = false,
+    voiceElapsedSeconds = 0,
+    voiceLevel = 0,
     voiceMessage = null,
     voiceState = "idle",
   } = props;
-  const sendDisabled = disabled || pending || retryBlocked || text.trim() === "";
-  const [voicePending, setVoicePending] = useState(false);
   const voiceActive =
-    voiceState === "starting" || voiceState === "recording" || voiceState === "finishing";
+    voiceState === "starting" ||
+    voiceState === "recording" ||
+    voiceState === "finishing" ||
+    voiceState === "cancelling" ||
+    voiceState === "retry";
+  const voiceRetryAvailable = voiceState === "retry";
+  const voiceCanSubmit = voiceState === "starting" || voiceState === "recording";
+  const voiceActionDisabled =
+    voiceDisabled ||
+    onVoice === undefined ||
+    pending ||
+    voiceState === "finishing" ||
+    voiceState === "cancelling";
+  const sendDisabled =
+    disabled ||
+    pending ||
+    retryBlocked ||
+    voiceState === "finishing" ||
+    voiceState === "cancelling" ||
+    voiceState === "retry" ||
+    (primaryAction === "send" && !voiceCanSubmit && text.trim() === "" && !hasAttachments);
   const selectMenu = useEvent((id: string) => onSelectMenu?.(id));
   const activateVoice = useEvent(() => {
-    if (onVoice === undefined || voiceDisabled || voicePending) return;
-    setVoicePending(true);
-    onVoice()
-      .finally(() => setVoicePending(false))
-      .catch(() => undefined);
+    if (onVoice === undefined || voiceActionDisabled) return;
+    void onVoice().catch(() => undefined);
   });
+  const cancelVoice = useEvent(() => {
+    if (onVoiceCancel === undefined || voiceCancelDisabled) return;
+    void onVoiceCancel().catch(() => undefined);
+  });
+  const visibleError =
+    error ?? (voiceState === "retry" || voiceState === "error" ? voiceMessage : null);
   return (
     <View style={styles.dock}>
-      {error === undefined || error === null ? null : (
+      {attachmentTray}
+      {visibleError === undefined || visibleError === null ? null : (
         <View style={styles.errorRow}>
           <ProductText accessibilityLiveRegion="polite" style={styles.error} tone="danger">
-            {error}
+            {visibleError}
           </ProductText>
         </View>
       )}
@@ -91,13 +155,28 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
         )}
         <View style={styles.inputShell}>
           {voiceActive ? (
-            <View accessibilityLabel="Voice recording" style={styles.voiceStatus}>
-              <ShimmerText
-                containerStyle={styles.voiceLabelShimmer}
-                style={styles.voiceLabel}
-                text={voiceStatusLabel(voiceState, voiceMessage)}
-              />
-            </View>
+            <VoiceCaptureStatusView
+              elapsedSeconds={voiceElapsedSeconds}
+              level={voiceLevel}
+              message={voiceMessage}
+              state={voiceState}
+            />
+          ) : InputComponent !== undefined &&
+            onLargePaste !== undefined &&
+            largePasteThreshold !== undefined ? (
+            <InputComponent
+              accessibilityLabel="Message Codex"
+              editable={!disabled && !pending}
+              largePasteThreshold={largePasteThreshold}
+              multiline
+              onChangeText={onChangeText}
+              onLargePaste={onLargePaste}
+              placeholder="Message Codex…"
+              placeholderTextColor={colors.textDim}
+              style={styles.input}
+              textAlignVertical="top"
+              value={text}
+            />
           ) : (
             <PresentationTextInput
               accessibilityLabel="Message Codex"
@@ -111,56 +190,64 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
               value={text}
             />
           )}
+          {voiceActive ? (
+            <Pressable
+              accessibilityLabel="Cancel voice input"
+              accessibilityRole="button"
+              accessibilityState={{
+                busy: voiceState === "cancelling",
+                disabled: voiceCancelDisabled || onVoiceCancel === undefined,
+              }}
+              disabled={voiceCancelDisabled || onVoiceCancel === undefined}
+              onPress={cancelVoice}
+              style={[
+                styles.inputAction,
+                (voiceCancelDisabled || onVoiceCancel === undefined) && styles.disabled,
+              ]}
+            >
+              {voiceState === "cancelling" ? (
+                <ShimmerText style={styles.voiceProgress} text="•••" />
+              ) : (
+                <PresentationIcon color={colors.red} name="close" size={20} />
+              )}
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityLabel={
-              voiceActive ? "Stop voice input and insert transcript" : "Voice input"
+              voiceRetryAvailable
+                ? "Retry voice transcription"
+                : voiceActive
+                  ? "Stop voice input and insert transcript"
+                  : "Voice input"
             }
             accessibilityRole="button"
             accessibilityState={{
-              busy: voicePending,
-              disabled: voiceDisabled || onVoice === undefined,
+              busy: voiceState === "starting" || voiceState === "finishing",
+              disabled: voiceActionDisabled,
             }}
-            disabled={voiceDisabled || onVoice === undefined}
+            disabled={voiceActionDisabled}
             onPress={activateVoice}
-            style={[
-              styles.inputAction,
-              (voiceDisabled || onVoice === undefined) && styles.disabled,
-            ]}
+            style={[styles.inputAction, voiceActionDisabled && styles.disabled]}
           >
             <PresentationIcon
-              color={voiceActive ? colors.red : colors.text}
-              name={voiceActive ? "stop" : voiceState === "error" ? "refresh" : "mic"}
+              color={voiceRetryAvailable || !voiceActive ? colors.text : colors.red}
+              name={voiceRetryAvailable ? "refresh" : voiceActive ? "stop" : "mic"}
               size={20}
             />
           </Pressable>
-          <Pressable
-            accessibilityLabel="Send message"
-            accessibilityRole="button"
-            accessibilityState={{ busy: pending, disabled: sendDisabled }}
+          <ComposerPrimaryActionView
             disabled={sendDisabled}
+            mode={primaryAction}
             onPress={onSubmit}
-            style={sendDisabled ? disabledSendStyle : enabledSendStyle}
-          >
-            {pending ? (
-              <ShimmerText style={styles.sendProgress} text="Send" />
-            ) : (
-              <PresentationIcon color={colors.onPrimary} name="send" size={21} />
-            )}
-          </Pressable>
+            pending={pending}
+            voiceActive={voiceActive}
+            voiceFinishing={voiceState === "finishing"}
+            voiceStarting={voiceState === "starting"}
+          />
         </View>
       </View>
     </View>
   );
-}
-
-function voiceStatusLabel(
-  state: NonNullable<ComposerViewProps["voiceState"]>,
-  message: string | null,
-): string {
-  if (message !== null) return message;
-  if (state === "starting") return "Starting voice…";
-  if (state === "finishing") return "Finishing voice…";
-  return "Listening…";
 }
 
 function disabledMenuStyle(state: PressableStateCallbackType) {
@@ -168,19 +255,9 @@ function disabledMenuStyle(state: PressableStateCallbackType) {
   return [styles.menu, styles.disabled, pressed && styles.pressed];
 }
 
-function disabledSendStyle(state: PressableStateCallbackType) {
-  const { pressed } = state;
-  return [styles.send, styles.disabled, pressed && styles.sendPressed];
-}
-
 function enabledMenuStyle(state: PressableStateCallbackType) {
   const { pressed } = state;
   return [styles.menu, pressed && styles.pressed];
-}
-
-function enabledSendStyle(state: PressableStateCallbackType) {
-  const { pressed } = state;
-  return [styles.send, pressed && styles.sendPressed];
 }
 
 const styles = StyleSheet.create({
@@ -196,17 +273,20 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xs,
   },
   input: {
+    alignSelf: "stretch",
     color: colors.text,
     flex: 1,
-    ...typeScale.body,
-
+    flexBasis: 0,
+    flexShrink: 1,
+    ...typeScale.composerInput,
     maxHeight: 132,
     minHeight: touchTarget,
     minWidth: 0,
-    paddingBottom: spacing.sm,
+    paddingBottom: spacing.composerInputBottom,
     paddingLeft: spacing.sm,
     paddingRight: spacing.xxs,
     paddingTop: spacing.sm,
+    width: 0,
   },
   inputAction: {
     alignItems: "center",
@@ -220,9 +300,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceContainer,
     borderRadius: radii.composer,
     flex: 1,
+    flexBasis: 0,
+    flexShrink: 1,
     flexDirection: "row",
+    maxHeight: 132,
     minHeight: touchTarget,
     minWidth: 0,
+    overflow: "hidden",
+    width: 0,
   },
   menu: {
     alignItems: "center",
@@ -243,28 +328,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     minHeight: touchTarget + 12,
     paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.composerRow,
   },
-  send: {
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    borderRadius: radii.composer,
-    flexShrink: 0,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
-  sendPressed: { backgroundColor: colors.primaryPressed },
-  sendProgress: { color: colors.onPrimary, ...typeScale.caption },
-  voiceLabel: { flex: 1, ...typeScale.body },
-  voiceLabelShimmer: { alignSelf: "stretch", flex: 1 },
-  voiceStatus: {
-    alignItems: "center",
-    flex: 1,
-    flexDirection: "row",
-    gap: spacing.sm,
-    minHeight: touchTarget,
-    minWidth: 0,
-    paddingLeft: spacing.sm,
-  },
+  voiceProgress: { color: colors.accent, ...typeScale.label },
 });

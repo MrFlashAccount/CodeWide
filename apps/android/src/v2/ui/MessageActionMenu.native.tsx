@@ -12,12 +12,13 @@ import { StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
 import { useAppDialog } from "./AppDialog";
-import { CodeWideMenu, type CodeWideMenuAction } from "./CodeWideMenu.native";
+import { CodeWideMenu } from "./CodeWideMenu.native";
 import type {
   MessageActionMenuProviderProps,
   MessageActionMenuRequest,
   OpenMessageActionMenu,
 } from "./MessageActionMenu.types";
+import { messageActionMenuItems } from "./messageActionMenuItems";
 
 interface MessageActionMenuHandle {
   open: OpenMessageActionMenu;
@@ -27,6 +28,12 @@ interface MessageActionMenuState {
   anchor: { height: number; left: number; top: number; width: number };
   generation: number;
   request: MessageActionMenuRequest;
+}
+
+interface ConfirmedAction {
+  action(): Promise<void> | void;
+  fallback: string;
+  title: string;
 }
 
 const MessageActionMenuContext = createContext<OpenMessageActionMenu | null>(null);
@@ -76,8 +83,42 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
     useImperativeHandle(ref, () => ({ open }), [open]);
 
     const dismiss = useEvent(() => setMenu(null));
+    const runAction = useEvent(
+      (title: string, fallback: string, action: (() => Promise<void> | void) | undefined) => {
+        if (action === undefined) return;
+        void Promise.resolve(action()).catch((cause: unknown) => {
+          alert(title, cause instanceof Error ? cause.message : fallback);
+        });
+      },
+    );
+    const confirmedActionRef = useRef<ConfirmedAction | null>(null);
+    const runConfirmedAction = useEvent(() => {
+      const confirmed = confirmedActionRef.current;
+      if (confirmed === null) return;
+      confirmedActionRef.current = null;
+      runAction(confirmed.title, confirmed.fallback, confirmed.action);
+    });
+    const confirmDestructive = useEvent((request: ConfirmedAction, prompt: string) => {
+      confirmedActionRef.current = request;
+      alert(prompt, "All later turns will be removed.", [
+        { text: "Cancel", style: "cancel" },
+        {
+          onPress: runConfirmedAction,
+          style: "destructive",
+          text: "Continue",
+        },
+      ]);
+    });
     const handleSelect = useEvent((id: string) => {
-      if (id !== "copy" && id !== "fork" && id !== "review") return;
+      if (
+        id !== "copy" &&
+        id !== "edit" &&
+        id !== "fork" &&
+        id !== "interrupt" &&
+        id !== "review" &&
+        id !== "rollback"
+      )
+        return;
       const selectedRequest = menu?.request;
       if (selectedRequest === undefined) return;
       dismiss();
@@ -88,37 +129,44 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
         return;
       }
       if (id === "review") {
-        if (selectedRequest.onReview !== undefined) {
-          void Promise.resolve(selectedRequest.onReview()).catch((cause: unknown) => {
-            alert(
-              "Review failed",
-              cause instanceof Error ? cause.message : "Could not review response",
-            );
-          });
+        runAction("Review failed", "Could not review response", selectedRequest.onReview);
+        return;
+      }
+      if (id === "edit") {
+        if (selectedRequest.onEdit !== undefined) {
+          confirmDestructive(
+            {
+              action: selectedRequest.onEdit,
+              fallback: "Could not edit message",
+              title: "Edit failed",
+            },
+            "Edit from this message?",
+          );
         }
         return;
       }
-      if (selectedRequest.onFork !== undefined) {
-        void selectedRequest.onFork().catch((cause: unknown) => {
-          alert("Fork failed", cause instanceof Error ? cause.message : "Could not fork thread");
-        });
+      if (id === "interrupt") {
+        runAction("Stop failed", "Could not stop turn", selectedRequest.onInterrupt);
+        return;
       }
+      if (id === "rollback") {
+        if (selectedRequest.onRollback !== undefined) {
+          confirmDestructive(
+            {
+              action: selectedRequest.onRollback,
+              fallback: "Could not roll back turn",
+              title: "Rollback failed",
+            },
+            "Roll back to this message?",
+          );
+        }
+        return;
+      }
+      runAction("Fork failed", "Could not fork thread", selectedRequest.onFork);
     });
 
     const request = menu?.request;
-    const canCopy = request !== undefined && request.copyText !== "";
-    const canFork = request?.onFork !== undefined;
-    const canReview = request?.onReview !== undefined;
-    const actions: readonly CodeWideMenuAction[] = [
-      { id: "copy", label: "Copy", icon: "copy-outline", disabled: !canCopy },
-      { id: "fork", label: "Fork", icon: "git-branch-outline", disabled: !canFork },
-      {
-        id: "review",
-        label: "Review response",
-        icon: "chatbubble-ellipses-outline",
-        disabled: !canReview,
-      },
-    ];
+    const actions = messageActionMenuItems(request);
 
     return (
       <View ref={rootRef} collapsable={false} pointerEvents="box-none" style={styles.host}>
@@ -141,14 +189,6 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
 );
 
 const styles = StyleSheet.create({
-  anchor: {
-    position: "absolute",
-  },
-  host: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-  },
+  anchor: { position: "absolute" },
+  host: { bottom: 0, left: 0, position: "absolute", right: 0, top: 0 },
 });

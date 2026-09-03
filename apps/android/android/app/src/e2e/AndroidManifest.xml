@@ -1,6 +1,26 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
   <application>
+    <!-- Shell-only deterministic Voice faults for the E2E application id. This
+         receiver is absent from debug and release manifests. -->
+    <receiver
+        android:name="dev.codewide.app.e2e.V2VoiceFaultReceiver"
+        android:enabled="true"
+        android:exported="true"
+        android:permission="android.permission.DUMP">
+      <intent-filter>
+        <action android:name="dev.codewide.app.e2e.VOICE_FAULT" />
+      </intent-filter>
+    </receiver>
+    <receiver
+        android:name="dev.codewide.app.e2e.AuthorityRotationFaultReceiver"
+        android:enabled="true"
+        android:exported="true"
+        android:permission="android.permission.DUMP">
+      <intent-filter>
+        <action android:name="dev.codewide.app.e2e.AUTHORITY_ROTATION_FAULT" />
+      </intent-filter>
+    </receiver>
     <!-- Expo's development tools button overlaps the app's rightmost header action.
          E2E drives the real app controls, so no developer overlay may intercept them. -->
     <meta-data

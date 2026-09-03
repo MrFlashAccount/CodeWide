@@ -18,11 +18,12 @@ const MAX_LABEL_LENGTH = 1024;
 const MAX_MEDIA_TYPE_LENGTH = 256;
 const MAX_SOURCE_URI_LENGTH = 8192;
 
-export interface VideoPlaybackSource {
+interface VideoPlaybackSource {
+  headers?: Record<string, string> | null;
   uri: string;
 }
 
-export interface VideoPreviewRouteModel {
+interface VideoPreviewRouteModel {
   attachmentId: string;
   mediaType: string;
   name: string;
@@ -31,7 +32,7 @@ export interface VideoPreviewRouteModel {
   threadId: string;
 }
 
-export interface VideoPreviewRouteInput {
+interface VideoPreviewRouteInput {
   attachmentId?: string | readonly string[];
   mediaType?: string | readonly string[];
   name?: string | readonly string[];
@@ -40,11 +41,11 @@ export interface VideoPreviewRouteInput {
   threadId?: string | readonly string[];
 }
 
-export type VideoPreviewRouteResult =
+type VideoPreviewRouteResult =
   | { model: VideoPreviewRouteModel; ok: true }
   | { message: string; ok: false };
 
-function isVideoAttachment(name: string, mediaType: string): boolean {
+export function isVideoAttachment(name: string, mediaType: string): boolean {
   const normalizedMediaType = mediaType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   if (normalizedMediaType.startsWith("video/")) {
     return true;
@@ -53,6 +54,7 @@ function isVideoAttachment(name: string, mediaType: string): boolean {
   return extension !== undefined && VIDEO_EXTENSIONS.has(extension);
 }
 
+/** @testOnly Exposes closed route parsing to malformed-input regressions. */
 export function parseVideoPreviewRoute(input: VideoPreviewRouteInput): VideoPreviewRouteResult {
   const fields = readRouteFields(input);
   const invalid = invalidRouteMessage(fields);

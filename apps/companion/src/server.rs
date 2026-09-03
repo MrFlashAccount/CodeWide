@@ -25,7 +25,7 @@ use crate::{
     rollout::read_rollout_metadata,
     store::IndexStore,
     sync::SyncHub,
-    sync_v2::{SyncV2Mode, SyncV2Runtime},
+    sync_v2::{AttachmentStageStore, SyncV2Mode, SyncV2Runtime, WorkspaceUploadStore},
     telemetry::{
         TelemetryBatch, TelemetryError, TelemetryQuery, TelemetrySettings, TelemetryStore,
     },
@@ -70,6 +70,8 @@ pub struct CompanionServices {
     pub inner_tls_target: Option<SocketAddr>,
     pub inner_tls_limit: Option<Arc<tokio::sync::Semaphore>>,
     pub sync_v2: Option<SyncV2Runtime>,
+    pub attachment_staging: Option<AttachmentStageStore>,
+    pub workspace_upload_staging: Option<WorkspaceUploadStore>,
     pub sync_v2_mode: SyncV2Mode,
 }
 
@@ -378,6 +380,18 @@ fn build_control_router(state: AppState) -> Router {
         .route(
             "/internal/e2e/v2-command-fault/{fault_id}/release",
             post(e2e_command_fault_release),
+        )
+        .route(
+            "/internal/e2e/v2-surface-fault",
+            post(e2e_surface_fault_arm),
+        )
+        .route(
+            "/internal/e2e/v2-surface-fault/{fault_id}",
+            get(e2e_surface_fault_status),
+        )
+        .route(
+            "/internal/e2e/v2-surface-fault/{fault_id}/release",
+            post(e2e_surface_fault_release),
         );
     router
         .layer(DefaultBodyLimit::max(8 * 1024))
@@ -437,6 +451,139 @@ async fn e2e_command_fault_release(
         .await
         .map_or_else(
             || json_error(StatusCode::NOT_FOUND, "e2e_command_fault_not_found"),
+            |status| Json(status).into_response(),
+        )
+}
+
+#[cfg(feature = "e2e-command-fault")]
+async fn e2e_surface_fault_arm(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Request,
+) -> Response {
+    if !e2e_fault_authorized(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    }
+    let Ok(body) = axum::body::to_bytes(request.into_body(), 8 * 1024).await else {
+        return json_error(StatusCode::BAD_REQUEST, "e2e_surface_fault_request_invalid");
+    };
+    let Ok(request) = serde_json::from_slice::<crate::sync_v2::E2ESurfaceFaultRequest>(&body)
+    else {
+        return json_error(StatusCode::BAD_REQUEST, "e2e_surface_fault_request_invalid");
+    };
+    let Some(runtime) = state.services.sync_v2.as_ref() else {
+        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
+    };
+    let immediate_port_expiry = request.target == crate::sync_v2::E2ESurfaceFaultTarget::PortExpire;
+    let fault_id = format!("surface-fault:{}", random_token(16));
+    match runtime.arm_e2e_surface_fault(fault_id, request).await {
+        Ok(status) => {
+            if immediate_port_expiry {
+                if let Err(response) = apply_e2e_port_expire(&state, runtime).await {
+                    return response;
+                }
+                return runtime
+                    .e2e_surface_fault_status(&status.fault_id)
+                    .await
+                    .map_or_else(
+                        || {
+                            json_error(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "e2e_surface_fault_not_found",
+                            )
+                        },
+                        |triggered| Json(triggered).into_response(),
+                    );
+            }
+            Json(status).into_response()
+        }
+        Err(
+            code @ ("e2e_surface_fault_marker_invalid"
+            | "e2e_surface_fault_identifier_invalid"
+            | "e2e_surface_fault_action_not_supported"),
+        ) => json_error(StatusCode::BAD_REQUEST, code),
+        Err(code) => json_error(StatusCode::CONFLICT, code),
+    }
+}
+
+#[cfg(feature = "e2e-command-fault")]
+async fn apply_e2e_port_expire(
+    state: &AppState,
+    runtime: &crate::sync_v2::SyncV2Runtime,
+) -> Result<(), Response> {
+    let Some(crate::sync_v2::E2ESurfaceFaultEffect::PortExpire {
+        tunnel_id,
+        owner_device_id,
+    }) = runtime
+        .intercept_e2e_surface_fault(crate::sync_v2::E2ESurfaceFaultTarget::PortExpire)
+        .await
+    else {
+        return Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "e2e_port_expire_action_mismatch",
+        ));
+    };
+    let Some(tunnels) = state.services.tunnels.as_ref() else {
+        return Err(json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "tunnel_service_unavailable",
+        ));
+    };
+    match tunnels.expire_for_e2e(&tunnel_id, &owner_device_id).await {
+        Ok(()) => Ok(()),
+        Err(crate::tunnels::TunnelError::NotFound) => Err(json_error(
+            StatusCode::NOT_FOUND,
+            "e2e_port_expire_tunnel_not_found",
+        )),
+        Err(crate::tunnels::TunnelError::Unauthorized) => Err(json_error(
+            StatusCode::UNAUTHORIZED,
+            "e2e_port_expire_owner_mismatch",
+        )),
+        Err(_) => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "e2e_port_expire_failed",
+        )),
+    }
+}
+
+#[cfg(feature = "e2e-command-fault")]
+async fn e2e_surface_fault_status(
+    State(state): State<AppState>,
+    Path(fault_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !e2e_fault_authorized(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    }
+    let Some(runtime) = state.services.sync_v2.as_ref() else {
+        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
+    };
+    runtime
+        .e2e_surface_fault_status(&fault_id)
+        .await
+        .map_or_else(
+            || json_error(StatusCode::NOT_FOUND, "e2e_surface_fault_not_found"),
+            |status| Json(status).into_response(),
+        )
+}
+
+#[cfg(feature = "e2e-command-fault")]
+async fn e2e_surface_fault_release(
+    State(state): State<AppState>,
+    Path(fault_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    if !e2e_fault_authorized(&state.authorization, &headers).await {
+        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
+    }
+    let Some(runtime) = state.services.sync_v2.as_ref() else {
+        return json_error(StatusCode::SERVICE_UNAVAILABLE, "sync_v2_unavailable");
+    };
+    runtime
+        .release_e2e_surface_fault(&fault_id)
+        .await
+        .map_or_else(
+            || json_error(StatusCode::NOT_FOUND, "e2e_surface_fault_not_found"),
             |status| Json(status).into_response(),
         )
 }

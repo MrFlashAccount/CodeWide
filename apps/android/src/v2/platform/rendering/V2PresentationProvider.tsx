@@ -38,6 +38,7 @@ const ioniconNames: Record<PresentationIconName, keyof typeof Ionicons.glyphMap>
   flash: "flash",
   folder: "folder-outline",
   forward: "chevron-forward",
+  hourglass: "hourglass-outline",
   list: "list-outline",
   layers: "layers-outline",
   mic: "mic-outline",

@@ -1,17 +1,20 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 import { describe, expect, it, vi } from "vitest";
 
 import type { PortTransport } from "../src/v2/application/ports/portTransport";
 import { PortsResource } from "../src/v2/application/resources/portsResource";
+import { ThreadPinsResource } from "../src/v2/application/resources/threadPinsResource";
 import { savedServerId, threadId } from "../src/v2/domain/ids";
 import { qualifiedThread } from "../src/v2/domain/qualifiedThread";
+import { createThreadPinStore } from "../src/v2/infrastructure/persistence/sqliteThreadPinStore.web";
 import { formatBytes } from "../src/v2/features/attachments/attachmentDisplay";
 import {
   accountSettingsDestination,
   agentDestination,
   attachmentPreviewDestination,
   newThreadDestination,
+  portBrowserDestination,
   portDestination,
   portsDestination,
   serverSettingsDestination,
@@ -54,12 +57,6 @@ describe("V2 feature surfaces", () => {
     expect(conversationRoute).toContain(
       "router.push(threadResourceDestination(owner, resourceName))",
     );
-    const newThread = readFileSync(
-      new URL("../src/v2/features/threadList/NewThreadScreen.tsx", import.meta.url),
-      "utf8",
-    );
-    expect(newThread).toContain("router.replace(");
-    expect(newThread).not.toContain("router.push(");
     const androidBackHandler = readFileSync(
       new URL("../src/ui/use-android-back-handler.ts", import.meta.url),
       "utf8",
@@ -96,20 +93,34 @@ describe("V2 feature surfaces", () => {
     expect(serverLayout).not.toContain('<Stack.Screen name="ports"');
     for (const route of [
       "../app/(workspace)/servers/[savedServerId]/ports/index.tsx",
+      "../app/(workspace)/servers/[savedServerId]/ports/[profileId].tsx",
       "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/attachments.tsx",
-      "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/changes.tsx",
     ]) {
       const source = readFileSync(new URL(route, import.meta.url), "utf8");
       expect(source).toContain("<Stack.Screen options={SCREEN_OPTIONS}");
       expect(source).toContain('presentation: "transparentModal"');
     }
-    for (const feature of ["attachments", "changes", "ports"] as const) {
+    const changesRoute = readFileSync(
+      new URL(
+        "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/changes.tsx",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(changesRoute).toContain('presentation: "fullScreenModal"');
+    for (const feature of ["attachments", "ports"] as const) {
       const source = readFileSync(
         new URL(`../src/v2/features/${feature}/${titleCase(feature)}Screen.tsx`, import.meta.url),
         "utf8",
       );
       expect(source).toContain("<PresentationSheetView");
     }
+    const changes = readFileSync(
+      new URL("../src/v2/features/changes/ChangesScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(changes).not.toContain("PresentationSheetView");
+    expect(changes).toContain("<ChangePreview");
   });
 
   it("disables V2 route transitions on changing foldable geometry", () => {
@@ -143,23 +154,70 @@ describe("V2 feature surfaces", () => {
     );
   });
 
+  it("keeps Android system bars dark while V2 sheets are open", () => {
+    const androidSheet = readFileSync(
+      new URL("../src/v2/presentation/surfaces/PresentationSheetView.android.tsx", import.meta.url),
+      "utf8",
+    );
+    const expoUiPatch = readFileSync(
+      new URL("../../../patches/@expo__ui@57.0.9.patch", import.meta.url),
+      "utf8",
+    );
+    expect(androidSheet).toContain('from "@expo/ui/jetpack-compose"');
+    expect(androidSheet).toContain('<Host colorScheme="dark"');
+    expect(androidSheet).toContain("<ModalBottomSheet");
+    expect(androidSheet).not.toContain("<BottomSheet");
+    expect(expoUiPatch).toContain("isAppearanceLightStatusBars = false");
+    expect(expoUiPatch).toContain("isAppearanceLightNavigationBars = false");
+  });
+
   it("uses text shimmer instead of spinner chrome for V2 progress states", () => {
     const shimmer = readFileSync(
       new URL("../src/v2/presentation/text/ShimmerText.tsx", import.meta.url),
       "utf8",
     );
-    expect(shimmer).toContain('requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")');
-    for (const surface of [
-      "../src/v2/presentation/conversation/TimelineView.tsx",
-      "../src/v2/presentation/feedback/ResourceStateView.tsx",
-      "../src/v2/presentation/input/ComposerContextStripView.tsx",
-      "../src/v2/presentation/input/ComposerView.tsx",
-      "../src/v2/presentation/navigation/ThreadListView.tsx",
-      "../src/v2/presentation/navigation/ThreadSidebarView.tsx",
-    ]) {
-      const source = readFileSync(new URL(surface, import.meta.url), "utf8");
-      expect(source).not.toContain("ActivityIndicator");
+    const nativeShimmer = readFileSync(
+      new URL("../src/presentation/text/nativeShimmerText.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(shimmer).toContain('from "../../../presentation/text/nativeShimmerText"');
+    expect(shimmer).not.toContain("requireNativeComponent");
+    expect(nativeShimmer).toContain(
+      'requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")',
+    );
+    const productionRoots = ["../src/boot/", "../src/v2/"];
+    const spinnerComponent = /<(?:ActivityIndicator|[A-Za-z][A-Za-z0-9]*Spinner)\b/u;
+    const violations: string[] = [];
+    for (const root of productionRoots) {
+      const files = readdirSync(new URL(root, import.meta.url), {
+        encoding: "utf8",
+        recursive: true,
+      }).filter((file) => file.endsWith(".tsx"));
+      for (const file of files) {
+        const source = readFileSync(new URL(`${root}${file}`, import.meta.url), "utf8");
+        if (spinnerComponent.test(source)) {
+          violations.push(`${root}${file}`);
+        }
+      }
     }
+    expect(violations).toStrictEqual([]);
+  });
+
+  it("does not navigate when the selected server is activated again", () => {
+    const threadList = readFileSync(
+      new URL("../src/v2/features/threadList/ThreadListScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    const workspace = readFileSync(
+      new URL("../src/v2/features/workspace/ServerWorkspaceChrome.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(threadList).toContain(
+      "if (candidate === undefined || candidate.id === savedServerId) return;",
+    );
+    expect(workspace).toContain(
+      "if (server === undefined || server.id === activeSavedServerId) return;",
+    );
   });
 
   it("opens on the aggregate thread catalog instead of a server-picker page", () => {
@@ -183,8 +241,35 @@ describe("V2 feature surfaces", () => {
     expect(source).toContain("<LegendList");
     expect(source).toContain("estimatedItemSize={64}");
     expect(source).toContain("drawDistance={320}");
+    expect(source).toContain("onEndReached={loadMore}");
+    expect(source).toContain("onEndReachedThreshold={0.45}");
     expect(source).toContain("recycleItems");
     expect(source).not.toContain("SectionList");
+  });
+
+  it("publishes and restores client-local thread pins per saved server", async () => {
+    const store = createThreadPinStore();
+    const server = savedServerId("server-a");
+    const thread = threadId("thread-a");
+    const first = new ThreadPinsResource(store);
+    await first.start();
+
+    await first.setPinned(server, thread, true);
+    expect(first.isPinned(server, thread)).toBe(true);
+
+    const restarted = new ThreadPinsResource(store);
+    await restarted.start();
+    expect(restarted.isPinned(server, thread)).toBe(true);
+
+    await restarted.setPinned(server, thread, false);
+    expect(restarted.isPinned(server, thread)).toBe(false);
+
+    const unpinnedRestart = new ThreadPinsResource(store);
+    await unpinnedRestart.start();
+    expect(unpinnedRestart.isPinned(server, thread)).toBe(false);
+
+    await unpinnedRestart.deleteSavedServer(server);
+    expect(unpinnedRestart.isPinned(server, thread)).toBe(false);
   });
 
   it("keeps every secondary destination qualified by saved server and thread", () => {
@@ -201,6 +286,10 @@ describe("V2 feature surfaces", () => {
     expect(portDestination(server, "profile/three")).toEqual({
       params: { profileId: "profile/three", savedServerId: "server/one" },
       pathname: "/servers/[savedServerId]/ports/[profileId]",
+    });
+    expect(portBrowserDestination(server, "profile/three")).toEqual({
+      params: { profileId: "profile/three", savedServerId: "server/one" },
+      pathname: "/servers/[savedServerId]/ports/browser/[profileId]",
     });
     expect(accountSettingsDestination(server)).toEqual({
       params: { savedServerId: "server/one" },
@@ -225,18 +314,12 @@ describe("V2 feature surfaces", () => {
     expect(
       attachmentPreviewDestination({
         attachmentId: "attachment/four",
-        mediaType: "video/mp4",
-        name: "recording.mp4",
         owner,
-        sourceUri: "file:///recording.mp4",
       }),
     ).toEqual({
       params: {
         attachmentId: "attachment/four",
-        mediaType: "video/mp4",
-        name: "recording.mp4",
         savedServerId: "server/one",
-        sourceUri: "file:///recording.mp4",
         threadId: "thread/two",
       },
       pathname: "/servers/[savedServerId]/threads/[threadId]/attachments/[attachmentId]",
@@ -254,27 +337,146 @@ describe("V2 feature surfaces", () => {
     );
   });
 
-  it("qualifies port discovery and tunnel lifecycle through one saved server", async () => {
+  it("qualifies durable native port profiles through one saved server", async () => {
     const server = savedServerId("server-1");
-    const list = vi.fn<PortTransport["list"]>().mockResolvedValue({ ports: [], scannedAt: 42 });
-    const createTunnel = vi
-      .fn<PortTransport["createTunnel"]>()
-      .mockResolvedValue({ id: "tunnel-1", expiresAt: 99, basePath: "/v2/tunnels/tunnel-1/" });
-    const deleteTunnel = vi.fn<PortTransport["deleteTunnel"]>().mockResolvedValue(undefined);
-    const resource = new PortsResource({ createTunnel, deleteTunnel, list }, server);
+    const stopped = {
+      enabled: false,
+      error: null,
+      forwardingKey: null,
+      id: "profile-1",
+      label: "Web",
+      localPort: null,
+      port: 3000,
+      preference: "included" as const,
+      preferredLocalPort: 30_001,
+      previewUrl: null,
+      savedServerId: server,
+      status: "stopped" as const,
+      updatedAt: 1,
+    };
+    const connecting = { ...stopped, enabled: true, status: "connecting" as const, updatedAt: 2 };
+    const list = vi.fn<PortTransport["list"]>().mockResolvedValue([]);
+    const discover = vi
+      .fn<PortTransport["discover"]>()
+      .mockResolvedValue({ ports: [], scannedAt: 42 });
+    const upsert = vi.fn<PortTransport["upsert"]>().mockResolvedValue(stopped);
+    const start = vi.fn<PortTransport["start"]>().mockResolvedValue(connecting);
+    const stop = vi.fn<PortTransport["stop"]>().mockResolvedValue(stopped);
+    const resource = new PortsResource(
+      {
+        createTunnel: vi.fn<PortTransport["createTunnel"]>(),
+        createProfileId: () => "profile-1",
+        deleteTunnel: vi.fn<PortTransport["deleteTunnel"]>().mockResolvedValue(undefined),
+        discover,
+        list,
+        remove: vi.fn<PortTransport["remove"]>().mockResolvedValue(undefined),
+        start,
+        stop,
+        subscribe: () => () => undefined,
+        upsert,
+      },
+      server,
+    );
     await resource.refresh();
-    expect(resource.snapshot()).toEqual({ status: "ready", value: { ports: [], scannedAt: 42 } });
-    await expect(resource.createTunnel(3000)).resolves.toMatchObject({ id: "tunnel-1" });
-    await resource.deleteTunnel("tunnel-1");
+    expect(resource.snapshot()).toEqual({
+      status: "ready",
+      value: {
+        discoveryError: null,
+        discoveryStatus: "ready",
+        ports: [],
+        profileError: null,
+        profiles: [],
+        scannedAt: 42,
+      },
+    });
+    const profile = await resource.create({
+      forwardingKey: null,
+      label: "Web",
+      port: 3000,
+      preferredLocalPort: 30_001,
+      profileId: "profile-1",
+      start: true,
+    });
+    expect(profile).toMatchObject({ enabled: true, id: "profile-1", status: "connecting" });
+    await resource.stop("profile-1");
     expect(list).toHaveBeenCalledWith(server);
-    expect(createTunnel).toHaveBeenCalledWith(server, 3000);
-    expect(deleteTunnel).toHaveBeenCalledWith(server, "tunnel-1");
+    expect(upsert).toHaveBeenCalledWith(server, {
+      forwardingKey: null,
+      label: "Web",
+      port: 3000,
+      preference: "included",
+      preferredLocalPort: 30_001,
+      profileId: "profile-1",
+    });
+    expect(start).toHaveBeenCalledWith(server, "profile-1");
+    expect(stop).toHaveBeenCalledWith(server, "profile-1");
   });
 
   it("renders bounded attachment sizes", () => {
     expect(formatBytes("12")).toBe("12 B");
     expect(formatBytes("1536")).toBe("1.5 KB");
     expect(formatBytes("invalid")).toBe("invalid bytes");
+  });
+
+  it("keeps all resource surfaces functional inside the V2 ownership boundary", () => {
+    const attachments = readFileSync(
+      new URL("../src/v2/features/attachments/AttachmentsScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    const attachmentPreview = readFileSync(
+      new URL("../src/v2/features/attachments/AttachmentPreviewScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    const attachmentPreviewContent = readFileSync(
+      new URL("../src/v2/features/attachments/AttachmentPreviewContent.tsx", import.meta.url),
+      "utf8",
+    );
+    const changes = readFileSync(
+      new URL("../src/v2/features/changes/ChangesScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    const changeDiff = readFileSync(
+      new URL("../src/v2/presentation/changes/ChangeDiffView.tsx", import.meta.url),
+      "utf8",
+    );
+    const ports = readFileSync(
+      new URL("../src/v2/features/ports/PortsScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    const browser = readFileSync(
+      new URL("../src/v2/presentation/browser/InternalBrowserView.tsx", import.meta.url),
+      "utf8",
+    );
+    const browserScreen = readFileSync(
+      new URL("../src/v2/features/ports/BrowserScreen.tsx", import.meta.url),
+      "utf8",
+    );
+    const terminal = readFileSync(
+      new URL("../src/v2/features/terminal/TerminalScreen.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(attachments).not.toContain("isLocalUri");
+    expect(attachmentPreview).toContain("runtime.preview(");
+    expect(attachmentPreviewContent).toContain(
+      "isVideoAttachment(attachment.name, attachment.mediaType)",
+    );
+    expect(changes).toContain("<ChangePreview");
+    expect(changes).toContain('kind: "thread.change"');
+    expect(changes).not.toContain("/v2/files/preview?path=");
+    expect(changeDiff).toContain("result.patches.map");
+    expect(changeDiff).toContain("result.source");
+    expect(ports).toContain('useState<ServiceSegment>("active")');
+    expect(ports).toContain("portBrowserDestination(");
+    expect(browserScreen).toContain("profile.previewUrl");
+    expect(browserScreen).not.toContain("runtime.preview(");
+    expect(browser).toContain("<WebView");
+    expect(browser).toContain("Loading browser…");
+    expect(terminal).toContain("useTerminalPlatform");
+    expect(terminal).toContain("<RouteBinding");
+    expect(terminal).toContain("runtime.terminal.workspaceSnapshot(owner)");
+    expect(terminal).not.toContain('from "expo-libghostty"');
+    expect(terminal).not.toContain("native-transport");
   });
 
   it("uses only the authoritative source generation for generation-bound resources", () => {
@@ -286,45 +488,11 @@ describe("V2 feature surfaces", () => {
       new URL("../src/v2/application/ports/voiceTransport.ts", import.meta.url),
       "utf8",
     );
-    expect(terminal).toContain("projection.sourceGeneration");
+    expect(terminal).toContain("generation: projection.sourceGeneration");
+    expect(terminal).toContain('currentThread?.id !== props.owner.threadId');
     expect(terminal).not.toContain("projection.generationId");
     expect(voice).toContain("sourceGeneration: V2U64");
     expect(voice).not.toContain("generationId");
-  });
-
-  it("keeps only the active draft locked and recovered work visible until typed settlement", () => {
-    const newThread = readFileSync(
-      new URL("../src/v2/features/threadList/NewThreadForm.tsx", import.meta.url),
-      "utf8",
-    );
-    const composer = readFileSync(
-      new URL("../src/v2/features/composer/ChatComposer.tsx", import.meta.url),
-      "utf8",
-    );
-    const composerView = readFileSync(
-      new URL("../src/v2/presentation/input/ComposerView.tsx", import.meta.url),
-      "utf8",
-    );
-    const correlations = readFileSync(
-      new URL("../src/v2/application/resources/commandCorrelationResource.ts", import.meta.url),
-      "utf8",
-    );
-    expect(newThread).toContain("setActivationLocked(true)");
-    expect(newThread).toContain('accessibilityLiveRegion="polite"');
-    expect(newThread).toContain("disabled={activationLocked}");
-    expect(newThread).toContain("locked={locallyLocked}");
-    expect(composer).toContain("<ComposerView");
-    expect(composer).toContain("disabled={disabled || locked === true}");
-    expect(composer).toContain("pending={sending}");
-    expect(composerView).toContain("editable={!disabled && !pending}");
-    expect(composerView).toContain(
-      "accessibilityState={{ busy: pending, disabled: sendDisabled }}",
-    );
-    expect(composerView).toContain('accessibilityLiveRegion="polite"');
-    expect(correlations).toContain("this.#commands.subscribe");
-    expect(correlations).toContain("#onSettlement");
-    expect(newThread).toContain("correlations.retainLock");
-    expect(newThread).toContain("correlations.isLocked(");
   });
 });
 

@@ -16,7 +16,8 @@ export type V2OperationUpdate = Partial<Pick<V2PersistedOperation, "state" | "ac
  * `create` resolves only after its row is atomically committed. Rejection is
  * deliberately ambiguous: callers must read the candidate id before deciding
  * whether retry is safe because conflict or commit acknowledgement can fail
- * while a row already exists.
+ * while a row already exists. `create` synchronously takes ownership of the
+ * command graph; callers must not retain a mutable use for that graph.
  */
 export interface V2OperationStore {
   create(
@@ -44,6 +45,7 @@ export interface V2OperationStore {
 export class MemoryV2OperationStore implements V2OperationStore {
   readonly #operations = new Map<string, Map<string, V2PersistedOperation>>();
   readonly #listeners = new Map<string, Set<() => void>>();
+  readonly #ownedCommands = new WeakSet<V2Command>();
 
   async create(
     savedServerId: V2SavedServerId,
@@ -51,29 +53,30 @@ export class MemoryV2OperationStore implements V2OperationStore {
     command: V2Command,
     nowMs = Date.now(),
   ): Promise<V2PersistedOperation> {
+    const fingerprint = fingerprintV2Command(command);
+    const ownedCommand = this.#takeCommandOwnership(command);
     await this.prune(savedServerId, nowMs);
     const operations = this.#partition(savedServerId);
-    const fingerprint = fingerprintV2Command(command);
     const existing = operations.get(operationId);
     if (existing !== undefined) {
       if (existing.commandFingerprint !== fingerprint)
         throw new Error("Sync V2 operation id is already bound to a different canonical command");
-      return clone(existing);
+      return existing;
     }
-    const operation: V2PersistedOperation = {
+    const operation = freezeOperation({
       operationId,
-      command: clone(command),
-      commandKind: command.kind,
+      command: ownedCommand,
+      commandKind: ownedCommand.kind,
       commandFingerprint: fingerprint,
       state: "created",
       terminalClass: null,
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
       acceptedAt: null,
-    };
+    });
     operations.set(operationId, operation);
     this.#publish(savedServerId);
-    return clone(operation);
+    return operation;
   }
 
   async get(
@@ -81,11 +84,15 @@ export class MemoryV2OperationStore implements V2OperationStore {
     operationId: string,
   ): Promise<V2PersistedOperation | null> {
     const operation = this.#operations.get(savedServerId)?.get(operationId);
-    return operation === undefined ? null : clone(operation);
+    return operation ?? null;
   }
 
   async list(savedServerId: V2SavedServerId): Promise<V2OperationStatus[]> {
-    return [...(this.#operations.get(savedServerId)?.values() ?? [])].map(publicOperationStatus);
+    const statuses: V2OperationStatus[] = [];
+    for (const operation of this.#operations.get(savedServerId)?.values() ?? []) {
+      statuses.push(publicOperationStatus(operation));
+    }
+    return statuses;
   }
 
   subscribe(savedServerId: V2SavedServerId, listener: () => void): V2StoreUnsubscribe {
@@ -113,10 +120,10 @@ export class MemoryV2OperationStore implements V2OperationStore {
     if (operation === undefined) throw new Error("Unknown Sync V2 operation id");
     if (!expected.includes(operation.state))
       throw new Error(`Sync V2 operation transition rejected from ${operation.state}`);
-    const next = applyOperationUpdate(operation, update, nowMs);
+    const next = freezeOperation(applyOperationUpdate(operation, update, nowMs));
     operations!.set(operationId, next);
     this.#publish(savedServerId);
-    return clone(next);
+    return next;
   }
 
   async recoverable(
@@ -124,9 +131,17 @@ export class MemoryV2OperationStore implements V2OperationStore {
     nowMs = Date.now(),
   ): Promise<V2PersistedOperation[]> {
     await this.prune(savedServerId, nowMs);
-    return [...(this.#operations.get(savedServerId)?.values() ?? [])]
-      .filter((operation) => ["created", "sent", "accepted"].includes(operation.state))
-      .map(clone);
+    const recoverable: V2PersistedOperation[] = [];
+    for (const operation of this.#operations.get(savedServerId)?.values() ?? []) {
+      if (
+        operation.state === "created" ||
+        operation.state === "sent" ||
+        operation.state === "accepted"
+      ) {
+        recoverable.push(operation);
+      }
+    }
+    return recoverable;
   }
 
   async prune(savedServerId: V2SavedServerId, nowMs = Date.now()): Promise<void> {
@@ -168,6 +183,13 @@ export class MemoryV2OperationStore implements V2OperationStore {
       }
     }
   }
+
+  #takeCommandOwnership(command: V2Command): V2Command {
+    if (this.#ownedCommands.has(command)) return command;
+    freezeJsonValue(command);
+    this.#ownedCommands.add(command);
+    return command;
+  }
 }
 
 export function publicOperationStatus(operation: V2PersistedOperation): V2OperationStatus {
@@ -189,12 +211,18 @@ export function applyOperationUpdate(
   update: V2OperationUpdate,
   nowMs: number,
 ): V2PersistedOperation {
-  const next = { ...operation, ...clone(update), updatedAtMs: nowMs };
-  if (next.state !== "created" && next.state !== "sent") next.command = null;
-  if (["completed", "failed", "indeterminate", "rejected", "expired"].includes(next.state)) {
-    next.terminalClass = next.state as NonNullable<V2PersistedOperation["terminalClass"]>;
-  }
-  return next;
+  const state = update.state ?? operation.state;
+  return {
+    operationId: operation.operationId,
+    command: state === "created" || state === "sent" ? operation.command : null,
+    commandKind: operation.commandKind,
+    commandFingerprint: operation.commandFingerprint,
+    state,
+    terminalClass: terminalClass(state, operation.terminalClass),
+    createdAtMs: operation.createdAtMs,
+    updatedAtMs: nowMs,
+    acceptedAt: update.acceptedAt === undefined ? operation.acceptedAt : update.acceptedAt,
+  };
 }
 
 function retentionStart(operation: V2PersistedOperation): number {
@@ -203,6 +231,30 @@ function retentionStart(operation: V2PersistedOperation): number {
   return Number.isNaN(accepted) ? operation.createdAtMs : accepted;
 }
 
-function clone<T>(value: T): T {
-  return structuredClone(value);
+function terminalClass(
+  state: V2OperationState,
+  previous: V2PersistedOperation["terminalClass"],
+): V2PersistedOperation["terminalClass"] {
+  switch (state) {
+    case "completed":
+    case "failed":
+    case "indeterminate":
+    case "rejected":
+    case "expired":
+      return state;
+    case "created":
+    case "sent":
+    case "accepted":
+      return previous;
+  }
+}
+
+function freezeOperation(operation: V2PersistedOperation): V2PersistedOperation {
+  return Object.freeze(operation);
+}
+
+function freezeJsonValue(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  for (const nested of Object.values(value)) freezeJsonValue(nested);
+  Object.freeze(value);
 }

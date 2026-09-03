@@ -38,6 +38,7 @@ const privateKeyPath = resolve(
   process.env.CODEWIDE_OTA_PRIVATE_KEY
     ?? join(userDataRoot, "codewide/ota/private-key.pem"),
 );
+const dryRun = parseArguments(process.argv.slice(2));
 
 const appConfig = JSON.parse(await readFile(appConfigPath, "utf8")) as AppConfig;
 const runtimeVersion = appConfig.expo?.runtimeVersion;
@@ -106,11 +107,28 @@ try {
     writeFile(join(stagingRoot, "release.json"), `${JSON.stringify({ updateId, runtimeVersion, createdAt }, null, 2)}\n`, { encoding: "utf8", mode: 0o644 }),
   ]);
 
-  const runtimeRoot = join(otaRoot, safeSegment(runtimeVersion));
-  await mkdir(runtimeRoot, { recursive: true });
-  const destination = join(runtimeRoot, `${Date.now()}-${updateId.slice(0, 8)}`);
-  await rename(stagingRoot, destination);
-  console.log(JSON.stringify({ updateId, runtimeVersion, createdAt, directory: relative(repoRoot, destination) }, null, 2));
+  if (dryRun) {
+    const scanned = spawnSync(
+      "pnpm",
+      ["security:scan-artifacts", "--", stagingRoot],
+      { cwd: repoRoot, stdio: "inherit", env: process.env },
+    );
+    if (scanned.status !== 0) throw new Error(`artifact scan failed with status ${scanned.status ?? "unknown"}`);
+    console.log(JSON.stringify({
+      updateId,
+      runtimeVersion,
+      createdAt,
+      dryRun: true,
+      artifact: "built-signed-scanned",
+    }, null, 2));
+    await rm(stagingRoot, { recursive: true, force: true });
+  } else {
+    const runtimeRoot = join(otaRoot, safeSegment(runtimeVersion));
+    await mkdir(runtimeRoot, { recursive: true });
+    const destination = join(runtimeRoot, `${Date.now()}-${updateId.slice(0, 8)}`);
+    await rename(stagingRoot, destination);
+    console.log(JSON.stringify({ updateId, runtimeVersion, createdAt, directory: relative(repoRoot, destination) }, null, 2));
+  }
 } catch (error) {
   await rm(stagingRoot, { recursive: true, force: true });
   throw error;
@@ -169,4 +187,14 @@ function mimeForExtension(extension: string): string {
     webp: "image/webp",
     xml: "application/xml",
   } as Record<string, string>)[extension.toLowerCase()] ?? "application/octet-stream";
+}
+
+function parseArguments(args: string[]): boolean {
+  let dryRun = false;
+  for (const argument of args) {
+    if (argument === "--") continue;
+    if (argument === "--dry-run" && !dryRun) dryRun = true;
+    else throw new Error("Usage: publish-android-ota.ts [--dry-run]");
+  }
+  return dryRun;
 }

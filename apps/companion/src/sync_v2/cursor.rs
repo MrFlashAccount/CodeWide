@@ -11,6 +11,13 @@ use super::{
 
 const PREFIX: &str = "sync-v2-history:";
 const V1_INTERNAL_PREFIX: &str = "codewide-history-v1:";
+const INVALID_V1_CONTINUATION_MESSAGE: &str = "history projection returned an invalid continuation";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct V1SourceContinuation {
+    source_offset: u64,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -119,13 +126,26 @@ impl HistoryCursor {
     }
 }
 
-pub fn v1_source_offset(value: &str) -> Option<u64> {
-    let raw = value.strip_prefix(V1_INTERNAL_PREFIX)?;
-    let decoded = URL_SAFE_NO_PAD.decode(raw).ok()?;
-    serde_json::from_slice::<serde_json::Value>(&decoded)
-        .ok()?
-        .get("sourceOffset")?
-        .as_u64()
+/// Extracts the required rollout offset from a V1 history continuation.
+///
+/// # Errors
+///
+/// Returns a retryable `sourceUnavailable` error when the source continuation
+/// has the wrong wire family or cannot prove an explicit unsigned offset.
+pub fn v1_source_offset(value: &str) -> Result<u64, V2Error> {
+    let raw = value
+        .strip_prefix(V1_INTERNAL_PREFIX)
+        .ok_or_else(invalid_v1_continuation)?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(raw)
+        .map_err(|_| invalid_v1_continuation())?;
+    let continuation: V1SourceContinuation =
+        serde_json::from_slice(&decoded).map_err(|_| invalid_v1_continuation())?;
+    Ok(continuation.source_offset)
+}
+
+fn invalid_v1_continuation() -> V2Error {
+    V2Error::source_unavailable(INVALID_V1_CONTINUATION_MESSAGE)
 }
 
 fn invalid_cursor() -> V2Error {
@@ -151,6 +171,10 @@ mod tests {
 
     fn id(value: &str) -> Id {
         Id::new(value).unwrap_or_else(|error| panic!("invalid test id: {error}"))
+    }
+
+    fn v1_continuation(payload: &[u8]) -> String {
+        format!("{V1_INTERNAL_PREFIX}{}", URL_SAFE_NO_PAD.encode(payload))
     }
 
     #[test]
@@ -197,6 +221,59 @@ mod tests {
             };
             assert_eq!(error.code, ErrorCode::InvalidCursor);
             assert_eq!(error.recovery, Recovery::None);
+        }
+    }
+
+    #[test]
+    fn v1_source_continuation_preserves_explicit_offsets() {
+        for offset in [0, 42] {
+            let continuation = v1_continuation(
+                serde_json::to_vec(&serde_json::json!({
+                    "kind": "turns",
+                    "threadId": "thread-a",
+                    "direction": "desc",
+                    "offset": 0,
+                    "sourceOffset": offset,
+                }))
+                .unwrap_or_else(|error| panic!("test continuation encode failed: {error}"))
+                .as_slice(),
+            );
+            assert_eq!(
+                v1_source_offset(&continuation)
+                    .unwrap_or_else(|error| panic!("valid continuation was rejected: {error:?}")),
+                offset
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_v1_source_continuations_fail_closed() {
+        let malformed_json = v1_continuation(b"not-json");
+        let missing_offset = v1_continuation(
+            serde_json::to_vec(&serde_json::json!({
+                "kind": "turns",
+                "threadId": "thread-a",
+                "direction": "desc",
+                "offset": 0,
+            }))
+            .unwrap_or_else(|error| panic!("test continuation encode failed: {error}"))
+            .as_slice(),
+        );
+
+        for continuation in [
+            "wrong-prefix:opaque".to_owned(),
+            format!("{V1_INTERNAL_PREFIX}not-base64!"),
+            malformed_json,
+            missing_offset,
+        ] {
+            let error = match v1_source_offset(&continuation) {
+                Err(error) => error,
+                Ok(offset) => panic!("malformed continuation produced offset {offset}"),
+            };
+            assert_eq!(error.code, ErrorCode::SourceUnavailable);
+            assert_eq!(error.recovery, Recovery::Retry);
+            assert_eq!(error.message, INVALID_V1_CONTINUATION_MESSAGE);
+            assert!(error.message.len() <= 128);
         }
     }
 }

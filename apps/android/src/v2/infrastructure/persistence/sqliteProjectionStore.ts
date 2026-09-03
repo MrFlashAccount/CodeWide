@@ -1,4 +1,1 @@
-export {
-  createNativeSyncV2ProjectionStore,
-  createNativeSyncV2ProjectionStoreWithDatabase,
-} from "./sqliteProjectionStore.native";
+export { createNativeSyncV2ProjectionStore } from "./sqliteProjectionStore.native";

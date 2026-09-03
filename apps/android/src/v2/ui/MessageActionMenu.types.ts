@@ -1,11 +1,14 @@
 import type { ReactNode } from "react";
 export interface MessageActionMenuRequest {
   copyText: string;
+  onEdit?(): Promise<void> | void;
   onFork?(): Promise<void>;
+  onInterrupt?(): Promise<void>;
   onReview?(): Promise<void> | void;
+  onRollback?(): Promise<void>;
 }
 
-export interface MessageActionMenuAnchor {
+interface MessageActionMenuAnchor {
   pageX: number;
   pageY: number;
   width: number;

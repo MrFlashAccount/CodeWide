@@ -50,9 +50,12 @@ pub struct SyncV2Runtime {
     context_lifecycles:
         Arc<tokio::sync::Mutex<HashMap<AuthenticatedContextKey, Arc<ContextLifecycle>>>>,
     operation_locks: Arc<tokio::sync::Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
+    thread_install_locks: Arc<tokio::sync::Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
     live_epoch_contexts: Arc<tokio::sync::Mutex<HashMap<Id, AuthenticatedContextKey>>>,
     #[cfg(feature = "e2e-command-fault")]
     e2e_command_fault: Arc<super::e2e_fault::E2ECommandFaultControl>,
+    #[cfg(feature = "e2e-command-fault")]
+    e2e_surface_fault: Arc<super::E2ESurfaceFaultControl>,
 }
 
 struct ContextLifecycle {
@@ -96,9 +99,12 @@ impl SyncV2Runtime {
             blocked_contexts: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
             context_lifecycles: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             operation_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            thread_install_locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             live_epoch_contexts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             #[cfg(feature = "e2e-command-fault")]
             e2e_command_fault: Arc::new(super::e2e_fault::E2ECommandFaultControl::default()),
+            #[cfg(feature = "e2e-command-fault")]
+            e2e_surface_fault: Arc::new(super::E2ESurfaceFaultControl::default()),
         })
     }
 
@@ -144,10 +150,64 @@ impl SyncV2Runtime {
         self.e2e_command_fault.release(fault_id).await
     }
 
+    #[cfg(feature = "e2e-command-fault")]
+    #[must_use]
+    pub fn with_e2e_surface_fault_control(
+        mut self,
+        control: Arc<super::E2ESurfaceFaultControl>,
+    ) -> Self {
+        self.e2e_surface_fault = control;
+        self
+    }
+
+    #[cfg(feature = "e2e-command-fault")]
+    /// Arms one typed surface fault for an authenticated E2E run.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable validation or active-fault conflict code from the E2E controller.
+    pub async fn arm_e2e_surface_fault(
+        &self,
+        fault_id: String,
+        request: super::E2ESurfaceFaultRequest,
+    ) -> Result<super::E2ESurfaceFaultStatus, &'static str> {
+        self.e2e_surface_fault.arm(fault_id, request).await
+    }
+
+    #[cfg(feature = "e2e-command-fault")]
+    pub async fn e2e_surface_fault_status(
+        &self,
+        fault_id: &str,
+    ) -> Option<super::E2ESurfaceFaultStatus> {
+        self.e2e_surface_fault.status(fault_id).await
+    }
+
+    #[cfg(feature = "e2e-command-fault")]
+    pub async fn release_e2e_surface_fault(
+        &self,
+        fault_id: &str,
+    ) -> Option<super::E2ESurfaceFaultStatus> {
+        self.e2e_surface_fault.release(fault_id).await
+    }
+
+    #[cfg(feature = "e2e-command-fault")]
+    pub(crate) async fn intercept_e2e_surface_fault(
+        &self,
+        target: super::E2ESurfaceFaultTarget,
+    ) -> Option<super::E2ESurfaceFaultEffect> {
+        self.e2e_surface_fault.intercept(target).await
+    }
+
     /// Returns the current upstream generation used by generation-bound resources.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.source.generation()
+    }
+
+    /// Subscribes to upstream generation changes for generation-bound data planes.
+    #[must_use]
+    pub(crate) fn subscribe_generation(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.source.subscribe_generation()
     }
 
     /// Purges retained state for a revoked authenticated device context.
@@ -170,10 +230,10 @@ impl SyncV2Runtime {
         if self.ledger.begin_context_purge(context).is_err() {
             return false;
         }
+        let _dispatch_guard = lifecycle.dispatch.write().await;
         self.blocked_contexts.write().await.insert(context.clone());
         let revision = lifecycle.revision.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = lifecycle.revisions.send(revision);
-        let _dispatch_guard = lifecycle.dispatch.write().await;
         if self.source.purge_context(context).await.is_err()
             || self.ledger.purge_context(context).is_err()
         {
@@ -207,6 +267,18 @@ impl SyncV2Runtime {
     ) -> bool {
         lifecycle.revision.load(Ordering::SeqCst) == revision
             && !self.blocked_contexts.read().await.contains(context)
+    }
+
+    async fn current_context_dispatch<'a>(
+        &self,
+        context: &AuthenticatedContextKey,
+        lifecycle: &'a ContextLifecycle,
+        revision: u64,
+    ) -> Option<tokio::sync::RwLockReadGuard<'a, ()>> {
+        let guard = lifecycle.dispatch.read().await;
+        self.context_is_current(context, lifecycle, revision)
+            .await
+            .then_some(guard)
     }
 
     pub async fn serve(
@@ -311,6 +383,19 @@ impl SyncV2Runtime {
                     let generation = self.source.generation();
                     let epoch_id = random_id("epoch");
                     let mut generation_changes = self.source.subscribe_generation();
+                    let thread_install_lock = self
+                        .thread_install_lock(
+                            generation,
+                            intent
+                                .current_thread
+                                .as_ref()
+                                .map(|current| &current.thread_id),
+                        )
+                        .await;
+                    let thread_install_guard = match &thread_install_lock {
+                        Some(lock) => Some(lock.lock().await),
+                        None => None,
+                    };
                     let source_events = self.source.coordinator().register(
                         epoch_id.clone(),
                         generation,
@@ -337,7 +422,9 @@ impl SyncV2Runtime {
                     )
                     .await;
                     match installed {
-                        Ok(Ok(())) => {}
+                        Ok(Ok(())) => {
+                            drop(thread_install_guard);
+                        }
                         Ok(Err(error)) => {
                             warn!(
                                 code = ?error.code,
@@ -565,6 +652,7 @@ impl SyncV2Runtime {
                         socket,
                         authorization,
                         context,
+                        authorization_changes,
                         lifecycle,
                         lifecycle_revision,
                         epoch,
@@ -661,6 +749,25 @@ impl SyncV2Runtime {
             );
         }
         epochs.insert(epoch_id.clone(), context.clone());
+    }
+
+    async fn thread_install_lock(
+        &self,
+        generation: u64,
+        thread_id: Option<&Id>,
+    ) -> Option<Arc<tokio::sync::Mutex<()>>> {
+        let thread_id = thread_id?;
+        // Upstream thread/resume is process-global, so different authenticated
+        // clients opening the same thread must share this installation barrier.
+        let key = format!("{generation}#{}", thread_id.as_str());
+        let mut locks = self.thread_install_locks.lock().await;
+        locks.retain(|_, candidate| candidate.strong_count() > 0);
+        if let Some(existing) = locks.get(&key).and_then(Weak::upgrade) {
+            return Some(existing);
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        Some(lock)
     }
 }
 

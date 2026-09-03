@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing } from "../theme";
-export type BubbleVariant = "agent" | "user";
+type BubbleVariant = "agent" | "user";
 
 interface BubbleProps {
   children: ReactNode;
@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   userSurface: {
-    maxWidth: "82%",
+    maxWidth: "78%",
     alignSelf: "flex-end",
     paddingHorizontal: spacing.sm,
     paddingTop: spacing.xs,

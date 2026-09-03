@@ -1,6 +1,6 @@
 use super::*;
 use crate::sync_v2::epoch::ConnectionEpoch;
-use crate::sync_v2::protocol::{CatalogIntent, CurrentThreadIntent};
+use crate::sync_v2::protocol::{CatalogIntent, CurrentThreadIntent, PendingRequestScope};
 use serde_json::json;
 
 fn id(value: &str) -> Id {
@@ -16,18 +16,6 @@ fn context(device_id: &str) -> AuthenticatedContextKey {
     .unwrap_or_else(|error| panic!("invalid test context: {error:?}"))
 }
 
-#[test]
-fn account_capabilities_are_not_advertised_without_approved_authority() {
-    let QueryResult::CapabilitiesRead {
-        commands, queries, ..
-    } = capabilities(SnapshotLimits::default())
-    else {
-        panic!("expected capabilities result");
-    };
-    assert!(!commands.iter().any(|kind| kind == "account.update"));
-    assert!(!queries.iter().any(|kind| kind == "accounts.list"));
-}
-
 fn intent(active_limit: u16, current_thread: Option<&str>) -> OpenIntent {
     OpenIntent {
         catalog: CatalogIntent {
@@ -38,6 +26,7 @@ fn intent(active_limit: u16, current_thread: Option<&str>) -> OpenIntent {
             thread_id: id(thread_id),
             turn_limit: 1,
         }),
+        pending_requests: PendingRequestScope::CurrentThread,
     }
 }
 
@@ -54,7 +43,14 @@ fn thread_with_partition(thread_id: &str, archived: bool) -> ThreadSummary {
             "model": null,
             "effort": null,
             "approvalPolicy": "never",
-            "sandbox": "readOnly"
+            "sandbox": "readOnly",
+            "personality": null
+        },
+        "readState": {
+            "kind": "unknown",
+            "latestActivityMarker": null,
+            "readThroughMarker": null,
+            "unreadCount": null
         },
         "createdAt": "2026-08-27T00:00:00Z",
         "updatedAt": "2026-08-27T00:00:00Z",
@@ -136,6 +132,73 @@ fn exact_context_routing_isolated_and_ambiguous_routing_invalidates() {
 }
 
 #[test]
+fn pending_scope_reaches_headless_subscribers_without_cross_context_routing() {
+    let coordinator = SubscriptionCoordinator::default();
+    let owner = context("device-a");
+    let other = context("device-b");
+    let current_events = coordinator.register(
+        id("current"),
+        7,
+        owner.clone(),
+        intent(0, Some("thread-1")),
+        SnapshotLimits::default(),
+    );
+    let mut headless_intent = intent(0, None);
+    headless_intent.pending_requests = PendingRequestScope::AllAccessible;
+    let headless_events = coordinator.register(
+        id("headless"),
+        7,
+        owner.clone(),
+        headless_intent.clone(),
+        SnapshotLimits::default(),
+    );
+    let other_events = coordinator.register(
+        id("other"),
+        7,
+        other,
+        headless_intent,
+        SnapshotLimits::default(),
+    );
+
+    coordinator.publish(
+        7,
+        AudienceSelector::PendingRequests {
+            context: owner.clone(),
+            thread_id: Some(id("thread-1")),
+        },
+        ProjectionChange::AccountsChanged {
+            revision: "pending-thread-1".into(),
+        },
+    );
+    assert!(current_events.try_recv_event().is_ok());
+    assert!(headless_events.try_recv_event().is_ok());
+    assert!(matches!(
+        other_events.try_recv_event(),
+        Err(CoordinatorRecvError::Empty)
+    ));
+
+    coordinator.publish(
+        7,
+        AudienceSelector::PendingRequests {
+            context: owner,
+            thread_id: Some(id("thread-2")),
+        },
+        ProjectionChange::AccountsChanged {
+            revision: "pending-thread-2".into(),
+        },
+    );
+    assert!(matches!(
+        current_events.try_recv_event(),
+        Err(CoordinatorRecvError::Empty)
+    ));
+    assert!(headless_events.try_recv_event().is_ok());
+    assert!(matches!(
+        other_events.try_recv_event(),
+        Err(CoordinatorRecvError::Empty)
+    ));
+}
+
+#[test]
 fn upstream_unavailability_is_preserved_as_a_distinct_invalidation_reason() {
     let coordinator = SubscriptionCoordinator::default();
     let recipient = id("recipient");
@@ -176,7 +239,7 @@ fn catalog_window_emits_outside_scope_and_current_thread_stays_coherent() {
     );
     coordinator.set_snapshot_membership(&recipient, &[thread("old")], &[]);
 
-    coordinator.publish_catalog_upsert(3, &context, thread("new"));
+    coordinator.publish_catalog_upsert(3, &context, &thread("new"));
     let CoordinatorEvent::Change { change, .. } = events
         .try_recv_event()
         .unwrap_or_else(|error| panic!("missing upsert: {error:?}"))
@@ -198,7 +261,7 @@ fn catalog_window_emits_outside_scope_and_current_thread_stays_coherent() {
             if thread_id == id("old")
     ));
 
-    coordinator.publish_catalog_upsert(3, &context, thread("current"));
+    coordinator.publish_catalog_upsert(3, &context, &thread("current"));
     let CoordinatorEvent::Change { change, .. } = events
         .try_recv_event()
         .unwrap_or_else(|error| panic!("missing current-thread update: {error:?}"))
@@ -208,6 +271,102 @@ fn catalog_window_emits_outside_scope_and_current_thread_stays_coherent() {
     assert!(
         matches!(change, ProjectionChange::ThreadUpserted { thread } if thread.id == id("current"))
     );
+}
+
+#[test]
+fn snapshot_membership_replays_catalog_changes_that_arrived_during_initialization() {
+    let coordinator = SubscriptionCoordinator::default();
+    let recipient = id("recipient");
+    let context = context("device");
+    let events = coordinator.register(
+        recipient.clone(),
+        3,
+        context.clone(),
+        intent(1, None),
+        SnapshotLimits::default(),
+    );
+
+    coordinator.publish_catalog_upsert(3, &context, &thread("new"));
+    let CoordinatorEvent::Change { change, .. } = events
+        .try_recv_event()
+        .unwrap_or_else(|error| panic!("missing initializing upsert: {error:?}"))
+    else {
+        panic!("expected initializing upsert");
+    };
+    assert!(matches!(
+        change,
+        ProjectionChange::ThreadUpserted { thread } if thread.id == id("new")
+    ));
+
+    coordinator.set_snapshot_membership(&recipient, &[thread("old")], &[]);
+    let CoordinatorEvent::Change { change, .. } = events
+        .try_recv_event()
+        .unwrap_or_else(|error| panic!("missing reconciled eviction: {error:?}"))
+    else {
+        panic!("expected reconciled eviction");
+    };
+    assert!(matches!(
+        change,
+        ProjectionChange::ThreadRemoved { thread_id, reason: RemovalReason::OutsideScope }
+            if thread_id == id("old")
+    ));
+
+    coordinator.publish_thread_removed(3, &context, &id("new"), RemovalReason::Deleted);
+    let CoordinatorEvent::Change { change, .. } = events
+        .try_recv_event()
+        .unwrap_or_else(|error| panic!("missing delete after snapshot reconciliation: {error:?}"))
+    else {
+        panic!("expected delete after snapshot reconciliation");
+    };
+    assert!(matches!(
+        change,
+        ProjectionChange::ThreadRemoved { thread_id, reason: RemovalReason::Deleted }
+            if thread_id == id("new")
+    ));
+}
+
+#[test]
+fn removal_during_snapshot_is_delivered_and_not_restored_by_snapshot_membership() {
+    let coordinator = SubscriptionCoordinator::default();
+    let recipient = id("recipient");
+    let context = context("device");
+    let events = coordinator.register(
+        recipient.clone(),
+        3,
+        context.clone(),
+        intent(1, None),
+        SnapshotLimits::default(),
+    );
+
+    coordinator.publish_thread_removed(3, &context, &id("old"), RemovalReason::Deleted);
+    let CoordinatorEvent::Change { change, .. } = events
+        .try_recv_event()
+        .unwrap_or_else(|error| panic!("missing initializing removal: {error:?}"))
+    else {
+        panic!("expected initializing removal");
+    };
+    assert!(matches!(
+        change,
+        ProjectionChange::ThreadRemoved { thread_id, reason: RemovalReason::Deleted }
+            if thread_id == id("old")
+    ));
+
+    coordinator.set_snapshot_membership(&recipient, &[thread("old")], &[]);
+    coordinator.publish(
+        3,
+        AudienceSelector::CatalogPartition {
+            context,
+            archived: false,
+        },
+        ProjectionChange::ResourcesChanged {
+            thread_id: id("old"),
+            revision: "removed-thread".into(),
+        },
+    );
+    assert!(matches!(
+        events.try_recv_event(),
+        Err(CoordinatorRecvError::Empty)
+    ));
 }
 
 #[test]
@@ -309,7 +468,7 @@ fn partition_transitions_remove_threads_when_target_partition_is_unsubscribed() 
         SnapshotLimits::default(),
     );
     coordinator.set_snapshot_membership(&active_recipient, &[thread("to-archive")], &[]);
-    coordinator.publish_catalog_upsert(1, &context, thread_with_partition("to-archive", true));
+    coordinator.publish_catalog_upsert(1, &context, &thread_with_partition("to-archive", true));
     assert!(matches!(
         active_events.try_recv_event(),
         Ok(CoordinatorEvent::Change {
@@ -325,6 +484,7 @@ fn partition_transitions_remove_threads_when_target_partition_is_unsubscribed() 
             archived_limit: 1,
         },
         current_thread: None,
+        pending_requests: PendingRequestScope::CurrentThread,
     };
     let archived_events = coordinator.register(
         archived_recipient.clone(),
@@ -338,7 +498,7 @@ fn partition_transitions_remove_threads_when_target_partition_is_unsubscribed() 
         &[],
         &[thread_with_partition("to-active", true)],
     );
-    coordinator.publish_catalog_upsert(1, &context, thread("to-active"));
+    coordinator.publish_catalog_upsert(1, &context, &thread("to-active"));
     assert!(matches!(
         archived_events.try_recv_event(),
         Ok(CoordinatorEvent::Change {

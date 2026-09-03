@@ -121,7 +121,7 @@ function ensureNativeSubscription(): void {
 // enabled by the settings screen itself.
 ensureNativeSubscription();
 
-function subscribe(listener: () => void): () => void {
+export function subscribePerformanceMetrics(listener: () => void): () => void {
   listeners.add(listener);
   ensureNativeSubscription();
   return () => {
@@ -134,7 +134,7 @@ function subscribe(listener: () => void): () => void {
 }
 
 export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
-  return useSyncExternalStore(subscribe, () => snapshot, () => snapshot);
+  return useSyncExternalStore(subscribePerformanceMetrics, () => snapshot, () => snapshot);
 }
 
 export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {

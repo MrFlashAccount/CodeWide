@@ -3,12 +3,20 @@ import { describe, expect, it } from "vitest";
 
 const hud = readFileSync(new URL("../src/ui/NavigationPerformanceHud.tsx", import.meta.url), "utf8");
 const nativeRoot = readFileSync(new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url), "utf8");
+const generationHost = readFileSync(
+  new URL("../src/boot/UiGenerationDiagnosticsHost.tsx", import.meta.url),
+  "utf8",
+);
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
 const performanceModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt", import.meta.url), "utf8");
 
 describe("navigation performance HUD", () => {
   it("profiles virtualized chat navigation without rendering message content", () => {
-    expect(nativeRoot).toContain("<NavigationPerformanceHud />");
+    expect(nativeRoot).not.toContain("<NavigationPerformanceHud />");
+    expect(generationHost).toContain('props.generation === "legacy"');
+    expect(generationHost).toContain('props.generation === "v2"');
+    expect(generationHost).toContain("<LegacyNavigationPerformanceHud />");
+    expect(generationHost).toContain("<NavigationDiagnosticsFeature");
     expect(hud).toContain("if (!metrics.enabled) return null");
     expect(hud).toContain('testID="navigation-performance-hud"');
     expect(hud).toContain('accessibilityLabel="Open navigation performance tools"');

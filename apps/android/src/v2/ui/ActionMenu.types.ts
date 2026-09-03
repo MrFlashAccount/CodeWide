@@ -1,6 +1,8 @@
 import type Ionicons from "@expo/vector-icons/Ionicons";
 import type { ComponentProps, ReactElement } from "react";
 import type {
+  AccessibilityRole,
+  AccessibilityState,
   GestureResponderEvent,
   ImageSourcePropType,
   StyleProp,
@@ -11,6 +13,8 @@ export type ActionMenuIconName = ComponentProps<typeof Ionicons>["name"];
 
 type ActionMenuTriggerElement = ReactElement<{
   accessibilityLabel?: string;
+  accessibilityRole?: AccessibilityRole;
+  accessibilityState?: AccessibilityState;
   onLongPress?(event: GestureResponderEvent): void;
   onPress?(event: GestureResponderEvent): void;
 }>;

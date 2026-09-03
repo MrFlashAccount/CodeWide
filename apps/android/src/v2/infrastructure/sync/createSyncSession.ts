@@ -21,6 +21,7 @@ export async function createSyncSession(
         currentThreadId === null
           ? null
           : { threadId: currentThreadId, turnLimit: V2_PROTOCOL_LIMITS.turnWindowMax },
+      pendingRequests: "allAccessible",
     },
     operationStore,
     projectionStore,

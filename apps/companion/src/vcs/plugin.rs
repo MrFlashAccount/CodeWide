@@ -16,8 +16,9 @@ use tokio::{
 };
 
 use super::{
-    CHANGES_CAPABILITY, DIFF_CAPABILITY, VcsDiff, VcsError, VcsFile, VcsScope, VcsSnapshot,
-    WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult, WorkspaceSupport,
+    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, VcsDiff, VcsDiffPage, VcsError,
+    VcsFile, VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult,
+    WorkspaceSupport,
 };
 
 const REGISTRY_VERSION: u32 = 1;
@@ -373,6 +374,84 @@ pub async fn diff(
         )));
     }
     Ok(diff)
+}
+
+#[expect(
+    clippy::suspicious_operation_groupings,
+    reason = "VcsDiffPage.file_id intentionally corresponds to VcsFile.id"
+)]
+pub async fn diff_page(
+    plugin: &VcsPluginConfig,
+    workspace: &Path,
+    file: &VcsFile,
+    snapshot_id: &str,
+    scope: VcsScope,
+    offset: usize,
+    limit: usize,
+) -> Result<VcsDiffPage, PluginCallError> {
+    let mut session = PluginSession::spawn(plugin, workspace)?;
+    let initialized = session
+        .request(
+            1,
+            "initialize",
+            json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "client": { "name": "codewide-companion" },
+                "capabilities": [CHANGES_CAPABILITY, DIFF_PAGE_CAPABILITY]
+            }),
+        )
+        .await?;
+    validate_initialize(plugin, &initialized, DIFF_PAGE_CAPABILITY)?;
+    let result = session
+        .request(
+            2,
+            "vcs.diffPage",
+            json!({
+                "workspace": workspace,
+                "path": file.path,
+                "snapshotId": snapshot_id,
+                "scope": scope,
+                "offset": offset,
+                "limit": limit,
+            }),
+        )
+        .await;
+    session.shutdown().await;
+    let page = serde_json::from_value::<VcsDiffPage>(result?).map_err(|error| {
+        PluginCallError::Protocol(format!("invalid vcs.diffPage result: {error}"))
+    })?;
+    if page.capability != DIFF_PAGE_CAPABILITY {
+        return Err(PluginCallError::Protocol(format!(
+            "unexpected capability {}",
+            page.capability
+        )));
+    }
+    if page.provider != plugin.id {
+        return Err(PluginCallError::Protocol(format!(
+            "provider mismatch: expected {}, got {}",
+            plugin.id, page.provider
+        )));
+    }
+    if page.path != file.path || page.file_id != file.id {
+        return Err(PluginCallError::Protocol(
+            "provider returned a diff page for a different file".into(),
+        ));
+    }
+    if page.scope != scope || page.snapshot_id != snapshot_id {
+        return Err(PluginCallError::Protocol(
+            "provider returned a diff page for a different snapshot".into(),
+        ));
+    }
+    if page.next_offset < offset
+        || page.next_offset > page.total_bytes
+        || page.content.len() > limit
+        || page.next_offset != offset.saturating_add(page.content.len())
+    {
+        return Err(PluginCallError::Protocol(
+            "provider returned an invalid diff page boundary".into(),
+        ));
+    }
+    Ok(page)
 }
 
 pub async fn workspace_support(

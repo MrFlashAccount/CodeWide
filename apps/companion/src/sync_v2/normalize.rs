@@ -1,24 +1,38 @@
 //! Narrow App Server/local-service to Sync V2 semantic normalization boundary.
 
-#![allow(clippy::too_many_lines)]
-
 use std::collections::HashMap;
 
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{
     domain::{
         ApprovalPolicy, Attachment, Effort, ExecutionState, FileChangeKind, FileChangeState,
-        InputBlock, Item, PlanStep, PlanStepState, Sandbox, ThreadSettings, ThreadState,
-        ThreadSummary, TurnActivity, TurnState, TurnUsage, TurnView,
+        InputBlock, Item, ItemLifecycle, LifecyclePhase, NetworkAccess, Personality, Sandbox,
+        ThreadReadState, ThreadSettings, ThreadState, ThreadSummary, TurnActivity, TurnState,
+        TurnUsage, TurnView, UsageStatus,
     },
     protocol::{
-        AccountProfile, Model, Project, QueueItem, QueueState, ResourceChange, V2Error,
-        WeeklyRateLimit, WorkspaceSupport,
+        AccountProfile, Model, Project, QueueAttachment, QueueItem, QueueState, ResourceChange,
+        V2Error, WeeklyRateLimit, WorkspaceSupport,
     },
     scalar::{Id, Timestamp, U64},
 };
+
+mod goals;
+mod items;
+
+pub use goals::thread_goal;
+pub use items::item;
+
+pub fn item_lifecycle(item: Item, phase: LifecyclePhase, pre_turn: bool) -> ItemLifecycle {
+    ItemLifecycle {
+        item,
+        phase,
+        pre_turn,
+    }
+}
 
 pub fn rpc_result(response: &Value) -> Result<Value, V2Error> {
     if let Some(error) = response.get("error") {
@@ -52,46 +66,26 @@ fn thread_summary_with_settings(
     settings_source: &Value,
 ) -> Result<ThreadSummary, V2Error> {
     let id = required_id(value, "id")?;
-    let state = match value
-        .pointer("/status/type")
-        .and_then(Value::as_str)
-        .or_else(|| value.get("status").and_then(Value::as_str))
-    {
-        Some("active" | "running" | "inProgress") => ThreadState::Running,
-        Some("waitingForApproval") => ThreadState::WaitingForApproval,
-        Some("waitingForInput") => ThreadState::WaitingForInput,
-        Some("completed") => ThreadState::Completed,
-        Some("failed") => ThreadState::Failed,
-        Some("interrupted") => ThreadState::Interrupted,
-        _ => ThreadState::Idle,
-    };
-    let created_at = timestamp(value.get("createdAt").or_else(|| value.get("created_at")))
-        .unwrap_or_else(Timestamp::now);
+    let state = thread_state(value.get("status"))?;
+    let created_at = required_timestamp_alias(value, "createdAt", "created_at")?;
     let updated_at = timestamp(
         value
-            .get("updatedAt")
-            .or_else(|| value.get("recencyAt"))
+            .get("recencyAt")
+            .filter(|recency| !recency.is_null())
+            .or_else(|| value.get("updatedAt"))
             .or_else(|| value.get("updated_at")),
     )
-    .unwrap_or_else(|| created_at.clone());
+    .ok_or_else(|| source_invalid("source record omitted or invalid updatedAt"))?;
     Ok(ThreadSummary {
         id,
-        parent_id: optional_id(
-            value
-                .get("parentId")
-                .or_else(|| value.get("parentThreadId")),
-        )?,
-        title: semantic_thread_title(value),
-        preview: value
-            .get("preview")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        parent_id: optional_id(thread_parent_id(value))?,
+        title: semantic_thread_title(value)?,
+        preview: required_string(value, "preview")?.to_owned(),
         workspace: value
             .get("workspace")
             .or_else(|| value.get("cwd"))
             .and_then(Value::as_str)
-            .unwrap_or_default()
+            .ok_or_else(|| source_invalid("source record omitted workspace"))?
             .to_owned(),
         archived: value
             .get("archived")
@@ -99,6 +93,11 @@ fn thread_summary_with_settings(
             .unwrap_or(false),
         state,
         settings: optional_thread_settings(settings_source)?,
+        read_state: ThreadReadState::Unknown {
+            latest_activity_marker: None,
+            read_through_marker: None,
+            unread_count: None,
+        },
         created_at,
         updated_at: updated_at.clone(),
         last_activity_at: Some(updated_at),
@@ -106,202 +105,249 @@ fn thread_summary_with_settings(
     })
 }
 
-fn semantic_thread_title(value: &Value) -> Option<String> {
+pub fn is_user_catalog_thread(value: &Value) -> bool {
+    !value
+        .get("ephemeral")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && thread_parent_id(value).is_none()
+        && subagent_source(value).is_none()
+}
+
+fn thread_parent_id(value: &Value) -> Option<&Value> {
     value
-        .get("name")
-        .or_else(|| value.get("title"))
-        .and_then(Value::as_str)
+        .get("parentId")
+        .filter(|parent| parent.as_str().is_some())
+        .or_else(|| {
+            value
+                .get("parentThreadId")
+                .filter(|parent| parent.as_str().is_some())
+        })
+        .or_else(|| {
+            subagent_source(value)?
+                .get("thread_spawn")?
+                .get("parent_thread_id")
+                .filter(|parent| parent.as_str().is_some())
+        })
+}
+
+fn subagent_source(value: &Value) -> Option<&Value> {
+    let source = value.get("source")?.as_object()?;
+    source.get("subAgent").or_else(|| source.get("subagent"))
+}
+
+fn semantic_thread_title(value: &Value) -> Result<Option<String>, V2Error> {
+    let title = optional_string_from(
+        value.get("name").or_else(|| value.get("title")),
+        "thread title",
+    )?;
+    Ok(title
+        .as_deref()
         .map(str::trim)
         .filter(|title| !title.is_empty() && !title.eq_ignore_ascii_case("Untitled thread"))
-        .map(ToOwned::to_owned)
+        .map(ToOwned::to_owned))
+}
+
+fn thread_state(value: Option<&Value>) -> Result<ThreadState, V2Error> {
+    match value {
+        Some(Value::Object(status)) => match status.get("type").and_then(Value::as_str) {
+            Some("notLoaded" | "idle") => Ok(ThreadState::Idle),
+            Some("systemError") => Ok(ThreadState::Failed),
+            Some("active") => active_thread_state(status.get("activeFlags")),
+            _ => Err(source_invalid("thread status is invalid")),
+        },
+        Some(Value::String(status)) => match status.as_str() {
+            "idle" | "notLoaded" => Ok(ThreadState::Idle),
+            "active" | "running" | "inProgress" => Ok(ThreadState::Running),
+            "waitingForApproval" => Ok(ThreadState::WaitingForApproval),
+            "waitingForInput" => Ok(ThreadState::WaitingForInput),
+            "completed" => Ok(ThreadState::Completed),
+            "failed" | "systemError" => Ok(ThreadState::Failed),
+            "interrupted" => Ok(ThreadState::Interrupted),
+            _ => Err(source_invalid("thread status is invalid")),
+        },
+        _ => Err(source_invalid("thread status is missing")),
+    }
+}
+
+fn active_thread_state(value: Option<&Value>) -> Result<ThreadState, V2Error> {
+    let flags = value
+        .and_then(Value::as_array)
+        .ok_or_else(|| source_invalid("active thread flags are invalid"))?;
+    let mut waiting_for_approval = false;
+    let mut waiting_for_input = false;
+    for flag in flags {
+        match flag.as_str() {
+            Some("waitingOnApproval") => waiting_for_approval = true,
+            Some("waitingOnUserInput") => waiting_for_input = true,
+            _ => return Err(source_invalid("active thread flag is invalid")),
+        }
+    }
+    if waiting_for_approval {
+        Ok(ThreadState::WaitingForApproval)
+    } else if waiting_for_input {
+        Ok(ThreadState::WaitingForInput)
+    } else {
+        Ok(ThreadState::Running)
+    }
 }
 
 pub fn turn_view(thread_id: &Id, value: &Value) -> Result<TurnView, V2Error> {
     let state = match value.get("status").and_then(Value::as_str) {
         Some("queued") => TurnState::Queued,
-        Some("inProgress" | "running") => TurnState::Running,
+        Some("inProgress") => TurnState::Running,
+        Some("completed") => TurnState::Completed,
         Some("failed") => TurnState::Failed,
         Some("interrupted") => TurnState::Interrupted,
-        _ => TurnState::Completed,
+        _ => return Err(source_invalid("turn status is invalid")),
     };
-    let source_items = value
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let source_items = required_array(value, "items")?;
     if source_items.len() > 2_048 {
         return Err(V2Error::source_unavailable("turn item limit exceeded"));
     }
-    let items = source_items.iter().filter_map(item).collect();
+    let items = source_items
+        .iter()
+        .map(item)
+        .collect::<Result<Vec<_>, _>>()?;
+    let lifecycle = snapshot_lifecycle(&items, state);
     Ok(TurnView {
         id: required_id(value, "id")?,
         thread_id: thread_id.clone(),
         state,
-        created_at: timestamp(value.get("startedAt").or_else(|| value.get("createdAt")))
-            .unwrap_or_else(Timestamp::now),
+        created_at: timestamp(value.get("startedAt").or_else(|| value.get("createdAt"))),
         completed_at: timestamp(value.get("completedAt")),
         duration_ms: nonnegative_safe_integer(value.get("durationMs")),
-        activity: turn_activity(value),
-        usage: turn_usage(value),
+        activity: turn_activity(value)?,
+        usage: turn_usage(value)?,
         items,
+        lifecycle,
     })
 }
 
-fn turn_activity(value: &Value) -> Option<TurnActivity> {
-    let activity = value.pointer("/codewide/activity")?;
-    let count = nonnegative_safe_integer(activity.get("count"))?;
-    let kinds = activity
-        .get("kinds")?
-        .as_array()?
+fn snapshot_lifecycle(items: &[Item], turn_state: TurnState) -> Vec<ItemLifecycle> {
+    let mut seen_user_message = false;
+    let last_index = items.len().saturating_sub(1);
+    items
         .iter()
-        .filter_map(Value::as_str)
-        .take(256)
-        .map(ToOwned::to_owned)
-        .collect();
-    Some(TurnActivity { count, kinds })
+        .enumerate()
+        .map(|(index, item)| {
+            let pre_turn = !seen_user_message && !matches!(item, Item::UserMessage { .. });
+            if matches!(item, Item::UserMessage { .. }) {
+                seen_user_message = true;
+            }
+            item_lifecycle(
+                item.clone(),
+                snapshot_lifecycle_phase(item, turn_state, index == last_index),
+                pre_turn,
+            )
+        })
+        .collect()
 }
 
-fn turn_usage(value: &Value) -> Option<TurnUsage> {
-    let tokens = value.pointer("/codewide/usage/turn/tokens")?;
-    let thread_tokens = value.pointer("/codewide/usage/thread/tokens")?;
-    let input_tokens = nonnegative_safe_integer(tokens.get("inputTokens"))?;
-    let output_tokens = nonnegative_safe_integer(tokens.get("outputTokens"))?;
-    let total_cost_usd = value
-        .pointer("/codewide/usage/turn/cost/totalCostUsd")
-        .and_then(Value::as_f64)
-        .filter(|cost| cost.is_finite() && *cost >= 0.0);
-    let thread_total_cost_usd = value
-        .pointer("/codewide/usage/thread/cost/totalCostUsd")
-        .and_then(Value::as_f64)
-        .filter(|cost| cost.is_finite() && *cost >= 0.0);
-    Some(TurnUsage {
+fn snapshot_lifecycle_phase(item: &Item, turn_state: TurnState, is_last: bool) -> LifecyclePhase {
+    match item {
+        Item::Command { status, .. }
+        | Item::Tool { status, .. }
+        | Item::Collaboration { status, .. }
+        | Item::ImageGeneration { status, .. } => execution_lifecycle_phase(*status),
+        Item::FileChange { status, .. } => match status {
+            FileChangeState::Pending => LifecyclePhase::Started,
+            FileChangeState::Applied | FileChangeState::Rejected => LifecyclePhase::Completed,
+        },
+        _ if turn_state == TurnState::Running && is_last => LifecyclePhase::Started,
+        _ => LifecyclePhase::Completed,
+    }
+}
+
+fn execution_lifecycle_phase(status: ExecutionState) -> LifecyclePhase {
+    match status {
+        ExecutionState::Running => LifecyclePhase::Started,
+        ExecutionState::Completed | ExecutionState::Failed => LifecyclePhase::Completed,
+    }
+}
+
+fn turn_activity(value: &Value) -> Result<Option<TurnActivity>, V2Error> {
+    let Some(activity) = value.pointer("/codewide/activity") else {
+        return Ok(None);
+    };
+    let count = required_nonnegative_integer(activity, "count")?;
+    let source_kinds = required_array(activity, "kinds")?;
+    if source_kinds.len() > 256 {
+        return Err(source_invalid("turn activity kind limit exceeded"));
+    }
+    let kinds = source_kinds
+        .iter()
+        .map(|kind| {
+            kind.as_str()
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| source_invalid("turn activity kind is invalid"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(TurnActivity { count, kinds }))
+}
+
+fn turn_usage(value: &Value) -> Result<Option<TurnUsage>, V2Error> {
+    let Some(usage) = value.pointer("/codewide/usage") else {
+        return Ok(None);
+    };
+    let tokens = required_object(usage.pointer("/turn/tokens"), "turn usage tokens")?;
+    let thread_tokens = required_object(usage.pointer("/thread/tokens"), "thread usage tokens")?;
+    let input_tokens = required_nonnegative_integer(tokens, "inputTokens")?;
+    let output_tokens = required_nonnegative_integer(tokens, "outputTokens")?;
+    let total_cost_usd = optional_nonnegative_number(usage.pointer("/turn/cost/totalCostUsd"))?;
+    let thread_total_cost_usd =
+        optional_nonnegative_number(usage.pointer("/thread/cost/totalCostUsd"))?;
+    Ok(Some(TurnUsage {
         input_tokens,
+        cached_input_tokens: required_nonnegative_integer(tokens, "cachedInputTokens")?,
+        cache_write_input_tokens: required_nonnegative_integer(tokens, "cacheWriteInputTokens")?,
         output_tokens,
+        reasoning_output_tokens: required_nonnegative_integer(tokens, "reasoningOutputTokens")?,
         total_cost_usd,
-        latest_request_tokens: nonnegative_safe_integer(
-            value.pointer("/codewide/usage/latestRequest/totalTokens"),
+        latest_request_tokens: required_nonnegative_integer(
+            required_object(usage.get("latestRequest"), "latest request usage")?,
+            "totalTokens",
         )?,
-        model_context_window: value
-            .pointer("/codewide/usage/modelContextWindow")
-            .and_then(Value::as_i64)
-            .filter(|number| (0..=9_007_199_254_740_991).contains(number)),
-        thread_input_tokens: nonnegative_safe_integer(thread_tokens.get("inputTokens"))?,
-        thread_output_tokens: nonnegative_safe_integer(thread_tokens.get("outputTokens"))?,
-        thread_total_tokens: nonnegative_safe_integer(thread_tokens.get("totalTokens"))?,
+        model_context_window: optional_nonnegative_integer(usage, "modelContextWindow")?,
+        thread_input_tokens: required_nonnegative_integer(thread_tokens, "inputTokens")?,
+        thread_cached_input_tokens: required_nonnegative_integer(
+            thread_tokens,
+            "cachedInputTokens",
+        )?,
+        thread_cache_write_input_tokens: required_nonnegative_integer(
+            thread_tokens,
+            "cacheWriteInputTokens",
+        )?,
+        thread_output_tokens: required_nonnegative_integer(thread_tokens, "outputTokens")?,
+        thread_reasoning_output_tokens: required_nonnegative_integer(
+            thread_tokens,
+            "reasoningOutputTokens",
+        )?,
+        thread_total_tokens: required_nonnegative_integer(thread_tokens, "totalTokens")?,
         thread_total_cost_usd,
-    })
+        thread_compaction_count: optional_nonnegative_integer_from(
+            usage.pointer("/thread/compactionCount"),
+            "thread compaction count",
+        )?,
+        model: optional_string_from(
+            value
+                .pointer("/codewide/execution/model")
+                .or_else(|| usage.get("model")),
+            "usage model",
+        )?,
+        status: match usage.get("status").and_then(Value::as_str) {
+            Some("live") => UsageStatus::Live,
+            Some("final") | None => UsageStatus::Final,
+            Some(_) => return Err(source_invalid("usage status is invalid")),
+        },
+        cache_hit: optional_bool(usage, "cacheHit")?,
+    }))
 }
 
 fn nonnegative_safe_integer(value: Option<&Value>) -> Option<i64> {
     value
         .and_then(Value::as_i64)
         .filter(|number| (0..=9_007_199_254_740_991).contains(number))
-}
-
-pub fn item(value: &Value) -> Option<Item> {
-    let kind = value.get("type")?.as_str()?;
-    let id = Id::new(value.get("id")?.as_str()?.to_owned()).ok()?;
-    match kind {
-        "userMessage" => Some(Item::UserText {
-            id,
-            text: message_text(value),
-        }),
-        "agentMessage" => Some(Item::AssistantText {
-            id,
-            text: value
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-        }),
-        "reasoning" => Some(Item::Reasoning {
-            id,
-            summary: value
-                .get("summary")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-        }),
-        "commandExecution" => Some(Item::Command {
-            id,
-            command: value
-                .get("command")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            cwd: value
-                .get("cwd")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            status: execution_state(value.get("status")),
-            exit_code: value.get("exitCode").and_then(Value::as_i64),
-            output_preview: value
-                .get("aggregatedOutput")
-                .or_else(|| value.get("output"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .chars()
-                .take(16_384)
-                .collect(),
-        }),
-        "fileChange" => Some(Item::FileChange {
-            id,
-            path: value
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            change: match value.get("change").and_then(Value::as_str) {
-                Some("add") => FileChangeKind::Add,
-                Some("delete") => FileChangeKind::Delete,
-                _ => FileChangeKind::Update,
-            },
-            status: match value.get("status").and_then(Value::as_str) {
-                Some("applied") => FileChangeState::Applied,
-                Some("rejected") => FileChangeState::Rejected,
-                _ => FileChangeState::Pending,
-            },
-        }),
-        "mcpToolCall" | "tool" => Some(Item::Tool {
-            id,
-            name: value
-                .get("name")
-                .or_else(|| value.get("tool"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            status: execution_state(value.get("status")),
-            summary: value
-                .get("summary")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-        }),
-        "plan" => Some(Item::Plan {
-            id,
-            steps: value
-                .get("steps")
-                .and_then(Value::as_array)
-                .map(|steps| {
-                    steps
-                        .iter()
-                        .filter_map(|step| {
-                            Some(PlanStep {
-                                text: step.get("text")?.as_str()?.to_owned(),
-                                status: match step.get("status").and_then(Value::as_str) {
-                                    Some("running" | "inProgress") => PlanStepState::Running,
-                                    Some("completed") => PlanStepState::Completed,
-                                    _ => PlanStepState::Pending,
-                                },
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-        }),
-        _ => None,
-    }
 }
 
 pub fn input_blocks(
@@ -322,302 +368,336 @@ pub fn input_blocks(
                     recovery: super::protocol::Recovery::Requery,
                     message: "attachment identity was not resolved".into(),
                 }),
+            InputBlock::Skill { name, path } => Ok(serde_json::json!({
+                "type": "skill",
+                "name": name,
+                "path": path,
+            })),
         })
         .collect()
 }
 
-pub fn models(result: &Value) -> Vec<Model> {
-    result
-        .get("data")
-        .or_else(|| result.get("models"))
+pub fn models(result: &Value) -> Result<Vec<Model>, V2Error> {
+    required_collection(result, "data", "models")?
+        .iter()
+        .map(model)
+        .collect()
+}
+
+fn model(value: &Value) -> Result<Model, V2Error> {
+    let id_value = value
+        .get("model")
+        .or_else(|| value.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| source_invalid("model record omitted identity"))?;
+    let efforts = value
+        .get("supportedReasoningEfforts")
+        .or_else(|| value.get("efforts"))
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            Some(Model {
-                id: Id::new(value.get("id")?.as_str()?.to_owned()).ok()?,
-                label: value
-                    .get("displayName")
-                    .or_else(|| value.get("label"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_else(|| value.get("id").and_then(Value::as_str).unwrap_or_default())
-                    .to_owned(),
-                efforts: value
-                    .get("supportedReasoningEfforts")
-                    .or_else(|| value.get("efforts"))
-                    .and_then(Value::as_array)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(|value| match value.as_str()? {
-                                "low" => Some(Effort::Low),
-                                "medium" => Some(Effort::Medium),
-                                "high" => Some(Effort::High),
-                                "xhigh" => Some(Effort::Xhigh),
-                                _ => None,
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                default_effort: value
-                    .get("defaultReasoningEffort")
-                    .or_else(|| value.get("defaultEffort"))
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-            })
-        })
+        .ok_or_else(|| source_invalid("model record omitted efforts"))?
+        .iter()
+        .map(|value| parse_effort(reasoning_effort(value)?))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Model {
+        id: Id::new(id_value.to_owned())
+            .map_err(|_| source_invalid("model record has invalid identity"))?,
+        label: value
+            .get("displayName")
+            .or_else(|| value.get("label"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| source_invalid("model record omitted display name"))?
+            .to_owned(),
+        efforts,
+        default_effort: optional_string_from(
+            value
+                .get("defaultReasoningEffort")
+                .or_else(|| value.get("defaultEffort")),
+            "model default effort",
+        )?,
+        // App Server defines this field with a protocol-level default of false.
+        supports_personality: optional_bool(value, "supportsPersonality")?.unwrap_or(false),
+    })
+}
+
+fn reasoning_effort(value: &Value) -> Result<&str, V2Error> {
+    value
+        .as_str()
+        .or_else(|| value.get("reasoningEffort").and_then(Value::as_str))
+        .ok_or_else(|| source_invalid("model effort is invalid"))
+}
+
+fn parse_effort(value: &str) -> Result<Effort, V2Error> {
+    match value {
+        "none" => Ok(Effort::None),
+        "minimal" => Ok(Effort::Minimal),
+        "low" => Ok(Effort::Low),
+        "medium" => Ok(Effort::Medium),
+        "high" => Ok(Effort::High),
+        "xhigh" => Ok(Effort::Xhigh),
+        "max" => Ok(Effort::Max),
+        "ultra" => Ok(Effort::Ultra),
+        _ => Err(source_invalid("model effort is unrecognized")),
+    }
+}
+
+pub fn projects(result: &Value) -> Result<Vec<Project>, V2Error> {
+    required_collection(result, "data", "projects")?
+        .iter()
+        .map(project)
         .collect()
 }
 
-pub fn projects(result: &Value) -> Vec<Project> {
-    result
-        .get("data")
-        .or_else(|| result.get("projects"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            Some(Project {
-                path: value.get("path")?.as_str()?.to_owned(),
-                name: value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                pinned: value
-                    .get("pinned")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                added_at: timestamp(value.get("addedAt")).unwrap_or_else(Timestamp::now),
-                last_used_at: timestamp(value.get("lastUsedAt")),
-            })
-        })
-        .collect()
+fn project(value: &Value) -> Result<Project, V2Error> {
+    Ok(Project {
+        path: required_string(value, "path")?.to_owned(),
+        name: required_string(value, "name")?.to_owned(),
+        pinned: required_bool(value, "pinned")?,
+        added_at: required_timestamp(value, "addedAt")?,
+        last_used_at: optional_timestamp(value, "lastUsedAt")?,
+    })
 }
 
-pub fn workspace_support(result: &Value) -> Option<WorkspaceSupport> {
-    let value = result.get("support")?;
-    Some(WorkspaceSupport {
+pub fn workspace_support(result: &Value) -> Result<Option<WorkspaceSupport>, V2Error> {
+    let Some(value) = result.get("support") else {
+        return Ok(None);
+    };
+    let capability = required_string(value, "capability")?;
+    if capability != crate::vcs::WORKSPACE_CREATE_CAPABILITY {
+        return Ok(None);
+    }
+    Ok(Some(WorkspaceSupport {
         provider: Id::new(
             value
                 .get("provider")
-                .or_else(|| value.get("providerId"))?
-                .as_str()?
+                .or_else(|| value.get("providerId"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| source_invalid("workspace support omitted provider"))?
                 .to_owned(),
         )
-        .ok()?,
-        repository_root: value.get("repositoryRoot")?.as_str()?.to_owned(),
-        can_create: value
-            .get("canCreate")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
+        .map_err(|_| source_invalid("workspace support provider is invalid"))?,
+        repository_root: required_string(value, "repositoryRoot")?.to_owned(),
+        can_create: true,
+    }))
 }
 
-pub fn queue_items(result: &Value) -> Vec<QueueItem> {
-    result
-        .get("items")
-        .or_else(|| result.get("data"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            Some(QueueItem {
-                id: Id::new(
-                    value
-                        .get("commandId")
-                        .or_else(|| value.get("id"))?
-                        .as_str()?
-                        .to_owned(),
-                )
-                .ok()?,
-                thread_id: Id::new(
-                    value
-                        .get("remoteThreadId")
-                        .or_else(|| value.get("threadId"))?
-                        .as_str()?
-                        .to_owned(),
-                )
-                .ok()?,
-                position: U64::new(
-                    value
-                        .get("order")
-                        .or_else(|| value.get("position"))
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0),
-                ),
-                state: match value.get("state").and_then(Value::as_str) {
-                    Some("queued") => QueueState::Queued,
-                    Some("failed" | "uncertain") => QueueState::Failed,
-                    Some("delivered" | "done") => QueueState::Done,
-                    _ => QueueState::Running,
-                },
-                summary: value
-                    .get("summary")
-                    .or_else(|| value.pointer("/params/input/0/text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                last_error: value
-                    .get("lastError")
-                    .and_then(Value::as_str)
-                    .map(|_| "queue item failed; inspect the authoritative source".to_owned()),
-            })
-        })
+pub fn queue_items(result: &Value) -> Result<Vec<QueueItem>, V2Error> {
+    required_collection(result, "items", "data")?
+        .iter()
+        .map(queue_item)
         .collect()
 }
 
-pub fn accounts(result: &Value) -> (Option<Id>, Vec<AccountProfile>, bool) {
-    let active = result
-        .get("activeProfileId")
+fn queue_item(value: &Value) -> Result<QueueItem, V2Error> {
+    let id = value
+        .get("commandId")
+        .or_else(|| value.get("id"))
         .and_then(Value::as_str)
-        .and_then(|value| Id::new(value.to_owned()).ok());
-    let profiles = result
-        .get("profiles")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            Some(AccountProfile {
-                id: Id::new(
-                    value
-                        .get("id")
-                        .or_else(|| value.get("key"))?
-                        .as_str()?
-                        .to_owned(),
-                )
-                .ok()?,
-                email: value
-                    .get("email")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                plan: value
-                    .get("plan")
-                    .or_else(|| value.get("planType"))
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
-                enabled: value
-                    .get("enabled")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true),
-                priority: value.get("priority").and_then(Value::as_i64).unwrap_or(0),
-                exhausted_until: timestamp(value.get("exhaustedUntil")),
-                exhausted_indefinitely: value
-                    .get("exhaustedIndefinitely")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                weekly_limit: weekly_rate_limit(value.get("rateLimits")),
-                rate_limits_updated_at: timestamp(value.get("rateLimitsUpdatedAt")),
-                rate_limits_failed: value
-                    .get("rateLimitsError")
-                    .is_some_and(|error| !error.is_null()),
-            })
-        })
-        .collect();
-    (
-        active,
-        profiles,
-        result
-            .get("allExhausted")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    )
+        .ok_or_else(|| source_invalid("queue item omitted identity"))?;
+    let thread_id = value
+        .get("remoteThreadId")
+        .or_else(|| value.get("threadId"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| source_invalid("queue item omitted thread identity"))?;
+    let position = value
+        .get("order")
+        .or_else(|| value.get("position"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| source_invalid("queue item position is invalid"))?;
+    let state = match value.get("state").and_then(Value::as_str) {
+        Some("queued") => QueueState::Queued,
+        Some("running") => QueueState::Running,
+        Some("uncertain")
+            if value.pointer("/claim/resolved").and_then(Value::as_bool) == Some(false) =>
+        {
+            QueueState::Running
+        }
+        Some("uncertain") => QueueState::Uncertain,
+        Some("failed") => QueueState::Failed,
+        Some("delivered" | "done") => QueueState::Done,
+        _ => return Err(source_invalid("queue item state is invalid")),
+    };
+    let (input, attachments) = queue_input(value)?;
+    Ok(QueueItem {
+        id: Id::new(id.to_owned()).map_err(|_| source_invalid("queue item identity is invalid"))?,
+        thread_id: Id::new(thread_id.to_owned())
+            .map_err(|_| source_invalid("queue thread identity is invalid"))?,
+        position: U64::new(position),
+        state,
+        input,
+        attachments,
+        summary: optional_string_from(
+            value
+                .get("summary")
+                .or_else(|| value.pointer("/params/input/0/text")),
+            "queue item summary",
+        )?
+        .unwrap_or_default(),
+        last_error: optional_string_from(value.get("lastError"), "queue item error")?,
+    })
 }
 
-fn weekly_rate_limit(value: Option<&Value>) -> Option<WeeklyRateLimit> {
-    let response = value?;
-    let mut snapshots = response
-        .get("rateLimitsByLimitId")
-        .and_then(Value::as_object)
-        .into_iter()
-        .flat_map(serde_json::Map::values)
-        .collect::<Vec<_>>();
-    if let Some(snapshot) = response.get("rateLimits") {
+pub fn accounts(result: &Value) -> Result<(Option<Id>, Vec<AccountProfile>, bool), V2Error> {
+    let active = match result.get("activeProfileId") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(
+            Id::new(value.clone())
+                .map_err(|_| source_invalid("active account identity is invalid"))?,
+        ),
+        Some(_) => return Err(source_invalid("active account identity is invalid")),
+    };
+    let profiles = required_array(result, "profiles")?
+        .iter()
+        .map(account)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((active, profiles, required_bool(result, "allExhausted")?))
+}
+
+fn account(value: &Value) -> Result<AccountProfile, V2Error> {
+    let id = value
+        .get("id")
+        .or_else(|| value.get("key"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| source_invalid("account omitted identity"))?;
+    Ok(AccountProfile {
+        id: Id::new(id.to_owned()).map_err(|_| source_invalid("account identity is invalid"))?,
+        email: optional_string(value, "email")?,
+        plan: optional_string_from(
+            value.get("plan").or_else(|| value.get("planType")),
+            "account plan",
+        )?,
+        enabled: required_bool(value, "enabled")?,
+        priority: required_i64(value, "priority")?,
+        exhausted_until: optional_timestamp(value, "exhaustedUntil")?,
+        exhausted_indefinitely: required_bool(value, "exhaustedIndefinitely")?,
+        weekly_limit: weekly_rate_limit(value.get("rateLimits"))?,
+        rate_limits_updated_at: optional_timestamp(value, "rateLimitsUpdatedAt")?,
+        rate_limits_failed: value
+            .get("rateLimitsError")
+            .is_some_and(|error| !error.is_null()),
+    })
+}
+
+fn weekly_rate_limit(value: Option<&Value>) -> Result<Option<WeeklyRateLimit>, V2Error> {
+    let Some(response) = value else {
+        return Ok(None);
+    };
+    if response.is_null() {
+        return Ok(None);
+    }
+    let response = response
+        .as_object()
+        .ok_or_else(|| source_invalid("account rate limits are invalid"))?;
+    let mut snapshots = match response.get("rateLimitsByLimitId") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Object(values)) => values.values().collect::<Vec<_>>(),
+        Some(_) => return Err(source_invalid("account rate limit map is invalid")),
+    };
+    if let Some(snapshot) = response.get("rateLimits")
+        && !snapshot.is_null()
+    {
         snapshots.push(snapshot);
     }
-    snapshots.into_iter().find_map(|snapshot| {
-        ["primary", "secondary"].into_iter().find_map(|name| {
-            let window = snapshot.get(name)?;
-            if window.get("windowDurationMins").and_then(Value::as_i64) != Some(10_080) {
-                return None;
+    for snapshot in snapshots {
+        let snapshot = snapshot
+            .as_object()
+            .ok_or_else(|| source_invalid("account rate limit snapshot is invalid"))?;
+        for name in ["primary", "secondary"] {
+            let Some(window) = snapshot.get(name) else {
+                continue;
+            };
+            let duration = required_i64(window, "windowDurationMins")?;
+            if duration != 10_080 {
+                continue;
             }
-            let used = window.get("usedPercent")?.as_f64()?;
-            if !used.is_finite() {
-                return None;
+            let used = required_f64(window, "usedPercent")?;
+            if !used.is_finite() || !(0.0..=100.0).contains(&used) {
+                return Err(source_invalid("weekly rate limit usage is invalid"));
             }
-            Some(WeeklyRateLimit {
-                remaining_percent: (100.0 - used).clamp(0.0, 100.0),
-                resets_at: timestamp(window.get("resetsAt")),
-            })
-        })
+            return Ok(Some(WeeklyRateLimit {
+                remaining_percent: 100.0 - used,
+                resets_at: optional_timestamp(window, "resetsAt")?,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+pub fn resource_changes(result: &Value) -> Result<Vec<ResourceChange>, V2Error> {
+    required_array(result, "changes")?
+        .iter()
+        .map(resource_change)
+        .collect()
+}
+
+fn resource_change(value: &Value) -> Result<ResourceChange, V2Error> {
+    let kind = value
+        .get("change")
+        .or_else(|| value.get("kind"))
+        .and_then(Value::as_str);
+    Ok(ResourceChange {
+        path: required_string(value, "path")?.to_owned(),
+        change: match kind {
+            Some("add" | "added") => FileChangeKind::Add,
+            Some("delete" | "deleted") => FileChangeKind::Delete,
+            Some("update" | "updated") => FileChangeKind::Update,
+            _ => return Err(source_invalid("resource change kind is invalid")),
+        },
+        additions: U64::new(required_u64(value, "additions")?),
+        deletions: U64::new(required_u64(value, "deletions")?),
     })
 }
 
-pub fn resource_changes(result: &Value) -> Vec<ResourceChange> {
-    result
-        .get("changes")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            Some(ResourceChange {
-                path: value.get("path")?.as_str()?.to_owned(),
-                change: match value
-                    .get("change")
-                    .or_else(|| value.get("kind"))
-                    .and_then(Value::as_str)
-                {
-                    Some("add" | "added") => FileChangeKind::Add,
-                    Some("delete" | "deleted") => FileChangeKind::Delete,
-                    _ => FileChangeKind::Update,
-                },
-                additions: U64::new(value.get("additions").and_then(Value::as_u64).unwrap_or(0)),
-                deletions: U64::new(value.get("deletions").and_then(Value::as_u64).unwrap_or(0)),
-            })
-        })
+pub fn attachments(result: &Value) -> Result<Vec<Attachment>, V2Error> {
+    required_array(result, "attachments")?
+        .iter()
+        .map(attachment)
         .collect()
 }
 
-pub fn attachments(result: &Value) -> Vec<Attachment> {
-    result
-        .get("attachments")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            Some(Attachment {
-                id: Id::new(value.get("id")?.as_str()?.to_owned()).ok()?,
-                name: value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                media_type: value.get("mediaType").and_then(Value::as_str).map_or_else(
-                    || {
-                        match value.get("kind").and_then(Value::as_str) {
-                            Some("image") => "image/*",
-                            Some("audio") => "audio/*",
-                            _ => "application/octet-stream",
-                        }
-                        .to_owned()
-                    },
-                    ToOwned::to_owned,
-                ),
-                size_bytes: U64::new(value.get("sizeBytes").and_then(Value::as_u64).unwrap_or(0)),
-                download_url: value
-                    .get("downloadUrl")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
+fn attachment(value: &Value) -> Result<Attachment, V2Error> {
+    let id = value
+        .get("id")
+        .or_else(|| value.get("key"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| source_invalid("attachment omitted identity"))?;
+    let download_url = optional_string(value, "downloadUrl")?
+        .or(optional_string(value, "url")?)
+        .or_else(|| {
+            value.get("path").and_then(Value::as_str).map(|path| {
+                format!(
+                    "/v2/files/preview?path={}",
+                    utf8_percent_encode(path, NON_ALPHANUMERIC)
+                )
             })
-        })
-        .collect()
+        });
+    let media_type = match value.get("mediaType") {
+        Some(Value::String(media_type)) => media_type.clone(),
+        None => match value.get("kind").and_then(Value::as_str) {
+            Some("image") => "image/*".to_owned(),
+            Some("audio") => "audio/*".to_owned(),
+            Some("file") => "application/octet-stream".to_owned(),
+            _ => return Err(source_invalid("attachment media kind is invalid")),
+        },
+        Some(_) => return Err(source_invalid("attachment media type is invalid")),
+    };
+    Ok(Attachment {
+        id: Id::new(id.to_owned()).map_err(|_| source_invalid("attachment identity is invalid"))?,
+        name: required_string(value, "name")?.to_owned(),
+        media_type,
+        // The resource service does not expose a byte count. Zero is its explicit unknown sentinel.
+        size_bytes: U64::new(optional_u64(value, "sizeBytes")?.unwrap_or(0)),
+        download_url,
+    })
 }
 
 fn optional_thread_settings(value: &Value) -> Result<Option<ThreadSettings>, V2Error> {
     let approval = value
         .get("approvalPolicy")
         .filter(|setting| !setting.is_null());
-    let sandbox = value.get("sandbox").filter(|setting| !setting.is_null());
+    let sandbox = value
+        .get("sandboxPolicy")
+        .or_else(|| value.get("sandbox"))
+        .filter(|setting| !setting.is_null());
     match (approval, sandbox) {
         (None, None) => return Ok(None),
         (Some(_), Some(_)) => {}
@@ -630,62 +710,146 @@ fn optional_thread_settings(value: &Value) -> Result<Option<ThreadSettings>, V2E
     thread_settings(value).map(Some)
 }
 
-fn thread_settings(value: &Value) -> Result<ThreadSettings, V2Error> {
+pub(super) fn thread_settings(value: &Value) -> Result<ThreadSettings, V2Error> {
     let effort = match value.get("reasoningEffort").or_else(|| value.get("effort")) {
         None | Some(Value::Null) => None,
-        Some(Value::String(value)) if value == "low" => Some(Effort::Low),
-        Some(Value::String(value)) if value == "medium" => Some(Effort::Medium),
-        Some(Value::String(value)) if value == "high" => Some(Effort::High),
-        Some(Value::String(value)) if value == "xhigh" => Some(Effort::Xhigh),
+        Some(Value::String(value)) => Some(parse_effort(value)?),
         Some(_) => return Err(V2Error::source_unavailable("unrecognized effort setting")),
     };
-    let approval_policy = match value.get("approvalPolicy").and_then(Value::as_str) {
-        Some("never") => ApprovalPolicy::Never,
-        Some("on-request") => ApprovalPolicy::OnRequest,
-        Some("untrusted") => ApprovalPolicy::Untrusted,
-        _ => return Err(V2Error::source_unavailable("unrecognized approval setting")),
-    };
-    let sandbox = match (
-        value.pointer("/sandbox/type").and_then(Value::as_str),
-        value.get("sandbox").and_then(Value::as_str),
-    ) {
-        (Some("read-only" | "readOnly"), _) | (None, Some("read-only")) => Sandbox::ReadOnly,
-        (Some("workspace-write" | "workspaceWrite"), _) | (None, Some("workspace-write")) => {
-            Sandbox::WorkspaceWrite
-        }
-        (Some("danger-full-access" | "dangerFullAccess"), _)
-        | (None, Some("danger-full-access")) => Sandbox::Unrestricted,
+    let approval_policy = approval_policy(value.get("approvalPolicy"))?;
+    let source_sandbox = value.get("sandboxPolicy").or_else(|| value.get("sandbox"));
+    let sandbox_kind = source_sandbox.and_then(|sandbox| {
+        sandbox
+            .get("type")
+            .and_then(Value::as_str)
+            .or_else(|| sandbox.as_str())
+    });
+    let sandbox = match sandbox_kind {
+        Some("read-only" | "readOnly") => Sandbox::ReadOnly,
+        Some("workspace-write" | "workspaceWrite") => Sandbox::WorkspaceWrite,
+        Some("danger-full-access" | "dangerFullAccess") => Sandbox::Unrestricted,
+        Some("external-sandbox" | "externalSandbox") => Sandbox::ExternalSandbox {
+            network_access: match source_sandbox.and_then(|sandbox| sandbox.get("networkAccess")) {
+                None | Some(Value::Null) => NetworkAccess::Restricted,
+                Some(Value::String(value)) if value == "restricted" => NetworkAccess::Restricted,
+                Some(Value::String(value)) if value == "enabled" => NetworkAccess::Enabled,
+                _ => {
+                    return Err(V2Error::source_unavailable(
+                        "unrecognized external sandbox network setting",
+                    ));
+                }
+            },
+        },
         _ => return Err(V2Error::source_unavailable("unrecognized sandbox setting")),
     };
     Ok(ThreadSettings {
-        model: value
-            .get("model")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
+        model: optional_string(value, "model")?,
         effort,
         approval_policy,
         sandbox,
+        personality: match value.get("personality") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(personality)) if personality == "none" => Some(Personality::None),
+            Some(Value::String(personality)) if personality == "friendly" => {
+                Some(Personality::Friendly)
+            }
+            Some(Value::String(personality)) if personality == "pragmatic" => {
+                Some(Personality::Pragmatic)
+            }
+            Some(_) => return Err(source_invalid("unrecognized personality setting")),
+        },
     })
 }
 
-fn execution_state(value: Option<&Value>) -> ExecutionState {
-    match value.and_then(Value::as_str) {
-        Some("failed") => ExecutionState::Failed,
-        Some("completed") => ExecutionState::Completed,
-        _ => ExecutionState::Running,
+fn approval_policy(value: Option<&Value>) -> Result<ApprovalPolicy, V2Error> {
+    match value {
+        Some(Value::String(policy)) if policy == "never" => Ok(ApprovalPolicy::Never),
+        Some(Value::String(policy)) if policy == "on-request" => Ok(ApprovalPolicy::OnRequest),
+        Some(Value::String(policy)) if policy == "untrusted" => Ok(ApprovalPolicy::Untrusted),
+        Some(Value::Object(policy)) => {
+            let granular = policy
+                .get("granular")
+                .and_then(Value::as_object)
+                .ok_or_else(|| source_invalid("unrecognized approval setting"))?;
+            Ok(ApprovalPolicy::Granular(
+                super::domain::GranularApprovalConfig {
+                    sandbox_approval: required_bool_map(granular, "sandbox_approval")?,
+                    rules: required_bool_map(granular, "rules")?,
+                    skill_approval: required_bool_map(granular, "skill_approval")?,
+                    request_permissions: required_bool_map(granular, "request_permissions")?,
+                    mcp_elicitations: required_bool_map(granular, "mcp_elicitations")?,
+                },
+            ))
+        }
+        _ => Err(source_invalid("unrecognized approval setting")),
     }
 }
 
-fn message_text(value: &Value) -> String {
-    value
-        .get("content")
+fn queue_input(value: &Value) -> Result<(Vec<InputBlock>, Vec<QueueAttachment>), V2Error> {
+    if let Some(queue_input) = value.get("queueInput") {
+        let blocks = queue_input
+            .as_array()
+            .ok_or_else(|| source_invalid("queue presentation input is invalid"))?;
+        let mut input = Vec::with_capacity(blocks.len());
+        let mut attachments = Vec::new();
+        for block in blocks {
+            match block.get("kind").and_then(Value::as_str) {
+                Some("text") => input.push(InputBlock::Text {
+                    text: required_string(block, "text")?.to_owned(),
+                }),
+                Some("attachment") => {
+                    let id = Id::new(required_string(block, "attachmentId")?.to_owned())
+                        .map_err(|_| source_invalid("queue attachment identity is invalid"))?;
+                    let name = required_string(block, "name")?;
+                    if name.is_empty() || name.chars().count() > 512 || name.len() > 2048 {
+                        return Err(source_invalid("queue attachment name is invalid"));
+                    }
+                    input.push(InputBlock::Attachment {
+                        attachment_id: id.clone(),
+                    });
+                    attachments.push(QueueAttachment {
+                        id,
+                        name: name.to_owned(),
+                    });
+                }
+                Some("skill") => input.push(InputBlock::Skill {
+                    name: required_string(block, "name")?.to_owned(),
+                    path: required_string(block, "path")?.to_owned(),
+                }),
+                _ => return Err(source_invalid("queue presentation input block is invalid")),
+            }
+        }
+        return Ok((input, attachments));
+    }
+    let input = value
+        .pointer("/params/input")
+        .or_else(|| value.get("input"))
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
-        .filter_map(|block| block.get("text").and_then(Value::as_str))
-        .collect::<Vec<_>>()
-        .join("\n")
+        .ok_or_else(|| source_invalid("queue input is invalid"))?
+        .iter()
+        .map(|block| match block.get("type").and_then(Value::as_str) {
+            Some("text") => Ok(InputBlock::Text {
+                text: required_string(block, "text")?.to_owned(),
+            }),
+            Some("remoteFile" | "attachment") => Ok(InputBlock::Attachment {
+                attachment_id: Id::new(
+                    block
+                        .get("attachmentId")
+                        .or_else(|| block.get("id"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| source_invalid("queue attachment identity is missing"))?
+                        .to_owned(),
+                )
+                .map_err(|_| source_invalid("queue attachment identity is invalid"))?,
+            }),
+            Some("skill") => Ok(InputBlock::Skill {
+                name: required_string(block, "name")?.to_owned(),
+                path: required_string(block, "path")?.to_owned(),
+            }),
+            _ => Err(source_invalid("queue input block is invalid")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((input, Vec::new()))
 }
 
 fn required_id(value: &Value, field: &str) -> Result<Id, V2Error> {
@@ -700,13 +864,170 @@ fn required_id(value: &Value, field: &str) -> Result<Id, V2Error> {
 }
 
 fn optional_id(value: Option<&Value>) -> Result<Option<Id>, V2Error> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Id::new(value.to_owned())
+            .map_err(|_| V2Error::source_unavailable("source record has invalid id"))
+            .map(Some),
+        Some(_) => Err(V2Error::source_unavailable("source record has invalid id")),
+    }
+}
+
+fn required_collection<'a>(
+    value: &'a Value,
+    primary: &str,
+    alternate: &str,
+) -> Result<&'a [Value], V2Error> {
     value
+        .get(primary)
+        .or_else(|| value.get(alternate))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .ok_or_else(|| source_invalid(format!("source result omitted {primary}")))
+}
+
+fn required_array<'a>(value: &'a Value, field: &str) -> Result<&'a [Value], V2Error> {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn required_object<'a>(value: Option<&'a Value>, field: &str) -> Result<&'a Value, V2Error> {
+    value
+        .filter(|value| value.is_object())
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn required_string<'a>(value: &'a Value, field: &str) -> Result<&'a str, V2Error> {
+    value
+        .get(field)
         .and_then(Value::as_str)
-        .map(|value| {
-            Id::new(value.to_owned())
-                .map_err(|_| V2Error::source_unavailable("source record has invalid id"))
-        })
-        .transpose()
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn optional_string(value: &Value, field: &str) -> Result<Option<String>, V2Error> {
+    optional_string_from(value.get(field), field)
+}
+
+fn optional_string_from(value: Option<&Value>, field: &str) -> Result<Option<String>, V2Error> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(source_invalid(format!("source record has invalid {field}"))),
+    }
+}
+
+fn required_bool(value: &Value, field: &str) -> Result<bool, V2Error> {
+    value
+        .get(field)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn required_bool_map(value: &serde_json::Map<String, Value>, field: &str) -> Result<bool, V2Error> {
+    value
+        .get(field)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn optional_bool(value: &Value, field: &str) -> Result<Option<bool>, V2Error> {
+    match value.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(source_invalid(format!("source record has invalid {field}"))),
+    }
+}
+
+fn required_i64(value: &Value, field: &str) -> Result<i64, V2Error> {
+    value
+        .get(field)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn required_u64(value: &Value, field: &str) -> Result<u64, V2Error> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn optional_u64(value: &Value, field: &str) -> Result<Option<u64>, V2Error> {
+    match value.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| source_invalid(format!("source record has invalid {field}"))),
+    }
+}
+
+fn required_f64(value: &Value, field: &str) -> Result<f64, V2Error> {
+    value
+        .get(field)
+        .and_then(Value::as_f64)
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn required_nonnegative_integer(value: &Value, field: &str) -> Result<i64, V2Error> {
+    nonnegative_safe_integer(value.get(field))
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn optional_nonnegative_integer(value: &Value, field: &str) -> Result<Option<i64>, V2Error> {
+    match value.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => required_nonnegative_integer(value, field).map(Some),
+    }
+}
+
+fn optional_nonnegative_integer_from(
+    value: Option<&Value>,
+    field: &str,
+) -> Result<Option<i64>, V2Error> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => nonnegative_safe_integer(Some(value))
+            .map(Some)
+            .ok_or_else(|| source_invalid(format!("source record has invalid {field}"))),
+    }
+}
+
+fn optional_nonnegative_number(value: Option<&Value>) -> Result<Option<f64>, V2Error> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|number| number.is_finite() && *number >= 0.0)
+            .map(Some)
+            .ok_or_else(|| source_invalid("source record has invalid nonnegative number")),
+    }
+}
+
+fn required_timestamp(value: &Value, field: &str) -> Result<Timestamp, V2Error> {
+    timestamp(value.get(field))
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {field}")))
+}
+
+fn required_timestamp_alias(
+    value: &Value,
+    primary: &str,
+    alternate: &str,
+) -> Result<Timestamp, V2Error> {
+    timestamp(value.get(primary).or_else(|| value.get(alternate)))
+        .ok_or_else(|| source_invalid(format!("source record omitted or invalid {primary}")))
+}
+
+fn optional_timestamp(value: &Value, field: &str) -> Result<Option<Timestamp>, V2Error> {
+    match value.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(raw) => timestamp(Some(raw))
+            .map(Some)
+            .ok_or_else(|| source_invalid(format!("source record has invalid {field}"))),
+    }
 }
 
 fn timestamp(value: Option<&Value>) -> Option<Timestamp> {
@@ -728,235 +1049,87 @@ fn timestamp(value: Option<&Value>) -> Option<Timestamp> {
 }
 
 fn safe_source_error(error: &Value) -> String {
-    let _ = error;
-    "source request failed".into()
+    const FALLBACK: &str = "source request failed";
+    const PREFIX: &str = "App Server error";
+    const MAX_PUBLIC_CHARS: usize = 128;
+
+    let code = error.get("code").and_then(source_error_code);
+    let prefix = code.as_ref().map_or_else(
+        || format!("{PREFIX}: "),
+        |code| format!("{PREFIX} {code}: "),
+    );
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .and_then(safe_source_error_message)
+        .map(|message| bounded_chars(&message, MAX_PUBLIC_CHARS.saturating_sub(prefix.len())));
+
+    match (code, message) {
+        (_, Some(message)) => format!("{prefix}{message}"),
+        (Some(code), _) => format!("{PREFIX} {code}"),
+        (None, None) => FALLBACK.to_owned(),
+    }
+}
+
+fn source_error_code(value: &Value) -> Option<String> {
+    let code = match value {
+        Value::Number(value) if value.is_i64() => value.to_string(),
+        Value::String(value) => value.clone(),
+        _ => return None,
+    };
+    if code.is_empty()
+        || code.len() > 32
+        || !code
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".-_".contains(character))
+    {
+        return None;
+    }
+    Some(code)
+}
+
+fn safe_source_error_message(message: &str) -> Option<String> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
+        return None;
+    }
+    let lowercase = trimmed.to_ascii_lowercase();
+    if [
+        "access token",
+        "api key",
+        "authorization:",
+        "bearer ",
+        "credential",
+        "cookie:",
+        "private key",
+        "private_sentinel",
+        "refresh token",
+        "secret",
+        "/home/",
+        "/token",
+        "/users/",
+        "\\users\\",
+    ]
+    .iter()
+    .any(|sensitive| lowercase.contains(sensitive))
+    {
+        return None;
+    }
+    Some(trimmed.to_owned())
+}
+
+fn bounded_chars(value: &str, limit: usize) -> String {
+    let mut bounded = value.chars().take(limit).collect::<String>();
+    if value.chars().count() > limit && limit > 0 {
+        bounded.pop();
+        bounded.push('…');
+    }
+    bounded
+}
+
+fn source_invalid(message: impl Into<String>) -> V2Error {
+    V2Error::source_unavailable(message.into())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn source_thread(settings: &Value) -> Value {
-        let mut thread = json!({
-            "id": "thread",
-            "createdAt": "2026-08-27T00:00:00Z",
-            "updatedAt": "2026-08-27T00:00:00Z"
-        });
-        let object = thread
-            .as_object_mut()
-            .unwrap_or_else(|| panic!("test thread must be an object"));
-        object.extend(
-            settings
-                .as_object()
-                .unwrap_or_else(|| panic!("test settings must be an object"))
-                .clone(),
-        );
-        thread
-    }
-
-    #[test]
-    fn source_settings_accept_only_proven_source_spellings() {
-        let accepted = source_thread(&json!({
-            "model": null,
-            "reasoningEffort": "xhigh",
-            "approvalPolicy": "on-request",
-            "sandbox": {"type": "workspace-write"}
-        }));
-        let summary = thread_summary(&accepted)
-            .unwrap_or_else(|error| panic!("source settings should normalize: {error:?}"));
-        let settings = summary
-            .settings
-            .unwrap_or_else(|| panic!("source settings should be present"));
-        assert_eq!(settings.effort, Some(Effort::Xhigh));
-        assert_eq!(settings.approval_policy, ApprovalPolicy::OnRequest);
-        assert_eq!(settings.sandbox, Sandbox::WorkspaceWrite);
-
-        for rejected in [
-            json!({
-                "approvalPolicy": "onRequest",
-                "sandbox": "workspace-write"
-            }),
-            json!({
-                "approvalPolicy": "never",
-                "sandbox": "readOnly"
-            }),
-            json!({
-                "approvalPolicy": "never",
-                "sandbox": "read-only",
-                "effort": "extreme"
-            }),
-        ] {
-            assert!(thread_summary(&source_thread(&rejected)).is_err());
-        }
-    }
-
-    #[test]
-    fn thread_list_and_read_records_without_settings_remain_truthful() {
-        let summary = thread_summary(&source_thread(&json!({ "preview": "Newest answer" })))
-            .unwrap_or_else(|error| panic!("real thread DTO should normalize: {error:?}"));
-        assert_eq!(summary.settings, None);
-        assert_eq!(summary.preview, "Newest answer");
-    }
-
-    #[test]
-    fn app_server_placeholder_title_does_not_override_the_canonical_preview() {
-        let summary = thread_summary(&source_thread(&json!({
-            "title": "Untitled thread",
-            "preview": "Newest answer"
-        })))
-        .unwrap_or_else(|error| panic!("placeholder title should normalize: {error:?}"));
-
-        assert_eq!(summary.title, None);
-        assert_eq!(summary.preview, "Newest answer");
-    }
-
-    #[test]
-    fn catalog_partition_supplies_archived_state_missing_from_thread_dto() {
-        let summary = thread_summary_in_partition(&source_thread(&json!({})), true)
-            .unwrap_or_else(|error| panic!("catalog thread should normalize: {error:?}"));
-        assert!(summary.archived);
-    }
-
-    #[test]
-    fn response_level_settings_are_attached_to_the_nested_thread() {
-        let response = json!({
-            "thread": source_thread(&json!({})),
-            "model": "gpt-5.6",
-            "reasoningEffort": "high",
-            "approvalPolicy": "never",
-            "sandbox": {"type": "dangerFullAccess"}
-        });
-        let summary = thread_summary_from_response(&response)
-            .unwrap_or_else(|error| panic!("response settings should normalize: {error:?}"));
-        let settings = summary
-            .settings
-            .unwrap_or_else(|| panic!("response settings should be present"));
-        assert_eq!(settings.model.as_deref(), Some("gpt-5.6"));
-        assert_eq!(settings.effort, Some(Effort::High));
-        assert_eq!(settings.approval_policy, ApprovalPolicy::Never);
-        assert_eq!(settings.sandbox, Sandbox::Unrestricted);
-    }
-
-    #[test]
-    fn canonical_turn_display_metadata_survives_v2_normalization() {
-        let source = json!({
-            "id": "turn",
-            "createdAt": "2026-08-27T11:59:00Z",
-            "startedAt": "2026-08-27T12:00:00Z",
-            "completedAt": "2026-08-27T12:00:03Z",
-            "durationMs": 3200,
-            "status": "completed",
-            "items": [
-                {"type": "userMessage", "id": "user", "content": [{"type": "text", "text": "Question"}]},
-                {"type": "agentMessage", "id": "agent", "text": "Answer"}
-            ],
-            "codewide": {
-                "activity": {"count": 2, "kinds": ["reasoning", "commandExecution"]},
-                "usage": {
-                    "latestRequest": {"totalTokens": 25_700},
-                    "modelContextWindow": 258_400,
-                    "turn": {
-                        "tokens": {"inputTokens": 26_000, "outputTokens": 19},
-                        "cost": {"totalCostUsd": 0.014}
-                    },
-                    "thread": {
-                        "tokens": {"inputTokens": 76_000, "outputTokens": 1000, "totalTokens": 77_000},
-                        "cost": {"totalCostUsd": 0.044}
-                    }
-                }
-            }
-        });
-        let normalized = turn_view(
-            &Id::new("thread").unwrap_or_else(|error| panic!("valid id: {error:?}")),
-            &source,
-        )
-        .unwrap_or_else(|error| panic!("turn should normalize: {error:?}"));
-
-        assert_eq!(normalized.created_at.as_str(), "2026-08-27T12:00:00Z");
-        assert_eq!(normalized.duration_ms, Some(3200));
-        assert_eq!(
-            normalized
-                .activity
-                .unwrap_or_else(|| panic!("activity must survive"))
-                .kinds,
-            ["reasoning", "commandExecution"]
-        );
-        let usage = normalized
-            .usage
-            .unwrap_or_else(|| panic!("usage must survive"));
-        assert_eq!(usage.input_tokens, 26_000);
-        assert_eq!(usage.output_tokens, 19);
-        assert_eq!(usage.total_cost_usd, Some(0.014));
-        assert_eq!(usage.latest_request_tokens, 25_700);
-        assert_eq!(usage.model_context_window, Some(258_400));
-        assert_eq!(usage.thread_input_tokens, 76_000);
-        assert_eq!(usage.thread_output_tokens, 1000);
-        assert_eq!(usage.thread_total_tokens, 77_000);
-        assert_eq!(usage.thread_total_cost_usd, Some(0.044));
-    }
-
-    #[test]
-    fn account_weekly_limit_survives_v2_normalization() {
-        let result = json!({
-            "activeProfileId": "profile-1",
-            "allExhausted": false,
-            "profiles": [{
-                "id": "profile-1",
-                "email": "person@example.com",
-                "planType": "pro",
-                "enabled": true,
-                "priority": 0,
-                "active": true,
-                "exhaustedUntil": null,
-                "exhaustedIndefinitely": false,
-                "rateLimits": {
-                    "rateLimits": {
-                        "primary": {"usedPercent": 10, "windowDurationMins": 300, "resetsAt": 1_788_000_000},
-                        "secondary": {"usedPercent": 13, "windowDurationMins": 10_080, "resetsAt": 1_789_000_000}
-                    },
-                    "rateLimitsByLimitId": null
-                },
-                "rateLimitsUpdatedAt": 1_787_000_000,
-                "rateLimitsError": null
-            }]
-        });
-        let (active, profiles, exhausted) = accounts(&result);
-        assert_eq!(active.as_ref().map(Id::as_str), Some("profile-1"));
-        assert!(!exhausted);
-        let profile = profiles
-            .first()
-            .unwrap_or_else(|| panic!("profile should normalize"));
-        assert_eq!(profile.plan.as_deref(), Some("pro"));
-        assert_eq!(
-            profile
-                .rate_limits_updated_at
-                .as_ref()
-                .map(Timestamp::as_str),
-            Some("2026-08-17T20:53:20Z")
-        );
-        let weekly = profile
-            .weekly_limit
-            .as_ref()
-            .unwrap_or_else(|| panic!("weekly limit should normalize"));
-        assert!((weekly.remaining_percent - 87.0).abs() < f64::EPSILON);
-        assert_eq!(
-            weekly.resets_at.as_ref().map(Timestamp::as_str),
-            Some("2026-09-10T00:26:40Z")
-        );
-    }
-
-    #[test]
-    fn source_error_content_never_enters_public_error() {
-        let secret = "PRIVATE_SENTINEL_/home/user/token";
-        let Err(error) = rpc_result(&json!({
-            "error": {"message": secret, "data": {"credential": secret}}
-        })) else {
-            panic!("source error must fail");
-        };
-        let encoded = serde_json::to_string(&error.for_wire())
-            .unwrap_or_else(|failure| panic!("error must serialize: {failure}"));
-        assert!(!encoded.contains(secret));
-        assert!(encoded.len() <= 256);
-    }
-}
+mod tests;

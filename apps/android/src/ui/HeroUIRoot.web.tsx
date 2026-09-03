@@ -9,7 +9,6 @@ import { ContentReviewHost } from "../rendering/ContentReviewHost";
 import { ImagePreviewHost } from "../rendering/ImagePreviewHost";
 import { AppDialogProvider } from "./AppDialog";
 import { AppFullscreenOverlayHost, AppFullscreenOverlayProvider } from "./AppFullscreenOverlay";
-import { NavigationPerformanceHud } from "./NavigationPerformanceHud";
 import { APP_MAX_FONT_SIZE_MULTIPLIER } from "./typography-policy";
 
 Uniwind.setTheme("dark");
@@ -34,7 +33,6 @@ export function HeroUIRoot({ children }: { children: ReactNode }) {
               <ImagePreviewHost>
                 <DocumentPreviewHost>
                   {children}
-                  <NavigationPerformanceHud />
                   <PortalHost />
                   <AppFullscreenOverlayHost />
                 </DocumentPreviewHost>

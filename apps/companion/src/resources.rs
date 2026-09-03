@@ -26,6 +26,8 @@ use crate::{
     vcs::{VcsDiff, VcsError, VcsFileStatus, VcsScope, VcsService, VcsSnapshot},
 };
 
+mod full_change_output;
+
 const PROJECTIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_resources");
 const PROJECTION_VERSION: u8 = 8;
 const MAX_DIFF_CHARS_PER_PATH: usize = 4 * 1024 * 1024;
@@ -313,6 +315,8 @@ impl PersistedProjection {
 #[derive(Debug, thiserror::Error)]
 pub enum ResourceError {
     #[error(transparent)]
+    File(#[from] crate::files::FileError),
+    #[error(transparent)]
     Catalog(#[from] CatalogError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -338,6 +342,10 @@ pub enum ResourceError {
     MissingThreadId,
     #[error("path is required")]
     MissingPath,
+    #[error("change output offset is invalid")]
+    InvalidOffset,
+    #[error("canonical change output record is invalid")]
+    InvalidPatchRecord,
     #[error("resource projection task failed")]
     Join,
     #[error(transparent)]
@@ -345,6 +353,21 @@ pub enum ResourceError {
 }
 
 impl ResourceService {
+    /// Authorizes one workspace-relative preview against the authoritative
+    /// workspace root and returns its current length and media type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the workspace/path is invalid, escapes the
+    /// workspace root, or the file cannot be inspected.
+    pub async fn workspace_preview_metadata(
+        &self,
+        workspace: PathBuf,
+        path: PathBuf,
+    ) -> Result<(u64, String), ResourceError> {
+        Ok(self.files.preview_metadata_within(workspace, path).await?)
+    }
+
     /// Opens the compact, crash-safe projection store. It contains only file
     /// metadata, attachment references, and bounded diffs; canonical JSONL
     /// remains the only full-history source.
@@ -446,6 +469,10 @@ impl ResourceService {
             latest_live_turn,
             requested_scope,
         };
+
+        if method == "companion/threadChangeOutput/read" {
+            return self.handle_thread_change_output(params, &context).await;
+        }
 
         if method == "companion/threadChange/read" {
             return self.handle_thread_change(params, &context).await;

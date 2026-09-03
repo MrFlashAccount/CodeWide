@@ -17,7 +17,7 @@ use super::{
         ThreadSummary, ThreadWindow,
     },
     protocol::{
-        Action, ActionResult, CatalogSnapshot, Command, CommandResult, OpenIntent, Query,
+        CatalogSnapshot, Command, CommandResult, OpenIntent, PendingRequestScope, Query,
         QueryResult, V2Error,
     },
     scalar::{Id, OperationId},
@@ -52,6 +52,10 @@ pub enum AudienceSelector {
     CurrentThread {
         context: AuthenticatedContextKey,
         thread_id: Id,
+    },
+    PendingRequests {
+        context: AuthenticatedContextKey,
+        thread_id: Option<Id>,
     },
     CatalogPartition {
         context: AuthenticatedContextKey,
@@ -91,9 +95,27 @@ struct Recipient {
     generation: u64,
     context: AuthenticatedContextKey,
     intent: OpenIntent,
-    active_membership: Vec<Id>,
-    archived_membership: Vec<Id>,
+    membership: CatalogMembership,
     mailbox: Arc<RecipientMailbox>,
+}
+
+#[derive(Clone)]
+enum CatalogMembership {
+    // The source snapshot and live journal overlap. Keep catalog mutations until
+    // the snapshot membership is installed so a later install cannot erase them.
+    Initializing {
+        changes: Vec<CatalogMembershipChange>,
+    },
+    Ready {
+        active: Vec<Id>,
+        archived: Vec<Id>,
+    },
+}
+
+#[derive(Clone)]
+enum CatalogMembershipChange {
+    Upsert { thread_id: Id, archived: bool },
+    Remove { thread_id: Id },
 }
 
 struct RecipientMailbox {
@@ -375,8 +397,9 @@ impl SubscriptionCoordinator {
             generation,
             context,
             intent,
-            active_membership: Vec::new(),
-            archived_membership: Vec::new(),
+            membership: CatalogMembership::Initializing {
+                changes: Vec::new(),
+            },
             mailbox: mailbox.clone(),
         };
         if let Some(previous) = self
@@ -396,16 +419,58 @@ impl SubscriptionCoordinator {
         active: &[ThreadSummary],
         archived: &[ThreadSummary],
     ) {
-        if let Some(recipient) = self
+        let mut recipients = self
             .recipients
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get_mut(recipient_id)
-        {
-            recipient.active_membership = active.iter().map(|thread| thread.id.clone()).collect();
-            recipient.archived_membership =
-                archived.iter().map(|thread| thread.id.clone()).collect();
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(recipient) = recipients.get_mut(recipient_id) else {
+            return;
+        };
+        let changes = match std::mem::replace(
+            &mut recipient.membership,
+            CatalogMembership::Ready {
+                active: active.iter().map(|thread| thread.id.clone()).collect(),
+                archived: archived.iter().map(|thread| thread.id.clone()).collect(),
+            },
+        ) {
+            CatalogMembership::Initializing { changes } => changes,
+            CatalogMembership::Ready { .. } => Vec::new(),
+        };
+        let CatalogMembership::Ready { active, archived } = &mut recipient.membership else {
+            unreachable!();
+        };
+        let mut outside_scope = Vec::new();
+        for change in changes {
+            let current_thread = match &change {
+                CatalogMembershipChange::Upsert { thread_id, .. }
+                | CatalogMembershipChange::Remove { thread_id } => recipient
+                    .intent
+                    .current_thread
+                    .as_ref()
+                    .is_some_and(|current| &current.thread_id == thread_id),
+            };
+            outside_scope.extend(apply_catalog_membership_change(
+                active,
+                archived,
+                recipient.intent.catalog.active_limit,
+                recipient.intent.catalog.archived_limit,
+                current_thread,
+                change,
+            ));
         }
+        let generation = recipient.generation;
+        let mailbox = recipient.mailbox.clone();
+        for thread_id in outside_scope {
+            mailbox.push(CoordinatorEvent::Change {
+                generation,
+                recipient_ids: Arc::new(HashSet::from([recipient_id.clone()])),
+                change: ProjectionChange::ThreadRemoved {
+                    thread_id,
+                    reason: RemovalReason::OutsideScope,
+                },
+            });
+        }
+        drop(recipients);
     }
 
     pub fn remove(&self, recipient_id: &Id) {
@@ -468,34 +533,54 @@ impl SubscriptionCoordinator {
                 if recipient.generation != generation {
                     return None;
                 }
-                let allowed = match &selector {
-                    AudienceSelector::ExactContext(context) => &recipient.context == context,
-                    AudienceSelector::CurrentThread { context, thread_id } => {
-                        &recipient.context == context
-                            && recipient
-                                .intent
-                                .current_thread
-                                .as_ref()
-                                .is_some_and(|current| &current.thread_id == thread_id)
-                    }
-                    AudienceSelector::CatalogPartition { context, archived } => {
-                        if &recipient.context != context {
-                            return None;
+                let allowed =
+                    match &selector {
+                        AudienceSelector::ExactContext(context) => &recipient.context == context,
+                        AudienceSelector::CurrentThread { context, thread_id } => {
+                            &recipient.context == context
+                                && recipient
+                                    .intent
+                                    .current_thread
+                                    .as_ref()
+                                    .is_some_and(|current| &current.thread_id == thread_id)
                         }
-                        if *archived {
-                            recipient.archived_membership.iter().any(|id| {
-                                projection_thread_id(&change)
-                                    .is_some_and(|thread_id| thread_id == id)
-                            })
-                        } else {
-                            recipient.active_membership.iter().any(|id| {
-                                projection_thread_id(&change)
-                                    .is_some_and(|thread_id| thread_id == id)
-                            })
+                        AudienceSelector::PendingRequests { context, thread_id } => {
+                            &recipient.context == context
+                                && match recipient.intent.pending_requests {
+                                    PendingRequestScope::AllAccessible => true,
+                                    PendingRequestScope::CurrentThread => {
+                                        thread_id.as_ref().is_some_and(|thread_id| {
+                                            recipient.intent.current_thread.as_ref().is_some_and(
+                                                |current| &current.thread_id == thread_id,
+                                            )
+                                        })
+                                    }
+                                }
                         }
-                    }
-                    AudienceSelector::Ambiguous => false,
-                };
+                        AudienceSelector::CatalogPartition { context, archived } => {
+                            if &recipient.context != context {
+                                return None;
+                            }
+                            let thread_id = projection_thread_id(&change)?;
+                            match &recipient.membership {
+                                CatalogMembership::Initializing { .. } => {
+                                    if *archived {
+                                        recipient.intent.catalog.archived_limit > 0
+                                    } else {
+                                        recipient.intent.catalog.active_limit > 0
+                                    }
+                                }
+                                CatalogMembership::Ready {
+                                    active,
+                                    archived: archived_ids,
+                                } => {
+                                    let membership = if *archived { archived_ids } else { active };
+                                    membership.iter().any(|id| id == thread_id)
+                                }
+                            }
+                        }
+                        AudienceSelector::Ambiguous => false,
+                    };
                 allowed.then(|| id.clone())
             })
             .collect::<HashSet<_>>();
@@ -533,80 +618,121 @@ impl SubscriptionCoordinator {
             .collect()
     }
 
+    pub fn pending_contexts(
+        &self,
+        generation: u64,
+        thread_id: Option<&Id>,
+    ) -> HashSet<AuthenticatedContextKey> {
+        self.recipients
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .filter(|recipient| {
+                recipient.generation == generation
+                    && match recipient.intent.pending_requests {
+                        PendingRequestScope::AllAccessible => true,
+                        PendingRequestScope::CurrentThread => thread_id.is_some_and(|thread_id| {
+                            recipient
+                                .intent
+                                .current_thread
+                                .as_ref()
+                                .is_some_and(|current| &current.thread_id == thread_id)
+                        }),
+                    }
+            })
+            .map(|recipient| recipient.context.clone())
+            .collect()
+    }
+
     pub fn publish_catalog_upsert(
         &self,
         generation: u64,
         context: &AuthenticatedContextKey,
-        thread: ThreadSummary,
+        thread: &ThreadSummary,
     ) {
         let archived = thread.archived;
         let mut recipients = self
             .recipients
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut upsert = HashSet::new();
-        let mut exits: HashMap<Id, HashSet<Id>> = HashMap::new();
         for (recipient_id, recipient) in recipients.iter_mut().filter(|(_, recipient)| {
             recipient.generation == generation && &recipient.context == context
         }) {
+            let mut deliveries = Vec::new();
             let current = recipient
                 .intent
                 .current_thread
                 .as_ref()
                 .is_some_and(|current| current.thread_id == thread.id);
-            let (target, opposite, limit) = if archived {
-                (
-                    &mut recipient.archived_membership,
-                    &mut recipient.active_membership,
-                    recipient.intent.catalog.archived_limit,
-                )
-            } else {
-                (
-                    &mut recipient.active_membership,
-                    &mut recipient.archived_membership,
-                    recipient.intent.catalog.active_limit,
-                )
-            };
-            let was_in_opposite = opposite.iter().any(|candidate| candidate == &thread.id);
-            opposite.retain(|candidate| candidate != &thread.id);
-            let existing = target.iter().any(|candidate| candidate == &thread.id);
-            if existing || current {
-                upsert.insert(recipient_id.clone());
-            } else if limit > 0 {
-                target.insert(0, thread.id.clone());
-                upsert.insert(recipient_id.clone());
-                if target.len() > limit as usize
-                    && let Some(evicted) = target.pop()
-                {
-                    exits
-                        .entry(evicted)
-                        .or_default()
-                        .insert(recipient_id.clone());
+            match &mut recipient.membership {
+                CatalogMembership::Initializing {
+                    changes: membership_changes,
+                } => {
+                    if membership_changes.len() < recipient.mailbox.budget.max_events {
+                        membership_changes.push(CatalogMembershipChange::Upsert {
+                            thread_id: thread.id.clone(),
+                            archived,
+                        });
+                    }
+                    let limit = if archived {
+                        recipient.intent.catalog.archived_limit
+                    } else {
+                        recipient.intent.catalog.active_limit
+                    };
+                    if current || limit > 0 {
+                        deliveries.push(ProjectionChange::ThreadUpserted {
+                            thread: thread.clone(),
+                        });
+                    }
                 }
-            } else if was_in_opposite {
-                exits
-                    .entry(thread.id.clone())
-                    .or_default()
-                    .insert(recipient_id.clone());
+                CatalogMembership::Ready {
+                    active,
+                    archived: archived_ids,
+                } => {
+                    let (target, opposite, limit) = if archived {
+                        (
+                            archived_ids,
+                            active,
+                            recipient.intent.catalog.archived_limit,
+                        )
+                    } else {
+                        (active, archived_ids, recipient.intent.catalog.active_limit)
+                    };
+                    let was_in_opposite = opposite.iter().any(|candidate| candidate == &thread.id);
+                    opposite.retain(|candidate| candidate != &thread.id);
+                    let existing = target.iter().any(|candidate| candidate == &thread.id);
+                    if existing || current {
+                        deliveries.push(ProjectionChange::ThreadUpserted {
+                            thread: thread.clone(),
+                        });
+                    } else if limit > 0 {
+                        target.insert(0, thread.id.clone());
+                        deliveries.push(ProjectionChange::ThreadUpserted {
+                            thread: thread.clone(),
+                        });
+                        if target.len() > limit as usize
+                            && let Some(evicted) = target.pop()
+                        {
+                            deliveries.push(ProjectionChange::ThreadRemoved {
+                                thread_id: evicted,
+                                reason: RemovalReason::OutsideScope,
+                            });
+                        }
+                    } else if was_in_opposite {
+                        deliveries.push(ProjectionChange::ThreadRemoved {
+                            thread_id: thread.id.clone(),
+                            reason: RemovalReason::OutsideScope,
+                        });
+                    }
+                }
             }
-        }
-        drop(recipients);
-        if !upsert.is_empty() {
-            self.dispatch(CoordinatorEvent::Change {
-                generation,
-                recipient_ids: Arc::new(upsert),
-                change: ProjectionChange::ThreadUpserted { thread },
-            });
-        }
-        for (thread_id, recipient_ids) in exits {
-            self.dispatch(CoordinatorEvent::Change {
-                generation,
-                recipient_ids: Arc::new(recipient_ids),
-                change: ProjectionChange::ThreadRemoved {
-                    thread_id,
-                    reason: RemovalReason::OutsideScope,
-                },
-            });
+            for change in deliveries {
+                recipient.mailbox.push(CoordinatorEvent::Change {
+                    generation,
+                    recipient_ids: Arc::new(HashSet::from([recipient_id.clone()])),
+                    change,
+                });
+            }
         }
     }
 
@@ -614,45 +740,49 @@ impl SubscriptionCoordinator {
         &self,
         generation: u64,
         context: &AuthenticatedContextKey,
-        thread_id: Id,
+        thread_id: &Id,
         reason: RemovalReason,
     ) {
         let mut recipients = self
             .recipients
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let matching = recipients
-            .iter_mut()
-            .filter_map(|(recipient_id, recipient)| {
-                if recipient.generation != generation || &recipient.context != context {
-                    return None;
+        for (recipient_id, recipient) in recipients.iter_mut() {
+            if recipient.generation != generation || &recipient.context != context {
+                continue;
+            }
+            let current = recipient
+                .intent
+                .current_thread
+                .as_ref()
+                .is_some_and(|current| &current.thread_id == thread_id);
+            let affected = match &mut recipient.membership {
+                CatalogMembership::Initializing { changes } => {
+                    if changes.len() < recipient.mailbox.budget.max_events {
+                        changes.push(CatalogMembershipChange::Remove {
+                            thread_id: thread_id.clone(),
+                        });
+                    }
+                    recipient.intent.catalog.active_limit > 0
+                        || recipient.intent.catalog.archived_limit > 0
                 }
-                let current = recipient
-                    .intent
-                    .current_thread
-                    .as_ref()
-                    .is_some_and(|current| current.thread_id == thread_id);
-                let before =
-                    recipient.active_membership.len() + recipient.archived_membership.len();
-                recipient
-                    .active_membership
-                    .retain(|candidate| candidate != &thread_id);
-                recipient
-                    .archived_membership
-                    .retain(|candidate| candidate != &thread_id);
-                (current
-                    || before
-                        != recipient.active_membership.len() + recipient.archived_membership.len())
-                .then(|| recipient_id.clone())
-            })
-            .collect::<HashSet<_>>();
-        drop(recipients);
-        if !matching.is_empty() {
-            self.dispatch(CoordinatorEvent::Change {
-                generation,
-                recipient_ids: Arc::new(matching),
-                change: ProjectionChange::ThreadRemoved { thread_id, reason },
-            });
+                CatalogMembership::Ready { active, archived } => {
+                    let before = active.len() + archived.len();
+                    active.retain(|candidate| candidate != thread_id);
+                    archived.retain(|candidate| candidate != thread_id);
+                    before != active.len() + archived.len()
+                }
+            };
+            if current || affected {
+                recipient.mailbox.push(CoordinatorEvent::Change {
+                    generation,
+                    recipient_ids: Arc::new(HashSet::from([recipient_id.clone()])),
+                    change: ProjectionChange::ThreadRemoved {
+                        thread_id: thread_id.clone(),
+                        reason,
+                    },
+                });
+            }
         }
     }
 
@@ -700,22 +830,67 @@ impl SubscriptionCoordinator {
     }
 }
 
+fn apply_catalog_membership_change(
+    active: &mut Vec<Id>,
+    archived: &mut Vec<Id>,
+    active_limit: u16,
+    archived_limit: u16,
+    current_thread: bool,
+    change: CatalogMembershipChange,
+) -> Vec<Id> {
+    match change {
+        CatalogMembershipChange::Upsert {
+            thread_id,
+            archived: is_archived,
+        } => {
+            let (target, opposite, limit) = if is_archived {
+                (archived, active, archived_limit)
+            } else {
+                (active, archived, active_limit)
+            };
+            let was_in_opposite = opposite.iter().any(|candidate| candidate == &thread_id);
+            opposite.retain(|candidate| candidate != &thread_id);
+            target.retain(|candidate| candidate != &thread_id);
+            if limit > 0 {
+                target.insert(0, thread_id);
+                if target.len() > limit as usize {
+                    return target.split_off(limit as usize);
+                }
+            } else if was_in_opposite && !current_thread {
+                return vec![thread_id];
+            }
+            Vec::new()
+        }
+        CatalogMembershipChange::Remove { thread_id } => {
+            active.retain(|candidate| candidate != &thread_id);
+            archived.retain(|candidate| candidate != &thread_id);
+            Vec::new()
+        }
+    }
+}
+
 fn projection_thread_id(change: &ProjectionChange) -> Option<&Id> {
     match change {
         ProjectionChange::ThreadUpserted { thread } => Some(&thread.id),
         ProjectionChange::ThreadRemoved { thread_id, .. }
-        | ProjectionChange::ResourcesChanged { thread_id, .. } => Some(thread_id),
+        | ProjectionChange::ResourcesChanged { thread_id, .. }
+        | ProjectionChange::ThreadGoalChanged { thread_id, .. }
+        | ProjectionChange::ItemLifecycleChanged { thread_id, .. } => Some(thread_id),
         ProjectionChange::CurrentThreadReplaced { current_thread, .. } => {
             Some(&current_thread.thread.id)
         }
         ProjectionChange::TurnUpserted { turn } => Some(&turn.thread_id),
         ProjectionChange::PendingRequestOpened { request } => match request {
-            PendingRequest::Approval { thread_id, .. }
+            PendingRequest::CommandApproval { thread_id, .. }
+            | PendingRequest::FileChangeApproval { thread_id, .. }
+            | PendingRequest::PermissionApproval { thread_id, .. }
             | PendingRequest::UserInput { thread_id, .. } => Some(thread_id),
             PendingRequest::Elicitation { thread_id, .. } => thread_id.as_ref(),
         },
-        ProjectionChange::QueueChanged { thread_id, .. } => thread_id.as_ref(),
+        ProjectionChange::QueueChanged { thread_id, .. }
+        | ProjectionChange::AgentsChanged { thread_id, .. } => thread_id.as_ref(),
         ProjectionChange::PendingRequestClosed { .. }
+        | ProjectionChange::SkillsChanged { .. }
         | ProjectionChange::AccountsChanged { .. } => None,
     }
 }
@@ -784,39 +959,12 @@ pub trait SemanticSource: Send + Sync {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> CommandExecution;
-    async fn resolve(
-        &self,
-        action: Action,
-        authorization: &AuthorizationContext,
-        context: &AuthenticatedContextKey,
-        generation: u64,
-    ) -> Result<ActionResult, V2Error>;
 }
 
 pub fn ensure_generation(source: &dyn SemanticSource, expected: u64) -> Result<(), V2Error> {
     (source.generation() == expected)
         .then_some(())
         .ok_or_else(V2Error::generation_changed)
-}
-
-pub fn capabilities(limits: SnapshotLimits) -> QueryResult {
-    QueryResult::CapabilitiesRead {
-        commands: super::protocol::COMMAND_KINDS
-            .iter()
-            .filter(|kind| **kind != "account.update")
-            .map(ToString::to_string)
-            .collect(),
-        queries: super::protocol::QUERY_KINDS
-            .iter()
-            .filter(|kind| **kind != "accounts.list")
-            .map(ToString::to_string)
-            .collect(),
-        actions: super::protocol::ACTION_KINDS
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
-        limits,
-    }
 }
 
 #[cfg(test)]

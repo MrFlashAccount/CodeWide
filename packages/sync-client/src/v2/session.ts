@@ -1,8 +1,6 @@
 import { fingerprintV2Command, v2SavedServerId, type V2SavedServerId } from "./canonical";
 import type { V2ClientFrame, V2CommandTerminalFrame, V2OpenIntent, V2ServerFrame } from "./frames";
 import type {
-  V2Action,
-  V2ActionResult,
   V2Command,
   V2OperationStatus,
   V2PersistedOperation,
@@ -20,6 +18,7 @@ import {
   commandTerminalState,
   compareU64,
   defaultRequestId,
+  isRetryableOperationReceiptFailure,
   pendingPromise,
   sameIntent,
   settleRequest,
@@ -47,6 +46,9 @@ export type SyncV2SafeDiagnostic = {
   code: "transport" | "protocol" | "projection" | "reinitialize" | "operation";
   detail: string;
 };
+
+const MAX_OPERATION_RECEIPT_RECOVERY_FAILURES = 5;
+const MAX_OPERATION_RECEIPT_RETRY_DELAY_MS = 30_000;
 export type SyncV2SessionSnapshot = {
   version: number;
   state: SyncV2ConnectionState;
@@ -63,6 +65,10 @@ export type SyncV2SessionOptions = {
   onState?: (state: SyncV2ConnectionState, diagnostic: SyncV2SafeDiagnostic | null) => void;
   requestId?: () => string;
   reconnectDelayMs?: number;
+  requestTimeoutMs?: number;
+  heartbeatIntervalMs?: number;
+  heartbeatTimeoutMs?: number;
+  initializationTimeoutMs?: number;
 };
 
 type CommandFrame = Extract<V2ServerFrame, { type: `command${string}` }>;
@@ -81,13 +87,20 @@ export class SyncV2Session {
   ) => void;
   readonly #requestId: () => string;
   readonly #reconnectDelayMs: number;
+  readonly #requestTimeoutMs: number;
+  readonly #heartbeatIntervalMs: number;
+  readonly #heartbeatTimeoutMs: number;
+  readonly #initializationTimeoutMs: number;
   readonly #queries = new Map<string, Pending<V2QueryResult>>();
-  readonly #actions = new Map<string, Pending<V2ActionResult>>();
   readonly #threadWatches = new Map<string, Pending<void>>();
+  readonly #threadWatchTargets = new Map<string, string>();
   readonly #commands = new Map<string, Pending<V2CommandTerminalFrame>>();
   readonly #recoveringOperations = new Set<string>();
+  readonly #operationReceiptFailures = new Map<string, number>();
   readonly #observers = new Set<() => void>();
   readonly #changeObservers = new Set<(change: V2ProjectionChange) => void>();
+  readonly #requestTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #diagnostic: SyncV2SafeDiagnostic | null = null;
   #socket: V2SocketLike | undefined;
   #phase: "offline" | "waitingOpen" | "initializing" | "awaitingCommit" | "draining" | "live" =
     "offline";
@@ -99,6 +112,9 @@ export class SyncV2Session {
   #stopped = true;
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   #heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  #heartbeatDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  #pendingHeartbeatNonce: string | null = null;
+  #initializationDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
   #storeUnsubscribes: V2StoreUnsubscribe[] = [];
   #publicationVersion = 0;
   #connectionState: SyncV2ConnectionState = "offline";
@@ -112,6 +128,10 @@ export class SyncV2Session {
     this.#onState = options.onState ?? (() => undefined);
     this.#requestId = options.requestId ?? defaultRequestId;
     this.#reconnectDelayMs = options.reconnectDelayMs ?? 1_000;
+    this.#requestTimeoutMs = positiveDuration(options.requestTimeoutMs, 15_000);
+    this.#heartbeatIntervalMs = positiveDuration(options.heartbeatIntervalMs, 5_000);
+    this.#heartbeatTimeoutMs = positiveDuration(options.heartbeatTimeoutMs, 10_000);
+    this.#initializationTimeoutMs = positiveDuration(options.initializationTimeoutMs, 15_000);
     this.#observeStores();
   }
 
@@ -167,6 +187,11 @@ export class SyncV2Session {
     };
   }
 
+  /** Returns the bounded diagnostic attached to the current connection state. */
+  safeDiagnostic(): SyncV2SafeDiagnostic | null {
+    return this.#diagnostic;
+  }
+
   start(): void {
     if (!this.#stopped) return;
     this.#observeStores();
@@ -209,6 +234,7 @@ export class SyncV2Session {
     if (this.#reconnectTimer !== undefined) clearTimeout(this.#reconnectTimer);
     this.#reconnectTimer = undefined;
     this.#stopHeartbeat();
+    this.#stopInitializationDeadline();
     this.#socket?.close(1000, "client_stopped");
     this.#socket = undefined;
     this.#phase = "offline";
@@ -228,6 +254,7 @@ export class SyncV2Session {
       if (this.#reconnectTimer !== undefined) clearTimeout(this.#reconnectTimer);
       this.#reconnectTimer = undefined;
       this.#stopHeartbeat();
+      this.#stopInitializationDeadline();
       const socket = this.#socket;
       this.#socket = undefined;
       socket?.close(1000, "client_disposed");
@@ -260,10 +287,11 @@ export class SyncV2Session {
     const requestId = this.#requestId();
     const frame = validateV2ClientFrame({ type: "query", requestId, query });
     const promise = pendingPromise(this.#queries, requestId, query.kind);
+    this.#armRequestTimeout(this.#queries, requestId, "query_timeout");
     try {
       this.#send(frame);
     } catch (cause: unknown) {
-      this.#queries.delete(requestId);
+      this.#deletePending(this.#queries, requestId);
       throw cause;
     }
     return await promise;
@@ -271,18 +299,28 @@ export class SyncV2Session {
 
   /** Changes the live thread subscription without replacing the transport epoch. */
   async watchThread(threadId: string, turnLimit: number): Promise<void> {
-    this.#intent = validateIntent({
+    const previousIntent = this.#intent;
+    const nextIntent = validateIntent({
       catalog: this.#intent.catalog,
       currentThread: { threadId, turnLimit },
+      pendingRequests: this.#intent.pendingRequests,
     });
-    await this.#whenLive();
+    this.#intent = nextIntent;
     const requestId = this.#requestId();
     const frame = validateV2ClientFrame({ type: "threadWatch", requestId, threadId, turnLimit });
     const promise = pendingPromise(this.#threadWatches, requestId, "threadWatch");
+    this.#threadWatchTargets.set(requestId, threadId);
+    this.#armRequestTimeout(this.#threadWatches, requestId, "thread_watch_timeout", () => {
+      this.#threadWatchTargets.delete(requestId);
+    });
     try {
+      await Promise.race([this.#whenLive(), promise]);
+      if (!this.#threadWatches.has(requestId)) return await promise;
       this.#send(frame);
     } catch (cause: unknown) {
-      this.#threadWatches.delete(requestId);
+      this.#deleteThreadWatch(requestId);
+      if (cause instanceof SyncV2RequestError && sameIntent(this.#intent, nextIntent))
+        this.#intent = previousIntent;
       throw cause;
     }
     await promise;
@@ -296,9 +334,9 @@ export class SyncV2Session {
         if (this.#connectionState === "live" && this.#phase === "live") {
           unsubscribe();
           resolve();
-        } else if (this.#stopped) {
+        } else if (this.#stopped || this.#connectionState === "error") {
           unsubscribe();
-          reject(new Error("Sync V2 connection stopped before thread watch"));
+          reject(new Error("Sync V2 connection became unavailable before thread watch"));
         }
       });
     });
@@ -344,25 +382,19 @@ export class SyncV2Session {
     return await pending.promise;
   }
 
-  async action(action: V2Action): Promise<V2ActionResult> {
-    this.#requireLive();
-    const requestId = this.#requestId();
-    const frame = validateV2ClientFrame({ type: "action", requestId, action });
-    const promise = pendingPromise(this.#actions, requestId, action.kind);
-    try {
-      this.#send(frame);
-    } catch (cause: unknown) {
-      this.#actions.delete(requestId);
-      throw cause;
-    }
-    return await promise;
-  }
-
   #connect(): void {
     if (this.#stopped) return;
     this.#phase = "waitingOpen";
     this.#setState("initializing", null);
-    const socket = this.#transportLease.openSync();
+    let socket: V2SocketLike;
+    try {
+      socket = this.#transportLease.openSync();
+    } catch {
+      this.#phase = "offline";
+      this.#setState("error", { code: "transport", detail: "socket_open_failed" });
+      this.#scheduleReconnect();
+      return;
+    }
     this.#socket = socket;
     socket.addEventListener("open", () => {
       if (this.#socket !== socket || this.#stopped) return;
@@ -390,9 +422,13 @@ export class SyncV2Session {
       }
       this.#receive(frame);
     });
-    socket.addEventListener("error", () =>
-      this.#setState("error", { code: "transport", detail: "socket_error" }),
-    );
+    socket.addEventListener("error", () => {
+      if (this.#socket !== socket || this.#stopped) return;
+      this.#setState("error", { code: "transport", detail: "socket_error" });
+      setTimeout(() => {
+        if (this.#socket === socket && !this.#stopped) socket.close(1011, "socket_error");
+      }, 0);
+    });
     socket.addEventListener("close", () => this.#handleClose(socket));
   }
 
@@ -401,6 +437,7 @@ export class SyncV2Session {
     this.#snapshotCommit?.abort();
     this.#snapshotCommit = null;
     this.#stopHeartbeat();
+    this.#stopInitializationDeadline();
     const epochId = this.#epochId;
     this.#socket = undefined;
     this.#phase = "offline";
@@ -411,36 +448,86 @@ export class SyncV2Session {
     this.#setState("offline", null);
     const abandoned = epochId === null ? Promise.resolve(true) : this.#recoverableAbandon(epochId);
     void abandoned.then(() => {
-      if (!this.#stopped && this.#socket === undefined)
-        this.#reconnectTimer = setTimeout(() => this.#connect(), this.#reconnectDelayMs);
+      this.#scheduleReconnect();
     });
+  }
+
+  #scheduleReconnect(): void {
+    if (this.#stopped || this.#socket !== undefined || this.#reconnectTimer !== undefined) return;
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = undefined;
+      this.#connect();
+    }, this.#reconnectDelayMs);
   }
 
   #beginEpoch(): void {
     this.#phase = "initializing";
     this.#epochId = null;
     this.#watermark = null;
-    this.#send({ type: "open", version: 2, intent: this.#intent });
+    this.#armInitializationDeadline("snapshot_timeout");
+    try {
+      this.#send({ type: "open", version: 2, intent: this.#intent });
+    } catch {
+      this.#stopInitializationDeadline();
+      this.#setState("error", { code: "transport", detail: "open_send_failed" });
+      this.#socket?.close(1011, "open_send_failed");
+      return;
+    }
   }
 
   #startHeartbeat(socket: V2SocketLike): void {
     this.#stopHeartbeat();
     this.#heartbeatTimer = setInterval(() => {
       if (this.#socket !== socket || this.#stopped) return;
+      if (this.#pendingHeartbeatNonce !== null) return;
+      const nonce = this.#requestId();
       try {
-        this.#send({ type: "ping", nonce: this.#requestId() });
+        this.#send({ type: "ping", nonce });
+        this.#pendingHeartbeatNonce = nonce;
+        this.#heartbeatDeadlineTimer = setTimeout(() => {
+          if (this.#socket !== socket || this.#pendingHeartbeatNonce !== nonce) return;
+          this.#setState("error", { code: "transport", detail: "heartbeat_timeout" });
+          socket.close(1011, "heartbeat_timeout");
+        }, this.#heartbeatTimeoutMs);
       } catch {
         socket.close(1011, "heartbeat_send_failed");
       }
-    }, 5_000);
+    }, this.#heartbeatIntervalMs);
   }
 
   #stopHeartbeat(): void {
     if (this.#heartbeatTimer !== undefined) clearInterval(this.#heartbeatTimer);
     this.#heartbeatTimer = undefined;
+    if (this.#heartbeatDeadlineTimer !== undefined) clearTimeout(this.#heartbeatDeadlineTimer);
+    this.#heartbeatDeadlineTimer = undefined;
+    this.#pendingHeartbeatNonce = null;
+  }
+
+  #armInitializationDeadline(detail: string): void {
+    this.#stopInitializationDeadline();
+    const socket = this.#socket;
+    this.#initializationDeadlineTimer = setTimeout(() => {
+      if (socket === undefined || this.#socket !== socket || this.#phase === "live") return;
+      this.#setState("error", { code: "transport", detail });
+      socket.close(1011, detail);
+    }, this.#initializationTimeoutMs);
+  }
+
+  #stopInitializationDeadline(): void {
+    if (this.#initializationDeadlineTimer !== undefined)
+      clearTimeout(this.#initializationDeadlineTimer);
+    this.#initializationDeadlineTimer = undefined;
   }
 
   #receive(frame: V2ServerFrame): void {
+    if (frame.type === "pong") {
+      if (frame.nonce !== this.#pendingHeartbeatNonce)
+        return this.#protocolFailure("unexpected_pong");
+      if (this.#heartbeatDeadlineTimer !== undefined) clearTimeout(this.#heartbeatDeadlineTimer);
+      this.#heartbeatDeadlineTimer = undefined;
+      this.#pendingHeartbeatNonce = null;
+      return;
+    }
     if (frame.type === "snapshot") return this.#receiveSnapshot(frame);
     if (frame.type === "change") return this.#receiveChange(frame);
     if (frame.type === "live") return this.#receiveLive(frame);
@@ -452,23 +539,44 @@ export class SyncV2Session {
     }
     if (frame.type === "threadWatched") {
       const pending = this.#threadWatches.get(frame.requestId);
+      const requestedThreadId = this.#threadWatchTargets.get(frame.requestId);
       if (pending === undefined) return;
+      if (requestedThreadId === undefined)
+        return this.#protocolFailure("missing_thread_watch_target");
       if (frame.epochId !== this.#epochId) return this.#protocolFailure("foreign_thread_watch");
-      this.#threadWatches.delete(frame.requestId);
-      void this.#applyChain.then(() => pending.resolve()).catch(pending.reject);
+      void this.#applyChain
+        .then(async () => {
+          if (this.#threadWatches.get(frame.requestId) !== pending) return;
+          const active = await this.#projectionStore.active(this.#savedServerId);
+          if (this.#threadWatches.get(frame.requestId) !== pending) return;
+          if (active?.currentThread?.thread.id !== requestedThreadId) {
+            this.#deleteThreadWatch(frame.requestId);
+            pending.reject(new Error("Sync V2 thread watch did not publish its requested thread"));
+            this.#protocolFailure("thread_watch_projection_mismatch");
+            return;
+          }
+          this.#deleteThreadWatch(frame.requestId);
+          pending.resolve();
+        })
+        .catch((cause: unknown) => {
+          if (this.#threadWatches.get(frame.requestId) !== pending) return;
+          this.#deleteThreadWatch(frame.requestId);
+          pending.reject(cause instanceof Error ? cause : new Error("Projection apply failed"));
+          this.#projectionFailure(frame.epochId);
+        });
       return;
     }
     if (frame.type === "threadWatchFailed") {
       const pending = this.#threadWatches.get(frame.requestId);
       if (pending === undefined) return;
-      this.#threadWatches.delete(frame.requestId);
+      this.#deleteThreadWatch(frame.requestId);
       pending.reject(new SyncV2RequestError(frame.error));
       return;
     }
-    if (frame.type === "queryCompleted" || frame.type === "queryFailed")
+    if (frame.type === "queryCompleted" || frame.type === "queryFailed") {
+      this.#clearRequestTimer(frame.requestId);
       return settleRequest(this.#queries, frame);
-    if (frame.type === "actionCompleted" || frame.type === "actionFailed")
-      return settleRequest(this.#actions, frame);
+    }
     if (frame.type.startsWith("command")) {
       this.#commandChain = this.#commandChain
         .then(() => this.#settleCommand(frame as CommandFrame))
@@ -478,6 +586,10 @@ export class SyncV2Session {
 
   #receiveSnapshot(frame: Extract<V2ServerFrame, { type: "snapshot" }>): void {
     if (this.#phase !== "initializing") return this.#protocolFailure("snapshot_out_of_phase");
+    const intendedThreadId = this.#intent.currentThread?.threadId ?? null;
+    const snapshotThreadId = frame.currentThread?.thread.id ?? null;
+    if (snapshotThreadId !== intendedThreadId)
+      return this.#protocolFailure("snapshot_thread_mismatch");
     if (
       !validTail(
         frame.watermark,
@@ -488,6 +600,7 @@ export class SyncV2Session {
     const controller = new AbortController();
     this.#snapshotCommit = controller;
     this.#phase = "awaitingCommit";
+    this.#armInitializationDeadline("snapshot_commit_timeout");
     this.#epochId = frame.epochId;
     this.#watermark = frame.watermark;
     this.#applyChain = this.#applyChain
@@ -512,6 +625,7 @@ export class SyncV2Session {
         });
         this.#phase = "draining";
         this.#snapshotCommit = null;
+        this.#armInitializationDeadline("live_timeout");
       })
       .catch(() => {
         if (!controller.signal.aborted) this.#projectionFailure(frame.epochId);
@@ -554,6 +668,7 @@ export class SyncV2Session {
         await this.#commandChain;
         if (this.#epochId !== frame.epochId) return;
         this.#phase = "live";
+        this.#stopInitializationDeadline();
         this.#setState("live", null);
         this.#recoverDurableCommands();
       })
@@ -692,6 +807,7 @@ export class SyncV2Session {
     if (!this.#sameAuthority(authority)) return;
     const requestId = this.#requestId();
     const pending = pendingPromise(this.#queries, requestId, "operation.get");
+    this.#armRequestTimeout(this.#queries, requestId, "query_timeout");
     try {
       this.#send({
         type: "query",
@@ -700,6 +816,7 @@ export class SyncV2Session {
       });
       const result = await pending;
       if (!this.#sameAuthority(authority) || result.kind !== "operation.get") return;
+      this.#operationReceiptFailures.delete(operation.operationId);
       const receipt = result.receipt;
       if (receipt.state === "admitted") {
         setTimeout(() => this.#recoverDurableCommands(), this.#reconnectDelayMs);
@@ -735,11 +852,24 @@ export class SyncV2Session {
                 error: receipt.error,
               };
       await this.#settleCommand(frame);
-    } catch {
-      this.#queries.delete(requestId);
-      if (this.#sameAuthority(authority)) {
-        setTimeout(() => this.#recoverDurableCommands(), this.#reconnectDelayMs);
+    } catch (cause) {
+      this.#deletePending(this.#queries, requestId);
+      if (!this.#sameAuthority(authority)) return;
+      if (isRetryableOperationReceiptFailure(cause)) {
+        const failures = (this.#operationReceiptFailures.get(operation.operationId) ?? 0) + 1;
+        this.#operationReceiptFailures.set(operation.operationId, failures);
+        if (failures >= MAX_OPERATION_RECEIPT_RECOVERY_FAILURES) {
+          await this.#markAcceptedDurableUnsettled(operation.operationId);
+          return;
+        }
+        const retryDelayMs = Math.min(
+          this.#reconnectDelayMs * 2 ** (failures - 1),
+          MAX_OPERATION_RECEIPT_RETRY_DELAY_MS,
+        );
+        setTimeout(() => this.#recoverDurableCommands(), retryDelayMs);
+        return;
       }
+      await this.#markAcceptedDurableUnsettled(operation.operationId);
     }
   }
 
@@ -787,15 +917,50 @@ export class SyncV2Session {
 
   #rejectEphemeral(message: string): void {
     const error = new Error(message);
-    for (const pending of [
-      ...this.#queries.values(),
-      ...this.#actions.values(),
-      ...this.#threadWatches.values(),
-    ])
+    for (const pending of [...this.#queries.values(), ...this.#threadWatches.values()])
       pending.reject(error);
     this.#queries.clear();
-    this.#actions.clear();
     this.#threadWatches.clear();
+    this.#threadWatchTargets.clear();
+    for (const timer of this.#requestTimers.values()) clearTimeout(timer);
+    this.#requestTimers.clear();
+  }
+
+  #armRequestTimeout<T>(
+    map: Map<string, Pending<T>>,
+    requestId: string,
+    detail: string,
+    onTimeout?: () => void,
+  ): void {
+    const timer = setTimeout(() => {
+      this.#requestTimers.delete(requestId);
+      const pending = map.get(requestId);
+      if (pending === undefined) return;
+      map.delete(requestId);
+      onTimeout?.();
+      pending.reject(new Error(`Sync V2 request timed out: ${pending.kind}`));
+      this.#setState("error", { code: "transport", detail });
+      if (this.#socket === undefined) this.reconnect();
+      else this.#socket.close(1011, detail);
+    }, this.#requestTimeoutMs);
+    this.#requestTimers.set(requestId, timer);
+  }
+
+  #deletePending<T>(map: Map<string, Pending<T>>, requestId: string): void {
+    map.delete(requestId);
+    this.#clearRequestTimer(requestId);
+  }
+
+  #deleteThreadWatch(requestId: string): void {
+    this.#threadWatches.delete(requestId);
+    this.#threadWatchTargets.delete(requestId);
+    this.#clearRequestTimer(requestId);
+  }
+
+  #clearRequestTimer(requestId: string): void {
+    const timer = this.#requestTimers.get(requestId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.#requestTimers.delete(requestId);
   }
 
   #rejectDurableCommands(): void {
@@ -812,8 +977,17 @@ export class SyncV2Session {
     pending.reject(new SyncV2CommandDurableUnsettledError(operationId));
   }
 
+  async #markAcceptedDurableUnsettled(operationId: string): Promise<void> {
+    this.#operationReceiptFailures.delete(operationId);
+    await this.#operationStore.transition(this.#savedServerId, operationId, ["accepted"], {
+      state: "indeterminate",
+    });
+    this.#settleDurableUnsettled(operationId);
+  }
+
   #resolveTerminal(frame: V2CommandTerminalFrame): void {
     this.#recoveringOperations.delete(frame.operationId);
+    this.#operationReceiptFailures.delete(frame.operationId);
     const pending = this.#commands.get(frame.operationId);
     if (pending === undefined) return;
     this.#commands.delete(frame.operationId);
@@ -822,6 +996,7 @@ export class SyncV2Session {
 
   #setState(state: SyncV2ConnectionState, diagnostic: SyncV2SafeDiagnostic | null): void {
     this.#connectionState = state;
+    this.#diagnostic = diagnostic;
     try {
       this.#onState(state, diagnostic);
     } catch {
@@ -859,4 +1034,8 @@ export class SyncV2Session {
       }
     }
   }
+}
+
+function positiveDuration(value: number | undefined, fallback: number): number {
+  return value === undefined || !Number.isFinite(value) || value <= 0 ? fallback : value;
 }

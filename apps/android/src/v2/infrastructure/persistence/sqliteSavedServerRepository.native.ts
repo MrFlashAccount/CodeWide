@@ -30,7 +30,6 @@ interface NativeSavedServerBridge {
   listConnectionConfigs(): Promise<NativeConnectionConfig[]>;
   listSavedServerSummaries(): Promise<unknown>;
   deleteConnectionCredentials(connectionId: string): Promise<void>;
-  resetSocket(connectionId: string, reason: string): void;
   saveConnectionCredentials(
     connectionId: string,
     endpoint: string,
@@ -46,8 +45,7 @@ interface NativeSavedServerBridge {
     enabled: boolean,
     deviceId: string,
   ): Promise<void>;
-  setConnectionEnabled(connectionId: string, enabled: boolean): Promise<void>;
-  wakeSocket(connectionId: string): void;
+  setV2ConnectionEnabled(connectionId: string, enabled: boolean): Promise<void>;
 }
 
 /** Adapter over the sole generation-neutral native saved-server catalog. */
@@ -146,16 +144,12 @@ export function createSavedServerRepository(): SavedServerRepository {
         },
         id,
       );
-      native.wakeSocket(id);
     },
-    reconnect(id) {
-      requireBridge().resetSocket(id, "user_reconnect_v2");
-    },
+    reconnect: () => undefined,
     async setEnabled(id, enabled) {
       const native = requireBridge();
-      await native.setConnectionEnabled(id, enabled);
+      await native.setV2ConnectionEnabled(id, enabled);
       await requireProfiles().setEnabled(id, enabled);
-      if (enabled) native.wakeSocket(id);
     },
     subscribe: () => () => undefined,
     async update(id, input) {
@@ -175,7 +169,6 @@ export function createSavedServerRepository(): SavedServerRepository {
         ...(input.replacementToken === null ? {} : { token: input.replacementToken }),
         tlsPinSha256: input.tlsPinSha256,
       });
-      if (existing.enabled) native.wakeSocket(id);
     },
   };
 }

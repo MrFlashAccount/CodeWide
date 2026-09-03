@@ -4,6 +4,7 @@ import path from "node:path";
 import type { remote } from "webdriverio";
 
 import { delay } from "./process.ts";
+import { validateRecordedVideo } from "./videoValidation.ts";
 
 export type AppiumBrowser = Awaited<ReturnType<typeof remote>>;
 
@@ -167,6 +168,18 @@ export function createAndroidE2eUi(input: {
       if (source.includes("There was a problem loading the project")) {
         throw new Error("Expo project failed to load from Metro");
       }
+      const uncaughtMarker = 'text="Uncaught Error"';
+      const uncaughtOffset = source.indexOf(uncaughtMarker);
+      if (uncaughtOffset >= 0) {
+        const detail = source
+          .slice(uncaughtOffset + uncaughtMarker.length)
+          .match(/text="([^"]+)"/)?.[1];
+        throw new Error(
+          detail === undefined
+            ? "React Native application raised an uncaught error"
+            : `React Native application raised an uncaught error: ${decodeXmlText(detail)}`,
+        );
+      }
       await delay(250);
     }
     throw new Error("Timed out waiting for the CodeWide application shell");
@@ -186,12 +199,24 @@ export function createAndroidE2eUi(input: {
         } catch (error) {
           actionError = error instanceof Error ? error : new Error(String(error));
         }
-        const encoded = await driver.stopRecordingScreen();
         const fileName = `${name}.mp4`;
-        await writeFile(path.join(input.artifactDir, fileName), Buffer.from(encoded, "base64"), {
-          mode: 0o600,
-        });
-        input.videos.push(fileName);
+        const filePath = path.join(input.artifactDir, fileName);
+        let recordingError: Error | null = null;
+        try {
+          const encoded = await driver.stopRecordingScreen();
+          await writeFile(filePath, Buffer.from(encoded, "base64"), { mode: 0o600 });
+          input.videos.push(fileName);
+          await validateRecordedVideo(filePath);
+        } catch (error) {
+          recordingError = error instanceof Error ? error : new Error(String(error));
+        }
+        if (actionError !== null && recordingError !== null) {
+          throw new Error(
+            `Scenario action failed: ${actionError.message}; video validation failed: ${recordingError.message}`,
+            { cause: new AggregateError([actionError, recordingError]) },
+          );
+        }
+        if (recordingError !== null) throw recordingError;
         if (actionError !== null) throw actionError;
       });
     },
@@ -323,13 +348,20 @@ export function createAndroidE2eUi(input: {
       await waitForVisibleTextContaining(driver, expectedText);
     },
 
-    async sendComposerMessage(driver: AppiumBrowser, message: string): Promise<void> {
+    async sendComposerMessage(
+      driver: AppiumBrowser,
+      message: string,
+      options: { beforeSend?(): Promise<void>; requireKeyboard?: boolean } = {},
+    ): Promise<void> {
       const composer = await waitForAccessibility(driver, "Message Codex");
       await composer.click();
       await composer.setValue(message);
-      // The wide split keyboard can cover V1's composer after text entry.
-      // Close only the IME, then press the real app action through Appium.
-      await driver.hideKeyboard().catch(() => undefined);
+      // Keep the IME open: sending while the composer is lifted is part of the
+      // Android contract, and hiding it here used to mask keyboard regressions.
+      await options.beforeSend?.();
+      if (options.requireKeyboard === true && !(await driver.isKeyboardShown())) {
+        throw new Error("The Android IME closed before the V2 message was sent");
+      }
       for (let attempt = 0; attempt < 3; attempt += 1) {
         await clickAccessibility(driver, "Send message");
         const deadline = Date.now() + 2_000;
@@ -395,4 +427,13 @@ export function createAndroidE2eUi(input: {
 
 function escapeUiSelector(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+function decodeXmlText(value: string): string {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
 }

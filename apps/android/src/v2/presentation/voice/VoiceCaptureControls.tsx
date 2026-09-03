@@ -1,24 +1,41 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
-import { spacing, typeWeight } from "../../theme";
+import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import { PresentationIcon } from "../icons/PresentationIcon";
+import { ProductText } from "../text/ProductText";
+import { ShimmerText } from "../text/ShimmerText";
+import { VoiceLevelMeter } from "./VoiceLevelMeter";
 
-export type VoiceCaptureState = "idle" | "starting" | "recording" | "finishing" | "retry" | "error";
+type VoiceCaptureState =
+  | "idle"
+  | "starting"
+  | "recording"
+  | "finishing"
+  | "cancelling"
+  | "retry"
+  | "error";
 
-interface VoiceCaptureControlsProps {
+export interface VoiceCaptureControlsProps {
   disabled: boolean;
+  level: number;
   message: string | null;
   onCancel(): Promise<void>;
   onFailure(): void;
   onFinish(): Promise<void>;
+  onRetry(): Promise<void>;
   onStart(): Promise<void>;
   state: VoiceCaptureState;
 }
 
-/** Protocol-neutral Voice controls; callers own audio, authority, and transcript state. */
+/**
+ * Renders the complete Voice action state without owning microphone or transcript
+ * lifetime. The process controller remains authoritative across route unmounts.
+ */
 export function VoiceCaptureControls(props: VoiceCaptureControlsProps): React.JSX.Element {
-  const { disabled, message, onCancel, onFailure, onFinish, onStart, state } = props;
+  const { disabled, level, message, onCancel, onFailure, onFinish, onRetry, onStart, state } =
+    props;
   const [pending, setPending] = useState(false);
   const run = useEvent((action: () => Promise<void>): void => {
     if (pending) return;
@@ -33,93 +50,142 @@ export function VoiceCaptureControls(props: VoiceCaptureControlsProps): React.JS
   });
   const cancel = useEvent(() => run(onCancel));
   const finish = useEvent(() => run(onFinish));
+  const retry = useEvent(() => run(onRetry));
   const start = useEvent(() => run(onStart));
-  const recording = state === "recording" || state === "finishing";
+  const active =
+    state === "starting" ||
+    state === "recording" ||
+    state === "finishing" ||
+    state === "cancelling";
+  const actionBusy = pending || state === "finishing" || state === "cancelling";
+
   return (
-    <View style={styles.root}>
-      {recording ? (
-        <>
-          <Pressable
-            accessibilityLabel="Finish V2 voice input"
-            accessibilityRole="button"
-            accessibilityState={{ busy: pending || state === "finishing", disabled: pending }}
-            disabled={pending}
-            onPress={finish}
-            style={styles.finish}
-          >
-            <Text style={styles.label}>
-              {state === "finishing" ? "Finishing voice…" : "Finish voice"}
-            </Text>
-          </Pressable>
-          <Pressable
-            accessibilityLabel="Cancel V2 voice input"
-            accessibilityRole="button"
-            accessibilityState={{ busy: pending, disabled: pending }}
-            disabled={pending}
-            onPress={cancel}
-            style={styles.cancel}
-          >
-            <Text style={styles.label}>Cancel voice</Text>
-          </Pressable>
-        </>
-      ) : (
-        <Pressable
-          accessibilityLabel="Start V2 voice input"
-          accessibilityRole="button"
-          accessibilityState={{
-            busy: pending || state === "starting",
-            disabled: disabled || pending,
-          }}
-          disabled={disabled || pending}
-          onPress={start}
-          style={[styles.start, (disabled || pending) && styles.disabled]}
-        >
-          <Text style={styles.label}>
-            {state === "starting" ? "Starting voice…" : "Voice input"}
-          </Text>
-        </Pressable>
-      )}
-      {message === null ? null : (
-        <Text
-          accessibilityLiveRegion="polite"
-          style={state === "error" ? styles.error : styles.status}
+    <View style={styles.root} testID="v2-global-voice-controls">
+      {active ? (
+        <View style={styles.captureStatus}>
+          <VoiceLevelMeter level={level} />
+          <ShimmerText style={styles.status} text={statusLabel(state, message)} />
+        </View>
+      ) : message === null ? null : (
+        <ProductText
+          accessibilityLiveRegion={state === "error" ? "assertive" : "polite"}
+          style={styles.status}
+          tone={state === "error" ? "danger" : "muted"}
         >
           {message}
-        </Text>
+        </ProductText>
       )}
+
+      <View style={styles.actions}>
+        {state === "recording" ? (
+          <VoiceAction
+            icon="stop"
+            label="Finish voice input"
+            onPress={finish}
+            pending={actionBusy}
+            tone="primary"
+          />
+        ) : null}
+        {state === "retry" ? (
+          <VoiceAction
+            icon="refresh"
+            label="Retry voice transcription"
+            onPress={retry}
+            pending={actionBusy}
+            tone="primary"
+          />
+        ) : null}
+        {active || state === "retry" ? (
+          <VoiceAction
+            icon="close"
+            label="Cancel voice input"
+            onPress={cancel}
+            pending={state === "cancelling" || pending}
+            tone="secondary"
+          />
+        ) : (
+          <VoiceAction
+            disabled={disabled}
+            icon={state === "error" ? "refresh" : "mic"}
+            label={state === "error" ? "Try voice input again" : "Start voice input"}
+            onPress={start}
+            pending={pending}
+            tone="secondary"
+          />
+        )}
+      </View>
     </View>
   );
 }
 
+interface VoiceActionProps {
+  disabled?: boolean;
+  icon: "close" | "mic" | "refresh" | "stop";
+  label: string;
+  onPress(): void;
+  pending: boolean;
+  tone: "primary" | "secondary";
+}
+
+function VoiceAction(props: VoiceActionProps): React.JSX.Element {
+  const { disabled = false, icon, label, onPress, pending, tone } = props;
+  const unavailable = disabled || pending;
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ busy: pending, disabled: unavailable }}
+      disabled={unavailable}
+      onPress={onPress}
+      style={[
+        styles.action,
+        tone === "primary" ? styles.primaryAction : styles.secondaryAction,
+        unavailable && styles.disabled,
+      ]}
+    >
+      <PresentationIcon
+        color={tone === "primary" ? colors.onPrimary : colors.text}
+        name={icon}
+        size={20}
+      />
+      <ProductText
+        style={[styles.actionLabel, tone === "primary" && styles.primaryActionLabel]}
+        tone={tone === "primary" ? "default" : "muted"}
+      >
+        {label}
+      </ProductText>
+    </Pressable>
+  );
+}
+
+function statusLabel(state: VoiceCaptureState, message: string | null): string {
+  if (message !== null) return message;
+  if (state === "starting") return "Starting voice…";
+  if (state === "finishing") return "Finishing voice…";
+  if (state === "cancelling") return "Cancelling voice…";
+  return "Listening…";
+}
+
 const styles = StyleSheet.create({
-  cancel: {
-    backgroundColor: "#3f3f46",
-    borderRadius: 12,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  disabled: { opacity: 0.5 },
-  error: { color: "#ff8b8b" },
-  finish: {
-    backgroundColor: "#0369a1",
-    borderRadius: 12,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  label: { color: "#fafafa", fontWeight: typeWeight.semibold },
-  root: {
-    alignItems: "flex-start",
+  action: {
+    alignItems: "center",
+    borderRadius: radii.pill,
     flexDirection: "row",
-    flexWrap: "wrap",
     gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  start: {
-    backgroundColor: "#14532d",
-    borderRadius: 12,
+    minHeight: touchTarget,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
   },
-  status: { color: "#e4e4e7", flexBasis: "100%" },
+  actionLabel: typeScale.label,
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  captureStatus: { alignItems: "stretch", gap: spacing.xs },
+  disabled: { opacity: 0.45 },
+  primaryAction: { backgroundColor: colors.primary },
+  primaryActionLabel: { color: colors.onPrimary },
+  root: {
+    gap: spacing.sm,
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  secondaryAction: { backgroundColor: colors.surfaceContainerHigh },
+  status: typeScale.label,
 });

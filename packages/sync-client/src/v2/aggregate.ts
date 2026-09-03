@@ -1,7 +1,7 @@
 import type { V2SavedServerId } from "./canonical";
 import type { V2SavedServerDeletionStore } from "./deletion-store";
 import type { V2CommandTerminalFrame } from "./frames";
-import type { V2Action, V2ActionResult, V2Command, V2Query, V2QueryResult } from "./operations";
+import type { V2Command, V2Query, V2QueryResult } from "./operations";
 import type { V2Projection, V2ProjectionStore } from "./projection";
 
 export type V2ServerSelection =
@@ -38,7 +38,6 @@ export type V2SemanticSession = {
   readonly savedServerId: V2SavedServerId;
   query(query: V2Query): Promise<V2QueryResult>;
   command(operationId: string, command: V2Command): Promise<V2CommandTerminalFrame>;
-  action(action: V2Action): Promise<V2ActionResult>;
 };
 
 /**
@@ -104,10 +103,6 @@ export class SyncV2SessionRouter {
 
   async command(identity: V2QualifiedOperationId, command: V2Command): Promise<V2CommandTerminalFrame> {
     return await (await this.#owner(identity.savedServerId)).command(identity.operationId, command);
-  }
-
-  async action(savedServerId: V2SavedServerId, action: V2Action): Promise<V2ActionResult> {
-    return await (await this.#owner(savedServerId)).action(action);
   }
 
   async #owner(savedServerId: V2SavedServerId): Promise<V2SemanticSession> {

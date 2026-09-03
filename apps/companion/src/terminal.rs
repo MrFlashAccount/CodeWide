@@ -1,7 +1,7 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     env, fmt,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, MutexGuard,
@@ -16,7 +16,7 @@ use axum::{
     http::StatusCode,
 };
 use futures_util::SinkExt;
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{Child, CommandBuilder, ExitStatus, MasterPty, PtySize, native_pty_system};
 use serde::Deserialize;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc, watch};
 
@@ -33,11 +33,14 @@ const MAX_COLS: u16 = 500;
 const MAX_ROWS: u16 = 300;
 const MAX_INPUT_BYTES: usize = 1024 * 1024;
 const OUTPUT_CHUNK_BYTES: usize = 64 * 1024;
-const MAX_REPLAY_BYTES: usize = 32 * 1024 * 1024;
+const REPLAY_MEMORY_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_REPLAY_BYTES_PER_OWNER: u64 = 256 * 1024 * 1024;
+const MAX_REPLAY_BYTES_GLOBAL: u64 = 1024 * 1024 * 1024;
 const COMPLETED_RETENTION: Duration = Duration::from_mins(15);
 const DETACHED_IDLE_TTL: Duration = Duration::from_hours(24);
 const TERMINAL_EXITED_CLOSE_CODE: u16 = 4000;
 const TERMINAL_REPLAY_CLOSE_CODE: u16 = 4004;
+const TERMINAL_RESOURCE_CLOSE_CODE: u16 = 4008;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +65,7 @@ pub enum TerminalError {
     InvalidSession,
     SessionNotFound,
     SessionOwnedByAnotherDevice,
+    AuthorizationUnavailable,
     SessionLimitReached,
     ReplayUnavailable,
     GenerationChanged,
@@ -76,7 +80,9 @@ impl TerminalError {
                 StatusCode::BAD_REQUEST
             }
             Self::ThreadNotFound | Self::SessionNotFound => StatusCode::NOT_FOUND,
-            Self::SessionOwnedByAnotherDevice => StatusCode::FORBIDDEN,
+            Self::SessionOwnedByAnotherDevice | Self::AuthorizationUnavailable => {
+                StatusCode::FORBIDDEN
+            }
             Self::SessionLimitReached => StatusCode::TOO_MANY_REQUESTS,
             Self::SessionThreadMismatch => StatusCode::UNPROCESSABLE_ENTITY,
             Self::ReplayUnavailable | Self::GenerationChanged => StatusCode::CONFLICT,
@@ -98,6 +104,7 @@ impl TerminalError {
             Self::InvalidSession => "terminal_session_invalid",
             Self::SessionNotFound => "terminal_session_not_found",
             Self::SessionOwnedByAnotherDevice => "terminal_session_owner_mismatch",
+            Self::AuthorizationUnavailable => "terminal_authorization_unavailable",
             Self::SessionLimitReached => "terminal_limit_reached",
             Self::ReplayUnavailable => "terminal_replay_unavailable",
             Self::GenerationChanged => "terminal_generation_changed",
@@ -136,6 +143,9 @@ impl fmt::Display for TerminalError {
             Self::SessionNotFound => formatter.write_str("terminal session was not found"),
             Self::SessionOwnedByAnotherDevice => {
                 formatter.write_str("terminal session belongs to another device")
+            }
+            Self::AuthorizationUnavailable => {
+                formatter.write_str("terminal session authorization is unavailable")
             }
             Self::SessionLimitReached => formatter.write_str("terminal session limit reached"),
             Self::ReplayUnavailable => formatter.write_str("terminal replay cursor is unavailable"),
@@ -238,6 +248,7 @@ pub struct TerminalRegistry {
 struct TerminalRegistryInner {
     sessions: Mutex<HashMap<TerminalRegistryKey, Arc<LiveTerminal>>>,
     slots: Arc<Semaphore>,
+    replay_quota: Arc<ReplayQuota>,
 }
 
 pub struct LiveTerminal {
@@ -252,9 +263,19 @@ pub struct LiveTerminal {
     replay: Mutex<ReplayBuffer>,
     attached: AtomicUsize,
     exited: AtomicBool,
+    closing: AtomicBool,
     authority_revoked: AtomicBool,
     last_activity: Mutex<Instant>,
     permit: Mutex<Option<OwnedSemaphorePermit>>,
+}
+
+struct LiveTerminalStart {
+    id: String,
+    protocol: TerminalProtocol,
+    generation: Option<u64>,
+    owner: String,
+    thread_id: Option<String>,
+    replay_quota: Arc<ReplayQuota>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -275,18 +296,74 @@ struct ReplayChunk {
     bytes: Arc<[u8]>,
 }
 
-#[derive(Default)]
+impl fmt::Debug for ReplayChunk {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ReplayChunk")
+            .field("start", &self.start)
+            .field("byte_count", &self.bytes.len())
+            .finish()
+    }
+}
+
 struct ReplayBuffer {
-    start: u64,
+    owner: String,
+    quota: Arc<ReplayQuota>,
+    memory_limit: u64,
     end: u64,
-    bytes: usize,
-    chunks: VecDeque<ReplayChunk>,
+    storage: ReplayStorage,
+}
+
+enum ReplayStorage {
+    Memory(Vec<u8>),
+    Disk(tempfile::NamedTempFile),
+}
+
+struct ReplayQuota {
+    owner_limit: u64,
+    global_limit: u64,
+    usage: Mutex<ReplayQuotaUsage>,
+}
+
+#[derive(Default)]
+struct ReplayQuotaUsage {
+    global: u64,
+    owners: HashMap<String, u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplayFailure {
+    OwnerQuotaExceeded,
+    GlobalQuotaExceeded,
+    StorageUnavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReplayReadError {
+    Unavailable,
+    Failed(ReplayFailure),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum TerminalState {
     Running,
-    Exited,
+    Exited(TerminalExit),
+    Failed(ReplayFailure),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TerminalExit {
+    exit_code: Option<u32>,
+    signal: Option<String>,
+}
+
+impl TerminalExit {
+    fn from_status(status: Option<ExitStatus>) -> Self {
+        Self {
+            exit_code: status.as_ref().map(ExitStatus::exit_code),
+            signal: status.and_then(|value| value.signal().map(str::to_owned)),
+        }
+    }
 }
 
 struct AttachmentGuard {
@@ -307,6 +384,10 @@ impl TerminalRegistry {
             inner: Arc::new(TerminalRegistryInner {
                 sessions: Mutex::new(HashMap::new()),
                 slots: Arc::new(Semaphore::new(max_sessions)),
+                replay_quota: Arc::new(ReplayQuota::new(
+                    MAX_REPLAY_BYTES_PER_OWNER,
+                    MAX_REPLAY_BYTES_GLOBAL,
+                )),
             }),
         }
     }
@@ -365,6 +446,32 @@ impl TerminalRegistry {
         )
     }
 
+    /// Revokes the least recently used detached V2 shell for one authenticated device.
+    ///
+    /// This is the bounded recovery path for a client that lost its durable
+    /// terminal registry during process/storage recovery. Attached terminals
+    /// and terminals owned by another device are never candidates.
+    pub(crate) fn reclaim_oldest_detached_v2(&self, owner: &str) -> bool {
+        let candidate = {
+            let sessions = lock(&self.inner.sessions);
+            sessions
+                .values()
+                .filter(|terminal| {
+                    terminal.protocol == TerminalProtocol::V2
+                        && terminal.owner == owner
+                        && terminal.attached.load(Ordering::Acquire) == 0
+                        && !terminal.exited.load(Ordering::Acquire)
+                })
+                .min_by_key(|terminal| *lock(&terminal.last_activity))
+                .cloned()
+        };
+        let Some(candidate) = candidate else {
+            return false;
+        };
+        candidate.revoke();
+        true
+    }
+
     fn attach_or_create_inner(
         &self,
         protocol: TerminalProtocol,
@@ -418,11 +525,14 @@ impl TerminalRegistry {
         let permit = self.legacy_permit()?;
         let session = spawn()?;
         let live = LiveTerminal::start(
-            session_id.to_owned(),
-            protocol,
-            generation,
-            owner.to_owned(),
-            query.thread_id.clone(),
+            LiveTerminalStart {
+                id: session_id.to_owned(),
+                protocol,
+                generation,
+                owner: owner.to_owned(),
+                thread_id: query.thread_id.clone(),
+                replay_quota: Arc::clone(&self.inner.replay_quota),
+            },
             session,
             permit,
         );
@@ -494,29 +604,28 @@ impl TerminalRegistry {
 
 impl LiveTerminal {
     fn start(
-        id: String,
-        protocol: TerminalProtocol,
-        generation: Option<u64>,
-        owner: String,
-        thread_id: Option<String>,
+        input: LiveTerminalStart,
         session: TerminalSession,
         permit: OwnedSemaphorePermit,
     ) -> Arc<Self> {
         let (commands, command_rx) = std_mpsc::sync_channel(64);
         let (output, _) = broadcast::channel(128);
         let (state, _) = watch::channel(TerminalState::Running);
+        let replay =
+            ReplayBuffer::new(input.owner.clone(), input.replay_quota, REPLAY_MEMORY_BYTES);
         let terminal = Arc::new(Self {
-            id,
-            protocol,
-            generation,
-            owner,
-            thread_id,
+            id: input.id,
+            protocol: input.protocol,
+            generation: input.generation,
+            owner: input.owner,
+            thread_id: input.thread_id,
             commands,
             output,
             state,
-            replay: Mutex::new(ReplayBuffer::default()),
+            replay: Mutex::new(replay),
             attached: AtomicUsize::new(0),
             exited: AtomicBool::new(false),
+            closing: AtomicBool::new(false),
             authority_revoked: AtomicBool::new(false),
             last_activity: Mutex::new(Instant::now()),
             permit: Mutex::new(Some(permit)),
@@ -534,10 +643,9 @@ impl LiveTerminal {
                 let Some(terminal) = reader_terminal.upgrade() else {
                     break;
                 };
-                terminal.append_output(&buffer[..count]);
-            }
-            if let Some(terminal) = reader_terminal.upgrade() {
-                terminal.mark_exited();
+                if terminal.append_output(&buffer[..count]).is_err() {
+                    break;
+                }
             }
         });
 
@@ -586,9 +694,9 @@ impl LiveTerminal {
                     Ok(None) => {}
                 }
             }
-            let _ = child.wait();
+            let status = child.wait().ok();
             if let Some(terminal) = control_terminal.upgrade() {
-                terminal.mark_exited();
+                terminal.mark_exited(status);
             }
             drop(master);
         });
@@ -596,19 +704,28 @@ impl LiveTerminal {
         terminal
     }
 
-    fn append_output(&self, bytes: &[u8]) {
+    fn append_output(&self, bytes: &[u8]) -> Result<(), ReplayFailure> {
         if bytes.is_empty()
             || self.exited.load(Ordering::Acquire)
+            || self.closing.load(Ordering::Acquire)
             || self.authority_revoked.load(Ordering::Acquire)
         {
-            return;
+            return Ok(());
         }
         let chunk = {
             let mut replay = lock(&self.replay);
-            replay.append(bytes)
+            match replay.append(bytes) {
+                Ok(chunk) => chunk,
+                Err(failure) => {
+                    drop(replay);
+                    self.mark_failed(failure);
+                    return Err(failure);
+                }
+            }
         };
         self.touch();
         let _ = self.output.send(chunk);
+        Ok(())
     }
 
     fn resize(&self, size: PtySize) -> Result<(), TerminalError> {
@@ -618,7 +735,11 @@ impl LiveTerminal {
     }
 
     fn close(&self) {
-        let _ = self.commands.try_send(WriterCommand::Close);
+        if self.closing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        lock(&self.replay).clear();
+        let _ = self.commands.send(WriterCommand::Close);
     }
 
     pub(crate) fn revoke(&self) {
@@ -626,13 +747,38 @@ impl LiveTerminal {
         self.close();
     }
 
-    fn mark_exited(&self) {
+    pub(crate) async fn revoke_and_wait(&self) {
+        let mut state = self.state.subscribe();
+        self.revoke();
+        loop {
+            let current = state.borrow_and_update().clone();
+            if matches!(current, TerminalState::Exited(_) | TerminalState::Failed(_)) {
+                break;
+            }
+            if state.changed().await.is_err() {
+                break;
+            }
+        }
+    }
+
+    fn mark_exited(&self, status: Option<ExitStatus>) {
         if self.exited.swap(true, Ordering::AcqRel) {
             return;
         }
         self.touch();
         lock(&self.permit).take();
-        self.state.send_replace(TerminalState::Exited);
+        if !matches!(*self.state.borrow(), TerminalState::Failed(_)) {
+            self.state
+                .send_replace(TerminalState::Exited(TerminalExit::from_status(status)));
+        }
+    }
+
+    fn mark_failed(&self, failure: ReplayFailure) {
+        if self.exited.load(Ordering::Acquire) {
+            return;
+        }
+        self.state.send_replace(TerminalState::Failed(failure));
+        self.close();
     }
 
     fn touch(&self) {
@@ -654,13 +800,13 @@ impl LiveTerminal {
                 match authorization.changes.recv().await {
                     Ok(change) if change.device_id == authorization.device_id => {
                         if let Some(terminal) = terminal.upgrade() {
-                            terminal.close();
+                            terminal.revoke();
                         }
                         return;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         if let Some(terminal) = terminal.upgrade() {
-                            terminal.close();
+                            terminal.revoke();
                         }
                         return;
                     }
@@ -672,34 +818,146 @@ impl LiveTerminal {
     }
 }
 
+impl ReplayQuota {
+    fn new(owner_limit: u64, global_limit: u64) -> Self {
+        Self {
+            owner_limit,
+            global_limit,
+            usage: Mutex::new(ReplayQuotaUsage::default()),
+        }
+    }
+
+    fn reserve(&self, owner: &str, bytes: u64) -> Result<(), ReplayFailure> {
+        let mut usage = lock(&self.usage);
+        let owner_usage = usage.owners.get(owner).copied().unwrap_or(0);
+        let next_owner = owner_usage
+            .checked_add(bytes)
+            .ok_or(ReplayFailure::OwnerQuotaExceeded)?;
+        if next_owner > self.owner_limit {
+            return Err(ReplayFailure::OwnerQuotaExceeded);
+        }
+        let next_global = usage
+            .global
+            .checked_add(bytes)
+            .ok_or(ReplayFailure::GlobalQuotaExceeded)?;
+        if next_global > self.global_limit {
+            return Err(ReplayFailure::GlobalQuotaExceeded);
+        }
+        usage.global = next_global;
+        usage.owners.insert(owner.to_owned(), next_owner);
+        Ok(())
+    }
+
+    fn release(&self, owner: &str, bytes: u64) {
+        let mut usage = lock(&self.usage);
+        usage.global = usage.global.saturating_sub(bytes);
+        let Some(owner_usage) = usage.owners.get_mut(owner) else {
+            return;
+        };
+        *owner_usage = owner_usage.saturating_sub(bytes);
+        if *owner_usage == 0 {
+            usage.owners.remove(owner);
+        }
+    }
+}
+
 impl ReplayBuffer {
-    fn append(&mut self, bytes: &[u8]) -> ReplayChunk {
+    fn new(owner: String, quota: Arc<ReplayQuota>, memory_limit: u64) -> Self {
+        Self {
+            owner,
+            quota,
+            memory_limit,
+            end: 0,
+            storage: ReplayStorage::Memory(Vec::new()),
+        }
+    }
+
+    fn append(&mut self, bytes: &[u8]) -> Result<ReplayChunk, ReplayFailure> {
+        let byte_count =
+            u64::try_from(bytes.len()).map_err(|_| ReplayFailure::StorageUnavailable)?;
+        self.quota.reserve(&self.owner, byte_count)?;
+        if let Err(failure) = self.append_reserved(bytes) {
+            self.quota.release(&self.owner, byte_count);
+            return Err(failure);
+        }
         let chunk = ReplayChunk {
             start: self.end,
             bytes: Arc::from(bytes),
         };
-        self.end += u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        self.bytes += bytes.len();
-        self.chunks.push_back(chunk.clone());
-        while self.bytes > MAX_REPLAY_BYTES && self.chunks.len() > 1 {
-            if let Some(removed) = self.chunks.pop_front() {
-                self.bytes -= removed.bytes.len();
-                self.start = removed.start + u64::try_from(removed.bytes.len()).unwrap_or(0);
-            }
-        }
-        chunk
+        self.end += byte_count;
+        Ok(chunk)
     }
 
-    fn snapshot(&self, offset: u64) -> Result<Vec<ReplayChunk>, TerminalError> {
-        if offset < self.start || offset > self.end {
-            return Err(TerminalError::ReplayUnavailable);
+    fn append_reserved(&mut self, bytes: &[u8]) -> Result<(), ReplayFailure> {
+        let byte_count =
+            u64::try_from(bytes.len()).map_err(|_| ReplayFailure::StorageUnavailable)?;
+        if matches!(self.storage, ReplayStorage::Memory(_))
+            && self.end.saturating_add(byte_count) > self.memory_limit
+        {
+            let mut file =
+                tempfile::NamedTempFile::new().map_err(|_| ReplayFailure::StorageUnavailable)?;
+            let ReplayStorage::Memory(memory) = &self.storage else {
+                unreachable!();
+            };
+            file.write_all(memory)
+                .map_err(|_| ReplayFailure::StorageUnavailable)?;
+            self.storage = ReplayStorage::Disk(file);
         }
-        Ok(self
-            .chunks
-            .iter()
-            .filter(|chunk| chunk.start + u64::try_from(chunk.bytes.len()).unwrap_or(0) > offset)
-            .cloned()
-            .collect())
+        match &mut self.storage {
+            ReplayStorage::Memory(memory) => memory.extend_from_slice(bytes),
+            ReplayStorage::Disk(file) => {
+                file.as_file_mut()
+                    .seek(SeekFrom::End(0))
+                    .and_then(|_| file.write_all(bytes))
+                    .map_err(|_| ReplayFailure::StorageUnavailable)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn read_chunk(&mut self, offset: u64) -> Result<Option<ReplayChunk>, ReplayReadError> {
+        if offset > self.end {
+            return Err(ReplayReadError::Unavailable);
+        }
+        if offset == self.end {
+            return Ok(None);
+        }
+        let count = usize::try_from((self.end - offset).min(OUTPUT_CHUNK_BYTES as u64))
+            .map_err(|_| ReplayReadError::Failed(ReplayFailure::StorageUnavailable))?;
+        let mut bytes = vec![0_u8; count];
+        match &mut self.storage {
+            ReplayStorage::Memory(memory) => {
+                let start = usize::try_from(offset)
+                    .map_err(|_| ReplayReadError::Failed(ReplayFailure::StorageUnavailable))?;
+                bytes.copy_from_slice(&memory[start..start + count]);
+            }
+            ReplayStorage::Disk(file) => {
+                file.as_file_mut()
+                    .seek(SeekFrom::Start(offset))
+                    .and_then(|_| file.read_exact(&mut bytes))
+                    .map_err(|_| ReplayReadError::Failed(ReplayFailure::StorageUnavailable))?;
+            }
+        }
+        Ok(Some(ReplayChunk {
+            start: offset,
+            bytes: Arc::from(bytes),
+        }))
+    }
+
+    fn contains_offset(&self, offset: u64) -> bool {
+        offset <= self.end
+    }
+
+    fn clear(&mut self) {
+        self.quota.release(&self.owner, self.end);
+        self.end = 0;
+        self.storage = ReplayStorage::Memory(Vec::new());
+    }
+}
+
+impl Drop for ReplayBuffer {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 

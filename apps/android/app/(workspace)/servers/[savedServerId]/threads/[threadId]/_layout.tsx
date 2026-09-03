@@ -1,8 +1,20 @@
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 
-export const unstable_settings = { initialRouteName: "index" };
+import { RecoverableRenderBoundary } from "../../../../../../src/v2/ui/RecoverableRenderBoundary";
+
+export const unstable_settings = { anchor: "index", initialRouteName: "index" };
 const SCREEN_OPTIONS = { animation: "none", headerShown: false } as const;
 
 export default function ThreadLayout(): React.JSX.Element {
-  return <Stack screenOptions={SCREEN_OPTIONS} />;
+  const pathname = usePathname();
+  return (
+    <RecoverableRenderBoundary
+      context={`Route: ${pathname}`}
+      label="Thread route"
+      resetKey={pathname}
+      scope="surface"
+    >
+      <Stack screenOptions={SCREEN_OPTIONS} />
+    </RecoverableRenderBoundary>
+  );
 }

@@ -1,19 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState, useTransition } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import type { V2Query, V2QueryResult } from "@codewide/sync-client/v2";
 
 import type { QualifiedThread } from "../../domain/qualifiedThread";
+import { ChangeDiffView } from "../../presentation/changes/ChangeDiffView";
 import { ProductText as Text } from "../../presentation/text/ProductText";
 import { ShimmerText } from "../../presentation/text/ShimmerText";
-import {
-  PresentationSheetView,
-  type PresentationSheetContentProps,
-} from "../../presentation/surfaces/PresentationSheetView";
 import { useEvent } from "../../../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
+import { ChangesReviewLaunchButton } from "../review/ReviewEntryActions";
 import { V2QueryBoundary } from "../shared/V2QueryBoundary";
+import { threadChangeOutputDestination } from "../navigation/routeDestinations";
 
 interface ChangesScreenProps {
   owner: QualifiedThread;
@@ -23,17 +22,15 @@ type ChangeScope = Extract<V2Query, { kind: "thread.resources" }>["scope"];
 type ResourcesResult = Extract<V2QueryResult, { kind: "thread.resources" }>;
 type Change = ResourcesResult["changes"][number];
 
-interface ChangesListProps {
+interface ChangesWorkspaceProps {
+  availableScopes: ChangeScope[];
   changes: Change[];
   onClose(): void;
   onRefresh(): Promise<void>;
   onSelectScope(scope: ChangeScope): void;
+  owner: QualifiedThread;
+  reviewAvailable: boolean;
   scope: ChangeScope;
-}
-
-interface ScopePickerProps {
-  onSelect(scope: ChangeScope): void;
-  selected: ChangeScope;
 }
 
 interface ScopeOptionProps {
@@ -45,6 +42,16 @@ interface ScopeOptionProps {
 
 interface ChangeRowProps {
   change: Change;
+  onSelect(change: Change): void;
+  selected: boolean;
+}
+
+interface ChangePreviewProps {
+  change: Change;
+  owner: QualifiedThread;
+  onBack(): void;
+  scope: ChangeScope;
+  showBack: boolean;
 }
 
 const SCOPES: Array<{ label: string; scope: ChangeScope }> = [
@@ -54,104 +61,158 @@ const SCOPES: Array<{ label: string; scope: ChangeScope }> = [
   { label: "Unstaged", scope: "unstaged" },
   { label: "Branch", scope: "branch" },
 ];
+const WIDE_CHANGES_WIDTH = 720;
 
 export function ChangesScreen(props: ChangesScreenProps): React.JSX.Element {
   const { owner } = props;
   const [scope, setScope] = useState<ChangeScope>("session");
   const selectScope = useEvent((next: ChangeScope) => setScope(next));
   const close = useEvent(() => router.back());
-  const changeOpen = useEvent((open: boolean) => {
-    if (!open) close();
-  });
   return (
-    <PresentationSheetView contentProps={RESOURCE_SHEET_PROPS} isOpen onOpenChange={changeOpen}>
-      <V2QueryBoundary
-        key={scope}
-        chrome="none"
-        query={{ kind: "thread.resources", scope, threadId: owner.threadId }}
-        savedServerId={owner.savedServerId}
-        title="Changes"
-      >
-        {(result, refresh) => {
-          if (result.kind !== "thread.resources") return null;
-          return (
-            <ChangesList
-              changes={result.changes}
-              onClose={close}
-              onRefresh={refresh}
-              onSelectScope={selectScope}
-              scope={scope}
-            />
-          );
-        }}
-      </V2QueryBoundary>
-    </PresentationSheetView>
+    <V2QueryBoundary
+      key={scope}
+      chrome="none"
+      query={{
+        cursor: null,
+        kind: "thread.resources",
+        limit: 100,
+        scope,
+        threadId: owner.threadId,
+      }}
+      savedServerId={owner.savedServerId}
+      title="Changes"
+    >
+      {(result, refresh, availability) => {
+        return (
+          <ChangesWorkspace
+            availableScopes={result.availableScopes}
+            changes={result.changes}
+            onClose={close}
+            onRefresh={refresh}
+            onSelectScope={selectScope}
+            owner={owner}
+            reviewAvailable={
+              availability.actionable &&
+              result.review.targetKinds.length > 0 &&
+              result.review.deliveries.length > 0
+            }
+            scope={result.scope}
+          />
+        );
+      }}
+    </V2QueryBoundary>
   );
 }
 
-function ChangesList(props: ChangesListProps): React.JSX.Element {
-  const { changes, onClose, onRefresh, onSelectScope, scope } = props;
+function ChangesWorkspace(props: ChangesWorkspaceProps): React.JSX.Element {
+  const {
+    availableScopes,
+    changes,
+    onClose,
+    onRefresh,
+    onSelectScope,
+    owner,
+    reviewAvailable,
+    scope,
+  } = props;
+  const { width } = useWindowDimensions();
+  const [selectedPath, setSelectedPath] = useState<string | null>(() =>
+    width >= WIDE_CHANGES_WIDTH ? (changes[0]?.path ?? null) : null,
+  );
   const [refreshing, startRefresh] = useTransition();
+  const wide = width >= WIDE_CHANGES_WIDTH;
+  const effectivePath = selectedPath ?? (wide ? (changes[0]?.path ?? null) : null);
+  const selected = changes.find((change) => change.path === effectivePath) ?? null;
   const refresh = useEvent(() => startRefresh(() => onRefresh()));
+  const select = useEvent((change: Change) => setSelectedPath(change.path));
+  const backToFiles = useEvent(() => setSelectedPath(null));
   return (
     <View style={styles.root}>
       <View style={styles.header}>
-        <View style={styles.headerIconSlot}>
-          <Ionicons color={colors.textMuted} name="git-compare-outline" size={20} />
-        </View>
-        {refreshing ? (
-          <ShimmerText style={styles.title} text={`Changes · ${changes.length}`} />
-        ) : (
-          <Text numberOfLines={1} style={styles.title}>
-            Changes · {changes.length}
+        <Pressable accessibilityLabel="Close changes" onPress={onClose} style={styles.iconButton}>
+          <Ionicons color={colors.text} name="close" size={23} />
+        </Pressable>
+        <View style={styles.headerTitleBlock}>
+          {refreshing ? (
+            <ShimmerText style={styles.title} text={`Changes · ${changes.length}`} />
+          ) : (
+            <Text numberOfLines={1} style={styles.title}>
+              Changes · {changes.length}
+            </Text>
+          )}
+          <Text numberOfLines={1} style={styles.subtitle}>
+            {scopeLabel(scope)}
           </Text>
-        )}
-        <View style={styles.flex} />
+        </View>
+        {reviewAvailable && changes.length > 0 ? (
+          <ChangesReviewLaunchButton owner={owner} scope={scope} />
+        ) : null}
         <Pressable
           accessibilityLabel="Refresh changes"
           disabled={refreshing}
           onPress={refresh}
           style={styles.iconButton}
         >
-          <Ionicons color={colors.text} name="refresh" size={20} />
-        </Pressable>
-        <Pressable accessibilityLabel="Close changes" onPress={onClose} style={styles.iconButton}>
-          <Ionicons color={colors.text} name="close" size={21} />
+          <Ionicons color={colors.textMuted} name="refresh" size={20} />
         </Pressable>
       </View>
-      <ScopePicker onSelect={onSelectScope} selected={scope} />
-      <ScrollView contentContainerStyle={styles.content}>
-        {changes.map((change) => (
-          <ChangeRow key={change.path} change={change} />
-        ))}
-        {changes.length === 0 ? (
-          <View style={styles.empty}>
-            <Ionicons color={colors.textDim} name="git-compare-outline" size={28} />
-            <Text style={styles.notice}>No file changes in this scope.</Text>
+      <View style={styles.workspace}>
+        {wide || selected === null ? (
+          <View style={[styles.sidebar, wide && styles.sidebarWide]}>
+            <ScopePicker
+              availableScopes={availableScopes}
+              onSelect={onSelectScope}
+              selected={scope}
+            />
+            <ScrollView contentContainerStyle={styles.fileList}>
+              {changes.map((change) => (
+                <ChangeRow
+                  key={change.path}
+                  change={change}
+                  onSelect={select}
+                  selected={change.path === effectivePath}
+                />
+              ))}
+              {changes.length === 0 ? (
+                <View style={styles.empty}>
+                  <Ionicons color={colors.textDim} name="git-compare-outline" size={28} />
+                  <Text style={styles.notice}>No file changes in this scope.</Text>
+                </View>
+              ) : null}
+            </ScrollView>
           </View>
         ) : null}
-      </ScrollView>
+        {selected === null ? null : (
+          <ChangePreview
+            key={selected.path}
+            change={selected}
+            onBack={backToFiles}
+            owner={owner}
+            scope={scope}
+            showBack={!wide}
+          />
+        )}
+      </View>
     </View>
   );
 }
 
-const RESOURCE_SHEET_PROPS: PresentationSheetContentProps = {
-  contentContainerClassName: "h-full",
-  enableDynamicSizing: false,
-  enableOverDrag: false,
-  index: 0,
-  snapPoints: ["55%", "90%"],
-};
+interface ScopePickerProps {
+  availableScopes: ChangeScope[];
+  onSelect(scope: ChangeScope): void;
+  selected: ChangeScope;
+}
 
 function ScopePicker(props: ScopePickerProps): React.JSX.Element {
-  const { onSelect, selected } = props;
+  const { availableScopes, onSelect, selected } = props;
+  const available = new Set(availableScopes);
   return (
     <ScrollView
       contentContainerStyle={styles.scopes}
       horizontal
       showsHorizontalScrollIndicator={false}
     >
-      {SCOPES.map((entry) => (
+      {SCOPES.filter((entry) => available.has(entry.scope)).map((entry) => (
         <ScopeOption
           key={entry.scope}
           label={entry.label}
@@ -180,9 +241,14 @@ function ScopeOption(props: ScopeOptionProps): React.JSX.Element {
 }
 
 function ChangeRow(props: ChangeRowProps): React.JSX.Element {
-  const { change } = props;
+  const { change, onSelect, selected } = props;
+  const select = useEvent(() => onSelect(change));
   return (
-    <View style={styles.row}>
+    <Pressable
+      accessibilityLabel={`Open change ${change.path}`}
+      onPress={select}
+      style={[styles.row, selected && styles.rowSelected]}
+    >
       <View style={styles.resourceIcon}>
         <Ionicons color={changeColor(change.change)} name={changeIcon(change.change)} size={19} />
       </View>
@@ -194,7 +260,43 @@ function ChangeRow(props: ChangeRowProps): React.JSX.Element {
       </View>
       <Text style={styles.additions}>+{change.additions}</Text>
       <Text style={styles.deletions}>−{change.deletions}</Text>
-      <Ionicons color={colors.textDim} name="chevron-forward" size={17} />
+    </Pressable>
+  );
+}
+
+function ChangePreview(props: ChangePreviewProps): React.JSX.Element {
+  const { change, onBack, owner, scope, showBack } = props;
+  const openFullDiff = useEvent(() =>
+    router.push(threadChangeOutputDestination(owner, change.path, scope)),
+  );
+  return (
+    <View style={styles.preview}>
+      <View style={styles.previewHeader}>
+        {showBack ? (
+          <Pressable
+            accessibilityLabel="Back to changed files"
+            onPress={onBack}
+            style={styles.iconButton}
+          >
+            <Ionicons color={colors.text} name="arrow-back" size={20} />
+          </Pressable>
+        ) : null}
+        <View style={styles.previewTitleBlock}>
+          <Text ellipsizeMode="middle" numberOfLines={1} style={styles.previewTitle}>
+            {change.path}
+          </Text>
+          <Text style={styles.previewSubtitle}>Diff · {change.change}</Text>
+        </View>
+      </View>
+      <V2QueryBoundary
+        key={`${scope}:${change.path}`}
+        chrome="none"
+        query={{ kind: "thread.change", path: change.path, scope, threadId: owner.threadId }}
+        savedServerId={owner.savedServerId}
+        title="change"
+      >
+        {(result) => <ChangeDiffView onOpenFullDiff={openFullDiff} result={result} />}
+      </V2QueryBoundary>
     </View>
   );
 }
@@ -211,19 +313,25 @@ function changeColor(change: Change["change"]): string {
   return colors.textMuted;
 }
 
+function scopeLabel(scope: ChangeScope): string {
+  return SCOPES.find((entry) => entry.scope === scope)?.label ?? "Session";
+}
+
 const styles = StyleSheet.create({
   additions: { color: colors.green, ...typeScale.label, fontVariant: ["tabular-nums"] },
-  content: { gap: spacing.optical, padding: spacing.md, paddingBottom: spacing.xl },
   deletions: { color: colors.red, ...typeScale.label, fontVariant: ["tabular-nums"] },
   empty: { alignItems: "center", gap: spacing.sm, justifyContent: "center", minHeight: 180 },
-  flex: { flex: 1 },
+  fileList: { gap: spacing.optical, padding: spacing.sm, paddingBottom: spacing.xl },
   header: {
     alignItems: "center",
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: "row",
-    minHeight: 54,
-    paddingHorizontal: spacing.sm,
+    minHeight: 56,
+    paddingHorizontal: spacing.xs,
   },
-  headerIconSlot: { alignItems: "center", justifyContent: "center", width: 32 },
+  headerTitleBlock: { flex: 1, minWidth: 0 },
   iconButton: {
     alignItems: "center",
     height: touchTarget,
@@ -231,8 +339,21 @@ const styles = StyleSheet.create({
     width: touchTarget,
   },
   notice: { color: colors.textMuted, ...typeScale.body },
+  preview: { backgroundColor: colors.code, flex: 1, minWidth: 0 },
+  previewHeader: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderBottomColor: colors.borderSoft,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    minHeight: 52,
+    paddingHorizontal: spacing.sm,
+  },
+  previewSubtitle: { color: colors.textMuted, ...typeScale.caption, textTransform: "capitalize" },
+  previewTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
+  previewTitleBlock: { flex: 1, minWidth: 0 },
   resourceIcon: { alignItems: "center", justifyContent: "center", width: 32 },
-  root: { backgroundColor: colors.surface, flex: 1, minHeight: 0 },
+  root: { backgroundColor: colors.background, flex: 1 },
   row: {
     alignItems: "center",
     borderRadius: radii.selected,
@@ -241,23 +362,33 @@ const styles = StyleSheet.create({
     minHeight: 56,
     paddingHorizontal: spacing.sm,
   },
-  rowSubtitle: {
-    color: colors.textMuted,
-    ...typeScale.caption,
-
-    textTransform: "capitalize",
-  },
+  rowSelected: { backgroundColor: colors.surfaceHover },
+  rowSubtitle: { color: colors.textMuted, ...typeScale.caption, textTransform: "capitalize" },
   rowText: { flex: 1, minWidth: 0 },
   rowTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
   scope: {
     borderRadius: radii.large,
-    minHeight: 34,
     justifyContent: "center",
+    minHeight: 34,
     paddingHorizontal: spacing.sm,
   },
   scopeSelected: { backgroundColor: colors.surfaceHover },
   scopeText: { color: colors.textMuted, ...typeScale.label },
   scopeTextSelected: { color: colors.text, fontWeight: typeWeight.semibold },
-  scopes: { gap: spacing.xs, paddingHorizontal: spacing.md, paddingBottom: spacing.xs },
+  scopes: {
+    gap: spacing.xs,
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+  },
+  sidebar: { backgroundColor: colors.surface, flex: 1, minWidth: 0 },
+  sidebarWide: {
+    borderRightColor: colors.borderSoft,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    flex: 0,
+    width: 340,
+  },
+  subtitle: { color: colors.textMuted, ...typeScale.caption },
   title: { color: colors.text, ...typeScale.title },
+  workspace: { flex: 1, flexDirection: "row", minHeight: 0 },
 });

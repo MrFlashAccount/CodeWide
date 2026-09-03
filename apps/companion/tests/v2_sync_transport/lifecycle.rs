@@ -20,7 +20,7 @@ async fn absolute_session_expiry_closes_open_socket_and_fresh_session_recovers()
         &url,
         "expiry-device",
         "threads.read,threads.write",
-        now + 500,
+        now + 2_000,
     )
     .await?;
     open_and_commit(&mut expiring, "expiry-thread").await?;
@@ -60,16 +60,79 @@ async fn authorization_invalidation_lag_fails_closed_before_later_dispatch()
         }),
     )
     .await?;
-    tokio::time::sleep(Duration::from_millis(25)).await;
+    timeout(Duration::from_secs(1), source.query_entered.notified()).await?;
     for index in 0..4 {
         let _ = authorization_changes.send(AuthorizationChange {
             device_id: format!("unrelated-device-{index}"),
             reason: AuthorizationChangeReason::DeviceScopesChanged,
         });
     }
-    assert_eq!(receive(&mut client).await?["type"], "queryFailed");
     expect_close_code(&mut client, 1008).await?;
 
+    server_task.abort();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn device_revoke_cancels_admitted_destructive_execution_before_terminal_commit()
+-> Result<(), Box<dyn Error>> {
+    let directory = tempfile::tempdir()?;
+    let source = FakeSource::new();
+    let runtime = SyncV2Runtime::new(
+        source.clone(),
+        directory.path().join("revoke-execution-ledger.redb"),
+        TEST_PIN,
+    )?
+    .with_deadlines(Duration::from_secs(10), Duration::from_secs(1));
+    let (address, server_task, authorization_changes) =
+        start_server_with_authorization_changes(directory.path(), runtime).await?;
+    let url = format!("ws://{address}/v2/sync");
+    let device = "revoked-execution-device";
+    let command = json!({
+        "type": "command",
+        "requestId": "revoked-execution",
+        "operationId": "revoked-operation",
+        "command": {"kind": "thread.delete", "threadId": "revoked-thread"}
+    });
+    let mut client = connect_as(&url, device, "threads.read,threads.write,turns.start").await?;
+    open_and_commit(&mut client, "revoked-thread").await?;
+
+    source.hang_execute.store(true, Ordering::SeqCst);
+    send(&mut client, command.clone()).await?;
+    assert_eq!(receive(&mut client).await?["type"], "commandAccepted");
+    timeout(Duration::from_secs(1), source.execute_entered.notified()).await?;
+    authorization_changes.send(AuthorizationChange {
+        device_id: device.to_owned(),
+        reason: AuthorizationChangeReason::DeviceRevoked,
+    })?;
+    timeout(Duration::from_secs(1), source.execute_cancelled.notified()).await?;
+    expect_close_code(&mut client, 1008).await?;
+    assert_eq!(source.executions.load(Ordering::SeqCst), 1);
+    assert_eq!(*source.completed_executions.borrow(), 0);
+
+    source.hang_execute.store(false, Ordering::SeqCst);
+    let mut repaired = connect_as(&url, device, "threads.read,threads.write,turns.start").await?;
+    open_and_commit(&mut repaired, "revoked-thread").await?;
+    send(
+        &mut repaired,
+        json!({
+            "type": "query",
+            "requestId": "revoked-operation-receipt",
+            "query": {"kind": "operation.get", "operationId": "revoked-operation"}
+        }),
+    )
+    .await?;
+    let missing = receive(&mut repaired).await?;
+    assert_eq!(missing["type"], "queryFailed");
+    assert_eq!(missing["error"]["code"], "notFound");
+
+    send(&mut repaired, command).await?;
+    assert_eq!(receive(&mut repaired).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut repaired).await?["type"], "commandCompleted");
+    source.wait_for_completed_execution(1).await?;
+    assert_eq!(source.executions.load(Ordering::SeqCst), 2);
+
+    repaired.close(None).await?;
     server_task.abort();
     Ok(())
 }
@@ -137,7 +200,8 @@ async fn source_deadlines_close_outcomes_and_context_purge_removes_receipts()
             "version": 2,
             "intent": {
                 "catalog": {"activeLimit": 1, "archivedLimit": 1},
-                "currentThread": {"threadId": "deadline-thread", "turnLimit": 1}
+                "currentThread": {"threadId": "deadline-thread", "turnLimit": 1},
+                "pendingRequests": "currentThread"
             }
         }),
     )
@@ -155,7 +219,8 @@ async fn source_deadlines_close_outcomes_and_context_purge_removes_receipts()
             "version": 2,
             "intent": {
                 "catalog": {"activeLimit": 1, "archivedLimit": 1},
-                "currentThread": {"threadId": "deadline-thread", "turnLimit": 1}
+                "currentThread": {"threadId": "deadline-thread", "turnLimit": 1},
+                "pendingRequests": "currentThread"
             }
         }),
     )
@@ -198,25 +263,6 @@ async fn source_deadlines_close_outcomes_and_context_purge_removes_receipts()
     assert_eq!(receive(&mut client).await?["type"], "commandAccepted");
     assert_eq!(receive(&mut client).await?["type"], "commandCompleted");
     assert_eq!(source.executions.load(Ordering::SeqCst), 1);
-
-    source.hang_resolve.store(true, Ordering::SeqCst);
-    let action = json!({
-        "type": "action",
-        "requestId": "action-deadline",
-        "action": {
-            "kind": "request.resolve",
-            "requestId": "missing-request",
-            "generation": "1",
-            "resolution": {"kind": "cancel"}
-        }
-    });
-    send(&mut client, action.clone()).await?;
-    let action_timeout = receive(&mut client).await?;
-    assert_eq!(action_timeout["type"], "actionFailed");
-    assert_eq!(action_timeout["error"]["code"], "sourceUnavailable");
-    source.hang_resolve.store(false, Ordering::SeqCst);
-    send(&mut client, action).await?;
-    assert_eq!(receive(&mut client).await?["type"], "actionCompleted");
 
     source.hang_execute.store(true, Ordering::SeqCst);
     let command = json!({
@@ -268,7 +314,7 @@ async fn source_deadlines_close_outcomes_and_context_purge_removes_receipts()
     open_and_commit(&mut cleanup, "cleanup-thread").await?;
     source.hang_remove.store(true, Ordering::SeqCst);
     cleanup.close(None).await?;
-    tokio::time::sleep(Duration::from_millis(75)).await;
+    timeout(Duration::from_secs(1), source.remove_entered.notified()).await?;
     let mut healthy = connect_as(&url, "healthy-device", "threads.read,threads.write").await?;
     open_and_commit(&mut healthy, "healthy-thread").await?;
     source.hang_remove.store(false, Ordering::SeqCst);

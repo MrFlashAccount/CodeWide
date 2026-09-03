@@ -9,7 +9,7 @@ import org.junit.Test
 class SyncV2ContractGeneratedTest {
   @Test
   fun embedsTheExactExecutableContractFingerprint() {
-    assertEquals("12578d44b011b2cc6599e4991874263c8cfe125ad859cfaef7d6fbd862e78870", SyncV2ContractGenerated.CONTRACT_SHA256)
+    assertEquals("21e47c9f4b0f792aa9bd1637093655ee165ba07f2273be8bd532357b2b9e8803", SyncV2ContractGenerated.CONTRACT_SHA256)
   }
 
   @Test
@@ -42,6 +42,50 @@ class SyncV2ContractGeneratedTest {
     expectCloseCode(1008) {
       SyncV2ContractGenerated.parseClientFrame(
         """{"type":"command","requestId":"r","operationId":"o","command":{"kind":"thread.create","workspace":"/w","settings":{"model":null,"effort":null,"approvalPolicy":"onRequest","sandbox":"workspaceWrite"}}}""",
+      )
+    }
+  }
+
+  @Test
+  fun preservesUltraEffortAndStructuredGranularApproval() {
+    SyncV2ContractGenerated.parseClientFrame(
+      """{"type":"command","requestId":"r","operationId":"o","command":{"kind":"thread.create","workspace":"/w","title":null,"settings":{"model":"gpt-5.6","effort":"ultra","approvalPolicy":{"granular":{"sandboxApproval":true,"rules":false,"skillApproval":true,"requestPermissions":false,"mcpElicitations":true}},"sandbox":"workspaceWrite","personality":null}}}""",
+    )
+    expectCloseCode(1008) {
+      SyncV2ContractGenerated.parseClientFrame(
+        """{"type":"command","requestId":"r","operationId":"o","command":{"kind":"thread.create","workspace":"/w","title":null,"settings":{"model":"gpt-5.6","effort":"ultra","approvalPolicy":{"granular":{"sandboxApproval":true}},"sandbox":"workspaceWrite","personality":null}}}""",
+      )
+    }
+  }
+
+  @Test
+  fun validatesBackgroundProcessInspectionAndTermination() {
+    SyncV2ContractGenerated.parseClientFrame(
+      """{"type":"query","requestId":"r","query":{"kind":"thread.processes","threadId":"thread","cursor":null,"limit":100}}""",
+    )
+    SyncV2ContractGenerated.parseClientFrame(
+      """{"type":"command","requestId":"r","operationId":"o","command":{"kind":"process.terminate","threadId":"thread","processId":"process"}}""",
+    )
+    expectCloseCode(1008) {
+      SyncV2ContractGenerated.parseClientFrame(
+        """{"type":"query","requestId":"r","query":{"kind":"thread.processes","threadId":"thread","cursor":null,"limit":101}}""",
+      )
+    }
+  }
+
+  @Test
+  fun validatesBoundedCatalogSearch() {
+    SyncV2ContractGenerated.parseClientFrame(
+      """{"type":"query","requestId":"r","query":{"kind":"catalog.search","partition":"active","text":"indexed thread","cursor":null,"limit":100}}""",
+    )
+    expectCloseCode(1008) {
+      SyncV2ContractGenerated.parseClientFrame(
+        """{"type":"query","requestId":"r","query":{"kind":"catalog.search","partition":"active","text":"","cursor":null,"limit":1}}""",
+      )
+    }
+    expectCloseCode(1008) {
+      SyncV2ContractGenerated.parseClientFrame(
+        """{"type":"query","requestId":"r","query":{"kind":"catalog.search","partition":"all","text":"thread","cursor":null,"limit":1}}""",
       )
     }
   }

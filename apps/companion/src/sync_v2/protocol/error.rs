@@ -47,6 +47,15 @@ impl V2Error {
     }
 
     #[must_use]
+    pub fn unsupported_capability(_message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::UnsupportedCapability,
+            recovery: Recovery::None,
+            message: "capability is not available".into(),
+        }
+    }
+
+    #[must_use]
     pub fn operation_conflict() -> Self {
         Self {
             code: ErrorCode::OperationIdConflict,
@@ -82,6 +91,9 @@ impl V2Error {
             ErrorCode::Forbidden => "request is not authorized",
             ErrorCode::NotFound => "requested object was not found",
             ErrorCode::Conflict => "request conflicts with current state",
+            ErrorCode::SourceUnavailable if is_safe_app_server_error(&self.message) => {
+                &self.message
+            }
             ErrorCode::SourceUnavailable => "source is temporarily unavailable",
             ErrorCode::RateLimited => "request rate is limited",
             ErrorCode::InvalidCursor => "history cursor is invalid",
@@ -101,4 +113,29 @@ impl V2Error {
             message: message.into(),
         }
     }
+}
+
+fn is_safe_app_server_error(message: &str) -> bool {
+    let lowercase = message.to_ascii_lowercase();
+    message.chars().count() <= 128
+        && (message.starts_with("App Server error ") || message.starts_with("App Server error: "))
+        && !message.chars().any(char::is_control)
+        && ![
+            "access token",
+            "api key",
+            "authorization:",
+            "bearer ",
+            "credential",
+            "cookie:",
+            "private key",
+            "private_sentinel",
+            "refresh token",
+            "secret",
+            "/home/",
+            "/token",
+            "/users/",
+            "\\users\\",
+        ]
+        .iter()
+        .any(|sensitive| lowercase.contains(sensitive))
 }

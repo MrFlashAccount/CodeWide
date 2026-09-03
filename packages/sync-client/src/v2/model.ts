@@ -4,6 +4,7 @@ export type {
   V2CatalogAnchor,
   V2CatalogScope,
   V2Error,
+  V2Effort,
   V2Id,
   V2InputBlock,
   V2Item,
@@ -20,8 +21,7 @@ export type {
   V2U64,
 } from "./contract.generated";
 
-import type { V2ThreadSettings, V2ThreadSummary, V2TurnView } from "./contract.generated";
+import type { V2ThreadSummary, V2TurnView } from "./contract.generated";
 
 export type V2ThreadState = V2ThreadSummary["state"];
 export type V2TurnState = V2TurnView["state"];
-export type V2Effort = Exclude<V2ThreadSettings["effort"], null>;

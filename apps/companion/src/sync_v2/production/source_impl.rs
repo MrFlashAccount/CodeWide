@@ -4,9 +4,19 @@
 // backend source files reviewable and below the role size limit.
 #![allow(clippy::too_many_lines, clippy::wildcard_imports)]
 
-use super::{helpers::*, *};
+use super::{capabilities::*, helpers::*, *};
 
+mod accounts;
 mod attachments;
+mod background_processes;
+mod catalog_search;
+mod command_execution;
+mod item_output;
+mod queue;
+mod thread_changes;
+mod thread_resources;
+
+use thread_changes::parse_thread_change_result;
 
 #[async_trait]
 impl SemanticSource for UpstreamSemanticSource {
@@ -39,6 +49,15 @@ impl SemanticSource for UpstreamSemanticSource {
 
     async fn purge_context(&self, context: &AuthenticatedContextKey) -> Result<(), V2Error> {
         self.purge_context_state(context).await;
+        self.read_receipts
+            .purge_context(context)
+            .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
+        if let Some(attachments) = &self.services.attachments {
+            attachments
+                .purge_context(context)
+                .await
+                .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
+        }
         Ok(())
     }
 
@@ -66,6 +85,7 @@ impl SemanticSource for UpstreamSemanticSource {
                         json!({"threadId": current.thread_id.as_str(), "excludeTurns": true}),
                     )
                     .await?;
+                self.remember_thread_freshness_from_response(&current.thread_id, &resumed);
                 if let Some(settings) = normalize::thread_summary_from_response(&resumed)?.settings
                 {
                     let _ = self
@@ -174,7 +194,7 @@ impl SemanticSource for UpstreamSemanticSource {
     ) -> Result<SnapshotData, V2Error> {
         require_scope(authorization, "threads.read")?;
         ensure_generation(self, generation)?;
-        let (active, _) = if intent.catalog.active_limit == 0 {
+        let (mut active, active_next) = if intent.catalog.active_limit == 0 {
             (Vec::new(), None)
         } else {
             self.catalog_page(
@@ -186,7 +206,7 @@ impl SemanticSource for UpstreamSemanticSource {
             )
             .await?
         };
-        let (archived, _) = if intent.catalog.archived_limit == 0 {
+        let (mut archived, archived_next) = if intent.catalog.archived_limit == 0 {
             (Vec::new(), None)
         } else {
             self.catalog_page(
@@ -228,43 +248,35 @@ impl SemanticSource for UpstreamSemanticSource {
                     "history query returned the wrong result kind",
                 ));
             };
-            Some(ThreadWindow {
+            self.attach_read_state(context, &mut thread)?;
+            let current_window = ThreadWindow {
                 thread,
                 turns,
                 older_cursor,
                 newer_cursor,
-            })
+            };
+            for summary in active.iter_mut().chain(archived.iter_mut()) {
+                if summary.id == current_window.thread.id {
+                    summary.read_state = current_window.thread.read_state.clone();
+                }
+            }
+            Some(current_window)
         } else {
             None
         };
-        let mut pending = self.pending.write().await;
-        let mut pending_requests = Vec::new();
-        if let Some(current) = &intent.current_thread
-            && self.has_thread_access(context, &current.thread_id, generation)
-        {
-            for owned in pending.values_mut() {
-                if pending_thread_id(&owned.request) == Some(&current.thread_id) {
-                    owned.delivered_to.insert(context.clone());
-                    pending_requests.push(owned.request.clone());
-                }
-            }
-        }
-        drop(pending);
-        if pending_requests.len() > 256 {
-            return Err(V2Error::source_unavailable(
-                "pending request limit exceeded",
-            ));
-        }
+        let pending_requests = self
+            .snapshot_pending_requests(intent, authorization, context, generation)
+            .await?;
         let scope = CatalogScope {
             active: CatalogPartitionScope {
                 limit: intent.catalog.active_limit,
                 returned: u16::try_from(active.len()).unwrap_or(u16::MAX),
-                complete: active.len() < intent.catalog.active_limit as usize,
+                complete: active_next.is_none(),
             },
             archived: CatalogPartitionScope {
                 limit: intent.catalog.archived_limit,
                 returned: u16::try_from(archived.len()).unwrap_or(u16::MAX),
-                complete: archived.len() < intent.catalog.archived_limit as usize,
+                complete: archived_next.is_none(),
             },
         };
         Ok(SnapshotData {
@@ -283,18 +295,122 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> Result<QueryResult, V2Error> {
-        require_scope(authorization, query_scope(&query))?;
+        authorize_query(authorization, &query)?;
         ensure_generation(self, generation)?;
         match query {
-            Query::CapabilitiesRead => Ok(capabilities(
-                crate::sync_v2::domain::SnapshotLimits::default(),
-            )),
+            Query::CapabilitiesRead => {
+                let accounts_available = self.services.accounts.is_some();
+                Ok(capabilities(
+                    crate::sync_v2::domain::SnapshotLimits::default(),
+                    authorization,
+                    accounts_available,
+                ))
+            }
             Query::ModelsList => {
                 let result = self.rpc("model/list", json!({})).await?;
                 require_source_array_limit(&result, "models", 100)?;
-                let models = normalize::models(&result);
+                let models = normalize::models(&result)?;
                 require_result_count(models.len(), 100)?;
                 Ok(QueryResult::ModelsList { models })
+            }
+            Query::SkillsList {
+                workspace,
+                force_reload,
+            } => {
+                let result = self
+                    .rpc(
+                        "skills/list",
+                        json!({"cwds": [workspace.as_str()], "forceReload": force_reload}),
+                    )
+                    .await?;
+                require_source_array_limit(&result, "data", 256)?;
+                let entries = result
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| V2Error::source_unavailable("skills/list omitted data"))?;
+                let entry = entries
+                    .iter()
+                    .find(|entry| {
+                        entry.get("cwd").and_then(Value::as_str) == Some(workspace.as_str())
+                    })
+                    .ok_or_else(|| {
+                        V2Error::source_unavailable("skills/list omitted the requested workspace")
+                    })?;
+                let source_skills = entry
+                    .get("skills")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| V2Error::source_unavailable("skills/list omitted skills"))?;
+                require_result_count(source_skills.len(), 4_096)?;
+                let skills = source_skills
+                    .iter()
+                    .map(parse_skill)
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(QueryResult::SkillsList { workspace, skills })
+            }
+            Query::ThreadGoal { thread_id } => {
+                self.authorize_thread_access(authorization, context, &thread_id, generation)
+                    .await?;
+                let result = self
+                    .rpc("thread/goal/get", json!({"threadId": thread_id.as_str()}))
+                    .await?;
+                let goal = match result.get("goal") {
+                    None | Some(Value::Null) => None,
+                    Some(goal) => Some(normalize::thread_goal(goal)?),
+                };
+                Ok(QueryResult::ThreadGoal { thread_id, goal })
+            }
+            Query::ThreadAgents {
+                thread_id,
+                cursor,
+                limit,
+            } => {
+                self.authorize_thread_access(authorization, context, &thread_id, generation)
+                    .await?;
+                let result = self
+                    .rpc(
+                        "thread/list",
+                        crate::sync_v2::production::projection::thread_agents_params(
+                            &thread_id,
+                            cursor.as_deref(),
+                            limit,
+                        ),
+                    )
+                    .await?;
+                let source_agents = result
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| V2Error::source_unavailable("thread/list omitted data"))?;
+                if source_agents.len() > limit as usize {
+                    return Err(V2Error::source_unavailable(
+                        "thread agents source exceeded record limit",
+                    ));
+                }
+                let mut agents = source_agents
+                    .iter()
+                    .map(normalize::thread_summary)
+                    .collect::<Result<Vec<_>, _>>()?;
+                if agents
+                    .iter()
+                    .any(|agent| agent.parent_id.as_ref() != Some(&thread_id))
+                {
+                    return Err(V2Error::source_unavailable(
+                        "thread/list returned an agent outside the requested parent",
+                    ));
+                }
+                for agent in &mut agents {
+                    self.attach_read_state(context, agent)?;
+                    self.record_thread_access(context, &agent.id, generation);
+                }
+                ensure_generation(self, generation)?;
+                let next = result
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+                Ok(QueryResult::ThreadAgents {
+                    thread_id,
+                    agents,
+                    next,
+                })
             }
             Query::CatalogPage {
                 partition,
@@ -305,6 +421,15 @@ impl SemanticSource for UpstreamSemanticSource {
                     .catalog_page(context, generation, partition, before, limit)
                     .await?;
                 Ok(QueryResult::CatalogPage { threads, next })
+            }
+            Query::CatalogSearch {
+                partition,
+                text,
+                cursor,
+                limit,
+            } => {
+                self.catalog_search(context, generation, partition, text, cursor, limit)
+                    .await
             }
             Query::HistoryPage {
                 thread_id,
@@ -326,13 +451,20 @@ impl SemanticSource for UpstreamSemanticSource {
             } => {
                 self.authorize_thread_access(authorization, context, &thread_id, generation)
                     .await?;
+                let source_cursor = self.resolve_turn_items_cursor(
+                    context,
+                    &thread_id,
+                    &turn_id,
+                    generation,
+                    cursor.as_deref(),
+                )?;
                 let result = self
                     .rpc(
                         "thread/items/list",
                         json!({
                             "threadId": thread_id.as_str(),
                             "turnId": turn_id.as_str(),
-                            "cursor": cursor,
+                            "cursor": source_cursor,
                             "limit": limit,
                             "sortDirection": "asc"
                         }),
@@ -349,41 +481,138 @@ impl SemanticSource for UpstreamSemanticSource {
                 }
                 let items = entries
                     .iter()
-                    .filter(|entry| {
-                        entry.get("turnId").and_then(Value::as_str) == Some(turn_id.as_str())
+                    .map(|entry| {
+                        if entry.get("turnId").and_then(Value::as_str) != Some(turn_id.as_str()) {
+                            return Err(V2Error::source_unavailable(
+                                "turn item source returned a different turn",
+                            ));
+                        }
+                        let item = entry.get("item").ok_or_else(|| {
+                            V2Error::source_unavailable("turn item source omitted item")
+                        })?;
+                        normalize::item(item)
                     })
-                    .filter_map(|entry| entry.get("item").and_then(normalize::item))
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()?;
+                let next = result
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .map(|source_cursor| {
+                        self.wrap_turn_items_cursor(
+                            context,
+                            &thread_id,
+                            &turn_id,
+                            generation,
+                            source_cursor,
+                        )
+                    });
                 Ok(QueryResult::TurnItems {
                     thread_id,
                     turn_id,
                     items,
-                    next: result
-                        .get("nextCursor")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned),
+                    next,
                 })
             }
-            Query::ThreadResources { thread_id, scope } => {
+            Query::ItemOutput {
+                thread_id,
+                turn_id,
+                item_id,
+                cursor,
+                limit_bytes,
+            } => {
+                self.authorize_thread_access(authorization, context, &thread_id, generation)
+                    .await?;
+                self.item_output(
+                    context,
+                    generation,
+                    thread_id,
+                    turn_id,
+                    item_id,
+                    cursor,
+                    limit_bytes,
+                )
+                .await
+            }
+            Query::ThreadProcesses {
+                thread_id,
+                cursor,
+                limit,
+            } => {
+                self.authorize_thread_access(authorization, context, &thread_id, generation)
+                    .await?;
+                self.background_processes(context, generation, thread_id, cursor, limit)
+                    .await
+            }
+            Query::ThreadResources {
+                thread_id,
+                scope,
+                cursor,
+                limit,
+            } => {
+                self.thread_resources(
+                    authorization,
+                    context,
+                    generation,
+                    thread_id,
+                    scope,
+                    cursor,
+                    limit,
+                )
+                .await
+            }
+            Query::WorkspaceFile { thread_id, path } => {
+                self.workspace_file(authorization, context, generation, thread_id, path)
+                    .await
+            }
+            Query::ThreadChange {
+                thread_id,
+                path,
+                scope,
+            } => {
                 require_scope(authorization, "threads.read")?;
                 self.authorize_thread_access(authorization, context, &thread_id, generation)
                     .await?;
                 let resources = self.services.resources.as_ref().ok_or_else(|| {
                     V2Error::source_unavailable("resource service is unavailable")
                 })?;
-                let result = resources.handle("companion/threadResources/read", &json!({"threadId": thread_id.as_str(), "changeScope": resource_scope(scope)})).await.map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-                require_source_array_limit(&result, "changes", 100)?;
-                require_source_array_limit(&result, "attachments", 100)?;
-                let changes = normalize::resource_changes(&result);
-                let attachments = normalize::attachments(&result);
-                require_result_count(changes.len(), 100)?;
-                require_result_count(attachments.len(), 100)?;
-                Ok(QueryResult::ThreadResources {
+                let result = resources
+                    .handle(
+                        "companion/threadChange/read",
+                        &json!({
+                            "threadId": thread_id.as_str(),
+                            "path": path.as_str(),
+                            "changeScope": resource_scope(scope),
+                        }),
+                    )
+                    .await
+                    .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
+                let detail = parse_thread_change_result(&result, &thread_id, &path)?;
+                Ok(QueryResult::ThreadChange {
                     thread_id,
-                    revision: revision("resources"),
-                    changes,
-                    attachments,
+                    path: detail.path,
+                    scope: detail.scope,
+                    patches: detail.patches,
+                    source: detail.source,
+                    truncated: detail.truncated,
                 })
+            }
+            Query::ThreadChangeOutput {
+                thread_id,
+                path,
+                scope,
+                cursor,
+                limit_bytes,
+            } => {
+                self.thread_change_output(
+                    authorization,
+                    context,
+                    generation,
+                    thread_id,
+                    path,
+                    scope,
+                    cursor,
+                    limit_bytes,
+                )
+                .await
             }
             Query::ProjectsList => {
                 let projects =
@@ -395,7 +624,7 @@ impl SemanticSource for UpstreamSemanticSource {
                     .await
                     .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
                 require_source_array_limit(&result, "projects", 100)?;
-                let projects = normalize::projects(&result);
+                let projects = normalize::projects(&result)?;
                 require_result_count(projects.len(), 100)?;
                 Ok(QueryResult::ProjectsList { projects })
             }
@@ -408,33 +637,56 @@ impl SemanticSource for UpstreamSemanticSource {
                     .await
                     .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
                 Ok(QueryResult::WorkspaceInspect {
-                    support: normalize::workspace_support(&result),
+                    support: normalize::workspace_support(&result)?,
                 })
             }
-            Query::QueueList { thread_id } => {
-                if let Some(thread_id) = &thread_id {
-                    self.authorize_thread_access(authorization, context, thread_id, generation)
-                        .await?;
-                }
-                let commands = self
+            Query::QueueList {
+                thread_id,
+                cursor,
+                limit,
+            } => {
+                let (commands, revision) = self
                     .store
-                    .outbox_list_bounded(
+                    .outbox_list_for_owner_with_revision(
+                        context.as_str(),
                         thread_id.as_ref().map(Id::as_str),
-                        MAX_OUTBOX_SCAN,
-                        MAX_OUTBOX_RESULTS,
                     )
                     .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-                let mut items = normalize::queue_items(&json!({"items": commands}));
-                items.retain(|item| self.has_thread_access(context, &item.thread_id, generation));
-                if items.len() > 100 {
-                    return Err(V2Error::source_unavailable(
-                        "queue result exceeded record limit",
-                    ));
+                let offset = match cursor {
+                    Some(cursor) => {
+                        let cursor = QueueCursor::decode(&cursor, context, thread_id.as_ref())?;
+                        if cursor.witness() != revision {
+                            return Err(stale_queue_cursor());
+                        }
+                        cursor.offset()
+                    }
+                    None => 0,
+                };
+                if offset > commands.len() {
+                    return Err(stale_queue_cursor());
                 }
-                Ok(QueryResult::QueueList { items })
+                let end = offset
+                    .saturating_add(usize::from(limit))
+                    .min(commands.len());
+                let items = normalize::queue_items(&json!({"items": &commands[offset..end]}))?;
+                let revision_token =
+                    QueueCursor::new(context, thread_id.clone(), revision.clone(), 0).encode()?;
+                let next_cursor = if end < commands.len() {
+                    Some(QueueCursor::new(context, thread_id, revision.clone(), end).encode()?)
+                } else {
+                    None
+                };
+                Ok(QueryResult::QueueList {
+                    items,
+                    revision: revision_token,
+                    next_cursor,
+                })
             }
             Query::OperationGet { .. } => Err(V2Error::invalid_query()),
             Query::AccountsList => {
+                // Install the event audience before reading the snapshot so an
+                // account change cannot land in the snapshot/live gap.
+                self.record_account_access(context, generation);
                 let accounts =
                     self.services.accounts.as_ref().ok_or_else(|| {
                         V2Error::source_unavailable("account service is unavailable")
@@ -444,7 +696,7 @@ impl SemanticSource for UpstreamSemanticSource {
                     .await
                     .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
                 require_source_array_limit(&result, "profiles", 100)?;
-                let (active_profile_id, profiles, all_exhausted) = normalize::accounts(&result);
+                let (active_profile_id, profiles, all_exhausted) = normalize::accounts(&result)?;
                 require_result_count(profiles.len(), 100)?;
                 Ok(QueryResult::AccountsList {
                     active_profile_id,
@@ -462,44 +714,41 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> Result<(), V2Error> {
-        require_scope(authorization, command_scope(command))?;
-        if command_has_attachment(command) {
-            require_scope(authorization, "files.download.workspace")?;
-            if matches!(
-                command,
-                Command::TurnSubmit {
-                    thread_id: None,
-                    ..
-                }
-            ) {
-                return Err(V2Error::invalid_request(
-                    "new-thread attachments need an existing semantic identity",
-                ));
-            }
-        }
+        authorize_command(authorization, command)?;
+        self.authorize_attachment_access(command, authorization, context)?;
         ensure_generation(self, generation)?;
         if let Some(thread_id) = command_thread_id(command) {
             self.authorize_thread_access(authorization, context, thread_id, generation)
                 .await?;
         }
+        if let Command::RequestResolve {
+            request_id,
+            generation: request_generation,
+            ..
+        } = command
+        {
+            self.authorize_request_resolution(request_id, *request_generation, context, generation)
+                .await?;
+        }
         if let Command::QueueMutate { mutation } = command
             && let Some(item_id) = queue_mutation_item_id(mutation)
         {
-            let item = self
-                .store
-                .outbox_list_bounded(None, MAX_OUTBOX_SCAN, MAX_OUTBOX_SCAN)
-                .map_err(|error| V2Error::source_unavailable(error.to_string()))?
-                .into_iter()
-                .find(|item| item.command_id == item_id.as_str())
-                .ok_or_else(|| V2Error {
-                    code: ErrorCode::NotFound,
-                    recovery: Recovery::Requery,
-                    message: "queue item was not found".into(),
-                })?;
-            let thread_id = Id::new(item.remote_thread_id)
-                .map_err(|_| V2Error::source_unavailable("queue item thread is invalid"))?;
-            self.authorize_thread_access(authorization, context, &thread_id, generation)
-                .await?;
+            let item = find_outbox_item(&self.store, item_id)?;
+            if item.owner_context.as_deref() != Some(context.as_str()) {
+                return Err(V2Error::forbidden("queue item belongs to another device"));
+            }
+            if let QueueMutation::Move {
+                before_item_id: Some(before_item_id),
+                ..
+            } = mutation
+            {
+                let target = find_outbox_item(&self.store, before_item_id)?;
+                if target.owner_context.as_deref() != Some(context.as_str()) {
+                    return Err(V2Error::forbidden(
+                        "queue placement target belongs to another device",
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -512,12 +761,15 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> CommandExecution {
-        if let Err(error) = require_scope(authorization, command_scope(&command))
+        if let Err(error) = authorize_command(authorization, &command)
             .and_then(|()| ensure_generation(self, generation))
         {
             return CommandExecution::Failed(error);
         }
-        match self.execute_inner(operation_id, command, context).await {
+        match self
+            .execute_inner(operation_id, command, context, generation)
+            .await
+        {
             Ok(result) => {
                 if let Some(thread_id) = result_thread_id(&result) {
                     self.record_thread_access(context, thread_id, generation);
@@ -527,76 +779,11 @@ impl SemanticSource for UpstreamSemanticSource {
                 }
                 CommandExecution::Completed(result)
             }
-            Err(error) if error.code == ErrorCode::SourceUnavailable => {
-                CommandExecution::Indeterminate(V2Error::operation_indeterminate(error.message))
+            Err(CommandDispatchError::Failed(error)) => CommandExecution::Failed(error),
+            Err(CommandDispatchError::Indeterminate(error)) => {
+                CommandExecution::Indeterminate(error)
             }
-            Err(error) => CommandExecution::Failed(error),
         }
-    }
-
-    async fn resolve(
-        &self,
-        action: Action,
-        authorization: &AuthorizationContext,
-        context: &AuthenticatedContextKey,
-        generation: u64,
-    ) -> Result<ActionResult, V2Error> {
-        require_scope(authorization, "approvals.respond")?;
-        ensure_generation(self, generation)?;
-        let Action::RequestResolve {
-            request_id,
-            generation: request_generation,
-            resolution,
-        } = action;
-        if request_generation.get() != generation {
-            return Err(V2Error::generation_changed());
-        }
-        let mut pending = self.pending.write().await;
-        let Some(owned) = pending.get(request_id.as_str()).cloned() else {
-            return Ok(ActionResult::RequestResolve {
-                request_id,
-                state: ResolutionState::AlreadyResolved,
-            });
-        };
-        let Some(thread_id) = pending_thread_id(&owned.request).cloned() else {
-            return Err(V2Error::forbidden(
-                "request has no authorized thread audience",
-            ));
-        };
-        if !self.has_thread_access(context, &thread_id, generation) {
-            return Err(V2Error::forbidden("request belongs to another context"));
-        }
-        let request = owned.request;
-        if pending_generation(&request) != generation {
-            return Err(V2Error::generation_changed());
-        }
-        let result = resolution_result(resolution);
-        self.upstream
-            .respond(json!({"id": request_id.as_str(), "result": result}))
-            .await
-            .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-        let mut audiences = owned.delivered_to;
-        audiences.extend(self.authorized_contexts(&thread_id, generation));
-        pending.remove(request_id.as_str());
-        drop(pending);
-        for audience in audiences {
-            self.coordinator.publish(
-                generation,
-                AudienceSelector::CurrentThread {
-                    context: audience,
-                    thread_id: thread_id.clone(),
-                },
-                ProjectionChange::PendingRequestClosed {
-                    request_id: request_id.clone(),
-                    generation: U64::new(generation),
-                    reason: PendingCloseReason::Resolved,
-                },
-            );
-        }
-        Ok(ActionResult::RequestResolve {
-            request_id,
-            state: ResolutionState::Resolved,
-        })
     }
 }
 
@@ -604,6 +791,50 @@ fn require_result_count(actual: usize, limit: usize) -> Result<(), V2Error> {
     (actual <= limit)
         .then_some(())
         .ok_or_else(|| V2Error::source_unavailable("semantic result exceeded record limit"))
+}
+
+fn find_outbox_item(
+    store: &IndexStore,
+    item_id: &Id,
+) -> Result<crate::store::OutboxCommand, V2Error> {
+    store
+        .outbox_get(item_id.as_str())
+        .map_err(|error| V2Error::source_unavailable(error.to_string()))?
+        .ok_or_else(|| V2Error {
+            code: ErrorCode::NotFound,
+            recovery: Recovery::Requery,
+            message: "queue item was not found".into(),
+        })
+}
+
+fn normalize_queue_item(
+    item: &crate::store::OutboxCommand,
+) -> Result<crate::sync_v2::protocol::QueueItem, V2Error> {
+    normalize::queue_items(&json!({"items": [item]}))?
+        .pop()
+        .ok_or_else(|| V2Error::source_unavailable("queue item is invalid"))
+}
+
+fn source_response_within_bound(response: &Value) -> bool {
+    serde_json::to_vec(response).is_ok_and(|bytes| bytes.len() <= MAX_SOURCE_RESPONSE_BYTES)
+}
+
+fn resolve_queue_claim(
+    store: &IndexStore,
+    item_id: &Id,
+    token: u64,
+    resolution: OutboxClaimResolution<'_>,
+) -> Result<(), V2Error> {
+    match store
+        .outbox_resolve_claim(item_id.as_str(), token, resolution)
+        .map_err(|error| V2Error::operation_indeterminate(error.to_string()))?
+    {
+        OutboxClaimResolutionOutcome::Applied(_) => Ok(()),
+        OutboxClaimResolutionOutcome::AlreadyResolved(_)
+        | OutboxClaimResolutionOutcome::Stale(_) => Err(V2Error::operation_indeterminate(
+            "queue claim changed before its delivery result was persisted",
+        )),
+    }
 }
 
 fn require_source_array_limit(result: &Value, field: &str, limit: usize) -> Result<(), V2Error> {
@@ -617,423 +848,4 @@ fn require_source_array_limit(result: &Value, field: &str, limit: usize) -> Resu
         ));
     }
     Ok(())
-}
-
-impl UpstreamSemanticSource {
-    async fn resume_thread(&self, thread_id: &Id) -> Result<(), V2Error> {
-        let resumed = self
-            .rpc(
-                "thread/resume",
-                json!({"threadId": thread_id.as_str(), "excludeTurns": true}),
-            )
-            .await?;
-        if let Some(settings) = normalize::thread_summary_from_response(&resumed)?.settings {
-            let _ = self
-                .resumed_thread_settings
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(thread_id.clone(), settings);
-        }
-        Ok(())
-    }
-
-    async fn watched_thread_data(
-        &self,
-        current: &CurrentThreadIntent,
-        authorization: &AuthorizationContext,
-        context: &AuthenticatedContextKey,
-        generation: u64,
-    ) -> Result<WatchedThreadData, V2Error> {
-        let thread = self
-            .authorize_thread_access(authorization, context, &current.thread_id, generation)
-            .await?;
-        let page = self
-            .history_page(
-                context,
-                current.thread_id.clone(),
-                None,
-                HistoryDirection::Older,
-                current.turn_limit,
-                HistoryDetail::Summary,
-            )
-            .await?;
-        let QueryResult::HistoryPage {
-            turns,
-            older_cursor,
-            newer_cursor,
-            ..
-        } = page
-        else {
-            return Err(V2Error::source_unavailable(
-                "history query returned the wrong result kind",
-            ));
-        };
-        let mut pending = self.pending.write().await;
-        let mut pending_requests = Vec::new();
-        for owned in pending.values_mut() {
-            if pending_thread_id(&owned.request) == Some(&current.thread_id) {
-                owned.delivered_to.insert(context.clone());
-                pending_requests.push(owned.request.clone());
-            }
-        }
-        if pending_requests.len() > MAX_PENDING_REQUESTS {
-            return Err(V2Error::source_unavailable(
-                "pending request limit exceeded",
-            ));
-        }
-        Ok(WatchedThreadData {
-            current_thread: ThreadWindow {
-                thread,
-                turns,
-                older_cursor,
-                newer_cursor,
-            },
-            pending_requests,
-        })
-    }
-
-    async fn execute_inner(
-        &self,
-        operation_id: &OperationId,
-        command: Command,
-        context: &AuthenticatedContextKey,
-    ) -> Result<CommandResult, V2Error> {
-        match command {
-            Command::ThreadCreate {
-                workspace,
-                title,
-                settings,
-            } => {
-                let result = self.rpc("thread/start", json!({"cwd": workspace, "model": settings.model, "reasoningEffort": effort_source(settings.effort), "approvalPolicy": approval_policy_source(settings.approval_policy), "sandbox": sandbox_source(settings.sandbox)})).await?;
-                let mut thread = normalize::thread_summary_from_response(&result)?;
-                thread.title = title;
-                Ok(CommandResult::ThreadCreate { thread })
-            }
-            Command::ThreadFork {
-                thread_id,
-                through_turn_id,
-            } => {
-                let result = self.rpc("thread/fork", json!({"threadId": thread_id.as_str(), "turnId": through_turn_id.as_ref().map(Id::as_str)})).await?;
-                Ok(CommandResult::ThreadFork {
-                    thread: normalize::thread_summary_from_response(&result)?,
-                })
-            }
-            Command::ThreadUpdate { thread_id, change } => {
-                let updated_settings = match &change {
-                    ThreadUpdate::Settings { settings } => Some(settings.clone()),
-                    ThreadUpdate::Title { .. }
-                    | ThreadUpdate::Archive { .. }
-                    | ThreadUpdate::Goal { .. }
-                    | ThreadUpdate::Section { .. } => None,
-                };
-                let (method, params) = thread_update_rpc(&thread_id, change);
-                self.rpc(method, params).await?;
-                if let Some(settings) = &updated_settings {
-                    let _ = self
-                        .resumed_thread_settings
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .insert(thread_id.clone(), settings.clone());
-                }
-                let mut thread = self.read_thread(&thread_id).await?;
-                if let Some(settings) = updated_settings {
-                    thread.settings = Some(settings);
-                }
-                Ok(CommandResult::ThreadUpdate { thread })
-            }
-            Command::ThreadDelete { thread_id } => {
-                self.rpc("thread/delete", json!({"threadId": thread_id.as_str()}))
-                    .await?;
-                Ok(CommandResult::ThreadDelete { thread_id })
-            }
-            Command::TurnSubmit {
-                thread_id: Some(thread_id),
-                input,
-                intent,
-                settings,
-                ..
-            } => {
-                let input = self
-                    .resolve_input_blocks(context, &thread_id, &input)
-                    .await?;
-                let result = self.rpc(if matches!(intent, crate::sync_v2::protocol::TurnIntent::Review) { "review/start" } else { "turn/start" }, json!({"threadId": thread_id.as_str(), "input": input, "model": settings.as_ref().and_then(|settings| settings.model.as_deref())})).await?;
-                let turn_id = Id::new(
-                    result
-                        .pointer("/turn/id")
-                        .or_else(|| result.get("turnId"))
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| V2Error::source_unavailable("turn result omitted id"))?
-                        .to_owned(),
-                )
-                .map_err(|_| V2Error::source_unavailable("turn result has invalid id"))?;
-                Ok(CommandResult::TurnSubmit { thread_id, turn_id })
-            }
-            Command::TurnSubmit {
-                thread_id: None,
-                workspace,
-                input,
-                intent: _,
-                settings,
-            } => {
-                let workspace = workspace.ok_or_else(|| {
-                    V2Error::invalid_request("workspace is required for a new thread")
-                })?;
-                let created = self.rpc("thread/start", json!({"cwd": workspace, "model": settings.as_ref().and_then(|settings| settings.model.as_deref())})).await?;
-                let thread = normalize::thread_summary_from_response(&created)?;
-                let input = normalize::input_blocks(&input, &HashMap::new())?;
-                let started = self
-                    .rpc(
-                        "turn/start",
-                        json!({"threadId": thread.id.as_str(), "input": input}),
-                    )
-                    .await?;
-                let turn_id = Id::new(
-                    started
-                        .pointer("/turn/id")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| V2Error::source_unavailable("turn result omitted id"))?
-                        .to_owned(),
-                )
-                .map_err(|_| V2Error::source_unavailable("turn id is invalid"))?;
-                Ok(CommandResult::TurnSubmit {
-                    thread_id: thread.id,
-                    turn_id,
-                })
-            }
-            Command::TurnSteer {
-                thread_id,
-                turn_id,
-                input,
-            } => {
-                let input = self
-                    .resolve_input_blocks(context, &thread_id, &input)
-                    .await?;
-                let result = self.rpc("turn/steer", json!({"threadId": thread_id.as_str(), "turnId": turn_id.as_str(), "input": input})).await?;
-                let item_id = Id::new(
-                    result
-                        .get("itemId")
-                        .and_then(Value::as_str)
-                        .unwrap_or(operation_id.as_str())
-                        .to_owned(),
-                )
-                .map_err(|_| V2Error::source_unavailable("steer item id is invalid"))?;
-                Ok(CommandResult::TurnSteer {
-                    thread_id,
-                    turn_id,
-                    item_id,
-                })
-            }
-            Command::TurnInterrupt { thread_id, turn_id } => {
-                let result = self
-                    .rpc(
-                        "turn/interrupt",
-                        json!({"threadId": thread_id.as_str(), "turnId": turn_id.as_str()}),
-                    )
-                    .await?;
-                let state = if result
-                    .get("alreadyTerminal")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                {
-                    InterruptState::AlreadyTerminal
-                } else {
-                    InterruptState::Interrupted
-                };
-                Ok(CommandResult::TurnInterrupt {
-                    thread_id,
-                    turn_id,
-                    state,
-                })
-            }
-            Command::ThreadCompact { thread_id } => {
-                let result = self
-                    .rpc(
-                        "thread/compact/start",
-                        json!({"threadId": thread_id.as_str()}),
-                    )
-                    .await?;
-                let turn_id = Id::new(
-                    result
-                        .pointer("/turn/id")
-                        .or_else(|| result.get("turnId"))
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| {
-                            V2Error::source_unavailable("compact result omitted turn id")
-                        })?
-                        .to_owned(),
-                )
-                .map_err(|_| V2Error::source_unavailable("compact turn id is invalid"))?;
-                Ok(CommandResult::ThreadCompact { thread_id, turn_id })
-            }
-            Command::ThreadRollback {
-                thread_id,
-                through_turn_id,
-                drop_following_turns,
-            } => {
-                self.rpc("thread/rollback", json!({"threadId": thread_id.as_str(), "turnId": through_turn_id.as_str(), "dropFollowingTurns": drop_following_turns})).await?;
-                let thread = self.read_thread(&thread_id).await?;
-                Ok(CommandResult::ThreadRollback {
-                    head_turn_id: thread.head_turn_id.clone(),
-                    thread,
-                })
-            }
-            Command::ProjectAdd { path, name, pinned } => {
-                let projects =
-                    self.services.projects.as_ref().ok_or_else(|| {
-                        V2Error::source_unavailable("project service is unavailable")
-                    })?;
-                let result = projects
-                    .handle(
-                        "companion/project/add",
-                        &json!({"path": path, "name": name, "pinned": pinned}),
-                    )
-                    .await
-                    .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-                let project = normalize::projects(
-                    &json!({"projects": [result.get("project").cloned().unwrap_or(result)]}),
-                )
-                .pop()
-                .ok_or_else(|| V2Error::source_unavailable("project result is invalid"))?;
-                Ok(CommandResult::ProjectAdd { project })
-            }
-            Command::WorkspaceCreate {
-                provider,
-                parent_path,
-                name,
-            } => {
-                let workspaces = self.services.workspaces.as_ref().ok_or_else(|| {
-                    V2Error::source_unavailable("workspace service is unavailable")
-                })?;
-                let path = std::path::Path::new(&parent_path).join(&name);
-                let result = workspaces.handle("companion/workspace/create", &json!({"workspace": path, "provider": provider.as_str(), "requestId": operation_id.as_str()})).await.map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-                let workspace = result.get("workspace").ok_or_else(|| {
-                    V2Error::source_unavailable("workspace result omitted workspace")
-                })?;
-                Ok(CommandResult::WorkspaceCreate {
-                    path: workspace
-                        .get("path")
-                        .and_then(Value::as_str)
-                        .unwrap_or_else(|| path.to_str().unwrap_or_default())
-                        .to_owned(),
-                    repository_root: workspace
-                        .get("repositoryRoot")
-                        .and_then(Value::as_str)
-                        .unwrap_or_else(|| path.to_str().unwrap_or_default())
-                        .to_owned(),
-                })
-            }
-            Command::QueueMutate { mutation } => {
-                self.queue_mutate(operation_id, mutation, context).await
-            }
-            Command::AccountUpdate { change } => self.account_update(change).await,
-        }
-    }
-
-    async fn queue_mutate(
-        &self,
-        operation_id: &OperationId,
-        mutation: QueueMutation,
-        context: &AuthenticatedContextKey,
-    ) -> Result<CommandResult, V2Error> {
-        match mutation {
-            QueueMutation::Put { thread_id, input } => {
-                let input = self
-                    .resolve_input_blocks(context, &thread_id, &input)
-                    .await?;
-                self.store
-                    .outbox_put_turn_start_with_presentation(
-                        operation_id.as_str(),
-                        thread_id.as_str(),
-                        json!({"threadId": thread_id.as_str(), "input": input}),
-                        None,
-                        OutboxPresentation::Queue,
-                    )
-                    .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-            }
-            QueueMutation::Edit { item_id, input } => {
-                let thread_id = self
-                    .store
-                    .outbox_list_bounded(None, MAX_OUTBOX_SCAN, MAX_OUTBOX_SCAN)
-                    .map_err(|error| V2Error::source_unavailable(error.to_string()))?
-                    .into_iter()
-                    .find(|item| item.command_id == item_id.as_str())
-                    .and_then(|item| Id::new(item.remote_thread_id).ok())
-                    .ok_or_else(|| V2Error::source_unavailable("queue item is unavailable"))?;
-                let input = self
-                    .resolve_input_blocks(context, &thread_id, &input)
-                    .await?;
-                self.store
-                    .outbox_edit_prompt(item_id.as_str(), &Value::Array(input))
-                    .map_err(|error| V2Error::invalid_request(error.to_string()))?;
-            }
-            QueueMutation::Cancel { item_id } => {
-                self.store
-                    .outbox_cancel(item_id.as_str())
-                    .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-            }
-            QueueMutation::Move {
-                item_id,
-                before_item_id,
-            } => {
-                self.store
-                    .outbox_place(item_id.as_str(), before_item_id.as_ref().map(Id::as_str))
-                    .map_err(|error| V2Error::invalid_request(error.to_string()))?;
-            }
-            QueueMutation::Retry { item_id } => {
-                self.store
-                    .outbox_retry_failed(item_id.as_str())
-                    .map_err(|error| V2Error::invalid_request(error.to_string()))?;
-            }
-        }
-        let item = self
-            .store
-            .outbox_list_bounded(None, MAX_OUTBOX_SCAN, MAX_OUTBOX_SCAN)
-            .map_err(|error| V2Error::source_unavailable(error.to_string()))?
-            .into_iter()
-            .find(|item| item.command_id == operation_id.as_str())
-            .and_then(|item| normalize::queue_items(&json!({"items": [item]})).pop());
-        Ok(CommandResult::QueueMutate { item })
-    }
-
-    async fn account_update(&self, change: AccountChange) -> Result<CommandResult, V2Error> {
-        let accounts = self
-            .services
-            .accounts
-            .as_ref()
-            .ok_or_else(|| V2Error::source_unavailable("account service is unavailable"))?;
-        let (method, params, affected) = match change {
-            AccountChange::Activate { profile_id } => (
-                "companion/accountPool/profile/activate",
-                json!({"profileId": profile_id.as_str()}),
-                profile_id,
-            ),
-            AccountChange::Configure {
-                profile_id,
-                enabled,
-                priority,
-            } => (
-                "companion/accountPool/profile/update",
-                json!({"profileId": profile_id.as_str(), "enabled": enabled, "priority": priority}),
-                profile_id,
-            ),
-            AccountChange::Remove { profile_id } => (
-                "companion/accountPool/profile/remove",
-                json!({"profileId": profile_id.as_str()}),
-                profile_id,
-            ),
-        };
-        accounts
-            .handle(method, &params)
-            .await
-            .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-        let list = accounts
-            .handle("companion/accountPool/list", &json!({}))
-            .await
-            .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
-        let (active_profile_id, _, _) = normalize::accounts(&list);
-        Ok(CommandResult::AccountUpdate {
-            active_profile_id,
-            affected_profile_id: affected,
-        })
-    }
 }

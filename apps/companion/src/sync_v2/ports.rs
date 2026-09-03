@@ -23,6 +23,8 @@ use crate::{
     tunnels::TunnelError,
 };
 
+#[cfg(feature = "e2e-command-fault")]
+use super::protocol::TransportError;
 use super::{
     http,
     protocol::{
@@ -44,6 +46,12 @@ pub(crate) fn routes() -> Router<AppState> {
 async fn port_discovery(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if authorization(&state, &headers).await.is_none() {
         return unauthorized();
+    }
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) =
+        e2e_port_fault(&state, super::E2ESurfaceFaultTarget::PortDiscovery).await
+    {
+        return response;
     }
     let discovered = ports::discover(state.services.excluded_ports.into_iter().collect()).await;
     let response = PortsResponse {
@@ -83,6 +91,21 @@ async fn port_forward_upgrade(
     let Some(mut authority) = SessionAuthority::new(&authorization, changes) else {
         return unauthorized();
     };
+    let Ok(forwarding_identity) = forwarding_identity_headers(&headers) else {
+        return invalid_forwarding_identity();
+    };
+    if let ForwardingIdentity::Discovered(forwarding_key) = forwarding_identity {
+        let current = tokio::time::timeout(
+            Duration::from_secs(10),
+            ports::forwarding_key_for_port(port),
+        )
+        .await
+        .ok()
+        .flatten();
+        if !forwarding_service_matches(forwarding_key, current.as_deref()) {
+            return changed_forwarding_service();
+        }
+    }
     let stream = match tokio::time::timeout(
         Duration::from_secs(10),
         tokio::net::TcpStream::connect(("127.0.0.1", port)),
@@ -104,8 +127,54 @@ async fn port_forward_upgrade(
         .max_message_size(1024 * 1024)
         .max_frame_size(1024 * 1024)
         .on_upgrade(move |socket| async move {
-            bridge_port(socket, stream, &mut authority, Duration::from_secs(15)).await;
+            bridge_port(socket, stream, &mut authority).await;
         })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ForwardingIdentity<'a> {
+    Manual,
+    Discovered(&'a str),
+}
+
+fn forwarding_identity_headers(headers: &HeaderMap) -> Result<ForwardingIdentity<'_>, ()> {
+    let mode = single_header(headers, FORWARDING_MODE_HEADER)?.ok_or(())?;
+    let forwarding_key = forwarding_key_header(headers)?;
+    match (mode, forwarding_key) {
+        ("manual", None) => Ok(ForwardingIdentity::Manual),
+        ("discovered", Some(forwarding_key)) => Ok(ForwardingIdentity::Discovered(forwarding_key)),
+        _ => Err(()),
+    }
+}
+
+fn forwarding_key_header(headers: &HeaderMap) -> Result<Option<&str>, ()> {
+    let Some(value) = single_header(headers, FORWARDING_KEY_HEADER)? else {
+        return Ok(None);
+    };
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(());
+    }
+    Ok(Some(value))
+}
+
+fn single_header<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, ()> {
+    let values = headers.get_all(name);
+    let mut values = values.iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(());
+    }
+    Ok(Some(value.to_str().map_err(|_| ())?))
+}
+
+fn forwarding_service_matches(expected: &str, current: Option<&str>) -> bool {
+    current == Some(expected)
 }
 
 async fn tunnel_create(
@@ -123,6 +192,10 @@ async fn tunnel_create(
     let Some(authorization) = authorization(&state, &headers).await else {
         return unauthorized();
     };
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) = e2e_port_fault(&state, super::E2ESurfaceFaultTarget::PortCreate).await {
+        return response;
+    }
     let changes = match &state.authorization {
         Authorization::Registry(registry) => Some(registry.subscribe_authorization_changes()),
         Authorization::AdminOnly(_) => None,
@@ -179,6 +252,10 @@ async fn tunnel_exact(
     let Some(authorization) = authorization(&state, &headers).await else {
         return unauthorized();
     };
+    #[cfg(feature = "e2e-command-fault")]
+    if let Some(response) = e2e_port_fault(&state, super::E2ESurfaceFaultTarget::PortDelete).await {
+        return response;
+    }
     let tunnel = match tunnels.tunnel(&id).await {
         Ok(tunnel) => tunnel,
         Err(error) => return tunnel_error(&error),
@@ -267,6 +344,7 @@ async fn tunnel_proxy_inner(
             .max_frame_size(16 * 1024 * 1024)
             .on_upgrade(move |client| crate::tunnels::bridge_websocket(client, upstream, revoked));
     }
+    let browser_cookie_path = bearer_authorized.then(|| format!("/v2/tunnels/{id}/"));
     tunnels
         .proxy_http(
             tunnel,
@@ -274,7 +352,7 @@ async fn tunnel_proxy_inner(
             &target_path,
             &parts.headers,
             body,
-            bearer_authorized,
+            browser_cookie_path.as_deref(),
         )
         .await
         .unwrap_or_else(|error| tunnel_error(&error))
@@ -304,6 +382,16 @@ fn tunnel_error(error: &TunnelError) -> Response {
         TunnelError::NotFound => not_found(),
         TunnelError::Unauthorized => unauthorized(),
         TunnelError::Unavailable | TunnelError::Timeout => unavailable("tunnel unavailable"),
+        TunnelError::Capacity => http::error(
+            StatusCode::TOO_MANY_REQUESTS,
+            TransportErrorCode::LimitExceeded,
+            "tunnel capacity exceeded",
+        ),
+        TunnelError::TooLarge => http::error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            TransportErrorCode::LimitExceeded,
+            "tunnel body limit exceeded",
+        ),
     }
 }
 
@@ -339,22 +427,69 @@ fn unavailable(message: &'static str) -> Response {
     )
 }
 
+#[cfg(feature = "e2e-command-fault")]
+async fn e2e_port_fault(
+    state: &AppState,
+    target: super::E2ESurfaceFaultTarget,
+) -> Option<Response> {
+    let runtime = state.services.sync_v2.as_ref()?;
+    match runtime.intercept_e2e_surface_fault(target).await? {
+        super::E2ESurfaceFaultEffect::Continue => None,
+        super::E2ESurfaceFaultEffect::Fail(marker) => Some(
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(TransportError {
+                    code: TransportErrorCode::Unavailable,
+                    message: format!("E2E fault: {marker}"),
+                }),
+            )
+                .into_response(),
+        ),
+        super::E2ESurfaceFaultEffect::NotFound
+        | super::E2ESurfaceFaultEffect::ReplayUnavailable
+        | super::E2ESurfaceFaultEffect::InvalidCursor
+        | super::E2ESurfaceFaultEffect::VoiceRetry(_)
+        | super::E2ESurfaceFaultEffect::VoiceResult(_)
+        | super::E2ESurfaceFaultEffect::PortExpire { .. }
+        | super::E2ESurfaceFaultEffect::QueueUncertain(_) => Some(http::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            TransportErrorCode::Unavailable,
+            "E2E surface fault action did not match the port boundary",
+        )),
+    }
+}
+
+fn invalid_forwarding_identity() -> Response {
+    http::error(
+        StatusCode::BAD_REQUEST,
+        TransportErrorCode::InvalidRequest,
+        "forwarding identity is invalid",
+    )
+}
+
+fn changed_forwarding_service() -> Response {
+    http::error(
+        StatusCode::CONFLICT,
+        TransportErrorCode::Conflict,
+        "localhost service identity changed",
+    )
+}
+
+const FORWARDING_KEY_HEADER: &str = "x-codewide-forwarding-key";
+const FORWARDING_MODE_HEADER: &str = "x-codewide-forwarding-mode";
+
 async fn bridge_port(
     mut socket: WebSocket,
     mut stream: tokio::net::TcpStream,
     authority: &mut SessionAuthority,
-    idle_timeout: Duration,
 ) {
     const MAX_FRAME_BYTES: usize = 1024 * 1024;
     let mut host_buffer = vec![0_u8; 64 * 1024];
-    let idle = tokio::time::sleep(idle_timeout);
-    tokio::pin!(idle);
     loop {
         tokio::select! {
             phone = socket.recv() => match phone {
                 Some(Ok(Message::Binary(bytes))) if bytes.len() <= MAX_FRAME_BYTES => {
                     if !authority.is_valid() || stream.write_all(&bytes).await.is_err() { break; }
-                    idle.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
                 }
                 Some(Ok(Message::Ping(bytes))) => {
                     if socket.send(Message::Pong(bytes)).await.is_err() { break; }
@@ -370,13 +505,110 @@ async fn bridge_port(
                 Ok(0) | Err(_) => break,
                 Ok(bytes) => {
                     if !authority.is_valid() || socket.send(Message::Binary(host_buffer[..bytes].to_vec().into())).await.is_err() { break; }
-                    idle.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
                 }
             },
             () = authority.revoked() => break,
-            () = &mut idle => break,
         }
     }
     let _ = stream.shutdown().await;
     let _ = socket.close().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use super::{
+        FORWARDING_KEY_HEADER, FORWARDING_MODE_HEADER, ForwardingIdentity,
+        forwarding_identity_headers, forwarding_service_matches,
+    };
+
+    #[test]
+    fn manual_forwarding_mode_is_explicit_and_carries_no_fingerprint() {
+        let empty = HeaderMap::new();
+        assert_eq!(forwarding_identity_headers(&empty), Err(()));
+
+        let mut manual = HeaderMap::new();
+        manual.insert(FORWARDING_MODE_HEADER, HeaderValue::from_static("manual"));
+        assert_eq!(
+            forwarding_identity_headers(&manual),
+            Ok(ForwardingIdentity::Manual)
+        );
+
+        manual.insert(
+            FORWARDING_KEY_HEADER,
+            HeaderValue::from_static(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+        );
+        assert_eq!(forwarding_identity_headers(&manual), Err(()));
+
+        let mut ambiguous = HeaderMap::new();
+        ambiguous.append(FORWARDING_MODE_HEADER, HeaderValue::from_static("manual"));
+        ambiguous.append(FORWARDING_MODE_HEADER, HeaderValue::from_static("manual"));
+        assert_eq!(forwarding_identity_headers(&ambiguous), Err(()));
+    }
+
+    #[test]
+    fn discovered_forwarding_mode_requires_a_strict_fingerprint() {
+        let mut missing = HeaderMap::new();
+        missing.insert(
+            FORWARDING_MODE_HEADER,
+            HeaderValue::from_static("discovered"),
+        );
+        assert_eq!(forwarding_identity_headers(&missing), Err(()));
+
+        let key = "a".repeat(64);
+        let mut valid = HeaderMap::new();
+        valid.insert(
+            FORWARDING_MODE_HEADER,
+            HeaderValue::from_static("discovered"),
+        );
+        valid.insert(
+            FORWARDING_KEY_HEADER,
+            HeaderValue::from_str(&key).unwrap_or_else(|error| panic!("{error}")),
+        );
+        assert_eq!(
+            forwarding_identity_headers(&valid),
+            Ok(ForwardingIdentity::Discovered(key.as_str()))
+        );
+
+        for malformed in ["a".repeat(63), "A".repeat(64), "z".repeat(64)] {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                FORWARDING_MODE_HEADER,
+                HeaderValue::from_static("discovered"),
+            );
+            headers.insert(
+                FORWARDING_KEY_HEADER,
+                HeaderValue::from_str(&malformed).unwrap_or_else(|error| panic!("{error}")),
+            );
+            assert_eq!(forwarding_identity_headers(&headers), Err(()));
+        }
+    }
+
+    #[test]
+    fn duplicate_forwarding_key_headers_are_rejected() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            FORWARDING_MODE_HEADER,
+            HeaderValue::from_static("discovered"),
+        );
+        let key = HeaderValue::from_static(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        headers.append(FORWARDING_KEY_HEADER, key.clone());
+        headers.append(FORWARDING_KEY_HEADER, key);
+        assert_eq!(forwarding_identity_headers(&headers), Err(()));
+    }
+
+    #[test]
+    fn missing_or_changed_local_service_is_rejected_before_forwarding() {
+        let expected = "a".repeat(64);
+        let changed = "b".repeat(64);
+
+        assert!(!forwarding_service_matches(&expected, None));
+        assert!(!forwarding_service_matches(&expected, Some(&changed)));
+        assert!(forwarding_service_matches(&expected, Some(&expected)));
+    }
 }

@@ -9,13 +9,14 @@ import {
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 
 import { getV2SqliteDatabase } from "./v2Database.native";
+import { parsePersistedOperation } from "./persistedStateValidation";
 
 const TABLE = "codewide_sync_v2_operations_by_saved_server";
 const UNAPPROVED_CONTEXT_TABLE = "codewide_sync_v2_operations_by_context";
 const LEGACY_TABLE = "codewide_sync_v2_operations";
 const DURABLE_CREATE_LOG = "CodeWide Sync V2 durable operation committed";
 
-export interface DurableCreateObservation {
+interface DurableCreateObservation {
   commandKind: V2Command["kind"];
   operationId: string;
 }
@@ -25,6 +26,7 @@ export function createNativeSyncV2OperationStore(): V2OperationStore {
   return createNativeSyncV2OperationStoreWithDatabase(getV2SqliteDatabase());
 }
 
+/** @testOnly Injects an isolated database into persistence regression tests. */
 export function createNativeSyncV2OperationStoreWithDatabase(
   database: SqliteDatabase,
   observeDurableCreate: (observation: DurableCreateObservation) => void = (observation) => {
@@ -33,6 +35,17 @@ export function createNativeSyncV2OperationStoreWithDatabase(
 ): V2OperationStore {
   let prepared: Promise<void> | null = null;
   const listeners = new Map<string, Set<() => void>>();
+  const ownedCommands = new WeakSet<V2Command>();
+  const takeCommandOwnership = (command: V2Command): V2Command => {
+    if (ownedCommands.has(command)) return command;
+    freezeJsonValue(command);
+    ownedCommands.add(command);
+    return command;
+  };
+  const takeOperationOwnership = (operation: V2PersistedOperation): V2PersistedOperation => {
+    if (operation.command !== null) takeCommandOwnership(operation.command);
+    return Object.freeze(operation);
+  };
   const publish = (savedServerId: string): void => {
     for (const listener of listeners.get(savedServerId) ?? []) {
       try {
@@ -52,31 +65,45 @@ export function createNativeSyncV2OperationStoreWithDatabase(
     });
     return prepared;
   };
-  const read = async (
+  const readStoredOperation = async (
     executor: SqliteExecutor,
     savedServerId: string,
     operationId: string,
   ): Promise<V2PersistedOperation | null> => {
     const rows = extractRows(
       await executor.execute(
-        `SELECT payload FROM ${TABLE} WHERE saved_server_id = ? AND operation_id = ? LIMIT 1`,
+        `SELECT operation_id, payload FROM ${TABLE} WHERE saved_server_id = ? AND operation_id = ? LIMIT 1`,
         [savedServerId, operationId],
       ),
     );
-    return parseOperation(rows[0]?.payload);
+    const row = rows[0];
+    if (row === undefined) return null;
+    const operation = parsePersistedOperation(row.payload, operationId);
+    if (operation !== null) return operation;
+    await quarantineOperation(executor, savedServerId, operationId);
+    return null;
   };
   const readAll = async (
     executor: SqliteExecutor,
     savedServerId: string,
   ): Promise<V2PersistedOperation[]> => {
     const rows = extractRows(
-      await executor.execute(`SELECT payload FROM ${TABLE} WHERE saved_server_id = ?`, [
-        savedServerId,
-      ]),
+      await executor.execute(
+        `SELECT operation_id, payload FROM ${TABLE} WHERE saved_server_id = ?`,
+        [savedServerId],
+      ),
     );
-    return rows
-      .map((row) => parseOperation(row.payload))
-      .filter((value): value is V2PersistedOperation => value !== null);
+    const operations: V2PersistedOperation[] = [];
+    for (const row of rows) {
+      if (typeof row.operation_id !== "string") continue;
+      const operation = parsePersistedOperation(row.payload, row.operation_id);
+      if (operation === null) {
+        await quarantineOperation(executor, savedServerId, row.operation_id);
+      } else {
+        operations.push(operation);
+      }
+    }
+    return operations;
   };
   const write = async (
     executor: SqliteExecutor,
@@ -111,30 +138,33 @@ export function createNativeSyncV2OperationStoreWithDatabase(
   };
   return {
     async create(savedServerId, operationId: string, command: V2Command, nowMs = Date.now()) {
+      const fingerprint = fingerprintV2Command(command);
+      const durableCommand = takeCommandOwnership(command);
       await prepare();
       const [operation, changed, created] = await database.transaction(async (executor) => {
         const pruned = await pruneInTransaction(executor, savedServerId, nowMs);
-        const fingerprint = fingerprintV2Command(command);
-        const existing = await read(executor, savedServerId, operationId);
+        // WHY: pruning may delete this operation id, so conflict lookup must observe post-prune state.
+        // oxlint-disable-next-line react-doctor/server-sequential-independent-await
+        const existing = await readStoredOperation(executor, savedServerId, operationId);
         if (existing !== null) {
           if (existing.commandFingerprint !== fingerprint) {
             throw new Error(
               "Sync V2 operation id is already bound to a different canonical command",
             );
           }
-          return [existing, pruned, false] as const;
+          return [takeOperationOwnership(existing), pruned, false] as const;
         }
-        const operation: V2PersistedOperation = {
-          acceptedAt: null,
-          command: structuredClone(command),
-          commandFingerprint: fingerprint,
-          commandKind: command.kind,
-          createdAtMs: nowMs,
+        const operation = takeOperationOwnership({
           operationId,
+          command: durableCommand,
+          commandKind: durableCommand.kind,
+          commandFingerprint: fingerprint,
           state: "created",
           terminalClass: null,
+          createdAtMs: nowMs,
           updatedAtMs: nowMs,
-        };
+          acceptedAt: null,
+        });
         await write(executor, savedServerId, operation);
         return [operation, true, true] as const;
       });
@@ -161,20 +191,16 @@ export function createNativeSyncV2OperationStoreWithDatabase(
     },
     async get(savedServerId, operationId: string) {
       await prepare();
-      return database.transaction(async (executor) => read(executor, savedServerId, operationId));
+      return database.transaction(async (executor) => {
+        const operation = await readStoredOperation(executor, savedServerId, operationId);
+        return operation === null ? null : takeOperationOwnership(operation);
+      });
     },
     async hasSavedServerData(savedServerId) {
       await prepare();
-      return database.transaction(async (executor) => {
-        return (
-          extractRows(
-            await executor.execute(
-              `SELECT 1 AS present FROM ${TABLE} WHERE saved_server_id = ? LIMIT 1`,
-              [savedServerId],
-            ),
-          ).length > 0
-        );
-      });
+      return database.transaction(
+        async (executor) => (await readAll(executor, savedServerId)).length > 0,
+      );
     },
     async list(savedServerId) {
       await prepare();
@@ -201,9 +227,17 @@ export function createNativeSyncV2OperationStoreWithDatabase(
       await prepare();
       return database.transaction(async (executor) => {
         await pruneInTransaction(executor, savedServerId, nowMs);
-        return (await readAll(executor, savedServerId)).filter((operation) =>
-          ["created", "sent", "accepted"].includes(operation.state),
-        );
+        const recoverable: V2PersistedOperation[] = [];
+        for (const operation of await readAll(executor, savedServerId)) {
+          if (
+            operation.state === "created" ||
+            operation.state === "sent" ||
+            operation.state === "accepted"
+          ) {
+            recoverable.push(takeOperationOwnership(operation));
+          }
+        }
+        return recoverable;
       });
     },
     subscribe(savedServerId, listener) {
@@ -221,14 +255,17 @@ export function createNativeSyncV2OperationStoreWithDatabase(
     async transition(savedServerId, operationId, expected, update, nowMs = Date.now()) {
       await prepare();
       const next = await database.transaction(async (executor) => {
-        const current = await read(executor, savedServerId, operationId);
-        if (current === null) throw new Error("Unknown Sync V2 operation id");
+        const current = await readStoredOperation(executor, savedServerId, operationId);
+        // Returning lets a corrupt row's quarantine commit before the public operation fails.
+        // Throwing inside this transaction would roll the quarantine deletion back as well.
+        if (current === null) return null;
         if (!expected.includes(current.state))
           throw new Error(`Sync V2 operation transition rejected from ${current.state}`);
-        const next = applyOperationUpdate(current, update, nowMs);
+        const next = takeOperationOwnership(applyOperationUpdate(current, update, nowMs));
         await write(executor, savedServerId, next);
         return next;
       });
+      if (next === null) throw new Error("Unknown Sync V2 operation id");
       publish(savedServerId);
       return next;
     },
@@ -253,8 +290,15 @@ function retentionStart(operation: V2PersistedOperation): number {
   return Number.isNaN(accepted) ? operation.createdAtMs : accepted;
 }
 
-function parseOperation(payload: SqliteValue | undefined): V2PersistedOperation | null {
-  return typeof payload === "string" ? (JSON.parse(payload) as V2PersistedOperation) : null;
+async function quarantineOperation(
+  executor: SqliteExecutor,
+  savedServerId: string,
+  operationId: string,
+): Promise<void> {
+  await executor.execute(`DELETE FROM ${TABLE} WHERE saved_server_id = ? AND operation_id = ?`, [
+    savedServerId,
+    operationId,
+  ]);
 }
 
 function extractRows(result: unknown): readonly Record<string, SqliteValue>[] {
@@ -266,4 +310,10 @@ function extractRows(result: unknown): readonly Record<string, SqliteValue>[] {
   }
   const rows = (result as { rows?: unknown }).rows;
   return Array.isArray(rows) ? (rows as readonly Record<string, SqliteValue>[]) : [];
+}
+
+function freezeJsonValue(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  for (const nested of Object.values(value)) freezeJsonValue(nested);
+  Object.freeze(value);
 }

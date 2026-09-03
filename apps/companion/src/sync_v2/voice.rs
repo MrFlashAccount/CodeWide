@@ -510,6 +510,73 @@ async fn handle_record(
                 .await;
                 return false;
             }
+            #[cfg(feature = "e2e-command-fault")]
+            if let Some(effect) = runtime
+                .intercept_e2e_surface_fault(super::E2ESurfaceFaultTarget::VoiceFinish)
+                .await
+            {
+                match effect {
+                    super::E2ESurfaceFaultEffect::Continue => {}
+                    super::E2ESurfaceFaultEffect::VoiceRetry(retry_after_ms) => {
+                        return send_record(
+                            socket,
+                            &VoiceServerRecord::Retry {
+                                session_id,
+                                retry_after_ms,
+                            },
+                        )
+                        .await
+                        .is_ok();
+                    }
+                    super::E2ESurfaceFaultEffect::VoiceResult(text) => {
+                        if dictation.v2_cancel(audience, &session_id).await.is_err() {
+                            send_error(
+                                socket,
+                                Some(&session_id),
+                                TransportErrorCode::Unavailable,
+                                "Voice cleanup failed",
+                            )
+                            .await;
+                            return false;
+                        }
+                        let sent = send_record(
+                            socket,
+                            &VoiceServerRecord::Result {
+                                session_id: session_id.clone(),
+                                text,
+                            },
+                        )
+                        .await
+                        .is_ok();
+                        clear_active(active);
+                        return sent;
+                    }
+                    super::E2ESurfaceFaultEffect::Fail(marker) => {
+                        send_error_owned(
+                            socket,
+                            Some(&session_id),
+                            TransportErrorCode::Unavailable,
+                            format!("E2E fault: {marker}"),
+                        )
+                        .await;
+                        return false;
+                    }
+                    super::E2ESurfaceFaultEffect::NotFound
+                    | super::E2ESurfaceFaultEffect::ReplayUnavailable
+                    | super::E2ESurfaceFaultEffect::InvalidCursor
+                    | super::E2ESurfaceFaultEffect::PortExpire { .. }
+                    | super::E2ESurfaceFaultEffect::QueueUncertain(_) => {
+                        send_error(
+                            socket,
+                            Some(&session_id),
+                            TransportErrorCode::Unavailable,
+                            "E2E surface fault action did not match the Voice finish boundary",
+                        )
+                        .await;
+                        return false;
+                    }
+                }
+            }
             let outcome = {
                 let Some(session) = active.as_mut() else {
                     return false;
@@ -705,9 +772,18 @@ async fn send_error(
     code: TransportErrorCode,
     message: &'static str,
 ) {
+    send_error_owned(socket, session_id, code, message.to_owned()).await;
+}
+
+async fn send_error_owned(
+    socket: &mut WebSocket,
+    session_id: Option<&str>,
+    code: TransportErrorCode,
+    message: String,
+) {
     let record = VoiceServerRecord::Error {
         session_id: session_id.unwrap_or("uninitialized").to_owned(),
-        error: TransportError::new(code, message),
+        error: TransportError { code, message },
     };
     let _ = send_record(socket, &record).await;
 }

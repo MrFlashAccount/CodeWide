@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
+use tokio::{io::AsyncReadExt, process::Command};
 
 mod plugin;
 
@@ -13,6 +13,7 @@ pub use plugin::{PluginRegistry, VcsPluginConfig};
 
 pub const CHANGES_CAPABILITY: &str = "vcs.changes@2";
 pub const DIFF_CAPABILITY: &str = "vcs.diff@2";
+pub const DIFF_PAGE_CAPABILITY: &str = "vcs.diffPage@1";
 pub const WORKSPACE_CREATE_CAPABILITY: &str = "workspace.create@1";
 const MAX_DIFF_BYTES: usize = 4 * 1024 * 1024;
 
@@ -117,6 +118,51 @@ impl VcsService {
             return plugin::diff(&plugin, workspace, file, &snapshot.snapshot_id, scope)
                 .await
                 .map_err(|error| VcsError::Plugin(format!("{}: {error}", plugin.id)));
+        }
+        Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf()))
+    }
+
+    /// Reads one bounded page of a file diff without materializing the whole diff.
+    ///
+    /// Provider ownership and the current snapshot are resolved before every page.
+    /// Callers must compare the returned revision across pages and reject a stale
+    /// continuation if the working tree changed between requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the workspace/path is invalid, no provider owns the
+    /// workspace, or the owning provider lacks the paged-diff capability.
+    pub async fn diff_page(
+        &self,
+        workspace: &Path,
+        path: &Path,
+        scope: VcsScope,
+        offset: usize,
+        limit: usize,
+    ) -> Result<VcsDiffPage, VcsError> {
+        validate_workspace(workspace)?;
+        if !path.is_absolute() {
+            return Err(VcsError::InvalidWorkspace(path.to_path_buf()));
+        }
+        for provider in self.registry.enabled_plugins()? {
+            let snapshot = match plugin::changes(&provider, workspace, scope).await {
+                Ok(snapshot) => snapshot,
+                Err(plugin::PluginCallError::WorkspaceNotOwned) => continue,
+                Err(error) => return Err(VcsError::Plugin(format!("{}: {error}", provider.id))),
+            };
+            let file = find_snapshot_file(&snapshot, path)
+                .ok_or_else(|| VcsError::FileNotChanged(path.to_path_buf()))?;
+            return plugin::diff_page(
+                &provider,
+                workspace,
+                file,
+                &snapshot.snapshot_id,
+                scope,
+                offset,
+                limit,
+            )
+            .await
+            .map_err(|error| VcsError::Plugin(format!("{}: {error}", provider.id)));
         }
         Err(VcsError::UnsupportedWorkspace(workspace.to_path_buf()))
     }
@@ -353,6 +399,21 @@ pub struct VcsDiff {
     pub deletions: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsDiffPage {
+    pub capability: String,
+    pub provider: String,
+    pub scope: VcsScope,
+    pub snapshot_id: String,
+    pub file_id: String,
+    pub path: PathBuf,
+    pub content: String,
+    pub revision: String,
+    pub total_bytes: usize,
+    pub next_offset: usize,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct GitProvider;
 
@@ -498,6 +559,220 @@ impl GitProvider {
             binary,
             additions,
             deletions,
+        })
+    }
+
+    /// Streams the selected Git diff into a bounded page while hashing the
+    /// complete output for continuation consistency.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale path, invalid byte offset, non-UTF-8 Git
+    /// output, or a failed Git command.
+    pub async fn diff_page(
+        &self,
+        snapshot: &VcsSnapshot,
+        file: &VcsFile,
+        offset: usize,
+        limit: usize,
+    ) -> Result<VcsDiffPage, VcsError> {
+        if limit == 0 || limit > 1024 * 1024 {
+            return Err(VcsError::Command("invalid paged diff limit".into()));
+        }
+        let mut command = git_diff_command(snapshot, file)?;
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| VcsError::Command(format!("could not start git diff: {error}")))?;
+        let mut stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| VcsError::Command("git diff omitted stdout".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| VcsError::Command("git diff omitted stderr".into()))?;
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stderr
+                .take(65_536)
+                .read_to_end(&mut bytes)
+                .await
+                .map(|_| bytes)
+        });
+        let mut collector = DiffPageCollector::new(offset, limit);
+        let mut buffer = vec![0_u8; 32 * 1024].into_boxed_slice();
+        loop {
+            let read = stdout.read(&mut buffer).await.map_err(|error| {
+                VcsError::Command(format!("could not read git diff output: {error}"))
+            })?;
+            if read == 0 {
+                break;
+            }
+            collector.push(&buffer[..read])?;
+        }
+        let status = child
+            .wait()
+            .await
+            .map_err(|error| VcsError::Command(format!("could not wait for git diff: {error}")))?;
+        let stderr = stderr_task
+            .await
+            .map_err(|_| VcsError::Command("could not join git diff stderr reader".into()))?
+            .map_err(|error| {
+                VcsError::Command(format!("could not read git diff stderr: {error}"))
+            })?;
+        let untracked_difference =
+            file.status == VcsFileStatus::Untracked && status.code() == Some(1);
+        if !status.success() && !untracked_difference {
+            return Err(command_failure("git diff", &stderr));
+        }
+        let collected = collector.finish()?;
+        Ok(VcsDiffPage {
+            capability: DIFF_PAGE_CAPABILITY.to_owned(),
+            provider: snapshot.repository.provider.clone(),
+            scope: snapshot.scope,
+            snapshot_id: snapshot.snapshot_id.clone(),
+            file_id: file.id.clone(),
+            path: file.path.clone(),
+            content: collected.content,
+            revision: collected.revision,
+            total_bytes: collected.total_bytes,
+            next_offset: collected.next_offset,
+        })
+    }
+}
+
+fn git_diff_command(snapshot: &VcsSnapshot, file: &VcsFile) -> Result<Command, VcsError> {
+    let root = &snapshot.repository.root;
+    let relative = file
+        .path
+        .strip_prefix(root)
+        .map_err(|_| VcsError::FileNotChanged(file.path.clone()))?;
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(root)
+        .args(["diff", "--no-ext-diff", "--no-color"]);
+    if file.status == VcsFileStatus::Untracked {
+        command
+            .args(["--no-index", "--", "/dev/null"])
+            .arg(relative);
+        return Ok(command);
+    }
+    match snapshot.scope {
+        VcsScope::Staged => {
+            command.arg("--cached");
+        }
+        VcsScope::Unstaged => {}
+        VcsScope::Branch => {
+            let base = snapshot.repository.base.as_deref().ok_or_else(|| {
+                VcsError::Command("Git branch snapshot does not contain a merge base".into())
+            })?;
+            command.args([base, "HEAD"]);
+        }
+    }
+    command.arg("--");
+    if let Some(old_path) = file.old_path.as_deref() {
+        command.arg(old_path.strip_prefix(root).unwrap_or(old_path));
+    }
+    command.arg(relative);
+    Ok(command)
+}
+
+struct CollectedDiffPage {
+    content: String,
+    next_offset: usize,
+    revision: String,
+    total_bytes: usize,
+}
+
+struct DiffPageCollector {
+    content: String,
+    hasher: blake3::Hasher,
+    limit: usize,
+    offset: usize,
+    pending: Vec<u8>,
+    processed_bytes: usize,
+    total_bytes: usize,
+}
+
+impl DiffPageCollector {
+    fn new(offset: usize, limit: usize) -> Self {
+        Self {
+            content: String::new(),
+            hasher: blake3::Hasher::new(),
+            limit,
+            offset,
+            pending: Vec::with_capacity(4),
+            processed_bytes: 0,
+            total_bytes: 0,
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8]) -> Result<(), VcsError> {
+        self.hasher.update(bytes);
+        self.total_bytes = self.total_bytes.saturating_add(bytes.len());
+        self.pending.extend_from_slice(bytes);
+        match std::str::from_utf8(&self.pending) {
+            Ok(text) => {
+                let owned = text.to_owned();
+                self.pending.clear();
+                self.append(&owned)
+            }
+            Err(error) if error.error_len().is_none() => {
+                let valid = error.valid_up_to();
+                let text = std::str::from_utf8(&self.pending[..valid])
+                    .map_err(|_| VcsError::InvalidUtf8)?
+                    .to_owned();
+                let remainder = self.pending.split_off(valid);
+                self.pending = remainder;
+                self.append(&text)
+            }
+            Err(_) => Err(VcsError::InvalidUtf8),
+        }
+    }
+
+    fn append(&mut self, text: &str) -> Result<(), VcsError> {
+        let segment_start = self.processed_bytes;
+        let segment_end = segment_start.saturating_add(text.len());
+        self.processed_bytes = segment_end;
+        if segment_end <= self.offset || self.content.len() >= self.limit {
+            return Ok(());
+        }
+        let local_start = self.offset.saturating_sub(segment_start);
+        if !text.is_char_boundary(local_start) {
+            return Err(VcsError::Command(
+                "paged diff offset is not a UTF-8 boundary".into(),
+            ));
+        }
+        let remaining = self.limit.saturating_sub(self.content.len());
+        let mut local_end = text.len().min(local_start.saturating_add(remaining));
+        while local_end > local_start && !text.is_char_boundary(local_end) {
+            local_end -= 1;
+        }
+        self.content.push_str(&text[local_start..local_end]);
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<CollectedDiffPage, VcsError> {
+        if !self.pending.is_empty() {
+            let text = std::str::from_utf8(&self.pending)
+                .map_err(|_| VcsError::InvalidUtf8)?
+                .to_owned();
+            self.pending.clear();
+            self.append(&text)?;
+        }
+        if self.offset > self.total_bytes {
+            return Err(VcsError::Command("paged diff offset exceeds output".into()));
+        }
+        let next_offset = self.offset.saturating_add(self.content.len());
+        Ok(CollectedDiffPage {
+            content: self.content,
+            next_offset,
+            revision: self.hasher.finalize().to_hex().to_string(),
+            total_bytes: self.total_bytes,
         })
     }
 }

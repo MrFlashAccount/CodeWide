@@ -119,6 +119,7 @@ const config = {
         ".json",
       ],
       exportsFields: ["exports"],
+      mainFields: ["react-native", "browser", "module", "main"],
     },
     doNotFollow: {
       dependencyTypes: ["npm", "npm-bundled", "npm-dev", "npm-no-pkg", "npm-optional", "npm-peer"],

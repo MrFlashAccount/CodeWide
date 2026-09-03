@@ -11,6 +11,7 @@ import {
 } from "@codewide/sync-client/v2";
 
 import { CommandCapabilities } from "../src/v2/application/commandCapabilities";
+import { CommandCorrelationScopeBlockedError } from "../src/v2/application/commandCorrelation";
 import { savedServerId } from "../src/v2/domain/ids";
 import { createCommandCorrelationStore } from "../src/v2/infrastructure/persistence/sqliteCommandCorrelationStore.web";
 
@@ -117,6 +118,25 @@ describe("V2 command correlation", () => {
 
     expect(await fixture.capabilities.listUnsettled(scope)).toEqual([
       expect.objectContaining({ operationId: "operation-after-accepted", state: "durable" }),
+    ]);
+  });
+
+  it("persists an explicit duplicate-risk decision without forgetting the old operation", async () => {
+    const fixture = setup(async () => new Promise<V2CommandTerminalFrame>(() => undefined));
+    await beginCrashRecord(fixture, "released", "durable");
+
+    await fixture.capabilities.releaseUnsettled("correlation-released");
+    await fixture.correlations.markDurable("correlation-released", 3);
+
+    expect(await fixture.correlations.get("correlation-released")).toMatchObject({
+      operationId: "operation-released",
+      state: "durableReleased",
+    });
+    expect(await fixture.capabilities.listLocalUnsettled(scope)).toEqual([
+      expect.objectContaining({
+        operationId: "operation-released",
+        state: "durableReleased",
+      }),
     ]);
   });
 
@@ -240,6 +260,18 @@ describe("V2 command correlation", () => {
         failure: { retryable: true },
       },
     );
+  });
+
+  it("keeps a quarantined correlation scope non-retryable", async () => {
+    const fixture = setup(async () => new Promise<V2CommandTerminalFrame>(() => undefined));
+    fixture.correlations.begin = async () => {
+      throw new CommandCorrelationScopeBlockedError();
+    };
+
+    await expect(fixture.capabilities.executeCorrelated(scope, command)).resolves.toMatchObject({
+      kind: "durableUnsettled",
+      failure: { retryable: false },
+    });
   });
 });
 

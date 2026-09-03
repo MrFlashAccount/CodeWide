@@ -16,7 +16,7 @@ describe("Sync V2 operation retry boundary", () => {
   it("keeps validation errors fixed and content-free", async () => {
     const operations = new MemoryV2OperationStore();
     const { socket, session } = setupSession(operations);
-    await makeLive(socket, session);
+    await makeLive(socket, session, snapshot({ currentThread: null }));
 
     const failure = await session
       .command("invalid-operation", { kind: "unknown.command" } as unknown as V2Command)
@@ -30,7 +30,7 @@ describe("Sync V2 operation retry boundary", () => {
   it("reports notCreated only after a failed create is followed by a proven absent read", async () => {
     const operations = new CreateFailureStore("before");
     const { socket, session } = setupSession(operations);
-    await makeLive(socket, session);
+    await makeLive(socket, session, snapshot({ currentThread: null }));
 
     await expect(
       session.command("before-create", { kind: "thread.delete", threadId: "thread-1" }),
@@ -42,7 +42,7 @@ describe("Sync V2 operation retry boundary", () => {
   it("keeps a commit-then-error and operation-id conflict non-retryable", async () => {
     const commitFailure = new CreateFailureStore("after");
     const first = setupSession(commitFailure);
-    await makeLive(first.socket, first.session);
+    await makeLive(first.socket, first.session, snapshot({ currentThread: null }));
     await expect(
       first.session.command("after-create", { kind: "thread.delete", threadId: "thread-1" }),
     ).rejects.toBeInstanceOf(SyncV2CommandDurableUnsettledError);
@@ -55,7 +55,7 @@ describe("Sync V2 operation retry boundary", () => {
       threadId: "original",
     });
     const second = setupSession(conflict);
-    await makeLive(second.socket, second.session);
+    await makeLive(second.socket, second.session, snapshot({ currentThread: null }));
     await expect(
       second.session.command("conflict", { kind: "thread.delete", threadId: "different" }),
     ).rejects.toBeInstanceOf(SyncV2CommandDurableUnsettledError);
@@ -79,14 +79,18 @@ describe("Sync V2 operation retry boundary", () => {
     const sockets = [new FakeV2Socket(), new FakeV2Socket()];
     let socketIndex = 0;
     const session = new SyncV2Session({
-      intent: { catalog: { activeLimit: 2, archivedLimit: 1 }, currentThread: null },
+      intent: {
+        catalog: { activeLimit: 2, archivedLimit: 1 },
+        currentThread: null,
+        pendingRequests: "currentThread",
+      },
       operationStore: operations,
       projectionStore: new MemoryV2ProjectionStore(),
       reconnectDelayMs: 0,
       savedServerId: savedServerA,
       transportLease: { openSync: () => sockets[socketIndex++]! },
     });
-    await makeLive(sockets[0]!, session);
+    await makeLive(sockets[0]!, session, snapshot({ currentThread: null }));
     const terminal = session.command("expired-after-acceptance", {
       kind: "thread.delete",
       threadId: "thread-1",
@@ -107,7 +111,11 @@ describe("Sync V2 operation retry boundary", () => {
     session.reconnect();
     await waitFor(() => sockets[1]!.listenerCount("open") > 0);
     sockets[1]!.open();
-    const next = snapshot({ epochId: "epoch-2", revision: "sync-v2-revision:2" });
+    const next = snapshot({
+      currentThread: null,
+      epochId: "epoch-2",
+      revision: "sync-v2-revision:2",
+    });
     sockets[1]!.emit(next);
     await waitFor(() => sockets[1]!.sent.some((frame) => frame.type === "snapshotCommitted"));
     sockets[1]!.emit({ type: "live", epochId: next.epochId, watermark: next.watermark });
@@ -162,7 +170,11 @@ function setupSession(operations: MemoryV2OperationStore): {
   const socket = new FakeV2Socket();
   return {
     session: new SyncV2Session({
-      intent: { catalog: { activeLimit: 2, archivedLimit: 1 }, currentThread: null },
+      intent: {
+        catalog: { activeLimit: 2, archivedLimit: 1 },
+        currentThread: null,
+        pendingRequests: "currentThread",
+      },
       operationStore: operations,
       projectionStore: new MemoryV2ProjectionStore(),
       reconnectDelayMs: 0,

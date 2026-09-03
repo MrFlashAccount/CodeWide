@@ -5,6 +5,7 @@ import type { V2U64 } from "@codewide/sync-client/v2";
 
 export type VoiceTransportEvent =
   | { type: "recording" }
+  | { level: number; type: "level" }
   | { text: string; type: "result" }
   | { retryAfterMs: number; type: "retry" }
   | { type: "cancelled" }
@@ -19,6 +20,7 @@ export interface VoiceTransportStartInput {
   audience: SavedServerId;
   onEvent(event: VoiceTransportEvent): void;
   scope: VoiceInputScope;
+  signal: AbortSignal;
   sourceGeneration: V2U64;
   thread: QualifiedThread | null;
 }

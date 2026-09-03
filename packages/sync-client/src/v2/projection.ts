@@ -18,7 +18,13 @@ export type V2CatalogEntry = {
 export type V2SemanticInvalidation = Extract<
   V2ProjectionChange,
   {
-    kind: "resourcesChanged" | "queueChanged" | "accountsChanged";
+    kind:
+      | "resourcesChanged"
+      | "agentsChanged"
+      | "queueChanged"
+      | "accountsChanged"
+      | "threadGoalChanged"
+      | "skillsChanged";
   }
 > & { watermark: V2U64 };
 
@@ -164,11 +170,16 @@ export function buildV2Projection(
   snapshot: V2SnapshotFrame,
 ): V2Projection {
   assertSnapshotCoverage(snapshot);
-  const entries = new Map<string, V2CatalogEntry>();
-  for (const entry of previous?.catalog ?? [])
-    entries.set(entry.thread.id, { thread: entry.thread, coverage: "outsideCurrentScope" });
-  for (const thread of [...snapshot.catalog.active, ...snapshot.catalog.archived])
-    entries.set(thread.id, { thread, coverage: "current" });
+  const entries: V2CatalogEntry[] = [];
+  const currentIds = new Set<string>();
+  for (const thread of [...snapshot.catalog.active, ...snapshot.catalog.archived]) {
+    entries.push({ thread, coverage: "current" });
+    currentIds.add(thread.id);
+  }
+  for (const entry of previous?.catalog ?? []) {
+    if (currentIds.has(entry.thread.id)) continue;
+    entries.push({ thread: entry.thread, coverage: "outsideCurrentScope" });
+  }
   let projection: V2Projection = {
     generationId: `${snapshot.epochId}:${snapshot.revision}`,
     sourceGeneration: snapshot.sourceGeneration,
@@ -177,7 +188,7 @@ export function buildV2Projection(
     watermark: snapshot.includedTail[0]?.watermark ?? snapshot.watermark,
     scope: copyScope(snapshot.scope),
     limits: { ...snapshot.limits },
-    catalog: [...entries.values()],
+    catalog: entries,
     currentThread: snapshot.currentThread,
     pendingRequests: snapshot.pendingRequests,
     resourceRevisions: {},
@@ -226,7 +237,7 @@ export function reduceV2Projection(
     const turns = [...currentThread.turns];
     const index = turns.findIndex((turn) => turn.id === change.turn.id);
     if (index === -1) turns.push(change.turn);
-    else turns[index] = change.turn;
+    else turns[index] = mergeTurnLifecycle(turns[index]!, change.turn);
     if (turns.length > next.limits.turnWindowMax)
       turns.splice(
         0,
@@ -240,6 +251,23 @@ export function reduceV2Projection(
       },
       turns,
     };
+  } else if (
+    change.kind === "itemLifecycleChanged" &&
+    projection.currentThread?.thread.id === change.threadId
+  ) {
+    const currentThread = projection.currentThread;
+    const turns = [...currentThread.turns];
+    const turnIndex = turns.findIndex((turn) => turn.id === change.turnId);
+    if (turnIndex === -1) return next;
+    const turn = turns[turnIndex]!;
+    const lifecycle = [...turn.lifecycle];
+    const lifecycleIndex = lifecycle.findIndex(
+      (candidate) => candidate.item.id === change.lifecycle.item.id,
+    );
+    if (lifecycleIndex === -1) lifecycle.push(change.lifecycle);
+    else lifecycle[lifecycleIndex] = change.lifecycle;
+    turns[turnIndex] = { ...turn, lifecycle };
+    next.currentThread = { ...currentThread, turns };
   } else if (change.kind === "pendingRequestOpened") {
     if (
       change.request.threadId !== null &&
@@ -272,8 +300,30 @@ export function reduceV2Projection(
     next.accountsRevision = change.revision;
     next.invalidations = [...projection.invalidations];
     appendInvalidation(next, { ...change, watermark });
+  } else if (
+    change.kind === "threadGoalChanged" ||
+    change.kind === "skillsChanged" ||
+    change.kind === "agentsChanged"
+  ) {
+    next.invalidations = [...projection.invalidations];
+    appendInvalidation(next, { ...change, watermark });
   }
   return next;
+}
+
+function mergeTurnLifecycle(
+  previous: V2ThreadWindow["turns"][number],
+  incoming: V2ThreadWindow["turns"][number],
+): V2ThreadWindow["turns"][number] {
+  if (previous.lifecycle.length === 0) return incoming;
+  if (incoming.lifecycle.length === 0) return { ...incoming, lifecycle: previous.lifecycle };
+  const lifecycle = [...previous.lifecycle];
+  for (const entry of incoming.lifecycle) {
+    const index = lifecycle.findIndex((candidate) => candidate.item.id === entry.item.id);
+    if (index === -1) lifecycle.push(entry);
+    else lifecycle[index] = entry;
+  }
+  return { ...incoming, lifecycle };
 }
 
 function copyScope(scope: V2CatalogScope): V2CatalogScope {
@@ -311,8 +361,15 @@ function upsertScopedThread(projection: V2Projection, thread: V2ThreadSummary): 
     thread,
     coverage: limit === 0 ? "outsideCurrentScope" : "current",
   };
-  if (existingIndex === -1) projection.catalog.unshift(entry);
-  else projection.catalog[existingIndex] = entry;
+  if (existingIndex !== -1) projection.catalog.splice(existingIndex, 1);
+  const partitionStart = projection.catalog.findIndex(
+    (candidate) => candidate.thread.archived === thread.archived,
+  );
+  projection.catalog.splice(
+    partitionStart === -1 ? projection.catalog.length : partitionStart,
+    0,
+    entry,
+  );
   enforcePartitionLimit(projection, thread.archived, limit, thread.id);
   enforcePartitionLimit(
     projection,

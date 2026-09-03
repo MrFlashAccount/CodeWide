@@ -9,12 +9,14 @@ use codewide_companion::{
     catalog::SessionCatalog,
     dictation::DictationService,
     history_service::HistoryService,
+    media::MediaProxyService,
     server::{self, CompanionServices},
     store::IndexStore,
     sync::SyncHub,
     sync_v2::{
         ProductionServices, SyncV2Mode, SyncV2Runtime, UpstreamSemanticSource,
-        protocol::{ACTION_KINDS, COMMAND_KINDS, QUERY_KINDS},
+        domain::{ApprovalPolicy, Effort, GranularApprovalConfig, Sandbox, ThreadSettings},
+        protocol::{COMMAND_KINDS, QUERY_KINDS},
     },
     upstream::UpstreamHandle,
 };
@@ -50,7 +52,9 @@ fn executable_schema_matches_the_rust_registry_and_closed_scalar_rules() {
     );
     assert_eq!(schema["x-codewide"]["queryKinds"], json!(QUERY_KINDS));
     assert_eq!(schema["x-codewide"]["commandKinds"], json!(COMMAND_KINDS));
-    assert_eq!(schema["x-codewide"]["actionKinds"], json!(ACTION_KINDS));
+    assert!(schema["$defs"].get("action").is_none());
+    assert!(schema["$defs"].get("actionResult").is_none());
+    assert!(schema["x-codewide"].get("actionKinds").is_none());
     let paths = schema["x-codewide"]["paths"].as_object().unwrap();
     for endpoint in [
         "sync",
@@ -127,6 +131,84 @@ fn executable_schema_enforces_exact_integer_and_utc_z_timestamp_domains() {
         "2026-08-28T12:34:56",
     ] {
         assert!(!timestamp.is_valid(&json!(invalid)), "accepted {invalid}");
+    }
+}
+
+#[test]
+fn executable_schema_keeps_catalog_search_partitioned_and_bounded() {
+    let mut schema: Value = serde_json::from_str(CONTRACT).unwrap();
+    schema["oneOf"] = json!([{ "$ref": "#/$defs/query" }]);
+    let validator = jsonschema::draft202012::options().build(&schema).unwrap();
+
+    assert!(validator.is_valid(&json!({
+        "kind": "catalog.search",
+        "partition": "active",
+        "text": "indexed thread",
+        "cursor": null,
+        "limit": 100
+    })));
+    for invalid in [
+        json!({"kind":"catalog.search","partition":"active","text":"","cursor":null,"limit":1}),
+        json!({"kind":"catalog.search","partition":"all","text":"thread","cursor":null,"limit":1}),
+        json!({"kind":"catalog.search","partition":"archived","text":"thread","cursor":null,"limit":101}),
+    ] {
+        assert!(!validator.is_valid(&invalid), "accepted {invalid}");
+    }
+}
+
+#[test]
+fn thread_settings_preserve_all_known_efforts_and_structured_granular_approval() {
+    let settings = ThreadSettings {
+        model: Some("gpt-5.6".into()),
+        effort: Some(Effort::Ultra),
+        approval_policy: ApprovalPolicy::Granular(GranularApprovalConfig {
+            sandbox_approval: true,
+            rules: false,
+            skill_approval: true,
+            request_permissions: false,
+            mcp_elicitations: true,
+        }),
+        sandbox: Sandbox::WorkspaceWrite,
+        personality: None,
+    };
+    let value = serde_json::to_value(settings).unwrap();
+    assert_eq!(
+        value,
+        json!({
+            "model": "gpt-5.6",
+            "effort": "ultra",
+            "approvalPolicy": {
+                "granular": {
+                    "sandboxApproval": true,
+                    "rules": false,
+                    "skillApproval": true,
+                    "requestPermissions": false,
+                    "mcpElicitations": true
+                }
+            },
+            "sandbox": "workspaceWrite",
+            "personality": null
+        })
+    );
+
+    let schema: Value = serde_json::from_str(CONTRACT).unwrap();
+    let mut focused = schema.clone();
+    focused["oneOf"] = json!([{ "$ref": "#/$defs/threadSettings" }]);
+    let validator = jsonschema::draft202012::options().build(&focused).unwrap();
+    assert!(validator.is_valid(&value));
+    assert!(!validator.is_valid(&json!({
+        "model": null,
+        "effort": "ultra",
+        "approvalPolicy": {"granular": {"sandboxApproval": true}},
+        "sandbox": "workspaceWrite",
+        "personality": null
+    })));
+    for effort in [
+        "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+    ] {
+        let mut known = value.clone();
+        known["effort"] = Value::String(effort.into());
+        assert!(validator.is_valid(&known), "rejected known effort {effort}");
     }
 }
 
@@ -289,6 +371,7 @@ async fn paired_session_reaches_auxiliary_routes_without_a_sync_epoch()
         registry,
         sync,
         CompanionServices {
+            media: Some(Arc::new(MediaProxyService::new())),
             sync_v2: Some(runtime),
             sync_v2_mode: SyncV2Mode::Canary,
             ..CompanionServices::default()
@@ -304,6 +387,32 @@ async fn paired_session_reaches_auxiliary_routes_without_a_sync_epoch()
         .send()
         .await?;
     assert_eq!(ports.status(), reqwest::StatusCode::OK);
+
+    let insecure_asset = reqwest::Client::new()
+        .post(format!("http://{address}/v2/media/streams"))
+        .bearer_auth(&session_token)
+        .json(&json!({"url":"http://example.test/report.pdf"}))
+        .send()
+        .await?;
+    assert_eq!(insecure_asset.status(), reqwest::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        insecure_asset.json::<Value>().await?,
+        json!({"code":"invalidRequest","message":"invalid closed V2 request"})
+    );
+
+    for request in [
+        reqwest::Client::new()
+            .post(format!("http://{address}/v2/media/streams"))
+            .json(&json!({"url":"https://example.test/report.pdf"})),
+        reqwest::Client::new()
+            .post(format!("http://{address}/v2/media/streams"))
+            .bearer_auth(&session_token)
+            .header("origin", "https://untrusted.example")
+            .json(&json!({"url":"https://example.test/report.pdf"})),
+    ] {
+        let response = request.send().await?;
+        assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    }
 
     let malformed = reqwest::Client::new()
         .post(format!("http://{address}/v2/tunnels"))
@@ -376,6 +485,7 @@ async fn paired_session(registry: &DeviceRegistry) -> Result<String, Box<dyn std
             &claim.device_id,
             vec![
                 "threads.read".into(),
+                "files.download.workspace".into(),
                 "localhost.forward".into(),
                 "shell.explicit".into(),
                 "turns.start".into(),

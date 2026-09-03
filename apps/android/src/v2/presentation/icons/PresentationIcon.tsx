@@ -26,6 +26,7 @@ export type PresentationIconName =
   | "flash"
   | "folder"
   | "forward"
+  | "hourglass"
   | "list"
   | "layers"
   | "mic"
@@ -101,6 +102,7 @@ const glyphs: Record<PresentationIconName, string> = {
   flash: "↯",
   folder: "□",
   forward: "›",
+  hourglass: "⌛",
   list: "☷",
   layers: "▱",
   mic: "⌾",

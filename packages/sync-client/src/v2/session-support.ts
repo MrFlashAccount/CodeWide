@@ -1,6 +1,6 @@
 import type { V2CommandTerminalFrame, V2OpenIntent } from "./frames";
 import type { V2Error } from "./model";
-import type { V2ActionResult, V2QueryResult } from "./operations";
+import type { V2QueryResult } from "./operations";
 import { validateV2ClientFrame } from "./validate-client";
 
 export type Pending<T> = {
@@ -46,6 +46,15 @@ export class SyncV2CommandDurableUnsettledError extends Error {
   }
 }
 
+export function isRetryableOperationReceiptFailure(cause: unknown): boolean {
+  if (!(cause instanceof SyncV2RequestError)) return true;
+  return (
+    cause.detail.code === "sourceUnavailable" ||
+    cause.detail.code === "rateLimited" ||
+    cause.detail.code === "generationChanged"
+  );
+}
+
 export function validateIntent(intent: V2OpenIntent): V2OpenIntent {
   validateV2ClientFrame({ type: "open", version: 2, intent });
   // WHY: the session retains this public input across reconnects, so it must not retain caller-owned aliases.
@@ -61,6 +70,7 @@ export function validateIntent(intent: V2OpenIntent): V2OpenIntent {
             threadId: intent.currentThread.threadId,
             turnLimit: intent.currentThread.turnLimit,
           },
+    pendingRequests: intent.pendingRequests,
   };
 }
 
@@ -69,7 +79,8 @@ export function sameIntent(left: V2OpenIntent, right: V2OpenIntent): boolean {
     left.catalog.activeLimit === right.catalog.activeLimit &&
     left.catalog.archivedLimit === right.catalog.archivedLimit &&
     left.currentThread?.threadId === right.currentThread?.threadId &&
-    left.currentThread?.turnLimit === right.currentThread?.turnLimit
+    left.currentThread?.turnLimit === right.currentThread?.turnLimit &&
+    left.pendingRequests === right.pendingRequests
   );
 }
 
@@ -124,7 +135,7 @@ export function commandPending(
   return map.get(operationId)!;
 }
 
-export function settleRequest<T extends V2QueryResult | V2ActionResult>(
+export function settleRequest<T extends V2QueryResult>(
   map: Map<string, Pending<T>>,
   frame: { requestId: string; result?: T; error?: V2Error },
 ): void {

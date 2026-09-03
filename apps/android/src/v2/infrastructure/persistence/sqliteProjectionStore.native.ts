@@ -12,6 +12,7 @@ import {
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "@codewide/tanstack-db-sqlite";
 
 import { getV2SqliteDatabase } from "./v2Database.native";
+import { parsePersistedProjection } from "./persistedStateValidation";
 
 const TABLE = "codewide_sync_v2_projection_v2_by_saved_server";
 const ACTIVE_TABLE = "codewide_sync_v2_active_v2_by_saved_server";
@@ -29,6 +30,7 @@ export function createNativeSyncV2ProjectionStore(): V2ProjectionStore {
   return createNativeSyncV2ProjectionStoreWithDatabase(getV2SqliteDatabase());
 }
 
+/** @testOnly Injects an isolated database into persistence regression tests. */
 export function createNativeSyncV2ProjectionStoreWithDatabase(
   database: SqliteDatabase,
 ): V2ProjectionStore {
@@ -67,11 +69,16 @@ export function createNativeSyncV2ProjectionStoreWithDatabase(
   ): Promise<V2Projection | null> => {
     const rows = extractRows(
       await executor.execute(
-        `SELECT generation.payload FROM ${ACTIVE_TABLE} active JOIN ${TABLE} generation ON generation.saved_server_id = active.saved_server_id AND generation.generation_id = active.generation_id WHERE active.saved_server_id = ? LIMIT 1`,
+        `SELECT generation.generation_id, generation.payload FROM ${ACTIVE_TABLE} active JOIN ${TABLE} generation ON generation.saved_server_id = active.saved_server_id AND generation.generation_id = active.generation_id WHERE active.saved_server_id = ? LIMIT 1`,
         [savedServerId],
       ),
     );
-    return parseProjection(rows[0]?.payload);
+    const row = rows[0];
+    if (row === undefined) return null;
+    const projection = parsePersistedProjection(row.payload);
+    if (projection !== null) return projection;
+    await quarantineProjection(executor, savedServerId, row.generation_id);
+    return null;
   };
 
   const readRetained = async (
@@ -79,11 +86,17 @@ export function createNativeSyncV2ProjectionStoreWithDatabase(
     savedServerId: string,
   ): Promise<V2Projection | null> => {
     const rows = extractRows(
-      await executor.execute(`SELECT payload FROM ${TABLE} WHERE saved_server_id = ? LIMIT 1`, [
-        savedServerId,
-      ]),
+      await executor.execute(
+        `SELECT generation_id, payload FROM ${TABLE} WHERE saved_server_id = ? LIMIT 1`,
+        [savedServerId],
+      ),
     );
-    return parseProjection(rows[0]?.payload);
+    const row = rows[0];
+    if (row === undefined) return null;
+    const projection = parsePersistedProjection(row.payload);
+    if (projection !== null) return projection;
+    await quarantineProjection(executor, savedServerId, row.generation_id);
+    return null;
   };
 
   const replaceActive = async (
@@ -133,9 +146,12 @@ export function createNativeSyncV2ProjectionStoreWithDatabase(
     },
     async applyChange(savedServerId, epochId, watermark: V2U64, change: V2ProjectionChange) {
       await prepare();
-      await database.transaction(async (executor) => {
+      const applied = await database.transaction(async (executor) => {
         const current = await readActive(executor, savedServerId);
-        if (current === null || current.epochId !== epochId)
+        // Returning lets a corrupt row's quarantine commit before the public operation fails.
+        // Throwing inside this transaction would roll the quarantine deletion back as well.
+        if (current === null) return false;
+        if (current.epochId !== epochId)
           throw new Error("Sync V2 change does not belong to the active native generation");
         if (compareV2Watermarks(watermark, current.watermark) <= 0)
           throw new Error("Sync V2 native watermark did not advance");
@@ -144,7 +160,10 @@ export function createNativeSyncV2ProjectionStoreWithDatabase(
           savedServerId,
           reduceV2Projection(current, watermark, change),
         );
+        return true;
       });
+      if (!applied)
+        throw new Error("Sync V2 change does not belong to the active native generation");
       publish(savedServerId);
     },
     async commitSnapshot(savedServerId, snapshot: V2SnapshotFrame, signal?: AbortSignal) {
@@ -179,21 +198,7 @@ export function createNativeSyncV2ProjectionStoreWithDatabase(
     async hasSavedServerData(savedServerId) {
       await prepare();
       return database.transaction(async (executor) => {
-        const rows = extractRows(
-          await executor.execute(
-            `SELECT 1 AS present FROM ${TABLE} WHERE saved_server_id = ? LIMIT 1`,
-            [savedServerId],
-          ),
-        );
-        if (rows.length > 0) return true;
-        return (
-          extractRows(
-            await executor.execute(
-              `SELECT 1 AS present FROM ${ACTIVE_TABLE} WHERE saved_server_id = ? LIMIT 1`,
-              [savedServerId],
-            ),
-          ).length > 0
-        );
+        return (await readRetained(executor, savedServerId)) !== null;
       });
     },
     async retained(savedServerId) {
@@ -221,8 +226,17 @@ function assertNotAborted(signal?: AbortSignal): void {
   }
 }
 
-function parseProjection(payload: SqliteValue | undefined): V2Projection | null {
-  return typeof payload === "string" ? (JSON.parse(payload) as V2Projection) : null;
+async function quarantineProjection(
+  executor: SqliteExecutor,
+  savedServerId: string,
+  generationId: SqliteValue | undefined,
+): Promise<void> {
+  await executor.execute(`DELETE FROM ${ACTIVE_TABLE} WHERE saved_server_id = ?`, [savedServerId]);
+  if (typeof generationId !== "string") return;
+  await executor.execute(`DELETE FROM ${TABLE} WHERE saved_server_id = ? AND generation_id = ?`, [
+    savedServerId,
+    generationId,
+  ]);
 }
 
 function extractRows(result: unknown): readonly Record<string, SqliteValue>[] {

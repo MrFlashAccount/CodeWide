@@ -1,4 +1,1 @@
-export {
-  createCommandCorrelationStore,
-  createCommandCorrelationStoreWithDatabase,
-} from "./sqliteCommandCorrelationStore.native";
+export { createCommandCorrelationStore } from "./sqliteCommandCorrelationStore.native";

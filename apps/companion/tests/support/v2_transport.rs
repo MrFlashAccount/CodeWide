@@ -205,7 +205,8 @@ pub async fn open(client: &mut Client, thread_id: &str) -> Result<Value, Box<dyn
             "version": 2,
             "intent": {
                 "catalog": {"activeLimit": 1, "archivedLimit": 1},
-                "currentThread": {"threadId": thread_id, "turnLimit": 1}
+                "currentThread": {"threadId": thread_id, "turnLimit": 1},
+                "pendingRequests": "currentThread"
             }
         }),
     )

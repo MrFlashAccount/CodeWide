@@ -4,8 +4,8 @@ use std::{
 };
 
 use codewide_companion::vcs::{
-    CHANGES_CAPABILITY, DIFF_CAPABILITY, GitProvider, VcsError, VcsFile, VcsScope, VcsSnapshot,
-    WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult, WorkspaceSupport,
+    CHANGES_CAPABILITY, DIFF_CAPABILITY, DIFF_PAGE_CAPABILITY, GitProvider, VcsError, VcsFile,
+    VcsScope, VcsSnapshot, WORKSPACE_CREATE_CAPABILITY, WorkspaceCreateResult, WorkspaceSupport,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -61,6 +61,7 @@ async fn dispatch(request: Request) -> Response {
         "initialize" => initialize(&request.params),
         "vcs.changes" => changes_request(&request.params).await,
         "vcs.diff" => diff_request(&request.params).await,
+        "vcs.diffPage" => diff_page_request(&request.params).await,
         "workspace.inspect" => workspace_inspect_request(&request.params).await,
         "workspace.create" => workspace_create_request(&request.params).await,
         _ => Err(ProviderError::MethodNotFound(request.method)),
@@ -111,7 +112,12 @@ fn initialize(params: &Value) -> Result<Value, ProviderError> {
         "provider": "git",
         "displayName": "Git",
         "version": env!("CARGO_PKG_VERSION"),
-        "capabilities": [CHANGES_CAPABILITY, DIFF_CAPABILITY, WORKSPACE_CREATE_CAPABILITY]
+        "capabilities": [
+            CHANGES_CAPABILITY,
+            DIFF_CAPABILITY,
+            DIFF_PAGE_CAPABILITY,
+            WORKSPACE_CREATE_CAPABILITY
+        ]
     }))
 }
 
@@ -131,6 +137,29 @@ async fn diff_request(params: &Value) -> Result<Value, ProviderError> {
         .ok_or_else(|| VcsError::FileNotChanged(path.clone()))?;
     serde_json::to_value(GitProvider.diff(&snapshot, file).await?)
         .map_err(|error| ProviderError::Protocol(error.to_string()))
+}
+
+async fn diff_page_request(params: &Value) -> Result<Value, ProviderError> {
+    let workspace = required_absolute_path(params, "workspace")?;
+    let path = required_absolute_path(params, "path")?;
+    let scope = change_scope(params)?;
+    let offset = required_usize(params, "offset")?;
+    let limit = required_usize(params, "limit")?;
+    let snapshot = GitProvider.changes(&workspace, scope).await?;
+    let requested_snapshot = required_token(params, "snapshotId")?;
+    if snapshot.snapshot_id != requested_snapshot {
+        return Err(ProviderError::Protocol(
+            "snapshot changed before the diff page could be read".into(),
+        ));
+    }
+    let file = find_snapshot_file(&snapshot, &path)
+        .ok_or_else(|| VcsError::FileNotChanged(path.clone()))?;
+    serde_json::to_value(
+        GitProvider
+            .diff_page(&snapshot, file, offset, limit)
+            .await?,
+    )
+    .map_err(|error| ProviderError::Protocol(error.to_string()))
 }
 
 async fn workspace_inspect_request(params: &Value) -> Result<Value, ProviderError> {
@@ -295,6 +324,14 @@ fn required_token<'a>(params: &'a Value, name: &str) -> Result<&'a str, Provider
         })
         .ok_or_else(|| ProviderError::Protocol(format!("{name} is invalid")))?;
     Ok(value)
+}
+
+fn required_usize(params: &Value, name: &str) -> Result<usize, ProviderError> {
+    params
+        .get(name)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| ProviderError::Protocol(format!("{name} is invalid")))
 }
 
 fn find_snapshot_file<'a>(snapshot: &'a VcsSnapshot, path: &Path) -> Option<&'a VcsFile> {

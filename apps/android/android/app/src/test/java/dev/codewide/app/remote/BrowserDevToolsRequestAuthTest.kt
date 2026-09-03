@@ -92,5 +92,20 @@ class BrowserDevToolsRequestAuthTest {
     assertEquals(BrowserDevToolsAssetResolution.NotAsset, result)
   }
 
+  @Test
+  fun socketFloodIsRejectedAtTheAdmissionGateBeforeWorkerAllocation() {
+    val gate = BrowserConnectionGate(3)
+    assertTrue(gate.tryAcquire())
+    assertTrue(gate.tryAcquire())
+    assertTrue(gate.tryAcquire())
+
+    repeat(100) { assertFalse(gate.tryAcquire()) }
+    assertEquals(0, gate.available())
+
+    gate.release()
+    assertTrue(gate.tryAcquire())
+    assertEquals(0, gate.available())
+  }
+
   private fun String.bytes(): ByteArray = toByteArray(StandardCharsets.ISO_8859_1)
 }

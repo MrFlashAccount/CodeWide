@@ -1,18 +1,32 @@
 import type {
+  V2Attachment,
+  V2Command,
   V2CommandTerminalFrame,
+  V2InputBlock,
   V2Item,
+  V2PendingRequest,
   V2Query,
   V2QueryResult,
   V2ThreadSettings,
   V2ThreadWindow,
 } from "@codewide/sync-client/v2";
-import { useState, useSyncExternalStore, useTransition } from "react";
-import { useWindowDimensions } from "react-native";
+import { setStringAsync } from "expo-clipboard";
+import { router } from "expo-router";
+import { useReducer, useState, useSyncExternalStore, useTransition } from "react";
+import { StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
+import { V2ChatComposer } from "../../V2ChatComposer";
+import type { ComposerAttachmentDraft } from "../../application/composer/composerAttachmentDraft";
+import type { ComposerDraftLocalState } from "../../application/composer/composerAttachmentController";
+import type {
+  ComposerAttachmentDraftItem,
+  ComposerSubmission,
+} from "../../application/composer/composerAttachmentTypes";
+import type { ComposerAttachmentTarget } from "../../application/ports/composerAttachmentTransport";
 import { ActionSheetView, type ActionSheetItem } from "../../presentation/actions/ActionSheetView";
 import { TopBarActionView } from "../../presentation/actions/TopBarActionView";
-import { ShimmerText } from "../../presentation/text/ShimmerText";
+import { ResourceStateView } from "../../presentation/feedback/ResourceStateView";
 import {
   UsagePopoverView,
   type UsageAccountViewModel,
@@ -26,11 +40,20 @@ import { useLiveQuery } from "../../application/react/useLiveQuery";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { ProjectionResource } from "../../application/resources/projectionResource";
 import type { ResourceSnapshot } from "../../application/resources/resource";
-import { ThreadHistoryResource } from "../../application/resources/threadHistoryResource";
+import {
+  ThreadHistoryResource,
+  type ThreadHistoryRestoreCursor,
+} from "../../application/resources/threadHistoryResource";
+import { ThreadSearchResource } from "../../application/resources/threadSearchResource";
 import type { V2Runtime } from "../../application/v2Runtime";
-import type { QualifiedThread } from "../../domain/qualifiedThread";
-import { WorkspaceView } from "../../presentation/layouts/WorkspaceView";
+import { useTerminalContext } from "../../application/react/useTerminalContext";
+import type { SkillCatalogEntry } from "../../application/skills/skillSelection";
+import { insertSkillInvocation } from "../../application/skills/skillSelection";
+import { threadId } from "../../domain/ids";
+import { qualifiedThread, type QualifiedThread } from "../../domain/qualifiedThread";
+import { WorkspaceSubtitleView, WorkspaceView } from "../../presentation/layouts/WorkspaceView";
 import { ConversationView } from "../../presentation/conversation/ConversationView";
+import { ConversationComposerDockView } from "../../presentation/conversation/ConversationComposerDockView";
 import { ConversationSearchView } from "../../presentation/conversation/ConversationSearchView";
 import {
   ContextRingView,
@@ -38,8 +61,10 @@ import {
 } from "../../presentation/conversation/ContextRingActionView";
 import {
   TimelineView,
-  type TimelineDisplayActivity,
+  type TimelineActivityActions,
+  type TimelineDisplayResponseRow,
   type TimelineDisplayTurn,
+  type TimelineTurnActions,
 } from "../../presentation/conversation/TimelineView";
 import {
   ComposerContextStripView,
@@ -47,17 +72,72 @@ import {
 } from "../../presentation/input/ComposerContextStripView";
 import { ProductText } from "../../presentation/text/ProductText";
 import { isDesktopWindow } from "../../presentation/layouts/windowLayout";
-import { ChatComposer } from "../composer/ChatComposer";
-import { useVoiceInputControl, type VoiceInputControlModel } from "./VoiceInputControl";
+import { quickdrawImageSource } from "../../platform/drawing/quickdrawImageSource";
+import { CostBreakdownPopover } from "../../presentation/usage/CostBreakdownPopover";
+import { LiveTurnPlanPopover } from "../../presentation/usage/LiveTurnPlanPopover";
+import type {
+  LiveTurnPlanViewModel,
+  UsageBreakdownViewModel,
+} from "../../presentation/usage/usageTypes";
+import { DeliveryModeSelectorView } from "../../presentation/queue/DeliveryModeSelectorView";
+import type { QueueDeliveryMode } from "../../presentation/queue/queueTypes";
+import {
+  V2RenderingCapabilityProvider,
+  type V2RenderingCapabilities,
+} from "../../rendering/renderingCapabilities";
+import { createV2RenderingCapabilities } from "./createV2RenderingCapabilities";
+import { attachmentForReference } from "../attachments/attachmentReference";
+import { DrawingWorkspace, type DrawingWorkspaceRequest } from "../drawing/DrawingWorkspace";
+import { createAttachmentAnnotationCapability } from "../drawing/attachmentAnnotation";
+import { drawingWorkspaceRequest } from "../drawing/drawingDraft";
+import { ThreadGoalSheet } from "../goal/ThreadGoalSheet";
+import {
+  accountSettingsDestination,
+  agentDestination,
+  attachmentPreviewDestination,
+  itemOutputDestination,
+  newThreadDestination,
+  reviewResponseDestination,
+  threadDestination,
+} from "../navigation/routeDestinations";
+import { PendingRequestsPanel } from "../requests/PendingRequestsPanel";
+import { QueueControlsFeature } from "../queue/QueueManagerFeature";
+import { deliveryCommand } from "../queue/deliveryCommand";
+import { StartReviewLaunchButton } from "../review/ReviewEntryActions";
+import { SkillsSheet } from "../skills/SkillsSheet";
+import { terminalComposerContextItem } from "../terminal/terminalComposerContextItem";
+import { threadMarkReadCommand } from "../threadList/threadListCommands";
+import { createTurnActions, turnActionAvailability } from "../turnActions/turnActions";
+import type { EditPriorTurnReady, ReviewResponseRequest } from "../turnActions/turnActionTypes";
+import { liveTurnPlanPresentation } from "../usage/liveTurnPlanPresentation";
+import { usagePresentation } from "../usage/usagePresentation";
+import {
+  useVoiceInputControl,
+  useVoiceInputLevel,
+  type VoiceInputControlModel,
+} from "./VoiceInputControl";
 import { ConversationThreadMenu } from "./ConversationThreadMenu";
-import { activityDisplayModel, timelineTurnsDisplayModel } from "./timelineDisplayModel";
+import { ActionPressable } from "../../ui/actions/ActionPressable";
+import {
+  timelineResponseRowsDisplayModel,
+  timelineTurnsDisplayModel,
+} from "./timelineDisplayModel";
 import { accountUsagePresentation } from "../accounts/accountUsagePresentation";
+import { spacing } from "../../theme";
+import {
+  conversationPermissionContextItem,
+  nextConversationPermissionSettings,
+  threadSettingsUpdateCommand,
+} from "./conversationPermissionContext";
+import { unsupportedItemRecoveryPrompt } from "./unsupportedItemRecovery";
 
 type ThreadResourceName = "agents" | "attachments" | "changes" | "terminal";
 type ModelsResult = Extract<V2QueryResult, { kind: "models.list" }>;
 type ThreadEffort = NonNullable<V2ThreadSettings["effort"]>;
+type ResponseReviewNavigation = ReviewResponseRequest & { owner: QualifiedThread };
 
 interface ComposerContextItemsInput {
+  actionable: boolean;
   agentCount: number;
   modelsError: string | null;
   modelsLoading: boolean;
@@ -66,11 +146,13 @@ interface ComposerContextItemsInput {
   onSelectPermissions(id: string): void;
   portCount: number;
   resourcesResult: V2QueryResult | null;
+  terminalItem: ComposerContextItem | null;
   settingsPending: boolean;
   threadWindow: V2ThreadWindow | null;
 }
 
 interface ThreadControlChipsInput {
+  actionable: boolean;
   agentCount: number;
   modelsSnapshot: ResourceSnapshot<V2QueryResult | null>;
   owner: QualifiedThread;
@@ -79,8 +161,53 @@ interface ThreadControlChipsInput {
   runtime: V2Runtime;
   setError(message: string | null): void;
   settings: V2ThreadSettings | null;
+  terminalItem: ComposerContextItem | null;
   threadWindow: V2ThreadWindow | null;
 }
+
+interface LockedComposerActivation {
+  correlationId: string;
+  operationId: string;
+}
+
+interface InitialHistoryRestore {
+  cursor: ThreadHistoryRestoreCursor | null;
+  turnId: string | null;
+  viewportOffsetPx: number | null;
+}
+
+interface ConversationComposerState {
+  clearVersion: number;
+  error: string | null;
+  lockedActivation: LockedComposerActivation | null;
+  pendingInputBlocks: V2InputBlock[];
+  terminalBlocked: boolean;
+  text: string;
+}
+
+type ConversationComposerAction =
+  | { kind: "addTranscript"; text: string }
+  | { kind: "clearPendingInput" }
+  | { kind: "edit" }
+  | { kind: "editPriorTurn"; blocks: V2InputBlock[]; text: string }
+  | { kind: "lock"; activation: LockedComposerActivation; message: string }
+  | { kind: "releaseUnsettled" }
+  | { kind: "selectSkill"; block: V2InputBlock; text: string }
+  | { kind: "setError"; message: string | null }
+  | { kind: "setText"; text: string }
+  | { kind: "settled" }
+  | { kind: "submitCompleted" }
+  | { kind: "terminalFailure"; message: string }
+  | { kind: "unlockWithError"; message: string };
+
+const INITIAL_COMPOSER_STATE: ConversationComposerState = {
+  clearVersion: 0,
+  error: null,
+  lockedActivation: null,
+  pendingInputBlocks: [],
+  terminalBlocked: false,
+  text: "",
+};
 
 const ACCOUNTS_QUERY = { kind: "accounts.list" } as const;
 const MODELS_QUERY = { kind: "models.list" } as const;
@@ -123,10 +250,15 @@ export function ConversationScreen(props: ConversationScreenProps): React.JSX.El
   const runtime = useV2Runtime();
   const [outer] = useState(() => runtime.projection(owner.savedServerId, owner.threadId));
   const opened = useSyncExternalStore(outer.subscribe, outer.snapshot, outer.snapshot);
+  const retryOpening = useEvent((): Promise<void> => outer.refresh());
   if (opened.value === null) {
     return (
       <WorkspaceView title="Conversation">
-        <ShimmerText text="Opening conversation…" />
+        <ResourceStateView
+          message={opened.status === "error" ? opened.message : "Opening conversation…"}
+          onRetry={retryOpening}
+          status={opened.status === "error" ? "error" : "loading"}
+        />
       </WorkspaceView>
     );
   }
@@ -143,27 +275,77 @@ export function ConversationScreen(props: ConversationScreenProps): React.JSX.El
 }
 
 function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Element {
+  const surface = useProjectedConversationSurface(props);
+  return <ConversationSurface {...surface} />;
+}
+
+function useProjectedConversationSurface(
+  props: ProjectedConversationProps,
+): ConversationSurfaceProps {
   const { onBack, onOpenPorts, onOpenResource, owner, resource } = props;
   const runtime = useV2Runtime();
   const { height, width } = useWindowDimensions();
   const [ports] = useState(() => runtime.ports(owner.savedServerId));
   const portsSnapshot = useSyncExternalStore(ports.subscribe, ports.snapshot, ports.snapshot);
+  const terminalContext = useTerminalContext(runtime.terminal, owner);
   const servers = useSyncExternalStore(
     runtime.savedServers.subscribe,
     runtime.savedServers.snapshot,
     runtime.savedServers.snapshot,
   );
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
+  const refreshState = useSyncExternalStore(
+    resource.subscribeRefresh,
+    resource.refreshSnapshot,
+    resource.refreshSnapshot,
+  );
+  const requestedThread = resource.requestedThreadAuthority();
+  const threadAuthorityReady =
+    requestedThread.threadId === owner.threadId && requestedThread.status === "ready";
+  const threadLive =
+    threadAuthorityReady &&
+    snapshot.value.state === "live" &&
+    snapshot.value.projections.live?.currentThread?.thread.id === owner.threadId;
+  const retryThreadAuthority = useEvent(async (): Promise<void> => {
+    await runtime.sessions.open(owner.savedServerId, owner.threadId);
+  });
   const accountsSnapshot = useLiveQuery(runtime, owner.savedServerId, ACCOUNTS_QUERY);
   const modelsSnapshot = useLiveQuery(runtime, owner.savedServerId, MODELS_QUERY);
   const threadResourcesSnapshot = useLiveQuery(runtime, owner.savedServerId, {
+    cursor: null,
     kind: "thread.resources",
+    limit: 100,
     scope: "session",
+    threadId: owner.threadId,
+  });
+  const threadAgentsSnapshot = useLiveQuery(runtime, owner.savedServerId, {
+    cursor: null,
+    kind: "thread.agents",
+    limit: 100,
     threadId: owner.threadId,
   });
   const projection = snapshot.value.projections.live ?? snapshot.value.projections.retained;
   const window =
     projection?.currentThread?.thread.id === owner.threadId ? projection.currentThread : null;
+  const draftId = `thread:${owner.threadId}`;
+  const attachmentTarget = {
+    threadId: owner.threadId,
+    workspace: window?.thread.workspace ?? null,
+  };
+  const composerDraftScope = {
+    draftId,
+    savedServerId: owner.savedServerId,
+    target: attachmentTarget,
+  };
+  const [composerDraftState] = useState(() =>
+    runtime.composerAttachments.state(composerDraftScope),
+  );
+  const localDraft = useSyncExternalStore(
+    composerDraftState.subscribe,
+    composerDraftState.snapshot,
+    composerDraftState.snapshot,
+  );
+  const [initialHistoryRestore] = useState(() => historyRestore(localDraft.value));
   const executeHistoryQuery = useEvent(async (query: V2Query): Promise<V2QueryResult> =>
     runtime.queries.execute(owner.savedServerId, query),
   );
@@ -171,6 +353,7 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
     () =>
       new ThreadHistoryResource({
         execute: executeHistoryQuery,
+        restoreCursor: initialHistoryRestore.cursor,
         source: resource,
         threadId: owner.threadId,
       }),
@@ -181,23 +364,123 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
     historyResource.snapshot,
   );
   const history = { resource: historyResource, snapshot: historyObserved.value };
+  const [searchResource] = useState(
+    () =>
+      new ThreadSearchResource({
+        execute: executeHistoryQuery,
+        source: historyResource,
+        threadId: owner.threadId,
+      }),
+  );
+  const searchObserved = useSyncExternalStore(
+    searchResource.subscribe,
+    searchResource.snapshot,
+    searchResource.snapshot,
+  );
+  const search = searchObserved.value;
   const loadOlder = useEvent((): Promise<void> => history.resource.loadOlder());
   const loadNewer = useEvent((): Promise<void> => history.resource.loadNewer());
+  const jumpToLatest = useEvent(() => history.resource.jumpToLatest());
   const loadActivity = useTurnActivityLoader(runtime, owner);
   const settleHistoryWindow = useEvent((direction: "newer" | "older") =>
     history.resource.settle(direction),
   );
-  const [composerError, setComposerError] = useState<string | null>(null);
-  const [lockedActivation, setLockedActivation] = useState<{
-    correlationId: string;
-    operationId: string;
-  } | null>(null);
-  const [terminalBlocked, setTerminalBlocked] = useState(false);
-  const [composerText, setComposerText] = useState("");
-  const [clearVersion, setClearVersion] = useState(0);
+  const [composerState, dispatchComposer] = useReducer(conversationComposerReducer, {
+    ...INITIAL_COMPOSER_STATE,
+    text: localDraft.value.text,
+  });
+  const composerError =
+    composerState.error ?? (localDraft.status === "error" ? localDraft.message : null);
+  const lockedActivation = composerState.lockedActivation;
+  const terminalBlocked = composerState.terminalBlocked;
+  const composerText = localDraft.value.text;
+  const pendingInputBlocks = composerState.pendingInputBlocks;
+  const clearVersion = composerState.clearVersion;
+  const setComposerError = useEvent((message: string | null) => {
+    dispatchComposer({ kind: "setError", message });
+  });
+  const setComposerText = useEvent((text: string) => {
+    dispatchComposer({ kind: "setText", text });
+    runtime.composerAttachments.setText(composerDraftScope, text);
+  });
+  const deliveryPreference: QueueDeliveryMode = localDraft.value.deliveryMode;
+  const setDeliveryPreference = useEvent((mode: QueueDeliveryMode) => {
+    runtime.composerAttachments.setDeliveryMode(composerDraftScope, mode);
+  });
+  const setHistoryAnchor = useEvent((turnId: string | null, viewportOffsetPx: number | null) => {
+    const cursor = turnId === null ? null : history.resource.restoreCursorFor(turnId);
+    runtime.composerAttachments.setHistoryPosition(composerDraftScope, {
+      anchorOffsetPx: turnId === null ? null : viewportOffsetPx,
+      anchorTurnId: turnId,
+      generationId: cursor?.generationId ?? null,
+      pageCursor: cursor?.cursor ?? null,
+      pageDirection: cursor?.direction ?? null,
+    });
+  });
+  const [drawingRequest, setDrawingRequest] = useState<DrawingWorkspaceRequest | null>(null);
+  const [goalVisible, setGoalVisible] = useState(false);
   const [resourceMenuVisible, setResourceMenuVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const [searchVisible, setSearchVisible] = useState(false);
+  const [skillsVisible, setSkillsVisible] = useState(false);
+  const attachmentDraft = runtime.composerAttachments.draft({
+    ...composerDraftScope,
+  });
+  const drawingNow = useEvent(() => new Date(runtime.now()));
+  const presentDrawing = useEvent((request: DrawingWorkspaceRequest) => {
+    setDrawingRequest(request);
+  });
+  const annotateAttachment = createAttachmentAnnotationCapability({
+    imageSource: quickdrawImageSource,
+    now: drawingNow,
+    present: presentDrawing,
+  });
+  const threadAttachments =
+    threadResourcesSnapshot.value?.kind === "thread.resources"
+      ? threadResourcesSnapshot.value.attachments
+      : [];
+  const renderingCapabilities = createV2RenderingCapabilities({
+    annotate: annotateAttachment,
+    attachments: threadAttachments,
+    owner,
+    ports,
+    runtime,
+  });
+  const openActivityAttachment = useEvent((attachmentId: string) => {
+    router.push(attachmentPreviewDestination({ attachmentId, owner }));
+  });
+  const openActivitySubagent = useEvent((agentThreadId: string) => {
+    router.push(agentDestination(owner, agentThreadId));
+  });
+  const openActivityItemOutput = useEvent((turnId: string, itemId: string) => {
+    router.push(itemOutputDestination(owner, turnId, itemId));
+  });
+  const copyUnsupportedActivity = useEvent(async (payloadJson: string) => {
+    await setStringAsync(payloadJson);
+  });
+  const fixUnsupportedActivity = useEvent((sourceKind: string, payloadJson: string) => {
+    const recoveryDraftScope = {
+      draftId: `new-thread:${owner.savedServerId}`,
+      savedServerId: owner.savedServerId,
+      target: { threadId: null, workspace: null },
+    };
+    runtime.composerAttachments.setText(
+      recoveryDraftScope,
+      unsupportedItemRecoveryPrompt(sourceKind, payloadJson),
+    );
+    router.push(newThreadDestination(owner.savedServerId));
+  });
+  const activityActions: TimelineActivityActions = {
+    onCopyUnsupported: copyUnsupportedActivity,
+    onFixUnsupported: fixUnsupportedActivity,
+    onOpenAttachment: openActivityAttachment,
+    onOpenItemOutput: openActivityItemOutput,
+    onOpenSubagent: openActivitySubagent,
+  };
+  const reviewAvailable =
+    threadResourcesSnapshot.authority === "live" &&
+    threadResourcesSnapshot.value?.kind === "thread.resources" &&
+    threadResourcesSnapshot.value.review.targetKinds.length > 0 &&
+    threadResourcesSnapshot.value.review.deliveries.length > 0;
   const receiveSettlement = useEvent((settlement: CommandSettlement) => {
     if (
       lockedActivation === null ||
@@ -206,22 +489,21 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
     ) {
       return;
     }
-    setLockedActivation(null);
     if (settlement.kind === "notCreated") {
-      setTerminalBlocked(false);
-      setComposerError(settlement.failure.message);
+      dispatchComposer({ kind: "unlockWithError", message: settlement.failure.message });
       return;
     }
     if (settlement.kind === "terminal") {
-      if (completedCurrentTurn(settlement.frame, owner.threadId)) {
-        setTerminalBlocked(false);
-        setComposerError(null);
-        setComposerText("");
-        setClearVersion((version) => version + 1);
+      if (completedComposerCommand(settlement.frame, owner.threadId)) {
+        dispatchComposer({ kind: "settled" });
+        runtime.composerAttachments.setText(composerDraftScope, "");
+        attachmentDraft.clear();
         return;
       }
-      setTerminalBlocked(true);
-      setComposerError(composerTerminalMessage(settlement.frame));
+      dispatchComposer({
+        kind: "terminalFailure",
+        message: composerTerminalMessage(settlement.frame),
+      });
     }
   });
   const [correlations] = useState(() =>
@@ -247,30 +529,56 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
   );
   if (lockedActivation !== null) unsettledCorrelationIds.add(lockedActivation.correlationId);
   const unsettledCount = unsettledCorrelationIds.size;
-  const locallyLocked =
-    lockedActivation !== null &&
-    correlations.isLocked(lockedActivation.correlationId, lockedActivation.operationId);
+  const locallyLocked = correlations.isScopeLocked();
+  const unsettledBlockingCount = correlations.blockingCount();
+  const releaseUnsettled = useEvent(async (): Promise<void> => {
+    await correlations.releaseBlocking();
+    dispatchComposer({ kind: "releaseUnsettled" });
+  });
   const editComposer = useEvent(() => {
-    setTerminalBlocked(false);
-    setComposerError(null);
+    dispatchComposer({ kind: "edit" });
   });
   const addTranscript = useEvent((text: string) => {
-    setComposerText((current) => (current.trim() === "" ? text : `${current.trimEnd()} ${text}`));
-  });
-  const voice = useVoiceInputControl({
-    audience: owner.savedServerId,
-    live: snapshot.value.state === "live" && snapshot.value.projections.live !== null,
-    onTranscript: addTranscript,
-    projection: snapshot.value.projections.live,
-    scope: { id: owner.threadId, kind: "composer" },
-    thread: owner,
+    dispatchComposer({ kind: "addTranscript", text });
+    runtime.composerAttachments.setText(
+      composerDraftScope,
+      composerText.trim() === "" ? text : `${composerText.trimEnd()}\n${text}`,
+    );
   });
   const closeResourceMenu = useEvent(() => setResourceMenuVisible(false));
+  const closeDrawing = useEvent(() => setDrawingRequest(null));
+  const closeGoal = useEvent(() => setGoalVisible(false));
+  const closeSkills = useEvent(() => setSkillsVisible(false));
+  const completeDrawing = useEvent(() => setDrawingRequest(null));
+  const editDrawing = useEvent((item: ComposerAttachmentDraftItem) => {
+    const request = drawingWorkspaceRequest(item);
+    if (request === null) {
+      setComposerError("This attachment cannot be edited.");
+      return;
+    }
+    setDrawingRequest(request);
+  });
+  const selectSkill = useEvent((skill: SkillCatalogEntry) => {
+    const inserted = insertSkillInvocation(
+      composerText,
+      { end: composerText.length, start: composerText.length },
+      skill,
+    );
+    dispatchComposer({ kind: "selectSkill", block: inserted.block, text: inserted.text });
+    runtime.composerAttachments.setText(composerDraftScope, inserted.text);
+  });
   const openThreadResource = useEvent(async (id: ThreadResourceName): Promise<void> => {
     await onOpenResource(id);
   });
+  const changeSearchQuery = useEvent((query: string) => searchResource.setQuery(query));
+  const moveSearchNewer = useEvent(() => {
+    searchResource.moveNewer().catch(() => undefined);
+  });
+  const moveSearchOlder = useEvent(() => {
+    searchResource.moveOlder().catch(() => undefined);
+  });
   const closeSearch = useEvent(() => {
-    setSearchQuery("");
+    searchResource.setQuery("");
     setSearchVisible(false);
   });
   const toggleSearch = useEvent(() => {
@@ -303,12 +611,14 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
       return;
     }
     if (id === "skills") {
-      openThreadResource("agents").catch(() => setComposerError("Could not open skills."));
+      setSkillsVisible(true);
       return;
     }
-    setComposerError(
-      id === "drawing" ? "Drawing is not available yet." : "Goal is not available yet.",
-    );
+    if (id === "drawing") {
+      setDrawingRequest({ draftItemId: null, initialSnapshot: null, mode: "drawing" });
+      return;
+    }
+    if (id === "goal") setGoalVisible(true);
   });
   const openContext = useEvent((id: string) => {
     if (isThreadResourceName(id)) {
@@ -317,10 +627,14 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
       Promise.resolve(onOpenPorts()).catch(() => setComposerError("Could not open ports."));
     } else setResourceMenuVisible(true);
   });
-  const agentCount = (projection?.catalog ?? []).filter(
-    (value) => value.thread.parentId === owner.threadId,
-  ).length;
+  const agentCount =
+    threadAgentsSnapshot.authority === "live" &&
+    threadAgentsSnapshot.value.kind === "thread.agents" &&
+    threadAgentsSnapshot.value.threadId === owner.threadId
+      ? threadAgentsSnapshot.value.agents.length
+      : 0;
   const contextItems = useThreadControlChips({
+    actionable: threadLive,
     agentCount,
     modelsSnapshot,
     owner,
@@ -329,17 +643,63 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
     runtime,
     setError: setComposerError,
     settings: window?.thread.settings ?? null,
+    terminalItem: terminalComposerContextItem(terminalContext),
     threadWindow: window,
   });
-  const timelineTurns = timelineTurnsDisplayModel(history.snapshot.turns);
-  const sessionUsage = sessionUsagePresentation(timelineTurns);
-  const contextUsage = contextUsagePresentation(
-    timelineTurns,
-    window?.thread.settings?.model ?? null,
-  );
-  const visibleTimelineTurns = filterTimelineTurns(timelineTurns, searchQuery);
-  const submitMessage = useEvent(async (text: string): Promise<boolean> => {
-    setComposerError(null);
+  const searchActive = searchVisible && search.query !== "";
+  const historyRestoreIdentity =
+    initialHistoryRestore.cursor === null
+      ? "initial"
+      : history.snapshot.restoreCursor === null
+        ? "restoring"
+        : `restored:${initialHistoryRestore.turnId ?? "unknown"}`;
+  const timelineSourceTurns = searchActive ? search.turns : history.snapshot.turns;
+  const timelineTurns = timelineTurnsDisplayModel(timelineSourceTurns, threadAttachments);
+  const usage = usagePresentation({ turns: history.snapshot.turns });
+  const livePlan = liveTurnPlanPresentation(history.snapshot.turns);
+  const searchMatchIds = new Set(search.matchTurnIds);
+  const visibleTimelineTurns = searchActive
+    ? timelineTurns.filter((turn) => searchMatchIds.has(turn.id))
+    : timelineTurns;
+  const changeHistoryAnchor = useEvent((turnId: string | null, viewportOffsetPx: number | null) => {
+    if (!searchActive) setHistoryAnchor(turnId, viewportOffsetPx);
+  });
+  const unreadMarker =
+    window?.thread.readState?.kind === "unread"
+      ? window.thread.readState.latestActivityMarker
+      : null;
+  const markLatestVisibleRead = useEvent(async (marker: string): Promise<void> => {
+    if (!threadLive) throw new Error("Conversation is not ready for mutations");
+    const frame = await runtime.commandActivations.execute(
+      owner.savedServerId,
+      threadMarkReadCommand(owner, marker),
+    );
+    if (frame.type !== "commandCompleted") throw new Error(frame.error.message);
+  });
+  const activeTurnId = latestActiveTurnId(window?.turns ?? []);
+  const threadRunning = activeTurnId !== null;
+  const deliveryMode = effectiveDeliveryMode(deliveryPreference, threadRunning, activeTurnId);
+  const submitInput = useEvent(async (input: V2InputBlock[]): Promise<boolean> => {
+    if (!threadLive) {
+      setComposerError("Conversation is still connecting.");
+      return false;
+    }
+    dispatchComposer({ kind: "setError", message: null });
+    const submit: Extract<V2Command, { kind: "turn.submit" }> = {
+      input,
+      intent: "chat",
+      kind: "turn.submit",
+      settings: null,
+      threadId: owner.threadId,
+      workspace: null,
+    };
+    let command: V2Command;
+    try {
+      command = deliveryCommand({ activeTurnId, mode: deliveryMode, submit, threadRunning });
+    } catch (cause: unknown) {
+      setComposerError(errorMessage(cause, "Could not prepare message delivery."));
+      return false;
+    }
     const settlement = await runtime.commands
       .executeCorrelated(
         {
@@ -347,14 +707,7 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
           surface: "threadComposer",
           threadId: owner.threadId,
         },
-        {
-          input: [{ kind: "text", text }],
-          intent: "chat",
-          kind: "turn.submit",
-          settings: null,
-          threadId: owner.threadId,
-          workspace: null,
-        },
+        command,
       )
       .catch(() => null);
     if (settlement === null) {
@@ -362,27 +715,155 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
       return false;
     }
     if (settlement.kind === "notCreated") {
-      setTerminalBlocked(false);
-      setComposerError(settlement.failure.message);
+      dispatchComposer({ kind: "unlockWithError", message: settlement.failure.message });
       return false;
     }
     if (settlement.kind === "durableUnsettled") {
       correlations.retainLock(settlement);
-      setLockedActivation({
-        correlationId: settlement.correlationId,
-        operationId: settlement.operationId,
+      dispatchComposer({
+        activation: {
+          correlationId: settlement.correlationId,
+          operationId: settlement.operationId,
+        },
+        kind: "lock",
+        message: settlement.failure.message,
       });
-      setComposerError(settlement.failure.message);
       return false;
     }
-    if (!completedCurrentTurn(settlement.frame, owner.threadId)) {
-      setTerminalBlocked(true);
-      setComposerError(composerTerminalMessage(settlement.frame));
+    if (!completedComposerCommand(settlement.frame, owner.threadId)) {
+      dispatchComposer({
+        kind: "terminalFailure",
+        message: composerTerminalMessage(settlement.frame),
+      });
       return false;
     }
-    setTerminalBlocked(false);
+    dispatchComposer({ kind: "submitCompleted" });
     return true;
   });
+  const submitComposer = useEvent(async (submission: ComposerSubmission): Promise<boolean> => {
+    let prepared: V2InputBlock[];
+    try {
+      prepared = await submission.prepareInput(attachmentTarget);
+    } catch (cause: unknown) {
+      setComposerError(errorMessage(cause, "Could not prepare attachments."));
+      return false;
+    }
+    for (const block of pendingInputBlocks) prepared.push(block);
+    if (prepared.length === 0) return false;
+    const completed = await submitInput(prepared);
+    if (completed) dispatchComposer({ kind: "clearPendingInput" });
+    return completed;
+  });
+  const submitVoiceTranscript = useEvent(async (text: string): Promise<boolean> => {
+    let input: V2InputBlock[];
+    try {
+      input = await attachmentDraft.prepareInput(text, attachmentTarget);
+    } catch (cause: unknown) {
+      setComposerError(errorMessage(cause, "Could not prepare attachments."));
+      return false;
+    }
+    for (const block of pendingInputBlocks) input.push(block);
+    const completed = await submitInput(input);
+    if (completed) {
+      dispatchComposer({ kind: "clearPendingInput" });
+      attachmentDraft.commit();
+    }
+    return completed;
+  });
+  const voice = useVoiceInputControl({
+    audience: owner.savedServerId,
+    live: threadLive,
+    onSubmitTranscript: submitVoiceTranscript,
+    onTranscript: addTranscript,
+    projection: snapshot.value.projections.live,
+    scope: { id: owner.threadId, kind: "composer" },
+    thread: owner,
+  });
+  const searchVoice = useVoiceInputControl({
+    audience: owner.savedServerId,
+    live: threadLive,
+    onTranscript: changeSearchQuery,
+    projection: snapshot.value.projections.live,
+    scope: { id: `thread-search:${owner.threadId}`, kind: "generic" },
+    thread: owner,
+  });
+  const voiceLevel = useVoiceInputLevel(owner.savedServerId, {
+    id: owner.threadId,
+    kind: "composer",
+  });
+  const openPriorTurnEditor = useEvent((request: EditPriorTurnReady) => {
+    const text = request.draftInput
+      .flatMap((block) => (block.kind === "text" ? [block.text] : []))
+      .join("\n");
+    dispatchComposer({
+      blocks: request.draftInput.filter((block) => block.kind !== "text"),
+      kind: "editPriorTurn",
+      text,
+    });
+    runtime.composerAttachments.setText(composerDraftScope, text);
+  });
+  const openResponseReview = useEvent((request: ResponseReviewNavigation) => {
+    router.push(reviewResponseDestination(request.owner, request.turnId, request.itemId));
+  });
+  const openAccounts = useEvent(() => {
+    router.push(accountSettingsDestination(owner.savedServerId));
+  });
+  const turnActions = createTurnActions({
+    commands: runtime.commandActivations,
+    owner,
+    presentation: { openPriorTurnEditor, openResponseReview },
+  });
+  const interruptActiveTurn = useEvent(async (turnId: string): Promise<void> => {
+    await turnActions.interruptTurn(turnId);
+  });
+  const actionsForTurn = (turn: TimelineDisplayTurn): TimelineTurnActions | undefined => {
+    if (!threadLive) return undefined;
+    const index = timelineTurns.findIndex((candidate) => candidate.id === turn.id);
+    if (index < 0) return undefined;
+    const source = history.snapshot.turns.find((candidate) => candidate.id === turn.id);
+    if (source === undefined) return undefined;
+    const availability = turnActionAvailability({
+      hasAssistantResponse: turn.assistantItemId !== undefined,
+      hasRollbackBoundary: true,
+      state: turn.state,
+    });
+    const assistantItemId = turn.assistantItemId;
+    const draftInput = turnInputBlocks(source, threadAttachments);
+    return {
+      ...(draftInput === null || draftInput.length === 0
+        ? {}
+        : {
+            onEdit: async () =>
+              turnActions.editPriorTurn({
+                draftInput,
+                rollbackThroughTurnId: timelineTurns[index - 1]?.id ?? null,
+                sourceTurnId: turn.id,
+              }),
+          }),
+      ...(availability.canFork
+        ? {
+            onFork: async () => {
+              const result = await turnActions.forkThroughTurn(turn.id);
+              router.push(
+                threadDestination(qualifiedThread(owner.savedServerId, threadId(result.thread.id))),
+              );
+            },
+          }
+        : {}),
+      ...(availability.canInterrupt
+        ? { onInterrupt: async () => void (await turnActions.interruptTurn(turn.id)) }
+        : {}),
+      ...(availability.canReview && assistantItemId !== undefined
+        ? {
+            onReview: async () =>
+              turnActions.reviewResponse({ itemId: assistantItemId, turnId: turn.id }),
+          }
+        : {}),
+      ...(availability.canRollback
+        ? { onRollback: async () => void (await turnActions.rollbackThroughTurn(turn.id)) }
+        : {}),
+    };
+  };
   const subtitle =
     snapshot.value.state === "live"
       ? conversationSubtitle(
@@ -395,56 +876,111 @@ function ProjectedConversation(props: ProjectedConversationProps): React.JSX.Ele
       : "connecting…";
   const title =
     window?.thread.title ?? firstPreviewLine(window?.thread.preview ?? "") ?? "Conversation";
-  return (
-    <ConversationSurface
-      accounts={accountUsagePresentation(accountsSnapshot.value, runtime.now())}
-      archived={window?.thread.archived === true}
-      canLoadNewer={searchQuery.trim() === "" && history.snapshot.canLoadNewer}
-      canLoadOlder={searchQuery.trim() === "" && history.snapshot.canLoadOlder}
-      clearVersion={clearVersion}
-      composerError={composerError}
-      composerText={composerText}
-      contextItems={contextItems}
-      contextUsage={contextUsage}
-      desktop={isDesktopWindow({ height, width })}
-      live={snapshot.value.state === "live"}
-      locallyLocked={locallyLocked}
-      onBack={onBack}
-      onChangeSearchQuery={setSearchQuery}
-      onCloseResourceMenu={closeResourceMenu}
-      onCloseSearch={closeSearch}
-      onComposerError={setComposerError}
-      onEditComposer={editComposer}
-      onLoadNewer={loadNewer}
-      onLoadOlder={loadOlder}
-      onLoadActivity={loadActivity}
-      onOpenContext={openContext}
-      onSelectComposerAction={selectComposerAction}
-      onSelectResource={selectResource}
-      onSettleWindow={settleHistoryWindow}
-      onSubmitMessage={submitMessage}
-      onTextChange={setComposerText}
-      onToggleSearch={toggleSearch}
-      owner={owner}
-      resourceMenuVisible={resourceMenuVisible}
-      retryBlocked={terminalBlocked}
-      searchQuery={searchQuery}
-      searchVisible={searchVisible}
-      sessionUsage={sessionUsage}
-      subtitle={subtitle}
-      title={title}
-      turns={visibleTimelineTurns}
-      unsettledCount={unsettledCount}
-      voice={voice}
-    />
-  );
+  return {
+    accounts: accountUsagePresentation(accountsSnapshot.value, runtime.now()),
+    activityActions,
+    actionsForTurn,
+    activeTurnId,
+    archived: window?.thread.archived === true,
+    attachmentDraft,
+    attachmentTarget,
+    canLoadNewer: !searchActive && history.snapshot.canLoadNewer,
+    canLoadOlder: !searchActive && history.snapshot.canLoadOlder,
+    clearVersion,
+    composerError,
+    composerText,
+    contextItems,
+    contextUsage: usage.context,
+    deliveryMode,
+    desktop: isDesktopWindow({ height, width }),
+    draftId,
+    drawingNow,
+    drawingRequest,
+    goalVisible,
+    initialAnchorTurnId: searchActive ? search.selectedTurnId : initialHistoryRestore.turnId,
+    initialAnchorOffsetPx: searchActive ? 0 : initialHistoryRestore.viewportOffsetPx,
+    latestActivityMarker: searchActive ? null : unreadMarker,
+    authorityError:
+      requestedThread.threadId === owner.threadId && requestedThread.status === "error"
+        ? requestedThread.message
+        : null,
+    live: threadLive,
+    livePlan,
+    locallyLocked,
+    onBack,
+    onCloseDrawing: closeDrawing,
+    onCloseGoal: closeGoal,
+    onCloseResourceMenu: closeResourceMenu,
+    onCloseSkills: closeSkills,
+    onComposerError: setComposerError,
+    onDrawingAttached: completeDrawing,
+    onEditAttachment: editDrawing,
+    onEditComposer: editComposer,
+    onJumpToLatest: jumpToLatest,
+    onHistoryAnchorChange: changeHistoryAnchor,
+    onInterruptActiveTurn: interruptActiveTurn,
+    onLatestFinalAssistantVisible: markLatestVisibleRead,
+    onLoadActivity: loadActivity,
+    onLoadNewer: loadNewer,
+    onLoadOlder: loadOlder,
+    onOpenContext: openContext,
+    onOpenAccounts: openAccounts,
+    onRetryAuthority: retryThreadAuthority,
+    onReleaseUnsettled: releaseUnsettled,
+    onSelectComposerAction: selectComposerAction,
+    onSelectDeliveryMode: setDeliveryPreference,
+    onSelectResource: selectResource,
+    onSelectSkill: selectSkill,
+    onSettleWindow: settleHistoryWindow,
+    onSubmitMessage: submitComposer,
+    onTextChange: setComposerText,
+    owner,
+    pendingRequests: projection?.pendingRequests ?? [],
+    readReceiptRetryKey: threadLive ? (snapshot.value.projections.live?.epochId ?? null) : null,
+    renderingCapabilities,
+    reviewAvailable,
+    refreshing: refreshState.status === "refreshing",
+    resourceMenuVisible,
+    retryBlocked: terminalBlocked,
+    search: {
+      canMoveNewer: search.canMoveNewer,
+      canMoveOlder: search.canMoveOlder,
+      error: search.phase.kind === "error" ? search.phase.message : null,
+      loading: search.phase.kind === "loading",
+      matchCount: search.matchCount,
+      onChangeQuery: changeSearchQuery,
+      onClose: closeSearch,
+      onMoveNewer: moveSearchNewer,
+      onMoveOlder: moveSearchOlder,
+      onToggle: toggleSearch,
+      query: search.query,
+      voice: searchVoice,
+      visible: searchVisible,
+    },
+    sessionUsage: usage.session,
+    skillsVisible,
+    subtitle,
+    title,
+    timelineIdentity: searchActive
+      ? `${owner.savedServerId}:${owner.threadId}:search:${search.query}:${search.selectedTurnId ?? "none"}`
+      : `${owner.savedServerId}:${owner.threadId}:live:${historyRestoreIdentity}`,
+    turns: visibleTimelineTurns,
+    unreadCount: searchActive ? 0 : (window?.thread.readState?.unreadCount ?? 0),
+    unsettledCount,
+    unsettledBlockingCount,
+    usageBreakdown: usage.breakdown,
+    voice,
+    voiceLevel,
+    voiceNowMs: runtime.now(),
+    workspace: window?.thread.workspace ?? "",
+  };
 }
 
 function useTurnActivityLoader(
   runtime: V2Runtime,
   owner: QualifiedThread,
-): (turnId: string) => Promise<TimelineDisplayActivity[]> {
-  return useEvent(async (turnId: string): Promise<TimelineDisplayActivity[]> => {
+): (turnId: string) => Promise<TimelineDisplayResponseRow[]> {
+  return useEvent(async (turnId: string): Promise<TimelineDisplayResponseRow[]> => {
     const items: V2Item[] = [];
     let cursor: string | null = null;
     do {
@@ -461,13 +997,19 @@ function useTurnActivityLoader(
         throw new Error("Turn items query returned repeated cursor");
       cursor = result.next;
     } while (cursor !== null);
-    return items.flatMap(activityDisplayModel);
+    return timelineResponseRowsDisplayModel(items);
   });
 }
 
 interface ConversationSurfaceProps {
   accounts: readonly UsageAccountViewModel[];
+  activityActions: TimelineActivityActions;
+  actionsForTurn(turn: TimelineDisplayTurn): TimelineTurnActions | undefined;
+  activeTurnId: string | null;
+  authorityError: string | null;
   archived: boolean;
+  attachmentDraft: ComposerAttachmentDraft;
+  attachmentTarget: ComposerAttachmentTarget;
   canLoadNewer: boolean;
   canLoadOlder: boolean;
   clearVersion: number;
@@ -475,42 +1017,96 @@ interface ConversationSurfaceProps {
   composerText: string;
   contextItems: ComposerContextItem[];
   contextUsage: UsageContextViewModel | null;
+  deliveryMode: QueueDeliveryMode;
   desktop: boolean;
+  draftId: string;
+  drawingNow(): Date;
+  drawingRequest: DrawingWorkspaceRequest | null;
+  goalVisible: boolean;
+  initialAnchorOffsetPx: number | null;
+  initialAnchorTurnId: string | null;
+  latestActivityMarker: string | null;
   live: boolean;
+  livePlan: LiveTurnPlanViewModel | null;
   locallyLocked: boolean;
   onBack(): void;
-  onChangeSearchQuery(query: string): void;
   onCloseResourceMenu(): void;
-  onCloseSearch(): void;
+  onCloseDrawing(): void;
+  onCloseGoal(): void;
+  onCloseSkills(): void;
   onComposerError(message: string | null): void;
+  onDrawingAttached(draftItemId: string): void;
+  onEditAttachment(item: ComposerAttachmentDraftItem): void;
   onEditComposer(): void;
   onOpenContext(id: string): void;
+  onOpenAccounts(): void;
+  onRetryAuthority(): Promise<void>;
+  onReleaseUnsettled(): Promise<void>;
   onLoadNewer(): Promise<void>;
   onLoadOlder(): Promise<void>;
-  onLoadActivity(turnId: string): Promise<TimelineDisplayActivity[]>;
+  onLoadActivity(turnId: string): Promise<TimelineDisplayResponseRow[]>;
+  onJumpToLatest(): string | null;
+  onHistoryAnchorChange(turnId: string | null, viewportOffsetPx: number | null): void;
+  onInterruptActiveTurn(turnId: string): Promise<void>;
+  onLatestFinalAssistantVisible(marker: string): Promise<void>;
   onSelectComposerAction(id: string): void;
+  onSelectDeliveryMode(mode: QueueDeliveryMode): void;
   onSelectResource(id: string): void;
-  onSubmitMessage(text: string): Promise<boolean>;
+  onSelectSkill(skill: SkillCatalogEntry): void;
+  onSubmitMessage(submission: ComposerSubmission): Promise<boolean>;
   onSettleWindow(direction: "newer" | "older"): void;
   onTextChange(text: string): void;
-  onToggleSearch(): void;
   owner: QualifiedThread;
+  pendingRequests: readonly V2PendingRequest[];
+  readReceiptRetryKey: string | null;
+  renderingCapabilities: V2RenderingCapabilities;
+  reviewAvailable: boolean;
+  refreshing: boolean;
   resourceMenuVisible: boolean;
   retryBlocked: boolean;
-  searchQuery: string;
-  searchVisible: boolean;
+  search: ConversationSearchModel;
   sessionUsage: UsageSessionViewModel | null;
+  skillsVisible: boolean;
   subtitle: string;
   title: string;
+  timelineIdentity: string;
   turns: TimelineDisplayTurn[];
+  unreadCount: number;
   unsettledCount: number;
+  unsettledBlockingCount: number;
+  usageBreakdown: UsageBreakdownViewModel | null;
   voice: VoiceInputControlModel;
+  voiceLevel: number;
+  voiceNowMs: number;
+  workspace: string;
+}
+
+interface ConversationSearchModel {
+  canMoveNewer: boolean;
+  canMoveOlder: boolean;
+  error: string | null;
+  loading: boolean;
+  matchCount: number;
+  onChangeQuery(query: string): void;
+  onClose(): void;
+  onMoveNewer(): void;
+  onMoveOlder(): void;
+  onToggle(): void;
+  query: string;
+  voice: VoiceInputControlModel;
+  visible: boolean;
 }
 
 function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
   const {
     accounts,
+    activityActions,
+    actionsForTurn,
+    activeTurnId,
+    authorityError,
     archived,
+    attachmentDraft,
+    attachmentTarget,
     canLoadNewer,
     canLoadOlder,
     clearVersion,
@@ -518,40 +1114,72 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
     composerText,
     contextItems,
     contextUsage,
+    deliveryMode,
     desktop,
+    draftId,
+    drawingNow,
+    drawingRequest,
+    goalVisible,
+    initialAnchorOffsetPx,
+    initialAnchorTurnId,
+    latestActivityMarker,
     live,
+    livePlan,
     locallyLocked,
     onBack,
-    onChangeSearchQuery,
     onCloseResourceMenu,
-    onCloseSearch,
+    onCloseDrawing,
+    onCloseGoal,
+    onCloseSkills,
     onComposerError,
+    onDrawingAttached,
+    onEditAttachment,
     onEditComposer,
     onOpenContext,
+    onOpenAccounts,
+    onRetryAuthority,
+    onReleaseUnsettled,
     onLoadNewer,
     onLoadOlder,
     onLoadActivity,
+    onJumpToLatest,
+    onHistoryAnchorChange,
+    onInterruptActiveTurn,
+    onLatestFinalAssistantVisible,
     onSelectComposerAction,
+    onSelectDeliveryMode,
     onSelectResource,
+    onSelectSkill,
     onSubmitMessage,
     onSettleWindow,
     onTextChange,
-    onToggleSearch,
     owner,
+    pendingRequests,
+    readReceiptRetryKey,
+    renderingCapabilities,
+    reviewAvailable,
+    refreshing,
     resourceMenuVisible,
     retryBlocked,
-    searchQuery,
-    searchVisible,
+    search,
     sessionUsage,
+    skillsVisible,
     subtitle,
     title,
+    timelineIdentity,
     turns,
+    unreadCount,
     unsettledCount,
+    unsettledBlockingCount,
+    usageBreakdown,
     voice,
+    voiceLevel,
+    voiceNowMs,
+    workspace,
   } = props;
   return (
     <WorkspaceView
-      subtitle={subtitle}
+      subtitle={<WorkspaceSubtitleView text={subtitle} updating={refreshing} />}
       leading={
         desktop ? undefined : (
           <TopBarActionView icon="back" label="Back to threads" onPress={onBack} />
@@ -560,13 +1188,22 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
       actions={
         <>
           <TopBarActionView
-            active={searchVisible}
+            active={search.visible}
             icon="search"
             label="Search in thread"
-            onPress={onToggleSearch}
+            onPress={search.onToggle}
           />
           <UsagePopoverView
             accounts={accounts}
+            actions={[
+              {
+                description: "Profiles and usage limits",
+                icon: "people",
+                id: "accounts",
+                label: "Manage accounts",
+                onPress: onOpenAccounts,
+              },
+            ]}
             align="end"
             context={contextUsage}
             placement="bottom"
@@ -578,9 +1215,11 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
           </UsagePopoverView>
           <ConversationThreadMenu
             archived={archived}
+            live={live}
             onBack={onBack}
             onError={onComposerError}
             owner={owner}
+            title={title}
           />
         </>
       }
@@ -588,45 +1227,117 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
     >
       <MessageActionProviderView>
         <ConversationView>
-          {searchVisible ? (
-            <ConversationSearchView
-              matchCount={turns.length}
-              onChangeText={onChangeSearchQuery}
-              onClose={onCloseSearch}
-              query={searchQuery}
+          <ConversationSearchBar search={search} />
+          <V2RenderingCapabilityProvider capabilities={renderingCapabilities}>
+            <TimelineView
+              key={timelineIdentity}
+              activityActions={activityActions}
+              actionsForTurn={actionsForTurn}
+              canLoadNewer={canLoadNewer}
+              canLoadOlder={canLoadOlder}
+              initialAnchorOffsetPx={initialAnchorOffsetPx}
+              latestActivityMarker={latestActivityMarker}
+              initialAnchorTurnId={initialAnchorTurnId}
+              onLoadNewer={onLoadNewer}
+              onLoadOlder={onLoadOlder}
+              onLoadActivity={onLoadActivity}
+              onJumpToLatest={onJumpToLatest}
+              onAnchorTurnChange={onHistoryAnchorChange}
+              onLatestFinalAssistantVisible={onLatestFinalAssistantVisible}
+              readReceiptRetryKey={readReceiptRetryKey}
+              onSettleWindow={onSettleWindow}
+              timelineKey={timelineIdentity}
+              turns={turns}
+              unreadCount={unreadCount}
             />
-          ) : null}
-          <TimelineView
-            canLoadNewer={canLoadNewer}
-            canLoadOlder={canLoadOlder}
-            onLoadNewer={onLoadNewer}
-            onLoadOlder={onLoadOlder}
-            onLoadActivity={onLoadActivity}
-            onSettleWindow={onSettleWindow}
-            timelineKey={`${owner.savedServerId}:${owner.threadId}`}
-            turns={turns}
+          </V2RenderingCapabilityProvider>
+          <PendingRequestsPanel
+            enabled={live}
+            {...(renderingCapabilities.openExternalLink === undefined
+              ? {}
+              : { openExternalLink: renderingCapabilities.openExternalLink })}
+            pendingRequests={pendingRequests}
+            savedServerId={owner.savedServerId}
+            threadId={owner.threadId}
           />
-          {unsettledCount === 0 ? null : (
-            <ProductText accessibilityLiveRegion="polite" tone="warning">
-              {unsettledCount} saved message{unsettledCount === 1 ? " is" : "s are"} waiting for the
-              server
-            </ProductText>
-          )}
-          <ComposerContextStripView items={contextItems} onOpen={onOpenContext} />
-          <ChatComposer
-            key={clearVersion}
-            disabled={!live}
-            error={composerError}
-            locked={locallyLocked}
-            menuActions={COMPOSER_ACTIONS}
-            onEdit={onEditComposer}
-            onSelectMenu={onSelectComposerAction}
-            onSubmit={onSubmitMessage}
-            retryBlocked={retryBlocked}
-            onTextChange={onTextChange}
-            text={composerText}
-            voice={voice}
-          />
+          <ConversationComposerDockView>
+            {authorityError === null ? null : (
+              <View style={styles.authorityFailure}>
+                <ProductText accessibilityRole="alert" tone="warning">
+                  {authorityError}
+                </ProductText>
+                <ActionPressable
+                  action={{
+                    id: `retry-thread-authority:${owner.savedServerId}:${owner.threadId}`,
+                    label: "Retry conversation",
+                    run: onRetryAuthority,
+                  }}
+                />
+              </View>
+            )}
+            <QueueControlsFeature
+              activeTurnId={activeTurnId}
+              mutationsEnabled={live}
+              savedServerId={owner.savedServerId}
+              threadId={owner.threadId}
+            />
+            {unsettledCount === 0 ? null : (
+              <>
+                <ProductText accessibilityLiveRegion="polite" tone="warning">
+                  {unsettledCount} saved message{unsettledCount === 1 ? " is" : "s are"} waiting for
+                  the server
+                </ProductText>
+                {unsettledBlockingCount === 0 ? null : (
+                  <ActionPressable
+                    action={{
+                      id: `release-unsettled:${owner.savedServerId}:${owner.threadId}`,
+                      label: "Send another anyway",
+                      run: onReleaseUnsettled,
+                    }}
+                  />
+                )}
+              </>
+            )}
+            {!reviewAvailable && livePlan === null && usageBreakdown === null ? null : (
+              <View style={styles.liveStatus}>
+                {reviewAvailable ? <StartReviewLaunchButton owner={owner} /> : null}
+                {livePlan === null ? null : <LiveTurnPlanPopover plan={livePlan} />}
+                {usageBreakdown === null ? null : (
+                  <CostBreakdownPopover breakdown={usageBreakdown} />
+                )}
+              </View>
+            )}
+            <DeliveryModeSelectorView
+              activeTurnId={activeTurnId}
+              disabled={!live || locallyLocked}
+              onSelect={onSelectDeliveryMode}
+              selected={deliveryMode}
+              threadRunning={activeTurnId !== null}
+            />
+            <ComposerContextStripView items={contextItems} onOpen={onOpenContext} />
+            <V2ChatComposer
+              activeTurnId={activeTurnId}
+              key={clearVersion}
+              disabled={!live}
+              draftId={draftId}
+              error={composerError}
+              locked={locallyLocked}
+              menuActions={COMPOSER_ACTIONS}
+              onEdit={onEditComposer}
+              onEditAttachment={onEditAttachment}
+              onInterrupt={onInterruptActiveTurn}
+              onSelectMenu={onSelectComposerAction}
+              onSubmit={onSubmitMessage}
+              retryBlocked={retryBlocked}
+              onTextChange={onTextChange}
+              savedServerId={owner.savedServerId}
+              target={attachmentTarget}
+              text={composerText}
+              voice={voice}
+              voiceLevel={voiceLevel}
+              voiceNowMs={voiceNowMs}
+            />
+          </ConversationComposerDockView>
           <ActionSheetView
             items={RESOURCE_ACTIONS}
             onClose={onCloseResourceMenu}
@@ -634,44 +1345,61 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
             title="Thread"
             visible={resourceMenuVisible}
           />
+          {goalVisible ? (
+            <ThreadGoalSheet
+              onClose={onCloseGoal}
+              savedServerId={owner.savedServerId}
+              threadId={owner.threadId}
+            />
+          ) : null}
+          {skillsVisible ? (
+            <SkillsSheet
+              onClose={onCloseSkills}
+              onSelect={onSelectSkill}
+              savedServerId={owner.savedServerId}
+              workspace={workspace}
+            />
+          ) : null}
+          {drawingRequest === null ? null : (
+            <DrawingWorkspace
+              draft={attachmentDraft}
+              draftItemId={drawingRequest.draftItemId}
+              initialSnapshot={drawingRequest.initialSnapshot}
+              mode={drawingRequest.mode}
+              {...(drawingRequest.name === undefined ? {} : { name: drawingRequest.name })}
+              now={drawingNow}
+              onAttached={onDrawingAttached}
+              onClose={onCloseDrawing}
+            />
+          )}
         </ConversationView>
       </MessageActionProviderView>
     </WorkspaceView>
   );
 }
 
-function sessionUsagePresentation(turns: TimelineDisplayTurn[]) {
-  const usage = latestTimelineUsage(turns);
-  if (usage === null) return null;
-  return {
-    compactions: null,
-    costUsd: usage.threadTotalCostUsd,
-    inputTokens: usage.threadInputTokens,
-    outputTokens: usage.threadOutputTokens,
-    totalTokens: usage.threadTotalTokens,
-  };
+interface ConversationSearchBarProps {
+  search: ConversationSearchModel;
 }
 
-function contextUsagePresentation(turns: TimelineDisplayTurn[], model: string | null) {
-  const usage = latestTimelineUsage(turns, true);
-  if (usage === null || usage.modelContextWindow === null) return null;
-  const totalTokens = usage.modelContextWindow;
-  const usedTokens = Math.max(0, usage.latestRequestTokens);
-  return {
-    availableTokens: Math.max(0, totalTokens - usedTokens),
-    model,
-    percent: Math.max(0, Math.min(100, (usedTokens / totalTokens) * 100)),
-    totalTokens,
-    usedTokens,
-  };
-}
-
-function latestTimelineUsage(turns: TimelineDisplayTurn[], requireContext = false) {
-  for (let index = turns.length - 1; index >= 0; index -= 1) {
-    const usage = turns[index]?.usage ?? null;
-    if (usage !== null && (!requireContext || (usage.modelContextWindow ?? 0) > 0)) return usage;
-  }
-  return null;
+function ConversationSearchBar(props: ConversationSearchBarProps): React.JSX.Element | null {
+  const { search } = props;
+  if (!search.visible) return null;
+  return (
+    <ConversationSearchView
+      canMoveNewer={search.canMoveNewer}
+      canMoveOlder={search.canMoveOlder}
+      error={search.error}
+      loading={search.loading}
+      matchCount={search.matchCount}
+      onChangeText={search.onChangeQuery}
+      onClose={search.onClose}
+      onMoveNewer={search.onMoveNewer}
+      onMoveOlder={search.onMoveOlder}
+      query={search.query}
+      voice={search.voice}
+    />
+  );
 }
 
 function firstPreviewLine(value: string): string | null {
@@ -692,6 +1420,7 @@ function conversationSubtitle(serverName: string, workspace: string): string {
 
 function useThreadControlChips(input: ThreadControlChipsInput): ComposerContextItem[] {
   const {
+    actionable,
     agentCount,
     modelsSnapshot,
     owner,
@@ -700,24 +1429,29 @@ function useThreadControlChips(input: ThreadControlChipsInput): ComposerContextI
     runtime,
     setError,
     settings,
+    terminalItem,
     threadWindow,
   } = input;
   const [settingsPending, startSettingsUpdate] = useTransition();
   const updateThreadSettings = useEvent((next: V2ThreadSettings) => {
+    if (!actionable) {
+      setError("Conversation is still connecting.");
+      return;
+    }
     if (settingsPending) return;
     setError(null);
-    startSettingsUpdate(async () => {
-      try {
-        const frame = await runtime.commands.execute(owner.savedServerId, {
-          change: { kind: "settings", settings: next },
-          kind: "thread.update",
-          threadId: owner.threadId,
-        });
-        if (frame.type !== "commandCompleted") setError(frame.error.message);
-      } catch (cause: unknown) {
-        setError(cause instanceof Error ? cause.message : "Could not update thread settings.");
-      }
-    });
+    startSettingsUpdate(() =>
+      runtime.commandActivations
+        .execute(owner.savedServerId, threadSettingsUpdateCommand(owner, next))
+        .then(
+          (frame) => {
+            if (frame.type !== "commandCompleted") setError(frame.error.message);
+          },
+          (cause: unknown) => {
+            setError(cause instanceof Error ? cause.message : "Could not update thread settings.");
+          },
+        ),
+    );
   });
   const selectModel = useEvent((id: string) => {
     const next = nextModelSettings(id, settings, modelsSnapshot.value);
@@ -728,7 +1462,7 @@ function useThreadControlChips(input: ThreadControlChipsInput): ComposerContextI
     updateThreadSettings(next);
   });
   const selectPermissions = useEvent((id: string) => {
-    const next = nextPermissionSettings(id, settings);
+    const next = nextConversationPermissionSettings(id, settings);
     if (next === null) {
       setError("Permission settings are unavailable.");
       return;
@@ -736,6 +1470,7 @@ function useThreadControlChips(input: ThreadControlChipsInput): ComposerContextI
     updateThreadSettings(next);
   });
   return composerContextItems({
+    actionable,
     agentCount,
     modelsError: modelsSnapshot.status === "error" ? modelsSnapshot.message : null,
     modelsLoading: modelsSnapshot.status === "loading",
@@ -745,12 +1480,14 @@ function useThreadControlChips(input: ThreadControlChipsInput): ComposerContextI
     portCount,
     resourcesResult,
     settingsPending,
+    terminalItem,
     threadWindow,
   });
 }
 
 function composerContextItems(input: ComposerContextItemsInput): ComposerContextItem[] {
   const {
+    actionable,
     agentCount,
     modelsError,
     modelsLoading,
@@ -760,6 +1497,7 @@ function composerContextItems(input: ComposerContextItemsInput): ComposerContext
     portCount,
     resourcesResult,
     settingsPending,
+    terminalItem,
     threadWindow,
   } = input;
   const settings = threadWindow?.thread.settings ?? null;
@@ -770,7 +1508,6 @@ function composerContextItems(input: ComposerContextItemsInput): ComposerContext
   });
   const model = selectedModel?.label ?? settings?.model ?? "Model";
   const effort = settings?.effort ?? selectedModel?.defaultEffort ?? "default";
-  const access = accessLabel(settings);
   const changes = resourcesResult?.kind === "thread.resources" ? resourcesResult.changes : null;
   const attachments =
     resourcesResult?.kind === "thread.resources" ? resourcesResult.attachments : null;
@@ -782,26 +1519,22 @@ function composerContextItems(input: ComposerContextItemsInput): ComposerContext
       loading: modelsLoading || settingsPending,
       menu: {
         accessibilityLabel: `Model and thinking: ${model}, ${effort}`,
-        actions: modelMenuActions(models, settings, modelsLoading, modelsError).map((action) =>
-          settingsPending ? { ...action, disabled: true } : action,
+        actions: modelMenuActions(models, settings, modelsLoading, modelsError, actionable).map(
+          (action) => (settingsPending ? { ...action, disabled: true } : action),
         ),
         menuWidth: 344,
         onSelect: onSelectModel,
       },
     },
-    {
-      icon: "shield",
-      id: "permissions",
-      label: access,
-      loading: settingsPending,
-      menu: {
-        accessibilityLabel: `Permissions: ${access}`,
-        actions: permissionMenuActions(settings, settingsPending),
-        menuWidth: 344,
-        onSelect: onSelectPermissions,
-      },
-    },
   ];
+  items.push(
+    conversationPermissionContextItem({
+      actionable,
+      onSelect: onSelectPermissions,
+      pending: settingsPending,
+      settings,
+    }),
+  );
   if (changes !== null && changes.length > 0) {
     items.push({ icon: "changes", id: "changes", label: `Changes · ${changes.length}` });
   }
@@ -815,6 +1548,7 @@ function composerContextItems(input: ComposerContextItemsInput): ComposerContext
   if (portCount > 0) items.push({ icon: "ports", id: "ports", label: `Ports: ${portCount}` });
   if (agentCount > 0)
     items.push({ icon: "construct", id: "agents", label: `Subagents: ${agentCount}` });
+  if (terminalItem !== null) items.push(terminalItem);
   return items;
 }
 
@@ -823,10 +1557,11 @@ function modelMenuActions(
   settings: V2ThreadSettings | null,
   loading: boolean,
   error: string | null,
+  actionable: boolean,
 ): ActionMenuItem[] {
   const selected = models.find((model) => model.id === settings?.model) ?? models[0];
-  const efforts = selected?.efforts ?? [];
-  const unavailable = settings === null;
+  const efforts = selected === undefined ? [] : availableEfforts(selected);
+  const unavailable = settings === null || !actionable;
   return [
     ...(loading && models.length === 0
       ? [
@@ -860,61 +1595,31 @@ function modelMenuActions(
     ...efforts.map((effort) => ({
       disabled: unavailable,
       id: `effort:${effort}`,
+      keepOpen: selected?.supportsPersonality === true,
       label: thinkingEffortLabel(effort),
       section: "Thinking level",
       selected: effort === settings?.effort,
     })),
-  ];
-}
-
-function permissionMenuActions(
-  settings: V2ThreadSettings | null,
-  pending: boolean,
-): ActionMenuItem[] {
-  const disabled = settings === null || pending;
-  return [
-    {
-      disabled,
-      id: "sandbox:readOnly",
-      label: "Read only",
-      section: "Security permissions",
-      selected: settings?.sandbox === "readOnly",
-    },
-    {
-      disabled,
-      id: "sandbox:workspaceWrite",
-      label: "Workspace",
-      section: "Security permissions",
-      selected: settings?.sandbox === "workspaceWrite",
-    },
-    {
-      disabled,
-      id: "sandbox:unrestricted",
-      label: "Full access",
-      section: "Security permissions",
-      selected: settings?.sandbox === "unrestricted",
-    },
-    {
-      disabled,
-      id: "approval:never",
-      label: "Never ask",
-      section: "Approval policy",
-      selected: settings?.approvalPolicy === "never",
-    },
-    {
-      disabled,
-      id: "approval:onRequest",
-      label: "Ask when needed",
-      section: "Approval policy",
-      selected: settings?.approvalPolicy === "onRequest",
-    },
-    {
-      disabled,
-      id: "approval:untrusted",
-      label: "Untrusted commands",
-      section: "Approval policy",
-      selected: settings?.approvalPolicy === "untrusted",
-    },
+    ...(selected?.supportsPersonality === true
+      ? [
+          {
+            disabled: unavailable,
+            id: "personality:default",
+            keepOpen: true,
+            label: "Server default",
+            section: "Personality",
+            selected: settings?.personality === null,
+          },
+          ...(["friendly", "pragmatic", "none"] as const).map((personality) => ({
+            disabled: unavailable,
+            id: `personality:${personality}`,
+            keepOpen: true,
+            label: personalityLabel(personality),
+            section: "Personality",
+            selected: personality === settings?.personality,
+          })),
+        ]
+      : []),
   ];
 }
 
@@ -927,65 +1632,75 @@ function nextModelSettings(
   if (id.startsWith("model:")) {
     const model = result.models.find((candidate) => candidate.id === id.slice("model:".length));
     if (model === undefined) return null;
-    return { ...settings, effort: compatibleEffort(model, settings.effort), model: model.id };
+    return {
+      ...settings,
+      effort: compatibleEffort(model, settings.effort),
+      model: model.id,
+      personality: model.supportsPersonality ? settings.personality : null,
+    };
+  }
+  if (id.startsWith("personality:")) {
+    const model = result.models.find((candidate) => candidate.id === settings.model);
+    if (model?.supportsPersonality !== true) return null;
+    const value = id.slice("personality:".length);
+    const personality =
+      value === "friendly" || value === "pragmatic" || value === "none" ? value : null;
+    if (value !== "default" && personality === null) return null;
+    return { ...settings, personality };
   }
   if (!id.startsWith("effort:") || settings.model === null) return null;
   const effort = id.slice("effort:".length);
   const model = result.models.find((candidate) => candidate.id === settings.model);
-  if (model === undefined || !isThreadEffort(effort) || !model.efforts.includes(effort))
+  if (model === undefined || !isThreadEffort(effort) || !availableEfforts(model).includes(effort))
     return null;
   return { ...settings, effort };
-}
-
-function nextPermissionSettings(
-  id: string,
-  settings: V2ThreadSettings | null,
-): V2ThreadSettings | null {
-  if (settings === null) return null;
-  if (id === "sandbox:readOnly") return { ...settings, sandbox: "readOnly" };
-  if (id === "sandbox:workspaceWrite") return { ...settings, sandbox: "workspaceWrite" };
-  if (id === "sandbox:unrestricted") return { ...settings, sandbox: "unrestricted" };
-  if (id === "approval:never") return { ...settings, approvalPolicy: "never" };
-  if (id === "approval:onRequest") return { ...settings, approvalPolicy: "onRequest" };
-  if (id === "approval:untrusted") return { ...settings, approvalPolicy: "untrusted" };
-  return null;
 }
 
 function compatibleEffort(
   model: ModelsResult["models"][number],
   current: V2ThreadSettings["effort"],
 ): V2ThreadSettings["effort"] {
-  if (current !== null && model.efforts.includes(current)) return current;
-  if (model.defaultEffort !== null && isThreadEffort(model.defaultEffort))
+  const efforts = availableEfforts(model);
+  if (current !== null && efforts.includes(current)) return current;
+  if (isThreadEffort(model.defaultEffort) && efforts.includes(model.defaultEffort)) {
     return model.defaultEffort;
-  return model.efforts[0] ?? null;
+  }
+  return efforts[0] ?? null;
 }
 
-function isThreadEffort(value: string): value is ThreadEffort {
-  return value === "low" || value === "medium" || value === "high" || value === "xhigh";
+function availableEfforts(model: ModelsResult["models"][number]): ThreadEffort[] {
+  if (model.efforts.length > 0) return model.efforts;
+  return isThreadEffort(model.defaultEffort) ? [model.defaultEffort] : [];
+}
+
+function isThreadEffort(value: string | null): value is ThreadEffort {
+  return value !== null && THREAD_EFFORTS.has(value);
 }
 
 function thinkingEffortLabel(effort: ThreadEffort): string {
-  if (effort === "xhigh") return "Extra high";
+  const explicit = THREAD_EFFORT_LABELS[effort];
+  if (explicit !== undefined) return explicit;
   return `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`;
 }
 
-function accessLabel(settings: V2ThreadWindow["thread"]["settings"]): string {
-  if (settings === null || settings === undefined) return "Access";
-  const sandbox =
-    settings.sandbox === "unrestricted"
-      ? "Full access"
-      : settings.sandbox === "workspaceWrite"
-        ? "Workspace"
-        : "Read only";
-  const approval =
-    settings.approvalPolicy === "never"
-      ? null
-      : settings.approvalPolicy === "onRequest"
-        ? "Ask"
-        : "Untrusted";
-  return approval === null ? sandbox : `${sandbox} · ${approval}`;
+function personalityLabel(personality: NonNullable<V2ThreadSettings["personality"]>): string {
+  return `${personality.charAt(0).toUpperCase()}${personality.slice(1)}`;
 }
+
+const THREAD_EFFORTS = new Set<string>([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
+const THREAD_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  max: "Maximum",
+  xhigh: "Extra high",
+};
 
 function isThreadResourceName(value: string): value is ThreadResourceName {
   return (
@@ -993,34 +1708,155 @@ function isThreadResourceName(value: string): value is ThreadResourceName {
   );
 }
 
-function filterTimelineTurns(turns: TimelineDisplayTurn[], query: string): TimelineDisplayTurn[] {
-  const needle = query.trim().toLocaleLowerCase();
-  if (needle === "") return turns;
-  return turns.filter((turn) => timelineTurnText(turn).toLocaleLowerCase().includes(needle));
+function historyRestore(state: ComposerDraftLocalState): InitialHistoryRestore {
+  const cursor =
+    state.historyGenerationId === null ||
+    state.historyPageCursor === null ||
+    state.historyPageDirection === null
+      ? null
+      : {
+          cursor: state.historyPageCursor,
+          direction: state.historyPageDirection,
+          generationId: state.historyGenerationId,
+        };
+  return {
+    cursor,
+    turnId: state.historyAnchorTurnId,
+    viewportOffsetPx: state.historyAnchorOffsetPx,
+  };
 }
 
-function timelineTurnText(turn: TimelineDisplayTurn): string {
-  const activities = turn.activities.map(
-    (activity) => `${activity.label} ${activity.detail ?? ""} ${activity.state ?? ""}`,
-  );
-  return [
-    ...turn.userText,
-    ...turn.assistantText,
-    ...turn.lifecycle.map((value) => {
-      const { label } = value;
-      return label;
-    }),
-    ...activities,
-    turn.state,
-  ].join(" ");
+function completedComposerCommand(
+  frame: V2CommandTerminalFrame,
+  expectedThreadId: string,
+): boolean {
+  if (frame.type !== "commandCompleted") return false;
+  const { result } = frame;
+  if (result.kind === "turn.submit" || result.kind === "turn.steer") {
+    return result.threadId === expectedThreadId;
+  }
+  if (result.kind !== "queue.mutate") return false;
+  if (result.outcome.kind === "item") return result.outcome.item.threadId === expectedThreadId;
+  return result.outcome.kind === "steered" && result.outcome.threadId === expectedThreadId;
 }
 
-function completedCurrentTurn(frame: V2CommandTerminalFrame, threadId: string): boolean {
-  return (
-    frame.type === "commandCompleted" &&
-    frame.result.kind === "turn.submit" &&
-    frame.result.threadId === threadId
-  );
+function latestActiveTurnId(turns: V2ThreadWindow["turns"]): string | null {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn?.state === "running" || turn?.state === "queued") return turn.id;
+  }
+  return null;
+}
+
+function effectiveDeliveryMode(
+  preference: QueueDeliveryMode,
+  threadRunning: boolean,
+  activeTurnId: string | null,
+): QueueDeliveryMode {
+  if (!threadRunning) return "sendNow";
+  if (preference === "steer" && activeTurnId !== null) return "steer";
+  return "queue";
+}
+
+function turnInputBlocks(
+  turn: V2ThreadWindow["turns"][number],
+  attachments: readonly V2Attachment[],
+): V2InputBlock[] | null {
+  const input: V2InputBlock[] = [];
+  for (const item of turn.items) {
+    if (item.kind !== "userMessage") continue;
+    for (const block of item.content) {
+      if (block.kind === "text") {
+        input.push({ kind: "text", text: block.text });
+        continue;
+      }
+      if (block.kind === "skill") {
+        input.push({ kind: "skill", name: block.name, path: block.path });
+        continue;
+      }
+      if (block.kind === "mention" && /^[a-z][a-z0-9+.-]*:\/\//iu.test(block.path)) return null;
+      const reference = block.kind === "image" || block.kind === "audio" ? block.url : block.path;
+      const attachment = attachmentForReference(attachments, reference);
+      if (attachment === null) return null;
+      input.push({ attachmentId: attachment.id, kind: "attachment" });
+    }
+  }
+  return input;
+}
+
+function errorMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback;
+}
+
+function conversationComposerReducer(
+  state: ConversationComposerState,
+  action: ConversationComposerAction,
+): ConversationComposerState {
+  if (action.kind === "addTranscript") {
+    return {
+      ...state,
+      text: state.text.trim() === "" ? action.text : `${state.text.trimEnd()} ${action.text}`,
+    };
+  }
+  if (action.kind === "clearPendingInput") return { ...state, pendingInputBlocks: [] };
+  if (action.kind === "edit") return { ...state, error: null, terminalBlocked: false };
+  if (action.kind === "editPriorTurn") {
+    return {
+      ...state,
+      error: null,
+      pendingInputBlocks: action.blocks,
+      terminalBlocked: false,
+      text: action.text,
+    };
+  }
+  if (action.kind === "lock") {
+    return {
+      ...state,
+      error: action.message,
+      lockedActivation: action.activation,
+    };
+  }
+  if (action.kind === "releaseUnsettled") {
+    return { ...state, error: null, lockedActivation: null };
+  }
+  if (action.kind === "selectSkill") {
+    const pendingInputBlocks = state.pendingInputBlocks.filter(
+      (block) =>
+        block.kind !== "skill" || action.block.kind !== "skill" || block.path !== action.block.path,
+    );
+    pendingInputBlocks.push(action.block);
+    return { ...state, pendingInputBlocks, text: action.text };
+  }
+  if (action.kind === "setError") return { ...state, error: action.message };
+  if (action.kind === "setText") return { ...state, text: action.text };
+  if (action.kind === "settled") {
+    return {
+      ...state,
+      clearVersion: state.clearVersion + 1,
+      error: null,
+      lockedActivation: null,
+      pendingInputBlocks: [],
+      terminalBlocked: false,
+      text: "",
+    };
+  }
+  if (action.kind === "submitCompleted") {
+    return { ...state, error: null, terminalBlocked: false };
+  }
+  if (action.kind === "terminalFailure") {
+    return {
+      ...state,
+      error: action.message,
+      lockedActivation: null,
+      terminalBlocked: true,
+    };
+  }
+  return {
+    ...state,
+    error: action.message,
+    lockedActivation: null,
+    terminalBlocked: false,
+  };
 }
 
 function composerTerminalMessage(frame: V2CommandTerminalFrame): string {
@@ -1035,3 +1871,12 @@ function composerTerminalMessage(frame: V2CommandTerminalFrame): string {
   }
   return "The saved action completed without this message. Edit the draft before sending again.";
 }
+
+const styles = StyleSheet.create({
+  authorityFailure: { gap: spacing.xs },
+  liveStatus: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+});

@@ -74,6 +74,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   private val voiceAura = VoiceAuraRenderEffect(context)
   private val browserDevTools = BrowserDevToolsBridge(context)
   private val mainHandler = Handler(Looper.getMainLooper())
+  private val authenticatedLeaseGate = LeaseAcquisitionGate(MAX_AUTHENTICATED_LEASES_PER_CONTEXT)
+  @Volatile private var invalidated = false
 
   init {
     contexts += context
@@ -246,20 +248,26 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     try {
       validateEndpoint(endpoint)
       require(connectionId.isNotBlank()) { "Connection id is required" }
-      val store = NativeSessionCredentialsStore(context)
-      val existing = store.get(connectionId)
-      val capability = token?.takeIf { it.isNotBlank() } ?: existing?.token
-      require(capability != null && capability.length in 32..512) { "Capability token is invalid" }
       PinnedTls.requireTransport(endpoint, tlsPinSha256)
-      store.upsert(mergeNativeSessionCredentials(
-        existing,
-        connectionId,
-        endpoint,
-        capability,
-        tlsPinSha256,
-        enabled,
-        deviceId,
-      ))
+      processNativeAuthorityLifecycle.access {
+        val store = NativeSessionCredentialsStore(context)
+        val existing = store.get(connectionId)
+        val capability = token?.takeIf { it.isNotBlank() } ?: existing?.token
+        require(capability != null && capability.length in 32..512) { "Capability token is invalid" }
+        val replacement = mergeNativeSessionCredentials(
+          existing,
+          connectionId,
+          endpoint,
+          capability,
+          tlsPinSha256,
+          enabled,
+          deviceId,
+        )
+        if (replacement == existing) return@access
+        val service = CodexConnectionService.instance
+        if (service == null) store.upsert(replacement)
+        else service.replaceSavedServerAuthority(replacement)
+      }
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("SAVE_CONNECTION_FAILED", "Could not persist native connection credentials", error)
@@ -379,6 +387,32 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
+  fun setV2ConnectionEnabled(connectionId: String, enabled: Boolean, promise: Promise) {
+    try {
+      require(connectionId.isNotBlank()) { "Connection id is required" }
+      val serviceWasMissing = processNativeAuthorityLifecycle.access {
+        val store = NativeSessionCredentialsStore(context)
+        val saved = store.get(connectionId) ?: throw IllegalStateException("Saved native credentials are missing")
+        val replacement = saved.copy(enabled = enabled)
+        if (replacement == saved) return@access CodexConnectionService.instance == null
+        val service = CodexConnectionService.instance
+        if (service == null) {
+          store.upsert(replacement)
+          true
+        } else {
+          if (enabled) service.activateV2Sync(headless = false)
+          service.replaceSavedServerAuthority(replacement)
+          false
+        }
+      }
+      if (enabled && serviceWasMissing) activateV2ConnectionService()
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("SET_CONNECTION_ENABLED_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
   fun attachSocket(connectionId: String, promise: Promise) {
     try {
       require(connectionId.isNotBlank()) { "Connection id is required" }
@@ -429,30 +463,66 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   @ReactMethod
   fun acquireAuthenticatedTransportLease(savedServerId: String, promise: Promise) {
+    var reservation: LeaseAcquisitionGate.Reservation? = null
     try {
       require(savedServerId.isNotBlank()) { "Saved server id is required" }
-      wakeSocket(savedServerId)
+      reservation = authenticatedLeaseGate.reserve()
+      activateV2ConnectionService()
       acquireAuthenticatedTransportLeaseWhenReady(
         savedServerId,
         promise,
         SystemClock.uptimeMillis() + AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS,
+        reservation,
       )
     } catch (error: Throwable) {
+      reservation?.let(authenticatedLeaseGate::discard)
       promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "Could not acquire the authenticated transport lease", error)
     }
   }
 
-  private fun acquireAuthenticatedTransportLeaseWhenReady(savedServerId: String, promise: Promise, deadline: Long) {
+  private fun activateV2ConnectionService() {
+    val service = CodexConnectionService.instance
+    if (service != null) {
+      service.activateV2Sync(headless = false)
+      return
+    }
+    ContextCompat.startForegroundService(
+      context,
+      Intent(context, CodexConnectionService::class.java).apply {
+        action = CodexConnectionService.ACTION_ACTIVATE_V2
+      },
+    )
+  }
+
+  private fun acquireAuthenticatedTransportLeaseWhenReady(
+    savedServerId: String,
+    promise: Promise,
+    deadline: Long,
+    reservation: LeaseAcquisitionGate.Reservation,
+  ) {
+    if (invalidated) {
+      authenticatedLeaseGate.discard(reservation)
+      promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "React context is no longer active")
+      return
+    }
     val service = CodexConnectionService.instance
     if (service != null) {
       try {
-        promise.resolve(service.acquireAuthenticatedTransportLease(savedServerId))
+        val leaseHandle = service.acquireAuthenticatedTransportLease(savedServerId)
+        val retained = !invalidated && authenticatedLeaseGate.attach(reservation, leaseHandle)
+        if (retained) promise.resolve(leaseHandle)
+        else {
+          service.releaseAuthenticatedTransportLease(leaseHandle)
+          promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "React context is no longer active")
+        }
       } catch (error: Throwable) {
+        authenticatedLeaseGate.discard(reservation)
         promise.reject("AUTHENTICATED_LEASE_UNAVAILABLE", "Could not acquire the authenticated transport lease", error)
       }
       return
     }
     if (SystemClock.uptimeMillis() >= deadline) {
+      authenticatedLeaseGate.discard(reservation)
       promise.reject(
         "AUTHENTICATED_LEASE_UNAVAILABLE",
         "Connection service did not become ready",
@@ -460,7 +530,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       return
     }
     mainHandler.postDelayed(
-      { acquireAuthenticatedTransportLeaseWhenReady(savedServerId, promise, deadline) },
+      { acquireAuthenticatedTransportLeaseWhenReady(savedServerId, promise, deadline, reservation) },
       AUTHENTICATED_LEASE_SERVICE_RETRY_MS,
     )
   }
@@ -468,6 +538,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod
   fun openAuthenticatedDuplex(leaseHandle: String, channelId: String, purpose: String, promise: Promise) {
     try {
+      check(authenticatedLeaseGate.owns(leaseHandle)) { "Authenticated lease is not owned by this React context" }
       val service = CodexConnectionService.instance ?: error("Connection service is not running")
       service.openAuthenticatedDuplex(leaseHandle, channelId, purpose)
       promise.resolve(null)
@@ -479,6 +550,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod
   fun sendAuthenticatedDuplex(leaseHandle: String, channelId: String, data: String, promise: Promise) {
     try {
+      check(authenticatedLeaseGate.owns(leaseHandle)) { "Authenticated lease is not owned by this React context" }
       val service = CodexConnectionService.instance ?: error("Connection service is not running")
       service.sendAuthenticatedDuplex(leaseHandle, channelId, data)
       promise.resolve(null)
@@ -489,12 +561,14 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   @ReactMethod
   fun closeAuthenticatedDuplex(leaseHandle: String, channelId: String, code: Double, reason: String) {
+    if (!authenticatedLeaseGate.owns(leaseHandle)) return
     CodexConnectionService.instance?.closeAuthenticatedDuplex(leaseHandle, channelId, code.toInt(), reason)
   }
 
   @ReactMethod
   fun authenticatedRequest(leaseHandle: String, purpose: String, input: String, promise: Promise) {
     try {
+      check(authenticatedLeaseGate.owns(leaseHandle)) { "Authenticated lease is not owned by this React context" }
       val service = CodexConnectionService.instance ?: error("Connection service is not running")
       service.authenticatedRequest(leaseHandle, purpose, input) { result ->
         result.fold(
@@ -509,7 +583,9 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   @ReactMethod
   fun releaseAuthenticatedTransportLease(leaseHandle: String) {
-    CodexConnectionService.instance?.releaseAuthenticatedTransportLease(leaseHandle)
+    if (authenticatedLeaseGate.release(leaseHandle)) {
+      CodexConnectionService.instance?.releaseAuthenticatedTransportLease(leaseHandle)
+    }
   }
 
   @ReactMethod
@@ -859,6 +935,16 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
+  fun stopLegacyRuntimeResources(promise: Promise) {
+    try {
+      CodexConnectionService.instance?.stopLegacyRuntimeResources()
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("LEGACY_RUNTIME_STOP_FAILED", error.message ?: "Could not stop legacy native resources", error)
+    }
+  }
+
+  @ReactMethod
   fun acknowledgeProjection(connectionId: String, projectionCursor: Double) {
     CodexConnectionService.instance?.acknowledgeThrough(connectionId, projectionCursor.toLong())
   }
@@ -1032,6 +1118,10 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod fun removeListeners(count: Double) = Unit
 
   override fun invalidate() {
+    val service = CodexConnectionService.instance
+    invalidated = true
+    authenticatedLeaseGate.close().forEach { leaseHandle -> service?.releaseAuthenticatedTransportLease(leaseHandle) }
+    mainHandler.removeCallbacksAndMessages(null)
     contexts -= context
     browserDevTools.close()
     stopPcmCaptureInternal()
@@ -1303,6 +1393,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     private const val DOCUMENT_IO_BUFFER_BYTES = 256 * 1024
     private const val AUTHENTICATED_LEASE_SERVICE_RETRY_MS = 25L
     private const val AUTHENTICATED_LEASE_SERVICE_TIMEOUT_MS = 5_000L
+    private const val MAX_AUTHENTICATED_LEASES_PER_CONTEXT = 32
     private val contexts = CopyOnWriteArraySet<ReactApplicationContext>()
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val pairingHttpClient = OkHttpClient.Builder()

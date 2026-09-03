@@ -107,10 +107,6 @@ fn public_frame(frame: &ServerFrame) -> ServerFrame {
             operation_id: operation_id.clone(),
             error: error.for_wire(),
         },
-        ServerFrame::ActionFailed { request_id, error } => ServerFrame::ActionFailed {
-            request_id: request_id.clone(),
-            error: error.for_wire(),
-        },
         other => other.clone(),
     }
 }

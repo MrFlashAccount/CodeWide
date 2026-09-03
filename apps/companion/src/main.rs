@@ -1040,6 +1040,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     let content = PrivateContentService::open_with_fallbacks(content_directory, content_fallbacks);
     let media = Arc::new(MediaProxyService::new());
     let tunnels = Arc::new(LocalhostTunnelService::new()?);
+    tunnels.start_periodic_cleanup();
     let dictation = Arc::new(
         DictationService::open(
             codex_home.join("auth.json"),
@@ -1082,6 +1083,28 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             .unwrap_or_else(|| state_directory.join("identity")),
     )?;
     let sync_v2_tls_pin = identity.public().tls_pin_sha256.clone();
+    let attachment_staging = sync_v2_enabled
+        .then(|| {
+            codewide_companion::sync_v2::AttachmentStageStore::open(
+                state_directory.join("sync-v2-attachments.redb"),
+                state_directory.join("sync-v2-attachments"),
+            )
+        })
+        .transpose()?;
+    if let Some(staging) = &attachment_staging {
+        staging.start_periodic_gc();
+    }
+    let workspace_upload_staging = sync_v2_enabled
+        .then(|| {
+            codewide_companion::sync_v2::WorkspaceUploadStore::open(
+                state_directory.join("sync-v2-workspace-uploads.redb"),
+                files.clone(),
+            )
+        })
+        .transpose()?;
+    if let Some(staging) = &workspace_upload_staging {
+        staging.start_periodic_gc();
+    }
     let sync_v2 = sync_v2_enabled
         .then(|| {
             UpstreamHandle::spawn_with_message_limit(
@@ -1100,6 +1123,7 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
                     workspaces: Some(workspaces),
                     resources: Some(resources),
                     accounts: account_pool,
+                    attachments: attachment_staging.clone(),
                 },
             );
             SyncV2Runtime::new(
@@ -1107,10 +1131,27 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
                 state_directory.join("sync-v2-operations.redb"),
                 sync_v2_tls_pin,
             )
+            .map(|runtime| {
+                #[cfg(feature = "e2e-command-fault")]
+                {
+                    runtime.with_e2e_surface_fault_control(sync.e2e_surface_fault_control())
+                }
+                #[cfg(not(feature = "e2e-command-fault"))]
+                {
+                    runtime
+                }
+            })
         })
         .transpose()?;
     let token: Arc<str> = Arc::from(token);
     let registry = Arc::new(DeviceRegistry::open(token, options.device_registry, None).await?);
+    tunnels.start_revocation_cleanup(registry.subscribe_authorization_changes());
+    if let Some(staging) = &attachment_staging {
+        staging.start_revocation_cleanup(registry.subscribe_authorization_changes());
+    }
+    if let Some(staging) = &workspace_upload_staging {
+        staging.start_revocation_cleanup(registry.subscribe_authorization_changes());
+    }
     let bootstrap_listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     bootstrap_listener.set_nonblocking(true)?;
     let bootstrap_tls_target = bootstrap_listener.local_addr()?;
@@ -1136,6 +1177,8 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
         inner_tls_target: Some(inner_tls_target),
         inner_tls_limit: Some(Arc::new(tokio::sync::Semaphore::new(256))),
         sync_v2,
+        attachment_staging,
+        workspace_upload_staging,
         sync_v2_mode: options.sync_v2_mode,
     };
     let bootstrap_tls = codewide_companion::device_tls::bootstrap_config(&identity)?;

@@ -21,7 +21,7 @@ let snapshot = DEFAULT_SNAPSHOT;
 const listeners = new Set<() => void>();
 const PerformanceExperimentContext = createContext<PerformanceExperimentSnapshot>(DEFAULT_SNAPSHOT);
 
-function subscribe(listener: () => void): () => void {
+export function subscribePerformanceExperiments(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
@@ -47,7 +47,7 @@ export function resetPerformanceExperiments(): void {
 }
 
 export function PerformanceExperimentProvider({ children }: { children: ReactNode }) {
-  const value = useSyncExternalStore(subscribe, performanceExperimentSnapshot, performanceExperimentSnapshot);
+  const value = useSyncExternalStore(subscribePerformanceExperiments, performanceExperimentSnapshot, performanceExperimentSnapshot);
   return <PerformanceExperimentContext.Provider value={value}>{children}</PerformanceExperimentContext.Provider>;
 }
 

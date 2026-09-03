@@ -1,8 +1,9 @@
 use super::{
     Arc, AuthorizationChange, CloseFrame, LiveTerminal, MAX_INPUT_BYTES, Message,
-    OUTPUT_CHUNK_BYTES, PtySize, Read, ReplayChunk, SinkExt, TERMINAL_EXITED_CLOSE_CODE,
-    TERMINAL_REPLAY_CLOSE_CODE, TerminalAuthorization, TerminalSession, TerminalState, WebSocket,
-    Write, WriterCommand, broadcast, lock, mpsc, std_mpsc, validate_size,
+    OUTPUT_CHUNK_BYTES, PtySize, Read, ReplayChunk, ReplayFailure, ReplayReadError, SinkExt,
+    TERMINAL_EXITED_CLOSE_CODE, TERMINAL_REPLAY_CLOSE_CODE, TERMINAL_RESOURCE_CLOSE_CODE,
+    TerminalAuthorization, TerminalSession, TerminalState, WebSocket, Write, WriterCommand,
+    broadcast, lock, mpsc, std_mpsc, validate_size,
 };
 
 enum Output {
@@ -14,6 +15,11 @@ enum AuthorizationChangeOutcome {
     Continue,
     Close,
     Disable,
+}
+
+enum ReplaySendError {
+    Socket,
+    Replay(ReplayReadError),
 }
 
 pub async fn bridge(
@@ -124,27 +130,21 @@ pub async fn bridge_resumable(mut socket: WebSocket, terminal: Arc<LiveTerminal>
     let mut output = terminal.output.subscribe();
     let mut state = terminal.state.subscribe();
     let mut cursor = offset;
-    let replay = lock(&terminal.replay).snapshot(cursor);
-    let Ok(replay) = replay else {
-        close_socket(
-            &mut socket,
-            TERMINAL_REPLAY_CLOSE_CODE,
-            "terminal_replay_unavailable",
-        )
-        .await;
+    if let Err(error) = send_replay(&mut socket, &terminal, &mut cursor).await {
+        close_for_replay_error(&mut socket, error).await;
         return;
-    };
-    for chunk in replay {
-        if send_replay_chunk(&mut socket, &chunk, &mut cursor)
-            .await
-            .is_err()
-        {
+    }
+    let replayed_state = state.borrow().clone();
+    match replayed_state {
+        TerminalState::Running => {}
+        TerminalState::Exited(_) => {
+            close_socket(&mut socket, TERMINAL_EXITED_CLOSE_CODE, "terminal_exited").await;
             return;
         }
-    }
-    if *state.borrow() == TerminalState::Exited {
-        close_socket(&mut socket, TERMINAL_EXITED_CLOSE_CODE, "terminal_exited").await;
-        return;
+        TerminalState::Failed(failure) => {
+            close_for_terminal_failure(&mut socket, failure).await;
+            return;
+        }
     }
 
     loop {
@@ -191,32 +191,82 @@ pub async fn bridge_resumable(mut socket: WebSocket, terminal: Arc<LiveTerminal>
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    let replay = lock(&terminal.replay).snapshot(cursor);
-                    let Ok(replay) = replay else {
-                        close_socket(
-                            &mut socket,
-                            TERMINAL_REPLAY_CLOSE_CODE,
-                            "terminal_replay_unavailable",
-                        ).await;
+                    if let Err(error) = send_replay(&mut socket, &terminal, &mut cursor).await {
+                        close_for_replay_error(&mut socket, error).await;
                         return;
-                    };
-                    for chunk in replay {
-                        if send_replay_chunk(&mut socket, &chunk, &mut cursor).await.is_err() {
-                            return;
-                        }
                     }
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             },
             changed = state.changed() => {
-                if changed.is_err() || *state.borrow() == TerminalState::Exited {
+                if changed.is_err() {
                     break;
+                }
+                let current = state.borrow_and_update().clone();
+                match current {
+                    TerminalState::Running => {}
+                    TerminalState::Exited(_) => break,
+                    TerminalState::Failed(failure) => {
+                        close_for_terminal_failure(&mut socket, failure).await;
+                        return;
+                    }
                 }
             }
         }
     }
 
     close_socket(&mut socket, TERMINAL_EXITED_CLOSE_CODE, "terminal_exited").await;
+}
+
+async fn send_replay(
+    socket: &mut WebSocket,
+    terminal: &Arc<LiveTerminal>,
+    cursor: &mut u64,
+) -> Result<(), ReplaySendError> {
+    loop {
+        let chunk = match lock(&terminal.replay).read_chunk(*cursor) {
+            Ok(chunk) => chunk,
+            Err(ReplayReadError::Unavailable) => {
+                return Err(ReplaySendError::Replay(ReplayReadError::Unavailable));
+            }
+            Err(ReplayReadError::Failed(failure)) => {
+                terminal.mark_failed(failure);
+                return Err(ReplaySendError::Replay(ReplayReadError::Failed(failure)));
+            }
+        };
+        let Some(chunk) = chunk else {
+            return Ok(());
+        };
+        send_replay_chunk(socket, &chunk, cursor)
+            .await
+            .map_err(|()| ReplaySendError::Socket)?;
+    }
+}
+
+async fn close_for_replay_error(socket: &mut WebSocket, error: ReplaySendError) {
+    match error {
+        ReplaySendError::Socket => {}
+        ReplaySendError::Replay(ReplayReadError::Unavailable) => {
+            close_socket(
+                socket,
+                TERMINAL_REPLAY_CLOSE_CODE,
+                "terminal_replay_unavailable",
+            )
+            .await;
+        }
+        ReplaySendError::Replay(ReplayReadError::Failed(failure)) => {
+            close_for_terminal_failure(socket, failure).await;
+        }
+    }
+}
+
+async fn close_for_terminal_failure(socket: &mut WebSocket, failure: ReplayFailure) {
+    let reason = match failure {
+        ReplayFailure::OwnerQuotaExceeded => "terminal_owner_replay_quota_exceeded",
+        ReplayFailure::GlobalQuotaExceeded => "terminal_global_replay_quota_exceeded",
+        ReplayFailure::StorageUnavailable => "terminal_replay_storage_unavailable",
+    };
+    close_socket(socket, TERMINAL_RESOURCE_CLOSE_CODE, reason).await;
 }
 
 async fn send_replay_chunk(

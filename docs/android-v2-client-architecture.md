@@ -76,8 +76,8 @@ Snapshots and projections are read-model records, not entities or caches. Operat
 - `/servers` means aggregate All. No magic ID represents All.
 - `/servers/[savedServerId]` means one saved server.
 - Thread, agent, attachment, review, Terminal, port, and account destinations preserve the owning `savedServerId` in the URL.
-- `/pair` and `/thread` are temporary legacy-only aliases and never select V2. Their removal condition is explicit V1-deletion approval.
-- `connectionId` is not a V2 route or domain term.
+- `/pair` and `/thread` are public generation-aware aliases: they preserve legacy handling for V1 and route into typed V2 pairing or thread destinations when V2 is selected.
+- V2 thread destinations use `savedServerId` plus `threadId`. The public `/thread` boundary may translate the legacy `connectionId` query alias, but rejects malformed or disagreeing canonical and legacy identities; `connectionId` is not a V2 route or domain term beyond that adapter.
 - New V2 code imports Sync V2 only from `@codewide/sync-client/v2`. `packages/sync-client/src/index.ts` must not re-export V2 symbols.
 - `/v2/sync` is the authoritative snapshot/change/query/command/action/operation channel.
 - Pairing/session auth, files/media, and port/tunnel contracts use versioned `/v2` endpoints.
@@ -119,6 +119,9 @@ No arrow connects `operationResource` or `ActionRunner` to `V2ProjectionStore`. 
 - `sourceGeneration` is the sole server-restart witness for generation-bound resources. `epochId` and `revision` never substitute for it.
 - Reconnect revokes live capabilities, preserves retained projection, performs bounded reinitialization, and atomically publishes a new authoritative generation inside sync-client.
 - Watermarks order only within an epoch; they are not reconnect or history cursors.
+- Android keeps one service-owned V2 sync socket per saved server for completion and approval notifications, including while no React runtime exists. A foreground runtime takes that socket ownership by replacement; it never creates a parallel V1 sync runtime.
+- V2 notifications are live-only: while the native or foreground V2 socket is connected, exact completion and approval changes produce system notifications. After an interval with no socket, the next authoritative snapshot immediately restores current projection and pending approvals, but historical completion notifications are neither replayed nor inferred from the bounded snapshot.
+- Retiring a saved-server or generation authority cancels its open approval notifications and removes their content-free durable notification baseline.
 - Unknown, duplicate, regressing, foreign-epoch, ambiguous-owner, invalid-audience, or schema-invalid input follows the fail-closed V2 policy.
 - Generated types never replace inbound and outbound runtime validation.
 
@@ -481,7 +484,7 @@ Android declarations named `ConnectionEpoch`, `ProjectionGeneration`, `V2Project
 
 ## Compatibility decisions
 
-- `/pair` and `/thread` remain legacy-only aliases until V1-deletion approval.
+- `/pair` and `/thread` select the active UI generation. Their V2 branch must validate external params, preserve pairing review, and emit only typed `savedServerId`/`threadId` destinations.
 - Legacy presentation sources that are reused by V2 are converted atomically into V1 containers/platform adapters plus protocol-neutral shared Views.
 - No package-root V2 export, V1 wire adapter, state migration, dual write, or fallback path is allowed.
 

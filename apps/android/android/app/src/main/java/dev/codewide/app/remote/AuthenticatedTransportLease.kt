@@ -5,6 +5,7 @@ import android.util.Log
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Semaphore
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -19,6 +20,51 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONObject
 
+internal const val MAX_AUTHENTICATED_RESPONSE_BYTES = 16 * 1024 * 1024
+
+internal class AuthenticatedLeaseCapacityExceededException : IllegalStateException(
+  "Too many authenticated leases are open",
+)
+
+/** Process-wide admission budget; per-lease gates cannot multiply these limits. */
+internal class AuthenticatedTransportCapacity(
+  maximumLeases: Int,
+  maximumChannels: Int,
+  maximumRequests: Int,
+) {
+  private val leases = Semaphore(maximumLeases, true)
+  private val channels = Semaphore(maximumChannels, true)
+  private val requests = Semaphore(maximumRequests, true)
+
+  fun reserveLease() {
+    if (!leases.tryAcquire()) throw AuthenticatedLeaseCapacityExceededException()
+  }
+
+  fun releaseLease() = leases.release()
+
+  fun <T> channelGate(perLeaseMaximum: Int): LeaseChannelGate<T> = LeaseChannelGate(
+    perLeaseMaximum,
+    onReserved = { reserve(channels, "Too many authenticated channels are open in this process") },
+    onReleased = channels::release,
+  )
+
+  fun <T> requestGate(perLeaseMaximum: Int): LeaseRequestGate<T> = LeaseRequestGate(
+    perLeaseMaximum,
+    onReserved = { reserve(requests, "Too many authenticated requests are open in this process") },
+    onReleased = requests::release,
+  )
+
+  fun availableLeases(): Int = leases.availablePermits()
+
+  fun availableChannels(): Int = channels.availablePermits()
+
+  fun availableRequests(): Int = requests.availablePermits()
+
+  private fun reserve(semaphore: Semaphore, message: String) {
+    check(semaphore.tryAcquire()) { message }
+  }
+}
+
 internal data class AuthenticatedDuplexEvent(
   val type: String,
   val data: String? = null,
@@ -31,11 +77,12 @@ internal class AuthenticatedTransportLeaseRegistry(
   private val credentialClient: OkHttpClient,
   private val transportClient: OkHttpClient,
   private val emit: (String) -> Unit,
+  private val capacity: AuthenticatedTransportCapacity = PROCESS_CAPACITY,
 ) {
   private data class Lease(
     val savedServerId: String,
-    val channels: ConcurrentHashMap<String, WebSocket> = ConcurrentHashMap(),
-    val requests: LeaseRequestGate<Call> = LeaseRequestGate(MAX_REQUESTS_PER_LEASE),
+    val channels: LeaseChannelGate<WebSocket>,
+    val requests: LeaseRequestGate<Call>,
     @Volatile var released: Boolean = false,
   )
 
@@ -44,19 +91,35 @@ internal class AuthenticatedTransportLeaseRegistry(
     val method: String,
     val body: ByteArray? = null,
     val mediaType: String? = null,
+    val range: String? = null,
+    val responseLimit: Int = MAX_AUTHENTICATED_RESPONSE_BYTES,
+    val boundedPrefixResponse: Boolean = false,
   )
 
   private val leases = ConcurrentHashMap<String, Lease>()
   private val observers = ConcurrentHashMap<String, (AuthenticatedDuplexEvent) -> Unit>()
-  private val openingChannels = ConcurrentHashMap.newKeySet<String>()
+  private val lifecycleLock = Any()
+  @Volatile private var closed = false
 
-  fun acquire(savedServerId: String): String {
+  fun acquire(savedServerId: String): String = synchronized(lifecycleLock) {
+    check(!closed) { "Authenticated transport registry is closed" }
     require(savedServerId.isNotBlank() && savedServerId.length <= 256) { "Saved server id is invalid" }
     val saved = credentialsStore.get(savedServerId) ?: error("Saved server is unavailable")
     require(saved.enabled) { "Saved server is disabled" }
-    val handle = UUID.randomUUID().toString()
-    leases[handle] = Lease(savedServerId)
-    return handle
+    capacity.reserveLease()
+    try {
+      val handle = UUID.randomUUID().toString()
+      val lease = Lease(
+        savedServerId,
+        capacity.channelGate(MAX_CHANNELS_PER_LEASE),
+        capacity.requestGate(MAX_REQUESTS_PER_LEASE),
+      )
+      check(leases.putIfAbsent(handle, lease) == null) { "Could not allocate authenticated lease" }
+      return@synchronized handle
+    } catch (error: Throwable) {
+      capacity.releaseLease()
+      throw error
+    }
   }
 
   fun openDuplex(
@@ -67,7 +130,6 @@ internal class AuthenticatedTransportLeaseRegistry(
   ) {
     requireChannelId(channelId)
     val lease = requireLease(handle)
-    check(lease.channels.size < MAX_CHANNELS_PER_LEASE) { "Too many authenticated channels are open" }
     val path = when (purpose) {
       "sync-v2" -> "/v2/sync"
       "terminal-v2" -> "/v2/terminals"
@@ -75,23 +137,34 @@ internal class AuthenticatedTransportLeaseRegistry(
       else -> error("Authenticated channel purpose is invalid")
     }
     val key = channelKey(handle, channelId)
-    check(!lease.channels.containsKey(channelId) && openingChannels.add(key)) { "Authenticated channel already exists" }
+    val reservation = lease.channels.reserve(channelId)
     if (observer != null) observers[key] = observer
-    val saved = requireSaved(lease)
-    SessionCredentialClient.mint(credentialClient, saved) { result ->
-      result.fold(
-        onSuccess = { credential -> connectDuplex(handle, lease, channelId, purpose, path, saved, credential) },
-        onFailure = {
-          openingChannels.remove(key)
-          emitFailure(handle, channelId, "authorization_failed")
-        },
-      )
+    try {
+      val saved = requireSaved(lease)
+      SessionCredentialClient.mint(credentialClient, saved) { result ->
+        result.fold(
+          onSuccess = { credential ->
+            if (!current(handle, lease) || !lease.channels.contains(reservation)) return@fold
+            runCatching { connectDuplex(handle, lease, reservation, purpose, path, saved, credential) }
+              .onFailure {
+                if (lease.channels.discard(reservation)) emitFailure(handle, channelId, "transport_failed")
+              }
+          },
+          onFailure = {
+            if (lease.channels.discard(reservation)) emitFailure(handle, channelId, "authorization_failed")
+          },
+        )
+      }
+    } catch (error: Throwable) {
+      observers.remove(key)
+      lease.channels.discard(reservation)
+      throw error
     }
   }
 
   fun send(handle: String, channelId: String, data: String) {
     require(data.toByteArray(Charsets.UTF_8).size <= MAX_DUPLEX_MESSAGE_BYTES) { "Authenticated channel message is too large" }
-    val socket = requireLease(handle).channels[channelId] ?: error("Authenticated channel is unavailable")
+    val socket = requireLease(handle).channels.get(channelId) ?: error("Authenticated channel is unavailable")
     check(socket.send(data)) { "Authenticated channel is not writable" }
   }
 
@@ -99,8 +172,7 @@ internal class AuthenticatedTransportLeaseRegistry(
     val lease = leases[handle] ?: return
     val key = channelKey(handle, channelId)
     observers.remove(key)
-    openingChannels.remove(key)
-    lease.channels.remove(channelId)?.close(code.coerceIn(1000, 4999), reason.take(64))
+    lease.channels.take(channelId)?.close(code.coerceIn(1000, 4999), reason.take(64))
   }
 
   fun request(handle: String, purpose: String, input: String, completion: (Result<String>) -> Unit) {
@@ -110,14 +182,25 @@ internal class AuthenticatedTransportLeaseRegistry(
     val prepared = prepareRequest(purpose, input, saved)
     val requestId = UUID.randomUUID().toString()
     lease.requests.reserve(requestId)
-    SessionCredentialClient.mint(credentialClient, saved) { result ->
-      result.fold(
-        onSuccess = { credential -> executeRequest(handle, lease, requestId, prepared, saved, credential, completion) },
-        onFailure = {
-          lease.requests.complete(requestId)
-          completion(Result.failure(IllegalStateException("Authenticated request authorization failed")))
-        },
-      )
+    try {
+      SessionCredentialClient.mint(credentialClient, saved) { result ->
+        result.fold(
+          onSuccess = { credential ->
+            runCatching { executeRequest(handle, lease, requestId, prepared, saved, credential, completion) }
+              .onFailure { error ->
+                lease.requests.complete(requestId)
+                completion(Result.failure(IllegalStateException("Authenticated request could not start", error)))
+              }
+          },
+          onFailure = {
+            lease.requests.complete(requestId)
+            completion(Result.failure(IllegalStateException("Authenticated request authorization failed")))
+          },
+        )
+      }
+    } catch (error: Throwable) {
+      lease.requests.complete(requestId)
+      throw error
     }
   }
 
@@ -125,10 +208,9 @@ internal class AuthenticatedTransportLeaseRegistry(
     val lease = leases.remove(handle) ?: return
     lease.released = true
     observers.keys.filter { it.startsWith("$handle:") }.forEach(observers::remove)
-    openingChannels.removeIf { it.startsWith("$handle:") }
-    lease.channels.values.forEach { it.close(1000, "lease_released") }
-    lease.channels.clear()
+    lease.channels.release().forEach(WebSocket::cancel)
     lease.requests.release().forEach(Call::cancel)
+    capacity.releaseLease()
   }
 
   fun closeSavedServer(savedServerId: String) {
@@ -137,16 +219,28 @@ internal class AuthenticatedTransportLeaseRegistry(
 
   fun closeAll() = leases.keys.toList().forEach(::release)
 
+  fun shutdown() {
+    val handles = synchronized(lifecycleLock) {
+      closed = true
+      leases.keys.toList()
+    }
+    handles.forEach(::release)
+  }
+
   private fun connectDuplex(
     handle: String,
     lease: Lease,
-    channelId: String,
+    reservation: LeaseChannelGate.Reservation,
     purpose: String,
     path: String,
     saved: StoredNativeSession,
     credential: MintedSessionCredential,
   ) {
-    if (!current(handle, lease)) return
+    if (!current(handle, lease)) {
+      lease.channels.discard(reservation)
+      return
+    }
+    val channelId = reservation.channelId
     val endpoint = URI(saved.endpoint)
     val target = URI(endpoint.scheme, endpoint.rawAuthority, path, null, null).toString()
     val request = Request.Builder()
@@ -155,21 +249,20 @@ internal class AuthenticatedTransportLeaseRegistry(
       .build()
     val socket = InnerTlsTransport.client(transportClient, saved).newWebSocket(request, object : WebSocketListener() {
       override fun onOpen(socket: WebSocket, response: Response) {
-        openingChannels.remove(channelKey(handle, channelId))
-        if (!current(handle, lease) || lease.channels.putIfAbsent(channelId, socket) != null) {
-          socket.close(1000, "channel_stale")
+        if (!current(handle, lease) || !lease.channels.attach(reservation, socket)) {
+          socket.cancel()
           return
         }
         emitEvent(handle, channelId, "open")
       }
 
       override fun onMessage(socket: WebSocket, text: String) {
-        if (lease.channels[channelId] !== socket) return
+        if (!lease.channels.owns(reservation, socket)) return
         emitEvent(handle, channelId, "message", text)
       }
 
       override fun onMessage(socket: WebSocket, bytes: ByteString) {
-        if (lease.channels[channelId] !== socket || bytes.size > MAX_DUPLEX_MESSAGE_BYTES) {
+        if (!lease.channels.owns(reservation, socket) || bytes.size > MAX_DUPLEX_MESSAGE_BYTES) {
           socket.close(1009, "message_too_large")
           return
         }
@@ -177,14 +270,11 @@ internal class AuthenticatedTransportLeaseRegistry(
       }
 
       override fun onClosed(socket: WebSocket, code: Int, reason: String) {
-        openingChannels.remove(channelKey(handle, channelId))
-        lease.channels.remove(channelId, socket)
-        emitEvent(handle, channelId, "close", code = code)
+        if (lease.channels.discard(reservation)) emitEvent(handle, channelId, "close", code = code)
       }
 
       override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) {
-        openingChannels.remove(channelKey(handle, channelId))
-        lease.channels.remove(channelId, socket)
+        if (!lease.channels.discard(reservation)) return
         // Emit only a bounded transport classification. It is enough to diagnose
         // a failed opaque data channel without logging server response content.
         Log.w(
@@ -198,7 +288,7 @@ internal class AuthenticatedTransportLeaseRegistry(
         )
       }
     })
-    if (!current(handle, lease)) socket.close(1000, "lease_released")
+    if (!current(handle, lease) || !lease.channels.attach(reservation, socket)) socket.cancel()
   }
 
   private fun executeRequest(
@@ -217,6 +307,7 @@ internal class AuthenticatedTransportLeaseRegistry(
     val builder = Request.Builder()
       .url(prepared.url)
       .header("Authorization", "Bearer ${credential.token}")
+    prepared.range?.let { builder.header("Range", it) }
     val body = prepared.body?.toRequestBody((prepared.mediaType ?: OCTET_STREAM).toMediaType())
     val request = when (prepared.method) {
       "GET" -> builder.get()
@@ -238,16 +329,28 @@ internal class AuthenticatedTransportLeaseRegistry(
       }
 
       override fun onResponse(call: Call, response: Response) {
-        lease.requests.complete(requestId, call)
-        response.use {
-          val body = response.body?.byteStream()?.use { stream -> stream.readNBytes(MAX_RESPONSE_BYTES + 1) } ?: ByteArray(0)
-          if (body.size > MAX_RESPONSE_BYTES) return completion(Result.failure(IllegalStateException("Authenticated response is too large")))
-          completion(Result.success(JSONObject()
-            .put("status", response.code)
-            .put("contentType", response.header("Content-Type")?.take(128) ?: "application/octet-stream")
-            .put("bodyBase64", Base64.encodeToString(body, Base64.NO_WRAP))
-            .toString()))
+        val result = runCatching {
+          response.use {
+            val readLimit = if (prepared.boundedPrefixResponse) prepared.responseLimit else prepared.responseLimit + 1
+            val body = response.body?.byteStream()?.use { stream -> stream.readNBytes(readLimit) } ?: ByteArray(0)
+            check(current(handle, lease)) { "Authenticated lease is released" }
+            check(prepared.boundedPrefixResponse || body.size <= prepared.responseLimit) {
+              "Authenticated response is too large"
+            }
+            JSONObject()
+              .put("status", response.code)
+              .put("contentType", response.header("Content-Type")?.take(128) ?: "application/octet-stream")
+              .put("bodyBase64", Base64.encodeToString(body, Base64.NO_WRAP))
+              .toString()
+          }
         }
+        // The call stays lease-owned until its response body has been fully consumed.
+        // Releasing the lease therefore cancels an in-flight body, not only its headers.
+        lease.requests.complete(requestId, call)
+        completion(result.fold(
+          onSuccess = { Result.success(it) },
+          onFailure = { Result.failure(IllegalStateException("Authenticated response could not be read", it)) },
+        ))
       }
     })
   }
@@ -304,6 +407,27 @@ internal class AuthenticatedTransportLeaseRegistry(
         route.addPathSegments("v2/media/materialize")
         val body = JSONObject().put("url", input.requireBoundedString("sourceUrl", MAX_PATH_CHARS)).toString()
         PreparedRequest(route.build().toString(), "POST", body.toByteArray(Charsets.UTF_8), JSON_MEDIA_TYPE)
+      }
+      "media.streamCreate" -> {
+        require(purpose == "media-v2") { "Authenticated request purpose does not match operation" }
+        input.requireExactKeys("operation", "sourceUrl")
+        route.addPathSegments("v2/media/streams")
+        val body = JSONObject().put("url", input.requireBoundedString("sourceUrl", MAX_PATH_CHARS)).toString()
+        PreparedRequest(route.build().toString(), "POST", body.toByteArray(Charsets.UTF_8), JSON_MEDIA_TYPE)
+      }
+      "media.streamRead" -> {
+        require(purpose == "media-v2") { "Authenticated request purpose does not match operation" }
+        input.requireExactKeys("operation", "id", "offset", "limit", "head")
+        val offset = input.requireNonNegativeLong("offset")
+        val limit = input.requirePositiveInt("limit", MAX_AUTHENTICATED_RESPONSE_BYTES)
+        route.addPathSegments("v2/media/streams").addPathSegment(input.requireBoundedString("id", 256))
+        PreparedRequest(
+          url = route.build().toString(),
+          method = if (input.getBoolean("head")) "HEAD" else "GET",
+          range = boundedByteRange(offset, limit),
+          responseLimit = limit,
+          boundedPrefixResponse = true,
+        )
       }
       "media.read" -> {
         require(purpose == "media-v2") { "Authenticated request purpose does not match operation" }
@@ -388,17 +512,39 @@ internal class AuthenticatedTransportLeaseRegistry(
   private fun JSONObject.optionalNonNegativeLong(name: String): Long? =
     if (isNull(name)) null else getLong(name).also { require(it >= 0) { "Authenticated request field is invalid" } }
 
+  private fun JSONObject.requireNonNegativeLong(name: String): Long =
+    getLong(name).also { require(it >= 0) { "Authenticated request field is invalid" } }
+
+  private fun JSONObject.requirePositiveInt(name: String, maximum: Int): Int =
+    getInt(name).also { require(it in 1..maximum) { "Authenticated request field is invalid" } }
+
   private companion object {
+    val PROCESS_CAPACITY = AuthenticatedTransportCapacity(
+      MAX_LEASES_PER_PROCESS,
+      MAX_CHANNELS_PER_PROCESS,
+      MAX_REQUESTS_PER_PROCESS,
+    )
     val UUID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
     const val JSON_MEDIA_TYPE = "application/json; charset=utf-8"
     const val OCTET_STREAM = "application/octet-stream"
     const val MAX_CHANNELS_PER_LEASE = 8
     const val MAX_REQUESTS_PER_LEASE = 16
+    const val MAX_LEASES_PER_PROCESS = 64
+    const val MAX_CHANNELS_PER_PROCESS = 64
+    // Preserve one lease's existing request concurrency without allowing it to
+    // multiply by the number of cheap opaque handles.
+    const val MAX_REQUESTS_PER_PROCESS = MAX_REQUESTS_PER_LEASE
     const val MAX_DUPLEX_MESSAGE_BYTES = 4 * 1024 * 1024
     const val MAX_REQUEST_BYTES = 4 * 1024 * 1024
-    const val MAX_RESPONSE_BYTES = 16 * 1024 * 1024
     const val MAX_PATH_CHARS = 16 * 1024
   }
+}
+
+/** Builds the single closed range used by bounded asset reads and rejects overflow. */
+internal fun boundedByteRange(offset: Long, limit: Int): String {
+  require(offset >= 0 && limit in 1..MAX_AUTHENTICATED_RESPONSE_BYTES) { "Authenticated byte range is invalid" }
+  val end = Math.addExact(offset, limit.toLong() - 1)
+  return "bytes=$offset-$end"
 }
 
 internal fun authenticatedRequestBase(endpoint: String): HttpUrl {

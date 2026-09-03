@@ -110,6 +110,23 @@ pub async fn discover(excluded: Vec<u16>) -> Vec<DiscoveredPort> {
     .unwrap_or_default()
 }
 
+/// Resolves a forwarding identity from a fresh process inventory. Unlike catalog
+/// discovery this deliberately bypasses the cache: it is an authorization check
+/// performed immediately before a localhost connection is opened.
+pub async fn forwarding_key_for_port(port: u16) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        let inventory = inventory();
+        inventory
+            .listeners
+            .iter()
+            .find(|listener| listener.port == port)
+            .map(|listener| enrich(listener, &inventory).forwarding_key)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 fn discover_blocking(excluded: &HashSet<u16>) -> Vec<DiscoveredPort> {
     let fingerprint = listener_fingerprint();
     let cache = DISCOVERY_CACHE.get_or_init(|| Mutex::new(DiscoveryCache::default()));
