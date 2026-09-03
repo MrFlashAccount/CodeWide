@@ -138,7 +138,7 @@ export type ThreadRemoteLoader = {
     request: ThreadChatWindowRequest;
     cachedThread: Thread | null;
     requireAuthoritative: boolean;
-    reason: ThreadWindowCoverage["reason"] | "invalidated";
+    reason: ThreadWindowCoverage["reason"] | "activation" | "invalidated";
   }): Promise<void>;
   loadOlder(input: {
     connectionId: string;
@@ -1075,8 +1075,13 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
       hadUsableCachedThread = cachedThread !== null;
       const coverage = threadWindowCoverage(request, cachedWindow);
       const invalidated = invalidations.get(invalidationKey(request.connectionId, request.threadId)) !== undefined;
+      // Observing only attaches future live events. Every newly opened window
+      // therefore performs one bounded head read after revealing SQLite, even
+      // when the local coverage itself is complete: the thread may have moved
+      // while another chat was observed or while this client was offline.
+      const activationRefresh = coverage.complete && cachedThread !== null && !invalidated;
       const requiresHydration = !coverage.complete || cachedThread === null || invalidated;
-      if (requiresHydration && remoteLoader !== null) {
+      if ((activationRefresh || requiresHydration) && remoteLoader !== null) {
         const loader = remoteLoader;
         const hydrateAndInstall = async (): Promise<void> => {
           chat.setBackendRefreshing(request, generation, true);
@@ -1084,8 +1089,8 @@ export function createThreadDetailDatabase(): ThreadDetailDatabase {
             await loader.hydrateWindow({
               request,
               cachedThread,
-              requireAuthoritative: invalidated || !coverage.complete || cachedThread === null,
-              reason: invalidated ? "invalidated" : coverage.reason,
+              requireAuthoritative: activationRefresh || invalidated || !coverage.complete || cachedThread === null,
+              reason: invalidated ? "invalidated" : activationRefresh ? "activation" : coverage.reason,
             });
             if (navigationToken !== undefined && !windowIntents.isCurrent(navigationToken)) return;
             const refreshedWindow = await writes.run(async () => await readStoredWindow(request, requestedAt));

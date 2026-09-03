@@ -174,7 +174,7 @@ type TimelineDisplayLifecycle = TimelineDisplayActivity;
 export interface TimelineActivityActions {
   onCopyUnsupported?(payloadJson: string): Promise<void> | void;
   onFixUnsupported?(sourceKind: string, payloadJson: string): Promise<void> | void;
-  onOpenAttachment?(attachmentId: string): Promise<void> | void;
+  onOpenAttachment?(attachment: TimelineActivityAttachment): Promise<void> | void;
   onOpenItemOutput?(turnId: string, itemId: string): Promise<void> | void;
   onOpenSubagent?(threadId: string): Promise<void> | void;
 }

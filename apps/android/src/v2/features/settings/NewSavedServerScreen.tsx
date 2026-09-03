@@ -397,7 +397,12 @@ function ReviewPairing(props: ReviewPairingProps): React.JSX.Element {
         </View>
       </View>
       {error === null ? null : <PairingError message={error} />}
-      <ConnectButton accessibilityLabel="Connect server" onPress={onSave} saving={saving} />
+      <ConnectButton
+        accessibilityLabel="Connect server"
+        disabled={false}
+        onPress={onSave}
+        saving={saving}
+      />
       <Pressable
         accessibilityLabel="Edit connection details"
         accessibilityRole="button"
@@ -485,6 +490,11 @@ function ManualPairing(props: ManualPairingProps): React.JSX.Element {
       {props.error === null ? null : <PairingError message={props.error} />}
       <ConnectButton
         accessibilityLabel="Connect server manually"
+        disabled={
+          props.endpoint.trim() === "" ||
+          props.pairingToken.trim() === "" ||
+          props.tlsPinSha256.trim() === ""
+        }
         onPress={props.onSave}
         saving={props.saving}
       />
@@ -512,12 +522,13 @@ function ServerNameInput(props: ServerNameInputProps): React.JSX.Element {
 
 interface ConnectButtonProps {
   accessibilityLabel: string;
+  disabled: boolean;
   onPress(): Promise<void>;
   saving: boolean;
 }
 
 function ConnectButton(props: ConnectButtonProps): React.JSX.Element {
-  const { accessibilityLabel, onPress, saving } = props;
+  const { accessibilityLabel, disabled, onPress, saving } = props;
   const press = useEvent(() => {
     onPress().catch(() => undefined);
   });
@@ -525,9 +536,9 @@ function ConnectButton(props: ConnectButtonProps): React.JSX.Element {
     <Pressable
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      disabled={saving}
+      disabled={saving || disabled}
       onPress={press}
-      style={[styles.pairingPrimaryAction, saving && styles.disabled]}
+      style={[styles.pairingPrimaryAction, (saving || disabled) && styles.disabled]}
     >
       {saving ? null : <Ionicons color={colors.onPrimary} name="link" size={21} />}
       {saving ? (

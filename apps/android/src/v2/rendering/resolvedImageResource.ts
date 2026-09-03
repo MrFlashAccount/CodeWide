@@ -64,7 +64,9 @@ export class ResolvedImageResource {
   }
 
   #publish(): void {
-    this.#snapshot = [...this.#items.values()].toSorted((left, right) => left.order - right.order);
+    const snapshot = Array.from(this.#items.values());
+    snapshot.sort((left, right) => left.order - right.order);
+    this.#snapshot = snapshot;
     for (const listener of this.#listeners) listener();
   }
 }

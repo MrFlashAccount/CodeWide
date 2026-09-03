@@ -37,9 +37,17 @@ export interface InteractionInventoryCapture {
 }
 
 type InteractionKind = "default" | "disabled" | "focused" | "selected";
-type InteractionLayout = "phone" | "wide";
+type InteractionLayout =
+  | "folded"
+  | "folded-to-unfolded"
+  | "phone"
+  | "phone-landscape"
+  | "unfolded"
+  | "unfolded-to-folded"
+  | "wide";
 type NodeAttribute = "enabled" | "focused" | "selected";
-type OverlayKind = "dialog" | "popover" | "sheet";
+type ControlGesture = "adjustable" | "long-press" | "press" | "swipe-left";
+type OverlayKind = "dialog" | "fullscreen-modal" | "popover" | "sheet";
 
 interface NodeExpectation {
   attribute?: NodeAttribute;
@@ -50,6 +58,8 @@ interface NodeExpectation {
 
 interface ControlInventorySpec {
   expectation: NodeExpectation;
+  gesture: ControlGesture;
+  gestureResult?: NodeExpectation;
   kind: InteractionKind;
   layouts: readonly InteractionLayout[];
   sourceRowId: string;
@@ -90,6 +100,12 @@ interface SynchronousActionInventorySpec {
   reason: "local-selection" | "native-picker" | "navigation" | "presentation";
 }
 
+export interface InteractionInventoryBlocker {
+  reason: string;
+  rowId: InteractionInventoryRowId;
+  state: string;
+}
+
 interface AndroidBounds {
   bottom: number;
   left: number;
@@ -104,7 +120,9 @@ interface XmlElementNode {
 }
 
 const PHONE_AND_WIDE: readonly InteractionLayout[] = ["phone", "wide"];
+const PHONE_AND_FOLDED: readonly InteractionLayout[] = ["phone", "folded"];
 const PHONE_ONLY: readonly InteractionLayout[] = ["phone"];
+const WIDE_AND_UNFOLDED: readonly InteractionLayout[] = ["wide", "unfolded"];
 const WIDE_ONLY: readonly InteractionLayout[] = ["wide"];
 
 // This is deliberately an explicit inventory. Adding an exercised interactive surface to the
@@ -112,11 +130,21 @@ const WIDE_ONLY: readonly InteractionLayout[] = ["wide"];
 const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("LIST-04", "new-thread", "default", "New thread"),
   control("LIST-05", "thread-list-menu", "default", "Thread list menu"),
-  control("NAV-07", "server-selector-trigger", "default", "Choose server", PHONE_ONLY),
+  control("NAV-07", "server-selector-trigger", "default", "Choose server", PHONE_AND_FOLDED),
   control("NAV-08", "server-selector-all", "default", "All servers", PHONE_ONLY),
   control("NAV-08", "server-selector-saved", "default", "CodeWide E2E, Live", PHONE_ONLY),
-  control("NAV-11", "server-selector-live", "default", "CodeWide E2E, Live", PHONE_ONLY),
-  control("RAIL-01", "rail-live-server", "default", "CodeWide E2E, Live", WIDE_ONLY),
+  control("NAV-11", "server-selector-live", "default", "CodeWide E2E, Live", PHONE_AND_FOLDED),
+  prefixControl("NAV-12", "server-selector-connecting", "CodeWide E2E, ", PHONE_AND_FOLDED),
+  prefixControl("NAV-13", "server-selector-updating", "CodeWide E2E, ", PHONE_AND_FOLDED),
+  prefixControl("NAV-14", "server-selector-offline", "CodeWide E2E, ", PHONE_AND_FOLDED),
+  prefixControl("NAV-15", "server-selector-access-required", "CodeWide E2E, ", PHONE_AND_FOLDED),
+  prefixControl("NAV-16", "server-selector-connection-error", "CodeWide E2E, ", PHONE_AND_FOLDED),
+  prefixControl("NAV-17", "server-selector-disabled", "CodeWide E2E, ", PHONE_AND_FOLDED),
+  control("RAIL-01", "rail-live-server", "default", "CodeWide E2E, Live", WIDE_AND_UNFOLDED),
+  prefixControl("RAIL-03", "rail-connecting", "CodeWide E2E, ", WIDE_AND_UNFOLDED),
+  prefixControl("RAIL-04", "rail-updating", "CodeWide E2E, ", WIDE_AND_UNFOLDED),
+  prefixControl("RAIL-05", "rail-offline", "CodeWide E2E, ", WIDE_AND_UNFOLDED),
+  prefixControl("RAIL-06", "rail-connection-error", "CodeWide E2E, ", WIDE_AND_UNFOLDED),
   control("NAV-18", "server-selector-add-server", "default", "Add server", PHONE_ONLY),
   control("NAV-19", "server-selector-settings", "default", "Settings", PHONE_ONLY),
   control("RAIL-08", "rail-add-server", "default", "Add server", WIDE_ONLY),
@@ -135,9 +163,12 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("MENU-05", "composer-port-forward", "default", "Port forward"),
   control("MENU-06", "composer-skills", "default", "Skills"),
   control("MENU-07", "composer-goal", "default", "Goal"),
-  prefixControl("DRAFT-02", "draft-remove-image", "Remove"),
-  prefixControl("DRAFT-03", "draft-remove-file", "Remove"),
-  prefixControl("DRAFT-05", "draft-edit-attachment", "Edit"),
+  control("DRAFT-02", "draft-remove-image", "default", "Remove attachment"),
+  control("DRAFT-03", "draft-remove-file", "default", "Remove attachment"),
+  control("DRAFT-05", "draft-edit-attachment", "default", "Edit attachment"),
+  control("DRAFT-05", "draft-replace-attachment", "default", "Replace attachment"),
+  control("DRAFT-06", "draft-retry-attachment", "default", "Retry attachment"),
+  control("DRAFT-06", "draft-remove-failed-attachment", "default", "Remove attachment"),
   control("QUEUE-02", "queue-edit", "default", "Edit queued prompt"),
   control("QUEUE-02", "queue-delete", "default", "Delete queued prompt"),
   control("QUEUE-02", "queue-steer", "default", "Steer queued prompt"),
@@ -172,11 +203,22 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("FILTER-01", "thread-filter-unread-item", "default", "Unread"),
   control("FILTER-01", "thread-filter-pinned-item", "default", "Pinned"),
   prefixControl("ROW-01", "thread-row-open", "Open thread "),
+  gestureControl("ROW-01", "thread-row-long-press", "Open thread ", "long-press", {
+    token: "Copy session ID",
+  }),
   prefixControl("ROW-02", "thread-row-open-running", "Open thread "),
   prefixControl("ROW-03", "thread-row-open-approval", "Open thread "),
   prefixControl("ROW-04", "thread-row-open-input", "Open thread "),
   prefixControl("ROW-05", "thread-row-open-failed", "Open thread "),
   prefixControl("ROW-06", "thread-row-open-unread", "Open thread "),
+  gestureControl(
+    "ROW-06",
+    "thread-row-swipe-actions",
+    "Open thread ",
+    "swipe-left",
+    { token: "Pin thread" },
+    PHONE_ONLY,
+  ),
   prefixControl("ROW-09", "thread-row-open-retained", "Open thread "),
   control("ROW-10", "thread-row-copy-id", "default", "Copy session ID"),
   control("ROW-10", "thread-row-pin", "default", "Pin"),
@@ -186,10 +228,18 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("ROW-11", "thread-swipe-read", "default", "Read thread", PHONE_ONLY),
   control("ROW-11", "thread-swipe-archive", "default", "Archive thread", PHONE_ONLY),
   control("LIST-18", "archived-back", "default", "Back to threads"),
+  control("LIST-19", "archived-empty-back", "default", "Back to threads"),
+  control("LIST-20", "archived-search-back", "default", "Back to threads"),
   control("LIST-21", "catalog-page", "default", "Load more search results"),
   control("LIST-21", "catalog-page-retry", "default", "Retry loading threads"),
-  control("SEARCH-04", "conversation-search-previous", "default", "Previous thread match", WIDE_ONLY),
-  control("SEARCH-05", "conversation-search-next", "default", "Next thread match", WIDE_ONLY),
+  control(
+    "SEARCH-04",
+    "conversation-search-previous",
+    "default",
+    "Previous thread match",
+    PHONE_AND_WIDE,
+  ),
+  control("SEARCH-05", "conversation-search-next", "default", "Next thread match"),
   control("HEADER-10", "thread-menu-copy-id", "default", "Copy session ID"),
   control("HEADER-10", "thread-menu-rename", "default", "Rename"),
   control("HEADER-10", "thread-menu-pin", "default", "Pin thread"),
@@ -213,19 +263,34 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   prefixControl("LIFE-09", "plan-activity-collapse", "Collapse activity "),
   prefixControl("LIFE-10", "subagent-activity-collapse", "Collapse activity "),
   prefixControl("LIFE-11", "authoritative-attachment-open", "Open attachment "),
+  control("LIFE-03", "activity-copy-unsupported", "default", "Copy unsupported item"),
+  control(
+    "LIFE-03",
+    "activity-fix-unsupported",
+    "default",
+    "Fix unsupported item in new thread",
+  ),
+  prefixControl("LIFE-03", "activity-open-full-output", "Open full output for "),
+  prefixControl("LIFE-03", "activity-open-attachment", "Open attachment "),
+  control("LIFE-03", "activity-open-subagent", "default", "Open subagent conversation"),
   prefixControl("TURN-05", "turn-cost-trigger", "Estimated API-equivalent cost "),
+  control("PAGE-01", "history-retry-older", "default", "Retry loading older messages"),
+  control("PAGE-03", "history-retry-newer", "default", "Retry loading newer messages"),
   prefixControl("PAGE-04", "jump-latest", "Jump to latest"),
   prefixControl("PAGE-05", "jump-latest-unread", "Jump to latest"),
   prefixControl("CTX-01", "model-thinking-chip", "Model and thinking: "),
   prefixControl("CTX-03", "permissions-chip", "Permissions: "),
-  prefixControl("CTX-05", "changes-chip", "Changes · ", WIDE_ONLY),
-  prefixControl("CTX-07", "attachments-chip", "Attachments · ", WIDE_ONLY),
+  prefixControl("CTX-05", "changes-chip", "Changes · "),
+  prefixControl("CTX-07", "attachments-chip", "Attachments · "),
   prefixControl("CTX-08", "ports-chip", "Ports: "),
-  prefixControl("CTX-09", "terminals-chip", "Terminals: ", WIDE_ONLY),
+  prefixControl("CTX-09", "terminals-chip", "Terminals: "),
   prefixControl("CTX-10", "subagents-chip", "Subagents: "),
   control("MENU-01", "composer-menu-trigger", "default", "Composer menu"),
   prefixControl("QUEUE-01", "queue-open", "Open queued prompts, "),
   control("QUEUE-02", "queue-close", "default", "Close queued prompts"),
+  gestureControl("QUEUE-02", "queue-drag", "Drag queued prompt", "adjustable", {
+    token: "Drag queued prompt",
+  }),
   control("QUEUE-03", "queue-cancel-edit", "default", "Cancel queued prompt edit"),
   control("QUEUE-03", "queue-save-edit", "default", "Save queued prompt"),
   control("QUEUE-03", "queue-editor-attach-file", "default", "Attach file"),
@@ -261,7 +326,7 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("NEW-01", "new-thread-back", "default", "Back to threads", WIDE_ONLY),
   control("PAIR-01", "pairing-back", "default", "Back to connection methods"),
   control("PAIR-01", "pairing-close", "default", "Close server pairing"),
-  control("PAIR-02", "scanner-close", "default", "Close QR scanner", PHONE_ONLY),
+  control("PAIR-03", "scanner-close", "default", "Close QR scanner", PHONE_ONLY),
   control("PAIR-05", "pairing-invalid-close", "default", "Close server pairing"),
   control("PAIR-06", "pairing-failure-close", "default", "Close server pairing"),
   control("PAIR-06", "pairing-connect-retry", "default", "Connect server"),
@@ -273,6 +338,19 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("SET-07", "accounts-close", "default", "Close Codex accounts", WIDE_ONLY),
   control("SET-07", "accounts-refresh", "default", "Refresh Codex accounts", WIDE_ONLY),
   control("SET-07", "accounts-add", "default", "Add Codex account", WIDE_ONLY),
+
+  responsiveControl("RESP-02", "phone-landscape", "responsive-back", "Back to threads"),
+  responsiveControl("RESP-02", "phone-landscape", "responsive-search", "Search in thread"),
+  responsiveControl("RESP-02", "phone-landscape", "responsive-composer", "Message Codex"),
+  responsiveControl("RESP-04", "folded", "responsive-back", "Back to threads"),
+  responsiveControl("RESP-04", "folded", "responsive-search", "Search in thread"),
+  responsiveControl("RESP-04", "folded", "responsive-composer", "Message Codex"),
+  responsiveControl("RESP-05", "unfolded", "responsive-search", "Search in thread"),
+  responsiveControl("RESP-05", "unfolded", "responsive-composer", "Message Codex"),
+  responsiveControl("RESP-06", "folded-to-unfolded", "responsive-search", "Search in thread"),
+  responsiveControl("RESP-06", "folded-to-unfolded", "responsive-composer", "Message Codex"),
+  responsiveControl("RESP-07", "unfolded-to-folded", "responsive-back", "Back to threads"),
+  responsiveControl("RESP-07", "unfolded-to-folded", "responsive-composer", "Message Codex"),
 
   selected("NAV-09", "server-selector-all", "All servers", PHONE_ONLY),
   selected("NAV-10", "server-selector-saved", "CodeWide E2E, Live", PHONE_ONLY),
@@ -320,26 +398,14 @@ const OVERLAY_INVENTORY: readonly OverlayInventorySpec[] = [
   ),
   overlay("HEADER-10", "thread-menu", "popover", "Thread menu", "Pin thread"),
   overlay("MSG-12", "message-actions", "popover", "Message actions", "Copy"),
-  overlay(
-    "TURN-06",
-    "turn-cost",
-    "popover",
-    "Estimated API-equivalent cost",
-    "Usage breakdown",
-  ),
+  overlay("TURN-06", "turn-cost", "popover", "Estimated API-equivalent cost", "Usage breakdown"),
   overlay("MENU-01", "composer-menu", "popover", "Composer menu", "Attach file"),
   overlay("QUEUE-02", "queued-prompts", "sheet", "Message Codex", "Queued prompts"),
   overlay("ATT-02", "empty-attachments", "sheet", "Message Codex", "No attachments"),
   overlay("ATT-03", "attachments", "sheet", "Message Codex", "Attachments", WIDE_ONLY),
   overlay("PORT-02", "ports", "sheet", "Message Codex", "No active ports", WIDE_ONLY),
   overlay("PORT-03", "discovered-ports", "sheet", "Message Codex", "Available"),
-  overlay(
-    "PORT-05",
-    "bounded-tunnel-setup",
-    "sheet",
-    "Close ports",
-    "Close localhost preview",
-  ),
+  overlay("PORT-05", "bounded-tunnel-setup", "sheet", "Close ports", "Close localhost preview"),
   overlay("SET-01", "settings", "sheet", "New thread", "Settings", WIDE_ONLY),
   overlay(
     "SET-05",
@@ -500,10 +566,14 @@ export const INTERACTION_INVENTORY_STATE_NAMES: readonly string[] = [
     ),
   ),
   ...OVERLAY_INVENTORY.flatMap((spec) =>
-    spec.layouts.flatMap((layout) => [
-      `INT-07:${layout}-${spec.surface}-scrim`,
-      `INT-08:${layout}-${spec.surface}-safe-area`,
-    ]),
+    spec.layouts.flatMap((layout) =>
+      spec.kind === "fullscreen-modal"
+        ? [`INT-08:${layout}-${spec.surface}-safe-area`]
+        : [`INT-07:${layout}-${spec.surface}-scrim`, `INT-08:${layout}-${spec.surface}-safe-area`],
+    ),
+  ),
+  ...OVERLAY_INVENTORY.filter((spec) => spec.kind !== "fullscreen-modal").flatMap((spec) =>
+    spec.layouts.map((layout) => `INT-02:${layout}-${spec.surface}-scrim-pressed`),
   ),
   ...CONTROL_INVENTORY.filter((spec) => isPressableKind(spec.kind)).flatMap((spec) =>
     spec.layouts.map((layout) => `INT-02:${pressedState(spec, layout)}`),
@@ -545,13 +615,15 @@ export async function collectInteractionInventoryAliases(
   for (const spec of OVERLAY_INVENTORY) {
     if (spec.sourceRowId !== input.sourceRowId || !spec.layouts.includes(layout)) continue;
     assertOverlaySource(input.pageSource, spec);
-    aliases.push({
-      assertExactState: async () => {
-        assertOverlaySource(await input.driver.getPageSource(), spec);
-      },
-      rowId: "INT-07",
-      state: `${layout}-${spec.surface}-scrim`,
-    });
+    if (spec.kind !== "fullscreen-modal") {
+      aliases.push({
+        assertExactState: async () => {
+          assertOverlaySource(await input.driver.getPageSource(), spec);
+        },
+        rowId: "INT-07",
+        state: `${layout}-${spec.surface}-scrim`,
+      });
+    }
     await assertOverlaySafeArea(input.driver, input.pageSource, spec);
     aliases.push({
       assertExactState: async () => {
@@ -599,48 +671,179 @@ export async function capturePressedInteractionInventory(
     }
     const sourceNode = findExpectedNode(input.pageSource, spec.expectation, spec.surface);
     const bounds = readBounds(sourceNode, spec.surface);
-    const pointerId = `inventory-${spec.surface}`;
-    await input.driver.performActions([
+    await captureControlGesture(input, spec, layout, bounds);
+  }
+  await captureOverlayScrimGestures(input, layout);
+}
+
+async function captureControlGesture(
+  input: PressedInteractionInventorySource,
+  spec: ControlInventorySpec,
+  layout: InteractionLayout,
+  bounds: AndroidBounds,
+): Promise<void> {
+  const pointerId = `inventory-${spec.surface}`;
+  const centerX = bounds.left + Math.floor((bounds.right - bounds.left) / 2);
+  const centerY = bounds.top + Math.floor((bounds.bottom - bounds.top) / 2);
+  const actions: Array<Record<string, number | string>> = [
+    { duration: 0, type: "pointerMove", x: centerX, y: centerY },
+    { button: 0, type: "pointerDown" },
+  ];
+  if (spec.gesture === "long-press") {
+    actions.push({ duration: 700, type: "pause" });
+  } else if (spec.gesture === "swipe-left") {
+    actions.push(
+      { duration: 120, type: "pause" },
       {
-        actions: [
-          {
-            duration: 0,
-            type: "pointerMove",
-            x: bounds.left + Math.floor((bounds.right - bounds.left) / 2),
-            y: bounds.top + Math.floor((bounds.bottom - bounds.top) / 2),
-          },
-          { button: 0, type: "pointerDown" },
-          { duration: 40, type: "pause" },
-        ],
-        id: pointerId,
-        parameters: { pointerType: "touch" },
-        type: "pointer",
+        duration: 350,
+        type: "pointerMove",
+        x: Math.max(
+          bounds.left + 8,
+          centerX - Math.max(96, Math.floor((bounds.right - bounds.left) * 0.3)),
+        ),
+        y: centerY,
       },
-    ]);
-    try {
-      await input.capture("INT-02", pressedState(spec, layout), async () => {
-        const pressedSource = await input.driver.getPageSource();
-        assertNodeExpectation(pressedSource, spec.expectation, spec.surface);
+    );
+  } else if (spec.gesture === "adjustable") {
+    actions.push(
+      { duration: 140, type: "pause" },
+      {
+        duration: 240,
+        type: "pointerMove",
+        x: centerX,
+        y: Math.max(8, bounds.top - Math.max(48, bounds.bottom - bounds.top)),
+      },
+    );
+  } else {
+    actions.push({ duration: 40, type: "pause" });
+  }
+  await performPointerActions(input.driver, pointerId, actions);
+  try {
+    await input.capture("INT-02", pressedState(spec, layout), async () => {
+      const pressedSource = await input.driver.getPageSource();
+      assertNodeExpectation(pressedSource, spec.gestureResult ?? spec.expectation, spec.surface);
+    });
+  } finally {
+    if (spec.gesture === "adjustable") {
+      await performPointerActions(input.driver, pointerId, [
+        { duration: 240, type: "pointerMove", x: centerX, y: centerY },
+        { button: 0, type: "pointerUp" },
+      ]).catch(() => undefined);
+    } else {
+      await performPointerActions(input.driver, pointerId, [
+        { duration: 80, type: "pointerMove", x: 0, y: 0 },
+        { button: 0, type: "pointerUp" },
+      ]).catch(() => undefined);
+    }
+    await input.driver.releaseActions();
+    if (spec.gesture === "long-press") {
+      await input.driver.back();
+    } else if (spec.gesture === "swipe-left") {
+      await input.driver.execute("mobile: swipeGesture", {
+        direction: "right",
+        height: bounds.bottom - bounds.top,
+        left: bounds.left,
+        percent: 0.8,
+        top: bounds.top,
+        width: bounds.right - bounds.left,
       });
-    } finally {
-      // Move outside the original hit target before lifting so collecting one pressed-state
-      // artifact cannot activate the control and invalidate the remaining inventory on screen.
-      await input.driver
-        .performActions([
-          {
-            actions: [
-              { duration: 0, type: "pointerMove", x: 0, y: 0 },
-              { button: 0, type: "pointerUp" },
-            ],
-            id: pointerId,
-            parameters: { pointerType: "touch" },
-            type: "pointer",
-          },
-        ])
-        .catch(() => undefined);
-      await input.driver.releaseActions();
     }
   }
+}
+
+async function performPointerActions(
+  driver: AppiumBrowser,
+  pointerId: string,
+  actions: Array<Record<string, number | string>>,
+): Promise<void> {
+  await driver.performActions([
+    {
+      actions,
+      id: pointerId,
+      parameters: { pointerType: "touch" },
+      type: "pointer",
+    },
+  ]);
+}
+
+async function captureOverlayScrimGestures(
+  input: PressedInteractionInventorySource,
+  layout: InteractionLayout,
+): Promise<void> {
+  for (const spec of OVERLAY_INVENTORY) {
+    if (
+      spec.kind === "fullscreen-modal" ||
+      spec.sourceRowId !== input.sourceRowId ||
+      !spec.layouts.includes(layout)
+    ) {
+      continue;
+    }
+    const viewport = await input.driver.getWindowSize();
+    const container = findOverlayContainer(input.pageSource, spec, viewport);
+    if (container === undefined) {
+      throw new Error(`Interaction inventory ${spec.surface} has no measurable scrim target`);
+    }
+    const bounds = readBounds(container.openTag, spec.surface);
+    const { endX, endY, startX, startY } = scrimGestureCoordinates(bounds, viewport);
+    const pointerId = `inventory-${spec.surface}-scrim`;
+    await performPointerActions(input.driver, pointerId, [
+      { duration: 0, type: "pointerMove", x: startX, y: startY },
+      { button: 0, type: "pointerDown" },
+      { duration: 40, type: "pause" },
+    ]);
+    try {
+      await input.capture("INT-02", `${layout}-${spec.surface}-scrim-pressed`, async () => {
+        assertOverlaySource(await input.driver.getPageSource(), spec);
+      });
+    } finally {
+      await performPointerActions(input.driver, pointerId, [
+        { duration: 120, type: "pointerMove", x: endX, y: endY },
+        { button: 0, type: "pointerUp" },
+      ]).catch(() => undefined);
+      await input.driver.releaseActions();
+    }
+    assertOverlaySource(await input.driver.getPageSource(), spec);
+  }
+}
+
+function scrimGestureCoordinates(
+  bounds: AndroidBounds,
+  viewport: { height: number; width: number },
+): { endX: number; endY: number; startX: number; startY: number } {
+  const regions = [
+    { bottom: bounds.top, left: 0, right: viewport.width, top: 0 },
+    { bottom: viewport.height, left: 0, right: viewport.width, top: bounds.bottom },
+    { bottom: bounds.bottom, left: 0, right: bounds.left, top: bounds.top },
+    { bottom: bounds.bottom, left: bounds.right, right: viewport.width, top: bounds.top },
+  ].toSorted(
+    (left, right) =>
+      (right.right - right.left) * (right.bottom - right.top) -
+      (left.right - left.left) * (left.bottom - left.top),
+  );
+  const region = regions.find(
+    (candidate) => candidate.right - candidate.left >= 24 && candidate.bottom - candidate.top >= 24,
+  );
+  if (region === undefined) {
+    throw new Error("Overlay container leaves no measurable scrim touch target");
+  }
+  const startX = region.left + Math.floor((region.right - region.left) / 2);
+  const startY = region.top + Math.floor((region.bottom - region.top) / 2);
+  const horizontalSpace = region.right - region.left;
+  const verticalSpace = region.bottom - region.top;
+  if (horizontalSpace >= verticalSpace) {
+    return {
+      endX: Math.min(region.right - 4, startX + Math.min(48, Math.floor(horizontalSpace / 3))),
+      endY: startY,
+      startX,
+      startY,
+    };
+  }
+  return {
+    endX: startX,
+    endY: Math.min(region.bottom - 4, startY + Math.min(48, Math.floor(verticalSpace / 3))),
+    startX,
+    startY,
+  };
 }
 
 /** Fails closed when an inventory state that should have been exercised has no paired INT capture. */
@@ -673,6 +876,7 @@ function control(
 ): ControlInventorySpec {
   return {
     expectation: { attribute: "enabled", token, value: "true" },
+    gesture: "press",
     kind,
     layouts,
     sourceRowId,
@@ -688,8 +892,44 @@ function prefixControl(
 ): ControlInventorySpec {
   return {
     expectation: { attribute: "enabled", match: "prefix", token, value: "true" },
+    gesture: "press",
     kind: "default",
     layouts,
+    sourceRowId,
+    surface,
+  };
+}
+
+function gestureControl(
+  sourceRowId: string,
+  surface: string,
+  token: string,
+  gesture: Exclude<ControlGesture, "press">,
+  gestureResult: NodeExpectation,
+  layouts: readonly InteractionLayout[] = PHONE_AND_WIDE,
+): ControlInventorySpec {
+  return {
+    expectation: { attribute: "enabled", match: "prefix", token, value: "true" },
+    gesture,
+    gestureResult,
+    kind: "default",
+    layouts,
+    sourceRowId,
+    surface,
+  };
+}
+
+function responsiveControl(
+  sourceRowId: string,
+  layout: InteractionLayout,
+  surface: string,
+  token: string,
+): ControlInventorySpec {
+  return {
+    expectation: { attribute: "enabled", token, value: "true" },
+    gesture: "press",
+    kind: "default",
+    layouts: [layout],
     sourceRowId,
     surface,
   };
@@ -703,6 +943,7 @@ function selected(
 ): ControlInventorySpec {
   return {
     expectation: { attribute: "selected", token, value: "true" },
+    gesture: "press",
     kind: "selected",
     layouts,
     sourceRowId,
@@ -718,6 +959,7 @@ function selectedMarker(
 ): ControlInventorySpec {
   return {
     expectation: { match: "markup", token },
+    gesture: "press",
     kind: "selected",
     layouts,
     sourceRowId,
@@ -733,6 +975,7 @@ function disabled(
 ): ControlInventorySpec {
   return {
     expectation: { attribute: "enabled", token, value: "false" },
+    gesture: "press",
     kind: "disabled",
     layouts,
     sourceRowId,
@@ -748,6 +991,7 @@ function focused(
 ): ControlInventorySpec {
   return {
     expectation: { attribute: "focused", token, value: "true" },
+    gesture: "press",
     kind: "focused",
     layouts,
     sourceRowId,
@@ -796,12 +1040,29 @@ function isPressableKind(kind: InteractionKind): boolean {
 
 function pressedState(spec: ControlInventorySpec, layout: InteractionLayout): string {
   const selected = spec.kind === "selected" ? "-selected" : "";
-  return `${layout}-${spec.surface}${selected}-pressed`;
+  const suffix =
+    spec.gesture === "long-press"
+      ? "long-pressed"
+      : spec.gesture === "swipe-left"
+        ? "swiped-left"
+        : spec.gesture === "adjustable"
+          ? "adjusting"
+          : "pressed";
+  return `${layout}-${spec.surface}${selected}-${suffix}`;
 }
 
 function readLayout(state: string): InteractionLayout | null {
-  if (state.startsWith("phone-")) return "phone";
-  if (state.startsWith("wide-")) return "wide";
+  for (const layout of [
+    "folded-to-unfolded",
+    "unfolded-to-folded",
+    "phone-landscape",
+    "unfolded",
+    "folded",
+    "phone",
+    "wide",
+  ] as const) {
+    if (state.startsWith(`${layout}-`)) return layout;
+  }
   return null;
 }
 
@@ -843,10 +1104,15 @@ function matchesNodeToken(candidate: string, expectation: NodeExpectation): bool
 }
 
 function assertOverlaySource(source: string, spec: OverlayInventorySpec): void {
-  if (!xmlElements(source).some((node) => matchesNodeToken(node, { token: spec.foregroundToken }))) {
+  if (
+    !xmlElements(source).some((node) => matchesNodeToken(node, { token: spec.foregroundToken }))
+  ) {
     throw new Error(`Interaction inventory ${spec.surface} lost overlay content`);
   }
-  if (!xmlElements(source).some((node) => matchesNodeToken(node, { token: spec.backgroundToken }))) {
+  if (
+    spec.kind !== "fullscreen-modal" &&
+    !xmlElements(source).some((node) => matchesNodeToken(node, { token: spec.backgroundToken }))
+  ) {
     throw new Error(
       `Interaction inventory ${spec.surface} unmounted the surface behind its overlay`,
     );
@@ -862,21 +1128,7 @@ async function assertOverlaySafeArea(
   spec: OverlayInventorySpec,
 ): Promise<void> {
   const viewport = await driver.getWindowSize();
-  const elements = parseXmlElements(source);
-  const containerNode =
-    spec.kind === "sheet"
-      ? elements.find(
-          (candidate) =>
-            candidate.openTag.includes('pane-title="Bottom Sheet"') &&
-            !subtreeContainsToken(candidate, spec.backgroundToken),
-        )
-      : findBoundedOverlayContainer(
-          elements,
-          spec.backgroundToken,
-          spec.foregroundToken,
-          viewport.width,
-          viewport.height,
-        );
+  const containerNode = findOverlayContainer(source, spec, viewport);
   if (containerNode === undefined) {
     throw new Error(`Interaction inventory ${spec.surface} has no measurable overlay container`);
   }
@@ -897,6 +1149,29 @@ async function assertOverlaySafeArea(
       `Interaction inventory ${spec.surface} exceeds the viewport: ${left},${top}-${right},${bottom} in ${viewport.width}x${viewport.height}`,
     );
   }
+}
+
+function findOverlayContainer(
+  source: string,
+  spec: OverlayInventorySpec,
+  viewport: { height: number; width: number },
+): XmlElementNode | undefined {
+  const elements = parseXmlElements(source);
+  if (spec.kind === "sheet") {
+    return elements.find(
+      (candidate) =>
+        candidate.openTag.includes('pane-title="Bottom Sheet"') &&
+        !subtreeContainsToken(candidate, spec.backgroundToken),
+    );
+  }
+  return findBoundedOverlayContainer(
+    elements,
+    spec.backgroundToken,
+    spec.foregroundToken,
+    viewport.width,
+    viewport.height,
+    spec.kind === "fullscreen-modal",
+  );
 }
 
 function readBounds(node: string, surface: string): AndroidBounds {
@@ -930,6 +1205,7 @@ function findBoundedOverlayContainer(
   foregroundToken: string,
   viewportWidth: number,
   viewportHeight: number,
+  allowFullscreen: boolean,
 ): XmlElementNode | undefined {
   const foreground = elements.find((candidate) =>
     matchesNodeToken(candidate.openTag, { token: foregroundToken }),
@@ -956,7 +1232,8 @@ function findBoundedOverlayContainer(
         bounds.top < foregroundBounds.top ||
         bounds.right > foregroundBounds.right ||
         bounds.bottom > foregroundBounds.bottom) &&
-      (bounds.left > 0 ||
+      (allowFullscreen ||
+        bounds.left > 0 ||
         bounds.top > 0 ||
         bounds.right < viewportWidth ||
         bounds.bottom < viewportHeight)

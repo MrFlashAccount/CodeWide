@@ -378,6 +378,30 @@ impl FileService {
         Ok((metadata.len(), content_type(&path).to_owned()))
     }
 
+    /// Resolves one explicitly requested host file and grants its exact canonical
+    /// target to the private preview endpoint. Callers must enforce terminal-level
+    /// authorization before invoking this capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the path is missing, cannot be inspected, or does
+    /// not resolve to a regular file.
+    pub(crate) async fn host_preview_metadata(
+        &self,
+        path: PathBuf,
+    ) -> Result<(u64, String), FileError> {
+        let canonical = self
+            .canonical_preview_path(&path)
+            .await
+            .ok_or_else(|| client(StatusCode::NOT_FOUND, "file_not_found"))?;
+        let metadata = tokio::fs::metadata(&canonical).await?;
+        if !metadata.is_file() {
+            return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
+        }
+        self.record_observed_preview_paths(vec![canonical]).await;
+        Ok((metadata.len(), content_type(&path).to_owned()))
+    }
+
     async fn canonical_preview_path(&self, path: &Path) -> Option<PathBuf> {
         let readable = self.readable_preview_path(path);
         if let Ok(canonical) = tokio::fs::canonicalize(&readable).await {
@@ -689,11 +713,10 @@ impl FileService {
         if !metadata.is_file() {
             return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
         }
-        if metadata.len() > self.max_transfer_bytes {
+        if !inline && metadata.len() > self.max_transfer_bytes {
             return Err(client(StatusCode::PAYLOAD_TOO_LARGE, "file_too_large"));
         }
         let range = parse_range(headers.get(header::RANGE), metadata.len())?;
-        let hash = hash_file(path).await?;
         let mut response = Response::builder()
             .status(if range.is_some() {
                 StatusCode::PARTIAL_CONTENT
@@ -716,10 +739,11 @@ impl FileService {
                 ),
             )
             .header(header::CACHE_CONTROL, "private, no-store")
-            .header("x-content-type-options", "nosniff")
-            .header("x-content-sha256", hash);
+            .header("x-content-type-options", "nosniff");
         if inline {
             response = response.header("content-security-policy", "default-src 'none'; sandbox");
+        } else {
+            response = response.header("x-content-sha256", hash_file(path).await?);
         }
         let (start, length) = range.as_ref().map_or((0, metadata.len()), |range| {
             (range.start, range.end - range.start + 1)

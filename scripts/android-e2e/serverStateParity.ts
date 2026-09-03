@@ -242,16 +242,18 @@ export async function captureZeroServerNavigationParity(
   const rowId = layout === "phone" ? "NAV-01" : "NAV-02";
   await capture(rowId, `${layout}-zero-servers`, async () => {
     await waitForAccessibility(driver, "New thread", timeoutMs);
-    await waitForAccessibility(driver, "Choose server", timeoutMs);
     await waitForText(driver, "No threads found", timeoutMs);
     await assertNoSavedServerRows(driver);
     await assertHiddenAccessibility(driver, "Paste connection link");
-    if (layout === "wide") {
+    if (layout === "phone") {
+      await waitForAccessibility(driver, "Choose server", timeoutMs);
+    } else {
       await waitForAccessibility(driver, "Add server", timeoutMs);
       await waitForAccessibility(driver, "Settings", timeoutMs);
     }
     const source = await driver.getPageSource();
-    if (!source.includes("All threads") || source.includes("CodeWide E2E")) {
+    const expectedHeading = layout === "phone" ? "All threads" : "Server";
+    if (!source.includes(expectedHeading) || source.includes("CodeWide E2E")) {
       throw new Error(`${generation} did not render the exact zero-server navigation shell`);
     }
   });

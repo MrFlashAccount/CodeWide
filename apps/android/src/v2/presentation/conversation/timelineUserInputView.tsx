@@ -116,7 +116,7 @@ function UserAttachmentBlock(props: UserAttachmentBlockProps): React.JSX.Element
   const openAttachment = actions?.onOpenAttachment;
   const open = useEvent(async (): Promise<void> => {
     if (attachment === null) return;
-    await openAttachment?.(attachment.id);
+    await openAttachment?.(attachment);
   });
   if (attachment === null) {
     return (

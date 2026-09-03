@@ -42,6 +42,7 @@ export interface CreateAttachmentRenderingCapabilitiesInput {
   navigate(destination: AttachmentPreviewDestination): void;
   openWorkspaceFile(path: string): void;
   owner: QualifiedThread;
+  preparePreview(attachments: readonly V2Attachment[], selected: V2Attachment): void;
   preview(
     savedServerId: SavedServerId,
     sourceUrl: string,
@@ -66,6 +67,7 @@ export function createAttachmentRenderingCapabilities(
   input: CreateAttachmentRenderingCapabilitiesInput,
 ): AttachmentRenderingCapabilities {
   const openAttachment = (attachment: V2Attachment): void => {
+    input.preparePreview(input.attachments, attachment);
     input.navigate(
       attachmentPreviewDestination({ attachmentId: attachment.id, owner: input.owner }),
     );

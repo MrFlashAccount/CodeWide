@@ -15,6 +15,7 @@ import { AsyncActionFeedbackView } from "../../presentation/actions/AsyncActionF
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useEvent } from "../../../react/useEvent";
 import type { VoiceInputControlModel } from "../conversation/VoiceInputControl";
+import type { QueueDeliveryMode } from "../../presentation/queue/queueTypes";
 import { ComposerAttachmentTray } from "./ComposerAttachmentTray";
 import {
   composerActionErrorMessage,
@@ -30,6 +31,7 @@ export interface ChatComposerProps {
   activeTurnId?: string | null;
   attachmentDraft?: ComposerAttachmentDraft;
   disabled: boolean;
+  deliveryActions?: readonly ActionMenuItem[];
   error?: string | null;
   InputComponent?: ComponentType<ComposerTextInputProps>;
   locked?: boolean;
@@ -38,7 +40,7 @@ export interface ChatComposerProps {
   onEditAttachment?(item: ComposerAttachmentDraftSnapshot["items"][number]): void;
   onInterrupt?(turnId: string): Promise<void>;
   onSelectMenu?(id: string): void;
-  onSubmit(text: string): Promise<boolean>;
+  onSubmit(text: string, deliveryMode?: QueueDeliveryMode): Promise<boolean>;
   onTextChange?(text: string): void;
   retryBlocked?: boolean;
   text?: string;
@@ -80,7 +82,7 @@ export function ChatComposer(props: ChatComposerProps): React.JSX.Element {
     else props.onTextChange(value);
     props.onEdit?.();
   });
-  const submit = useEvent(async () => {
+  const submit = useEvent(async (deliveryMode?: QueueDeliveryMode) => {
     if (props.disabled || sending || interrupt.pending) return;
     if (interruptEnabled) {
       interrupt.activate();
@@ -97,13 +99,19 @@ export function ChatComposer(props: ChatComposerProps): React.JSX.Element {
     if (value === "" && attachmentSnapshot.value.items.length === 0) return;
     setSending(true);
     setActivationError(null);
-    const completed = await props.onSubmit(value).finally(() => setSending(false));
+    const submission =
+      deliveryMode === undefined ? props.onSubmit(value) : props.onSubmit(value, deliveryMode);
+    const completed = await submission.finally(() => setSending(false));
     if (!completed) return;
     updateText("");
     props.attachmentDraft?.commit();
   });
   const activateSubmit = useEvent(() => {
     submit().catch(() => setActivationError("Action failed. Try again."));
+  });
+  const selectDeliveryAction = useEvent((id: string) => {
+    if (id !== "sendNow" && id !== "queue" && id !== "steer") return;
+    submit(id).catch(() => setActivationError("Action failed. Try again."));
   });
   const selectMenu = useEvent((id: string) => {
     selectComposerMenu(props.attachmentDraft, props.onSelectMenu, id).catch((cause: unknown) =>
@@ -142,6 +150,12 @@ export function ChatComposer(props: ChatComposerProps): React.JSX.Element {
           )
         }
         disabled={props.disabled || (props.locked === true && !stopMode)}
+        {...(props.deliveryActions === undefined
+          ? {}
+          : {
+              deliveryActions: props.deliveryActions,
+              onSelectDeliveryAction: selectDeliveryAction,
+            })}
         error={props.error ?? voiceErrorMessage(props.voice) ?? activationError}
         hasAttachments={items.length > 0}
         {...(props.InputComponent === undefined ? {} : { InputComponent: props.InputComponent })}

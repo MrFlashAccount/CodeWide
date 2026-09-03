@@ -22,7 +22,7 @@ function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgres
 }
 
 describe("thread render window", () => {
-  it("projects every item before the canonical user message as pre-turn lifecycle", () => {
+  it("keeps compaction outside the bubble while projecting other pre-turn activity into it", () => {
     const items: FakeItem[] = [
       { type: "contextCompaction", id: "compaction" },
       { type: "commandExecution", id: "preflight" },
@@ -32,12 +32,14 @@ describe("thread render window", () => {
     ];
 
     const active = selectTurnRenderWindow(turn(items));
-    expect(active.preTurnActivityIndexes).toEqual([0, 1]);
+    expect(active.compactionIndexes).toEqual([0]);
+    expect(active.preTurnActivityIndexes).toEqual([1]);
     expect(active.liveActivityIndexes).toEqual([3, 4]);
     expect(active.collapsedActivityIndexes).toEqual([]);
 
     const completed = selectTurnRenderWindow(turn(items, "completed"));
-    expect(completed.preTurnActivityIndexes).toEqual([0, 1]);
+    expect(completed.compactionIndexes).toEqual([0]);
+    expect(completed.preTurnActivityIndexes).toEqual([1]);
     expect(completed.collapsedActivityIndexes).toEqual([3]);
   });
 
@@ -49,6 +51,7 @@ describe("thread render window", () => {
     ]));
 
     expect(window.preTurnActivityIndexes).toEqual([1]);
+    expect(window.compactionIndexes).toEqual([]);
     expect(window.liveActivityIndexes).toEqual([2]);
   });
 

@@ -32,6 +32,33 @@ type ThreadProjectionAdapters = {
   ): Promise<ThreadEventProjection>;
 };
 
+function normalizePersistedSnapshots(snapshots: SyncSnapshotThread[]): SyncSnapshotThread[] {
+  let normalizedSnapshots: SyncSnapshotThread[] | undefined;
+
+  for (let index = 0; index < snapshots.length; index += 1) {
+    const snapshot = snapshots[index]!;
+    const turns: unknown = (snapshot.thread as { turns?: unknown }).turns;
+    if (Array.isArray(turns)) {
+      normalizedSnapshots?.push(snapshot);
+      continue;
+    }
+    if (turns !== undefined) throw new Error("Thread snapshot has invalid turns");
+
+    normalizedSnapshots ??= snapshots.slice(0, index);
+    // Native snapshots survive JS bundle upgrades. Older metadata-only rows did
+    // not persist `turns`, so copy only this malformed row at the cache boundary.
+    normalizedSnapshots.push({
+      ...snapshot,
+      thread: {
+        ...snapshot.thread,
+        turns: [],
+      },
+    });
+  }
+
+  return normalizedSnapshots ?? snapshots;
+}
+
 /**
  * The single ordered seam between native frames and persisted thread views.
  * Detail is committed first so a terminal summary never outruns the selected
@@ -41,16 +68,17 @@ type ThreadProjectionAdapters = {
 export function createThreadProjectionStore(adapters: ThreadProjectionAdapters): ThreadProjectionStore {
   return {
     async applySnapshot(connectionId, snapshots, cursor) {
+      const normalizedSnapshots = normalizePersistedSnapshots(snapshots);
       const measureDiagnostics = operationalDiagnosticsEnabled();
       const detailStartedAt = measureDiagnostics ? performance.now() : 0;
       try {
-        await adapters.details.applySnapshot(connectionId, snapshots, cursor);
+        await adapters.details.applySnapshot(connectionId, normalizedSnapshots, cursor);
       } finally {
         if (measureDiagnostics) recordDiagnosticTiming("thread_detail_projection_ms", performance.now() - detailStartedAt);
       }
       const summaryStartedAt = measureDiagnostics ? performance.now() : 0;
       try {
-        await adapters.summaries.applySnapshot(connectionId, snapshots, cursor);
+        await adapters.summaries.applySnapshot(connectionId, normalizedSnapshots, cursor);
       } finally {
         if (measureDiagnostics) recordDiagnosticTiming("thread_summary_projection_ms", performance.now() - summaryStartedAt);
       }

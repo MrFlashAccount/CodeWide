@@ -285,10 +285,18 @@ describe("V2 timeline interactions", () => {
       fireEvent.press(screen.getByRole("button", { name: "Open attachment recording.mp4" }));
       fireEvent.press(screen.getByRole("button", { name: "Open attachment report.pdf" }));
     });
-    expect(openAttachment).toHaveBeenCalledWith("image");
-    expect(openAttachment).toHaveBeenCalledWith("audio");
-    expect(openAttachment).toHaveBeenCalledWith("video");
-    expect(openAttachment).toHaveBeenCalledWith("document");
+    expect(openAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "image", name: "image.png" }),
+    );
+    expect(openAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "audio", name: "audio.wav" }),
+    );
+    expect(openAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "video", name: "recording.mp4" }),
+    );
+    expect(openAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "document", name: "report.pdf" }),
+    );
   });
 
   it("restores a durable turn anchor and reports a new anchor only while away from the tail", () => {

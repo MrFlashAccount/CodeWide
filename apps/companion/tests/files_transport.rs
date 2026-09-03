@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose};
 use codewide_companion::{
     auth::{DeviceRegistry, PairingClaim, SessionProof, pairing_claim_message},
     catalog::SessionCatalog,
-    files::FileService,
+    files::{FileQuery, FileService},
     history_service::HistoryService,
     server::{self, CompanionServices},
     store::IndexStore,
@@ -31,6 +31,40 @@ const TOKEN: &str = "file-test-admin-token-that-is-long-enough";
 struct PairedFileDevice {
     id: String,
     session: String,
+}
+
+#[tokio::test]
+async fn private_preview_streams_regular_files_larger_than_the_transfer_ceiling()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("workspace");
+    tokio::fs::create_dir(&root).await?;
+    let file = root.join("large.bin");
+    tokio::fs::write(&file, b"abcdef").await?;
+    let files = FileService::open(
+        HashMap::from([("workspace".to_owned(), root)]),
+        Vec::new(),
+        None,
+        Some(4),
+    )
+    .await?;
+    files.observe_preview_path(&file).await;
+
+    let response = files
+        .download(
+            FileQuery {
+                path: Some(file.to_string_lossy().into_owned()),
+                root_id: None,
+            },
+            &axum::http::HeaderMap::new(),
+            false,
+            true,
+        )
+        .await?;
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert!(response.headers().get("x-content-sha256").is_none());
+    Ok(())
 }
 
 #[tokio::test]

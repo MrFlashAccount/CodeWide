@@ -5,6 +5,7 @@ import type { ComposerSubmission } from "./application/composer/composerAttachme
 import type { ComposerAttachmentTarget } from "./application/ports/composerAttachmentTransport";
 import { useV2Runtime } from "./application/react/V2RuntimeContext";
 import type { SavedServerId } from "./domain/ids";
+import type { QueueDeliveryMode } from "./presentation/queue/queueTypes";
 import { ChatComposer, type ChatComposerProps } from "./features/composer/ChatComposer";
 import { useLargePasteInterceptor } from "./infrastructure/react/useLargePasteInterceptor";
 import { ComposerViewTextInput } from "./presentation/input/ComposerViewTextInput";
@@ -16,7 +17,7 @@ export interface V2ChatComposerProps extends Omit<
   "attachmentDraft" | "InputComponent" | "onSubmit"
 > {
   draftId: string;
-  onSubmit(submission: ComposerSubmission): Promise<boolean>;
+  onSubmit(submission: ComposerSubmission, deliveryMode?: QueueDeliveryMode): Promise<boolean>;
   savedServerId: SavedServerId;
   target: ComposerAttachmentTarget;
 }
@@ -29,11 +30,15 @@ export function V2ChatComposer(props: V2ChatComposerProps): React.JSX.Element {
     savedServerId: props.savedServerId,
     target: props.target,
   });
-  const submit = useEvent(async (text: string): Promise<boolean> =>
-    props.onSubmit({
-      prepareInput: async (target) => draft.prepareInput(text, target),
-      text,
-    }),
+  const submit = useEvent(
+    async (text: string, deliveryMode?: QueueDeliveryMode): Promise<boolean> =>
+      props.onSubmit(
+        {
+          prepareInput: async (target) => draft.prepareInput(text, target),
+          text,
+        },
+        deliveryMode,
+      ),
   );
   return (
     <ChatComposer

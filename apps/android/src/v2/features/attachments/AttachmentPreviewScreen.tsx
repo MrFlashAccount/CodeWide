@@ -22,7 +22,7 @@ import { useDocumentViewerPreferences } from "./useDocumentViewerPreferences";
 
 interface AttachmentPreviewScreenProps extends AttachmentRendererCapabilities {
   annotate?: AttachmentAnnotationCapability;
-  attachments: V2Attachment[];
+  attachments: readonly V2Attachment[];
   initialAttachmentId: string;
   owner: QualifiedThread;
 }

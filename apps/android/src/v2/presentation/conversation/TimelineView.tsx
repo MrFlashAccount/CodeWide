@@ -27,6 +27,7 @@ import { useTimelineViewport, type TimelineEdge } from "./timelineViewport";
 
 export type {
   TimelineActivityActions,
+  TimelineActivityAttachment,
   TimelineDisplayResponseRow,
   TimelineDisplayTurn,
   TimelineTurnActions,

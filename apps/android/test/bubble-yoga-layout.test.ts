@@ -56,6 +56,22 @@ describe("Yoga-owned bubble layout", () => {
     expect(screen).toContain('testID="user-bubble"');
   });
 
+  it("fills tool-only agent bubbles and keeps non-compaction pre-turn rows inside them", () => {
+    expect(screen).toContain("const hasBubbleActivity = preTurnBlocks.length > 0");
+    expect(screen).toContain("|| completedActivityCount > 0");
+    expect(screen).toContain('visibleLiveActivitySequence.some((part) => part.kind !== "agent")');
+
+    const turnStart = screen.indexOf("function TurnTimelineItem(");
+    const agentBubbleStart = screen.indexOf('<Bubble\n            variant="agent"', turnStart);
+    const agentBubbleEnd = screen.indexOf("</Bubble>", agentBubbleStart);
+    const beforeAgentBubble = screen.slice(turnStart, agentBubbleStart);
+    const agentBubble = screen.slice(agentBubbleStart, agentBubbleEnd);
+
+    expect(beforeAgentBubble).toContain("blocks={compactionBlocks}");
+    expect(beforeAgentBubble).not.toContain("blocks={preTurnBlocks}");
+    expect(agentBubble).toContain("blocks={preTurnBlocks}");
+  });
+
   it("lets diagram blocks stretch the bubble without measured width overrides", () => {
     expect(markdown).toContain('<View style={styles.wideBlock}>');
     expect(markdown).toContain('wideBlock: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" }');

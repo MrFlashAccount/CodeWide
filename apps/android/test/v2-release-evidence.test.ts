@@ -28,6 +28,14 @@ const e2eHarness = readFileSync(
 const visualParityMatrix = parseVisualParityMatrix(
   readFileSync(new URL("../../../docs/android-v2-visual-parity.md", import.meta.url), "utf8"),
 );
+const VISUAL_PARITY_ARTIFACT_FIELDS = [
+  "v1Screenshot",
+  "v1Xml",
+  "v2Screenshot",
+  "v2Xml",
+  "diffImage",
+  "diffData",
+] as const;
 
 function passingEvidence(): AndroidE2eEvidence {
   return {
@@ -488,7 +496,16 @@ describe("Android V2 release evidence", () => {
   it("accepts honest atomic parity evidence and returns every required artifact", () => {
     const evidence = passingParityEvidence();
     expect(() => validateVisualParityMatrix(evidence, visualParityMatrix)).not.toThrow();
-    expect(validateVisualParityEvidence(evidence)).toHaveLength(7_590);
+    const captureCount = evidence.rows.reduce((count, row) => count + row.captures.length, 0);
+    const artifacts = validateVisualParityEvidence(evidence);
+    expect(artifacts).toHaveLength(captureCount * VISUAL_PARITY_ARTIFACT_FIELDS.length);
+    expect(artifacts).toStrictEqual(
+      evidence.rows.flatMap((row) =>
+        row.captures.flatMap((capture) =>
+          VISUAL_PARITY_ARTIFACT_FIELDS.map((field) => capture[field]),
+        ),
+      ),
+    );
   });
 
   it("loads the canonical 265-row matrix instead of accepting substituted row ids", () => {

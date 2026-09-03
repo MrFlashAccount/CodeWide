@@ -87,7 +87,13 @@ describe("V2 rich timeline activity", () => {
     await act(async () => fireEvent.press(screen.getByLabelText("Open attachment report.md")));
     await act(async () => fireEvent.press(screen.getByLabelText("Open subagent conversation")));
 
-    expect(openAttachment).toHaveBeenCalledWith("attachment-a");
+    expect(openAttachment).toHaveBeenCalledWith({
+      downloadUrl: "/v2/files/preview?path=report.md",
+      id: "attachment-a",
+      mediaType: "text/markdown",
+      name: "report.md",
+      sizeBytes: "1024",
+    });
     expect(openSubagent).toHaveBeenCalledWith("thread-child");
   });
 

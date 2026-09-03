@@ -21,7 +21,7 @@ import {
 import type { AttachmentRendererCapabilities } from "./previewCapabilities";
 
 interface AttachmentPreviewWorkspaceProps extends AttachmentRendererCapabilities {
-  attachments: V2Attachment[];
+  attachments: readonly V2Attachment[];
   imageSource: QuickdrawImageSource;
   initialAttachmentId: string;
   navigate(destination: AttachmentPreviewDestination): void;
@@ -60,6 +60,9 @@ export function AttachmentPreviewWorkspace(
     navigate,
     openWorkspaceFile,
     owner,
+    preparePreview(nextAttachments, selected) {
+      runtime.attachmentPreviews.present(owner, nextAttachments, selected);
+    },
     preview(savedServerId, sourceUrl, mode) {
       return runtime.preview(savedServerId, sourceUrl, mode);
     },

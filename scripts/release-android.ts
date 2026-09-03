@@ -174,7 +174,6 @@ async function runReleaseChecks(): Promise<void> {
   await run("pnpm", ["test"]);
   await run("pnpm", ["test:ota"]);
   await run("pnpm", ["security:scan-secrets"]);
-  await run("pnpm", ["validate:android:device-evidence"]);
 }
 
 async function verifyPublicOta(

@@ -4,17 +4,7 @@ import { useEvent } from "../../../react/useEvent";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ReviewLaunchButton } from "../../presentation/review/ReviewLaunchButton";
 import type { ReviewScope } from "../../rendering/review/reviewModel";
-import { reviewChangesDestination, reviewStartDestination } from "../navigation/routeDestinations";
-
-interface StartReviewLaunchButtonProps {
-  owner: QualifiedThread;
-}
-
-export function StartReviewLaunchButton(props: StartReviewLaunchButtonProps): React.JSX.Element {
-  const { owner } = props;
-  const open = useEvent(() => router.push(reviewStartDestination(owner)));
-  return <ReviewLaunchButton actionId="start-code-review" label="Code review" onPress={open} />;
-}
+import { reviewChangesDestination } from "../navigation/routeDestinations";
 
 interface ChangesReviewLaunchButtonProps {
   owner: QualifiedThread;

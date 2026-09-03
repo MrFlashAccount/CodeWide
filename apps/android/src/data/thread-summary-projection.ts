@@ -140,8 +140,14 @@ function projectThreadSummaryPatch(
   else if (operation.kind === "threadStatus" && object(operation.status) !== null) next.status = normalizeThreadStatus(operation.status);
   else if (operation.kind === "threadArchived") next.archived = operation.archived === true;
   else {
+    const lifecycleChanged = operation.kind === "turnStarted" || operation.kind === "turnCompleted";
+    if (operation.kind === "turnStarted" && next.status.type !== "active") {
+      next.status = { type: "active", activeFlags: [] };
+    } else if (operation.kind === "turnCompleted") {
+      next.status = { type: "idle" };
+    }
     const summary = object(operation.summary);
-    if (summary === null || summary.activity !== true) return null;
+    if (summary === null || summary.activity !== true) return lifecycleChanged ? { key, value: next } : null;
     if (typeof summary.previewText === "string") {
       const preview = plainThreadPreview(summary.previewText);
       if (preview !== "") next.preview = preview;

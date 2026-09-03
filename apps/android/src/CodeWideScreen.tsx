@@ -7721,6 +7721,7 @@ type CachedTurnProjection = {
   renderWindow: ReturnType<typeof selectTurnRenderWindow>;
   userBlocks: RenderBlock[];
   preTurnBlocks: RenderBlock[];
+  compactionBlocks: RenderBlock[];
   latestAgentBlock: RenderBlock | null;
   liveActivityBlocks: RenderBlock[];
 };
@@ -7736,6 +7737,10 @@ function projectTurnProjection(turn: Extract<TimelineItem, { kind: "turn" }>): C
     const item = rawTurn.items[index];
     return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
+  const compactionBlocks = renderWindow.compactionIndexes.flatMap((index) => {
+    const item = rawTurn.items[index];
+    return item === undefined ? [] : [projectThreadItem(turn, item, index)];
+  });
   const latestAgentItem = renderWindow.latestAgentIndex < 0 ? undefined : rawTurn.items[renderWindow.latestAgentIndex];
   const latestAgentBlock = latestAgentItem === undefined
     ? null
@@ -7744,7 +7749,7 @@ function projectTurnProjection(turn: Extract<TimelineItem, { kind: "turn" }>): C
     const item = rawTurn.items[index];
     return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
-  return { renderWindow, userBlocks, preTurnBlocks, latestAgentBlock, liveActivityBlocks };
+  return { renderWindow, userBlocks, preTurnBlocks, compactionBlocks, latestAgentBlock, liveActivityBlocks };
 }
 
 function TurnTimelineItem({
@@ -7778,7 +7783,7 @@ function TurnTimelineItem({
 }) {
   const rawTurn = turn.turn;
   const beginContentReview = useContentReview();
-  const { renderWindow, userBlocks, preTurnBlocks, latestAgentBlock, liveActivityBlocks } = projectTurnProjection(turn);
+  const { renderWindow, userBlocks, preTurnBlocks, compactionBlocks, latestAgentBlock, liveActivityBlocks } = projectTurnProjection(turn);
   const liveActivityEntries = renderWindow.liveActivityIndexes.flatMap((itemIndex, projectionIndex) => {
     const block = liveActivityBlocks[projectionIndex];
     return block === undefined ? [] : [{ index: itemIndex, block }];
@@ -7821,11 +7826,15 @@ function TurnTimelineItem({
   const showMessageActions = copyText !== "" || canForkThrough || canReviewResponse;
   const completedWithoutFinal = rawTurn.status === "completed" && latestAgentBlock === null;
   const completedActivityCount = rawTurn.status === "inProgress" ? 0 : completedActivityItemCount(rawTurn);
-  const agentBubbleFill = latestAgentBlock?.content?.fields["/text"] !== undefined
+  const hasBubbleActivity = preTurnBlocks.length > 0
+    || completedActivityCount > 0
+    || visibleLiveActivitySequence.some((part) => part.kind !== "agent");
+  const agentBubbleFill = hasBubbleActivity
+    || latestAgentBlock?.content?.fields["/text"] !== undefined
     || (latestAgentBlock !== null && richMarkdownLayout(latestAgentBlock.body ?? "") === "fill");
   const hasAgentContent = (rawTurn.status !== "inProgress"
-    ? rawTurn.itemsView !== "full" || completedActivityCount > 0 || latestAgentBlock !== null
-    : visibleLiveActivitySequence.length > 0 || latestAgentBlock !== null)
+    ? rawTurn.itemsView !== "full" || completedActivityCount > 0 || preTurnBlocks.length > 0 || latestAgentBlock !== null
+    : visibleLiveActivitySequence.length > 0 || preTurnBlocks.length > 0 || latestAgentBlock !== null)
     || pendingRequest !== null
     || completedWithoutFinal;
   const showAgentBubble = hasAgentContent || rawTurn.status !== "inProgress";
@@ -7839,7 +7848,7 @@ function TurnTimelineItem({
         <RecoverableRenderBoundary scope="bubble" label="User message" context={`Thread: ${turn.threadId}\nTurn: ${turn.id}`} resetKey={`${turn.key}:user`}>
           <ImagePreviewGroup id={`${turn.key}:user`}>
           <View style={styles.userMessageRow}>
-          {rawTurn.startedAt !== null && <Text style={styles.messageTime}>{`Sent · ${formatClockTime(rawTurn.startedAt)}`}</Text>}
+          {rawTurn.startedAt !== null && <Text style={styles.messageTime}>{formatClockTime(rawTurn.startedAt)}</Text>}
           <Bubble
             variant="user"
             testID="user-bubble"
@@ -7866,9 +7875,9 @@ function TurnTimelineItem({
         </RecoverableRenderBoundary>
         </View>
       )}
-      {preTurnBlocks.length > 0 && (
+      {compactionBlocks.length > 0 && (
         <PreTurnLifecycleRows
-          blocks={preTurnBlocks}
+          blocks={compactionBlocks}
           turnStatus={rawTurn.status}
           turnKey={turn.key}
           {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
@@ -7887,6 +7896,15 @@ function TurnTimelineItem({
             errorResetKey={`${turn.key}:agent`}
           >
           <BubbleContent>
+          {preTurnBlocks.length > 0 && (
+            <PreTurnLifecycleRows
+              blocks={preTurnBlocks}
+              turnStatus={rawTurn.status}
+              turnKey={turn.key}
+              {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
+              {...(onFixUnsupportedBlock === undefined ? {} : { onFixUnsupportedBlock })}
+            />
+          )}
           {rawTurn.status !== "inProgress" && (
             <CompletedTurnHistory
               item={turn}

@@ -40,7 +40,8 @@ describe("failed message retry", () => {
     expect(screen).toContain('? "Running"');
     expect(screen).toContain(': "Accepted by Companion"');
     expect(screen).toContain('? "Sending to Companion"');
-    expect(screen).toContain('`Sent · ${formatClockTime(rawTurn.startedAt)}`');
+    expect(screen).not.toContain("Sent ·");
+    expect(screen).toContain("{formatClockTime(rawTurn.startedAt)}");
   });
 
   it("repairs companion delivery acceptance without blocking live lifecycle projection", () => {

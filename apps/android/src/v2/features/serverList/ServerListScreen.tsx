@@ -1,5 +1,6 @@
 import { router } from "expo-router";
 import { useState, useSyncExternalStore, type ComponentProps } from "react";
+import { useWindowDimensions } from "react-native";
 
 import { useV2Runtime } from "../../V2Application";
 import {
@@ -9,6 +10,7 @@ import {
   threadDestination,
 } from "../navigation/routeDestinations";
 import { ThreadCatalogWorkspaceView } from "../../presentation/layouts/AdaptiveWorkspaceView";
+import { isDesktopWindow } from "../../presentation/layouts/windowLayout";
 import { ResourceStateView } from "../../presentation/feedback/ResourceStateView";
 import type { ThreadListRow } from "../../presentation/navigation/ThreadListView";
 import {
@@ -52,6 +54,8 @@ interface AggregateSearchEntry extends AggregateThreadCatalogEntry {
 export function ServerListScreen(): React.JSX.Element {
   const runtime = useV2Runtime();
   const alert = useAppDialog();
+  const window = useWindowDimensions();
+  const desktop = isDesktopWindow(window);
   const servers = useSyncExternalStore(
     runtime.savedServers.subscribe,
     runtime.savedServers.snapshot,
@@ -214,7 +218,9 @@ export function ServerListScreen(): React.JSX.Element {
     paging: aggregateThreadListPaging(query, catalogSnapshot.value, searchSnapshot.value, loadMore),
     query,
     rows,
-    title: (
+    title: desktop ? (
+      "Server"
+    ) : (
       <ServerSelectorView
         detail={aggregateConnectionLabel(servers.value, connectionStatuses.value)}
         heading="All threads"

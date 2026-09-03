@@ -29,7 +29,7 @@ use crate::{
 mod full_change_output;
 
 const PROJECTIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("thread_resources");
-const PROJECTION_VERSION: u8 = 8;
+const PROJECTION_VERSION: u8 = 9;
 const MAX_DIFF_CHARS_PER_PATH: usize = 4 * 1024 * 1024;
 const TAIL_CHECK_BYTES: u64 = 4_096;
 const COMPLETED_TURN_REFRESH_DELAYS: [Duration; 6] = [
@@ -366,6 +366,19 @@ impl ResourceService {
         path: PathBuf,
     ) -> Result<(u64, String), ResourceError> {
         Ok(self.files.preview_metadata_within(workspace, path).await?)
+    }
+
+    /// Grants one exact regular host file after the protocol layer has enforced
+    /// terminal-equivalent authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the host file cannot be resolved or inspected.
+    pub async fn host_preview_metadata(
+        &self,
+        path: PathBuf,
+    ) -> Result<(u64, String), ResourceError> {
+        Ok(self.files.host_preview_metadata(path).await?)
     }
 
     /// Opens the compact, crash-safe projection store. It contains only file
@@ -1433,6 +1446,13 @@ impl ResourceData {
     fn apply_materialized_item(&mut self, turn_id: &str, item: &Value, cwd: Option<&Path>) {
         let item_id = item.get("id").and_then(Value::as_str).unwrap_or("");
         match item.get("type").and_then(Value::as_str) {
+            Some("FileChange") => {
+                if let Some(changes) = item.get("changes").and_then(Value::as_object) {
+                    for (path, raw) in changes {
+                        self.apply_change(turn_id, item_id, path, raw, cwd);
+                    }
+                }
+            }
             Some("fileChange") => {
                 if let Some(changes) = item.get("changes").and_then(Value::as_array) {
                     for raw in changes {
@@ -1802,6 +1822,21 @@ fn apply_rollout_record(projection: &mut PersistedProjection, offset: u64, line:
                 for (path, change) in changes {
                     data.apply_change(&turn_id, item_id, path, change, cwd.as_deref());
                 }
+            }
+        }
+        "item_completed" => {
+            let turn_id = payload
+                .get("turn_id")
+                .and_then(Value::as_str)
+                .or(projection.active_turn_id.as_deref())
+                .unwrap_or("")
+                .to_owned();
+            let cwd = projection.cwd.clone();
+            let Some(data) = projection.pending_for(&turn_id) else {
+                return;
+            };
+            if let Some(item) = payload.get("item") {
+                data.apply_materialized_item(&turn_id, item, cwd.as_deref());
             }
         }
         "view_image_tool_call" => {
@@ -2214,6 +2249,7 @@ mod tests {
                 "{\"type\":\"session_meta\",\"payload\":{\"type\":\"session_meta\",\"id\":\"thread\",\"cwd\":\"/repo\",\"source\":\"cli\"}}\n",
                 "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn\"}}\n",
                 "{\"type\":\"event_msg\",\"payload\":{\"type\":\"patch_apply_end\",\"call_id\":\"patch\",\"changes\":{\"src/a.rs\":{\"type\":\"update\",\"diff\":\"-old\\n+new\\n\"}}}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"turn_id\":\"turn\",\"item\":{\"type\":\"FileChange\",\"id\":\"modern-patch\",\"changes\":{\"src/modern.rs\":{\"type\":\"add\",\"unified_diff\":\"+modern\\n\",\"move_path\":null}}}}}\n",
                 "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"id\":\"answer\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"[report](/tmp/report.md)\"}]}}\n",
                 "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn\"}}\n",
             ),
@@ -2223,8 +2259,11 @@ mod tests {
 
         let projection = resources.refresh("thread", &rollout, &index)?;
         let data = projection.materialized_data();
+        let last_turn = last_turn_summary(&projection, &BTreeMap::new(), None);
 
         assert!(data.changes.contains_key("/repo/src/a.rs"));
+        assert!(data.changes.contains_key("/repo/src/modern.rs"));
+        assert!(last_turn.changes.contains_key("/repo/src/modern.rs"));
         assert!(
             data.attachments
                 .iter()

@@ -62,6 +62,7 @@ import {
 import {
   TimelineView,
   type TimelineActivityActions,
+  type TimelineActivityAttachment,
   type TimelineDisplayResponseRow,
   type TimelineDisplayTurn,
   type TimelineTurnActions,
@@ -79,7 +80,6 @@ import type {
   LiveTurnPlanViewModel,
   UsageBreakdownViewModel,
 } from "../../presentation/usage/usageTypes";
-import { DeliveryModeSelectorView } from "../../presentation/queue/DeliveryModeSelectorView";
 import type { QueueDeliveryMode } from "../../presentation/queue/queueTypes";
 import {
   V2RenderingCapabilityProvider,
@@ -97,13 +97,13 @@ import {
   attachmentPreviewDestination,
   itemOutputDestination,
   newThreadDestination,
+  reviewStartDestination,
   reviewResponseDestination,
   threadDestination,
 } from "../navigation/routeDestinations";
 import { PendingRequestsPanel } from "../requests/PendingRequestsPanel";
 import { QueueControlsFeature } from "../queue/QueueManagerFeature";
 import { deliveryCommand } from "../queue/deliveryCommand";
-import { StartReviewLaunchButton } from "../review/ReviewEntryActions";
 import { SkillsSheet } from "../skills/SkillsSheet";
 import { terminalComposerContextItem } from "../terminal/terminalComposerContextItem";
 import { threadMarkReadCommand } from "../threadList/threadListCommands";
@@ -232,6 +232,10 @@ const COMPOSER_ACTIONS: ActionMenuItem[] = [
   { icon: "git-network-outline", id: "ports", label: "Port forward" },
   { icon: "sparkles-outline", id: "skills", label: "Skills" },
   { icon: "flag-outline", id: "goal", label: "Goal" },
+];
+const COMPOSER_ACTIONS_WITH_REVIEW: ActionMenuItem[] = [
+  ...COMPOSER_ACTIONS,
+  { icon: "code-slash-outline", id: "review", label: "Code review" },
 ];
 
 interface ConversationScreenProps {
@@ -404,9 +408,6 @@ function useProjectedConversationSurface(
     runtime.composerAttachments.setText(composerDraftScope, text);
   });
   const deliveryPreference: QueueDeliveryMode = localDraft.value.deliveryMode;
-  const setDeliveryPreference = useEvent((mode: QueueDeliveryMode) => {
-    runtime.composerAttachments.setDeliveryMode(composerDraftScope, mode);
-  });
   const setHistoryAnchor = useEvent((turnId: string | null, viewportOffsetPx: number | null) => {
     const cursor = turnId === null ? null : history.resource.restoreCursorFor(turnId);
     runtime.composerAttachments.setHistoryPosition(composerDraftScope, {
@@ -445,8 +446,11 @@ function useProjectedConversationSurface(
     ports,
     runtime,
   });
-  const openActivityAttachment = useEvent((attachmentId: string) => {
-    router.push(attachmentPreviewDestination({ attachmentId, owner }));
+  const openActivityAttachment = useEvent((attachment: TimelineActivityAttachment) => {
+    const selected =
+      threadAttachments.find((candidate) => candidate.id === attachment.id) ?? attachment;
+    runtime.attachmentPreviews.present(owner, threadAttachments, selected);
+    router.push(attachmentPreviewDestination({ attachmentId: attachment.id, owner }));
   });
   const openActivitySubagent = useEvent((agentThreadId: string) => {
     router.push(agentDestination(owner, agentThreadId));
@@ -618,6 +622,10 @@ function useProjectedConversationSurface(
       setDrawingRequest({ draftItemId: null, initialSnapshot: null, mode: "drawing" });
       return;
     }
+    if (id === "review" && reviewAvailable) {
+      router.push(reviewStartDestination(owner));
+      return;
+    }
     if (id === "goal") setGoalVisible(true);
   });
   const openContext = useEvent((id: string) => {
@@ -679,81 +687,91 @@ function useProjectedConversationSurface(
   const activeTurnId = latestActiveTurnId(window?.turns ?? []);
   const threadRunning = activeTurnId !== null;
   const deliveryMode = effectiveDeliveryMode(deliveryPreference, threadRunning, activeTurnId);
-  const submitInput = useEvent(async (input: V2InputBlock[]): Promise<boolean> => {
-    if (!threadLive) {
-      setComposerError("Conversation is still connecting.");
-      return false;
-    }
-    dispatchComposer({ kind: "setError", message: null });
-    const submit: Extract<V2Command, { kind: "turn.submit" }> = {
-      input,
-      intent: "chat",
-      kind: "turn.submit",
-      settings: null,
-      threadId: owner.threadId,
-      workspace: null,
-    };
-    let command: V2Command;
-    try {
-      command = deliveryCommand({ activeTurnId, mode: deliveryMode, submit, threadRunning });
-    } catch (cause: unknown) {
-      setComposerError(errorMessage(cause, "Could not prepare message delivery."));
-      return false;
-    }
-    const settlement = await runtime.commands
-      .executeCorrelated(
-        {
-          savedServerId: owner.savedServerId,
-          surface: "threadComposer",
-          threadId: owner.threadId,
-        },
-        command,
-      )
-      .catch(() => null);
-    if (settlement === null) {
-      setComposerError("Action failed. Try again.");
-      return false;
-    }
-    if (settlement.kind === "notCreated") {
-      dispatchComposer({ kind: "unlockWithError", message: settlement.failure.message });
-      return false;
-    }
-    if (settlement.kind === "durableUnsettled") {
-      correlations.retainLock(settlement);
-      dispatchComposer({
-        activation: {
-          correlationId: settlement.correlationId,
-          operationId: settlement.operationId,
-        },
-        kind: "lock",
-        message: settlement.failure.message,
-      });
-      return false;
-    }
-    if (!completedComposerCommand(settlement.frame, owner.threadId)) {
-      dispatchComposer({
-        kind: "terminalFailure",
-        message: composerTerminalMessage(settlement.frame),
-      });
-      return false;
-    }
-    dispatchComposer({ kind: "submitCompleted" });
-    return true;
-  });
-  const submitComposer = useEvent(async (submission: ComposerSubmission): Promise<boolean> => {
-    let prepared: V2InputBlock[];
-    try {
-      prepared = await submission.prepareInput(attachmentTarget);
-    } catch (cause: unknown) {
-      setComposerError(errorMessage(cause, "Could not prepare attachments."));
-      return false;
-    }
-    for (const block of pendingInputBlocks) prepared.push(block);
-    if (prepared.length === 0) return false;
-    const completed = await submitInput(prepared);
-    if (completed) dispatchComposer({ kind: "clearPendingInput" });
-    return completed;
-  });
+  const submitInput = useEvent(
+    async (input: V2InputBlock[], requestedMode?: QueueDeliveryMode): Promise<boolean> => {
+      if (!threadLive) {
+        setComposerError("Conversation is still connecting.");
+        return false;
+      }
+      dispatchComposer({ kind: "setError", message: null });
+      const submit: Extract<V2Command, { kind: "turn.submit" }> = {
+        input,
+        intent: "chat",
+        kind: "turn.submit",
+        settings: null,
+        threadId: owner.threadId,
+        workspace: null,
+      };
+      const resolvedMode = requestedMode ?? deliveryMode;
+      let command: V2Command;
+      try {
+        command = deliveryCommand({
+          activeTurnId,
+          mode: resolvedMode,
+          submit,
+          threadRunning,
+        });
+      } catch (cause: unknown) {
+        setComposerError(errorMessage(cause, "Could not prepare message delivery."));
+        return false;
+      }
+      const settlement = await runtime.commands
+        .executeCorrelated(
+          {
+            savedServerId: owner.savedServerId,
+            surface: "threadComposer",
+            threadId: owner.threadId,
+          },
+          command,
+        )
+        .catch(() => null);
+      if (settlement === null) {
+        setComposerError("Action failed. Try again.");
+        return false;
+      }
+      if (settlement.kind === "notCreated") {
+        dispatchComposer({ kind: "unlockWithError", message: settlement.failure.message });
+        return false;
+      }
+      if (settlement.kind === "durableUnsettled") {
+        correlations.retainLock(settlement);
+        dispatchComposer({
+          activation: {
+            correlationId: settlement.correlationId,
+            operationId: settlement.operationId,
+          },
+          kind: "lock",
+          message: settlement.failure.message,
+        });
+        return false;
+      }
+      if (!completedComposerCommand(settlement.frame, owner.threadId)) {
+        dispatchComposer({
+          kind: "terminalFailure",
+          message: composerTerminalMessage(settlement.frame),
+        });
+        return false;
+      }
+      dispatchComposer({ kind: "submitCompleted" });
+      return true;
+    },
+  );
+  const submitComposer = useEvent(
+    async (submission: ComposerSubmission, requestedMode?: QueueDeliveryMode): Promise<boolean> => {
+      let prepared: V2InputBlock[];
+      try {
+        prepared = await submission.prepareInput(attachmentTarget);
+      } catch (cause: unknown) {
+        setComposerError(errorMessage(cause, "Could not prepare attachments."));
+        return false;
+      }
+      for (const block of pendingInputBlocks) prepared.push(block);
+      if (prepared.length === 0) return false;
+      const completed = await submitInput(prepared, requestedMode);
+      if (completed) dispatchComposer({ kind: "clearPendingInput" });
+      return completed;
+    },
+  );
   const submitVoiceTranscript = useEvent(async (text: string): Promise<boolean> => {
     let input: V2InputBlock[];
     try {
@@ -928,7 +946,6 @@ function useProjectedConversationSurface(
     onRetryAuthority: retryThreadAuthority,
     onReleaseUnsettled: releaseUnsettled,
     onSelectComposerAction: selectComposerAction,
-    onSelectDeliveryMode: setDeliveryPreference,
     onSelectResource: selectResource,
     onSelectSkill: selectSkill,
     onSettleWindow: settleHistoryWindow,
@@ -1050,10 +1067,12 @@ interface ConversationSurfaceProps {
   onInterruptActiveTurn(turnId: string): Promise<void>;
   onLatestFinalAssistantVisible(marker: string): Promise<void>;
   onSelectComposerAction(id: string): void;
-  onSelectDeliveryMode(mode: QueueDeliveryMode): void;
   onSelectResource(id: string): void;
   onSelectSkill(skill: SkillCatalogEntry): void;
-  onSubmitMessage(submission: ComposerSubmission): Promise<boolean>;
+  onSubmitMessage(
+    submission: ComposerSubmission,
+    deliveryMode?: QueueDeliveryMode,
+  ): Promise<boolean>;
   onSettleWindow(direction: "newer" | "older"): void;
   onTextChange(text: string): void;
   owner: QualifiedThread;
@@ -1147,7 +1166,6 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
     onInterruptActiveTurn,
     onLatestFinalAssistantVisible,
     onSelectComposerAction,
-    onSelectDeliveryMode,
     onSelectResource,
     onSelectSkill,
     onSubmitMessage,
@@ -1298,31 +1316,28 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
                 )}
               </>
             )}
-            {!reviewAvailable && livePlan === null && usageBreakdown === null ? null : (
+            {livePlan === null && usageBreakdown === null ? null : (
               <View style={styles.liveStatus}>
-                {reviewAvailable ? <StartReviewLaunchButton owner={owner} /> : null}
                 {livePlan === null ? null : <LiveTurnPlanPopover plan={livePlan} />}
                 {usageBreakdown === null ? null : (
                   <CostBreakdownPopover breakdown={usageBreakdown} />
                 )}
               </View>
             )}
-            <DeliveryModeSelectorView
-              activeTurnId={activeTurnId}
-              disabled={!live || locallyLocked}
-              onSelect={onSelectDeliveryMode}
-              selected={deliveryMode}
-              threadRunning={activeTurnId !== null}
-            />
             <ComposerContextStripView items={contextItems} onOpen={onOpenContext} />
             <V2ChatComposer
               activeTurnId={activeTurnId}
               key={clearVersion}
               disabled={!live}
+              deliveryActions={deliveryModeActions(
+                deliveryMode,
+                activeTurnId !== null,
+                activeTurnId,
+              )}
               draftId={draftId}
               error={composerError}
               locked={locallyLocked}
-              menuActions={COMPOSER_ACTIONS}
+              menuActions={reviewAvailable ? COMPOSER_ACTIONS_WITH_REVIEW : COMPOSER_ACTIONS}
               onEdit={onEditComposer}
               onEditAttachment={onEditAttachment}
               onInterrupt={onInterruptActiveTurn}
@@ -1756,6 +1771,36 @@ function effectiveDeliveryMode(
   if (!threadRunning) return "sendNow";
   if (preference === "steer" && activeTurnId !== null) return "steer";
   return "queue";
+}
+
+function deliveryModeActions(
+  selected: QueueDeliveryMode,
+  threadRunning: boolean,
+  activeTurnId: string | null,
+): ActionMenuItem[] {
+  return [
+    {
+      disabled: threadRunning,
+      icon: "send-outline",
+      id: "sendNow",
+      label: "Send now",
+      selected: selected === "sendNow",
+    },
+    {
+      disabled: !threadRunning,
+      icon: "time-outline",
+      id: "queue",
+      label: "Queue after current turn",
+      selected: selected === "queue",
+    },
+    {
+      disabled: activeTurnId === null,
+      icon: "navigate-outline",
+      id: "steer",
+      label: "Steer active turn",
+      selected: selected === "steer",
+    },
+  ];
 }
 
 function turnInputBlocks(

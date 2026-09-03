@@ -265,9 +265,11 @@ describe("thread detail ownership races", () => {
     }
   });
 
-  it("keeps a complete SQLite window local and restores its native optimistic delivery", async () => {
+  it("reveals a complete SQLite window immediately and refreshes its bounded head on activation", async () => {
+    let releaseRefresh!: () => void;
+    const refresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
     harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
-    const hydrateWindow = vi.fn(async () => undefined);
+    const hydrateWindow = vi.fn(async () => await refresh);
     const details = createThreadDetailDatabase();
     const reconcilePending = vi.fn(async ({ connectionId, threadId }: { connectionId: string; threadId: string }) => {
       await details.reconcileNativeCommands(connectionId, threadId, [{
@@ -288,9 +290,14 @@ describe("thread detail ownership races", () => {
     details.setRemoteLoader({ reconcilePending, hydrateWindow, loadOlder: async () => undefined });
     await details.prepare();
 
-    await details.loadWindow({ connectionId: "server", threadId: "thread", anchorTurnId: null });
+    const resource = details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null });
+    await vi.waitFor(() => expect(resource.ready$.peek()).toBe(true));
 
-    expect(hydrateWindow).not.toHaveBeenCalled();
+    expect(hydrateWindow).toHaveBeenCalledWith(expect.objectContaining({
+      cachedThread: expect.objectContaining({ id: "thread" }),
+      requireAuthoritative: true,
+      reason: "activation",
+    }));
     expect(reconcilePending).toHaveBeenCalledWith({ connectionId: "server", threadId: "thread" });
     expect(details.hasPendingDelivery("server", "thread", "pending-command")).toBe(true);
     expect(details.chat.readRows(details.chat.window$("server", "thread").peek().liveRowIds))
@@ -299,6 +306,29 @@ describe("thread detail ownership races", () => {
         pending: expect.objectContaining({ commandId: "pending-command", text: "pending prompt" }),
       }));
     expect(details.chat.window$("server", "thread").peek().status).toBe("ready");
+    expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(true);
+    releaseRefresh();
+    await vi.waitFor(() => expect(details.chat.window$("server", "thread").peek().backendRefreshing).toBe(false));
+    await details.close();
+  });
+
+  it("refreshes a complete cached head again when navigation opens a new generation", async () => {
+    harness.loadResolvedWindow.mockResolvedValue(completeResolvedWindow());
+    const hydrateWindow = vi.fn(async () => undefined);
+    const details = createThreadDetailDatabase();
+    details.setRemoteLoader({ reconcilePending: async () => undefined, hydrateWindow, loadOlder: async () => undefined });
+    await details.prepare();
+
+    details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null, openGeneration: 1 });
+    await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledTimes(1));
+
+    details.windowResource({ connectionId: "server", threadId: "thread", anchorTurnId: null, openGeneration: 2 });
+    await vi.waitFor(() => expect(hydrateWindow).toHaveBeenCalledTimes(2));
+
+    expect(hydrateWindow).toHaveBeenLastCalledWith(expect.objectContaining({
+      requireAuthoritative: true,
+      reason: "activation",
+    }));
     await details.close();
   });
 

@@ -250,7 +250,7 @@ describe("V2 rendered action surfaces", () => {
     );
 
     await waitForComposerUnlocked();
-    expect(screen.getByLabelText("Delivery mode: Queue")).toBeTruthy();
+    expect(screen.queryByText("Send now")).toBeNull();
     fireEvent.changeText(screen.getByLabelText("Message Codex"), "Queue this message");
     fireEvent.press(screen.getByLabelText("Send message"));
 
@@ -268,6 +268,37 @@ describe("V2 rendered action surfaces", () => {
             kind: "put",
             threadId: conversationThreadId,
           },
+        },
+      ),
+    );
+  });
+
+  it("keeps delivery choices behind the send button long press", async () => {
+    const executeCorrelated = jest.fn(async () => durableSettlement());
+    renderConversation(
+      runtimeWith({
+        executeCorrelated,
+        projection: conversationProjection([runningTurn()]),
+      }),
+    );
+
+    await waitForComposerUnlocked();
+    fireEvent.changeText(screen.getByLabelText("Message Codex"), "Steer this turn");
+    fireEvent(screen.getByLabelText("Send message"), "longPress");
+    fireEvent.press(screen.getByLabelText("Delivery mode: Steer active turn"));
+
+    await waitFor(() =>
+      expect(executeCorrelated).toHaveBeenCalledWith(
+        {
+          savedServerId: serverId,
+          surface: "threadComposer",
+          threadId: conversationThreadId,
+        },
+        {
+          input: [{ kind: "text", text: "Steer this turn" }],
+          kind: "turn.steer",
+          threadId: conversationThreadId,
+          turnId: "turn-running",
         },
       ),
     );

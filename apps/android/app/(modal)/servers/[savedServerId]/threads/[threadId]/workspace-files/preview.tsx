@@ -8,7 +8,10 @@ import type { ProjectionResource } from "@/v2/application/resources/projectionRe
 import type { QualifiedThread } from "@/v2/domain/qualifiedThread";
 import { AttachmentPreviewWorkspace } from "@/v2/features/attachments/AttachmentPreviewWorkspace";
 import { workspaceFilePreviewDestination } from "@/v2/features/navigation/routeDestinations";
-import { opaqueRouteParam, qualifiedThreadRouteParams } from "@/v2/features/navigation/routeParams";
+import {
+  qualifiedThreadRouteParams,
+  workspacePathRouteParam,
+} from "@/v2/features/navigation/routeParams";
 import { V2QueryBoundary } from "@/v2/features/shared/V2QueryBoundary";
 import { quickdrawImageSource } from "@/v2/platform/drawing/quickdrawImageSource";
 import { ExpoVideoPlayer } from "@/v2/platform/rendering/ExpoVideoPlayer";
@@ -22,7 +25,7 @@ const SCREEN_OPTIONS = { animation: "none", headerShown: false } as const;
 export default function WorkspaceFilePreviewRoute(): React.JSX.Element {
   const params = useLocalSearchParams();
   const owner = qualifiedThreadRouteParams(params);
-  const path = opaqueRouteParam(params.path);
+  const path = workspacePathRouteParam(params.path);
   if (owner === null || path === null) return <Redirect href="/servers" />;
   return <QualifiedWorkspaceFileRoute owner={owner} path={path} />;
 }

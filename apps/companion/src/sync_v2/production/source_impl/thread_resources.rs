@@ -1,6 +1,6 @@
-//! Owner-bound resource pagination and cwd-relative workspace file previews.
+//! Owner-bound resource pagination and authorized file previews.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, PathBuf};
 
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
@@ -127,43 +127,57 @@ impl UpstreamSemanticSource {
         require_scope(authorization, "threads.read")?;
         self.authorize_thread_access(authorization, context, &thread_id, generation)
             .await?;
-        let relative = normalized_workspace_relative_path(&path)?;
-        let thread = self.read_thread(&thread_id).await?;
-        let workspace = PathBuf::from(&thread.workspace);
-        if !workspace.is_absolute() {
-            return Err(V2Error::source_unavailable(
-                "thread workspace is not an absolute path",
-            ));
-        }
-        let absolute = workspace.join(&relative);
         let resources = self
             .services
             .resources
             .as_ref()
             .ok_or_else(|| V2Error::source_unavailable("resource service is unavailable"))?;
-        let (size_bytes, media_type) = resources
-            .workspace_preview_metadata(workspace, absolute.clone())
-            .await
-            .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
+        let requested = authorized_file_path(authorization, &path)?;
+        let (absolute, returned_path, size_bytes, media_type) = if requested.is_absolute() {
+            let (size_bytes, media_type) = resources
+                .host_preview_metadata(requested.clone())
+                .await
+                .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
+            (requested, path, size_bytes, media_type)
+        } else {
+            let relative = normalized_workspace_relative_path(&path)?;
+            let thread = self.read_thread(&thread_id).await?;
+            let workspace = PathBuf::from(&thread.workspace);
+            if !workspace.is_absolute() {
+                return Err(V2Error::source_unavailable(
+                    "thread workspace is not an absolute path",
+                ));
+            }
+            let absolute = workspace.join(&relative);
+            let (size_bytes, media_type) = resources
+                .workspace_preview_metadata(workspace, absolute.clone())
+                .await
+                .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
+            (
+                absolute,
+                relative.to_string_lossy().into_owned(),
+                size_bytes,
+                media_type,
+            )
+        };
         let absolute_text = absolute.to_string_lossy();
         let source_url = format!(
             "/v2/files/preview?path={}",
             utf8_percent_encode(&absolute_text, NON_ALPHANUMERIC)
         );
-        let relative_text = relative.to_string_lossy().into_owned();
-        let name = relative
+        let name = absolute
             .file_name()
             .and_then(|value| value.to_str())
             .ok_or_else(|| V2Error::invalid_request("workspace file name is invalid"))?
             .to_owned();
         let id = Id::new(format!(
             "workspace-file:{}",
-            blake3::hash(relative_text.as_bytes()).to_hex()
+            blake3::hash(returned_path.as_bytes()).to_hex()
         ))
         .map_err(|_| V2Error::source_unavailable("workspace file identity is invalid"))?;
         Ok(QueryResult::WorkspaceFile {
             thread_id,
-            path: relative_text,
+            path: returned_path,
             file: super::super::super::domain::Attachment {
                 id,
                 name,
@@ -173,6 +187,24 @@ impl UpstreamSemanticSource {
             },
         })
     }
+}
+
+fn validated_file_path(value: &str) -> Result<PathBuf, V2Error> {
+    if value.is_empty() || value.len() > 8_192 || value.contains('\0') {
+        return Err(V2Error::invalid_request("workspace file path is invalid"));
+    }
+    Ok(PathBuf::from(value))
+}
+
+fn authorized_file_path(
+    authorization: &AuthorizationContext,
+    value: &str,
+) -> Result<PathBuf, V2Error> {
+    let path = validated_file_path(value)?;
+    if path.is_absolute() {
+        require_scope(authorization, "shell.explicit")?;
+    }
+    Ok(path)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -207,10 +239,7 @@ fn resource_page(
 }
 
 fn normalized_workspace_relative_path(value: &str) -> Result<PathBuf, V2Error> {
-    if value.is_empty() || value.len() > 8_192 || value.contains('\0') {
-        return Err(V2Error::invalid_request("workspace file path is invalid"));
-    }
-    let path = Path::new(value);
+    let path = validated_file_path(value)?;
     if path.is_absolute() {
         return Err(V2Error::invalid_request(
             "workspace file path must be relative",
@@ -238,6 +267,31 @@ fn normalized_workspace_relative_path(value: &str) -> Result<PathBuf, V2Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_host_file_path_is_distinct_from_workspace_relative_validation() {
+        let file_reader = AuthorizationContext::Session {
+            device_id: "device".into(),
+            scopes: vec!["files.download.workspace".into(), "threads.read".into()],
+            expires_at: u64::MAX,
+        };
+        let terminal = AuthorizationContext::Session {
+            device_id: "device".into(),
+            scopes: vec![
+                "files.download.workspace".into(),
+                "shell.explicit".into(),
+                "threads.read".into(),
+            ],
+            expires_at: u64::MAX,
+        };
+        assert_eq!(
+            authorized_file_path(&terminal, "/var/tmp/report.pdf")
+                .unwrap_or_else(|error| panic!("valid absolute path failed: {error:?}")),
+            PathBuf::from("/var/tmp/report.pdf")
+        );
+        assert!(authorized_file_path(&file_reader, "/var/tmp/report.pdf").is_err());
+        assert!(normalized_workspace_relative_path("/var/tmp/report.pdf").is_err());
+    }
 
     #[test]
     fn workspace_path_is_cwd_relative_and_cannot_escape() {

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::Path,
@@ -231,13 +231,18 @@ impl DigestBuilder {
         let first_user = self.items.iter().find(|item| item.kind == "userMessage");
         let final_agent_key = self.final_agent().map(|item| item.key.as_str());
         let final_agent_text_bytes = self.final_agent().and_then(|item| item.text_bytes);
-        let activity_kinds: Vec<String> = self
-            .items
-            .iter()
-            .filter(|item| item.kind != "userMessage")
-            .filter(|item| Some(item.key.as_str()) != final_agent_key)
-            .map(|item| item.kind.clone())
-            .collect();
+        let mut activity_count = 0;
+        let mut seen_activity_kinds = HashSet::new();
+        let mut activity_kinds = Vec::new();
+        for item in &self.items {
+            if item.kind == "userMessage" || Some(item.key.as_str()) == final_agent_key {
+                continue;
+            }
+            activity_count += 1;
+            if seen_activity_kinds.insert(item.kind.as_str()) {
+                activity_kinds.push(item.kind.clone());
+            }
+        }
         TurnDigest {
             id,
             status: self.status,
@@ -246,7 +251,7 @@ impl DigestBuilder {
             duration_ms: self.duration_ms,
             user_text_bytes: first_user.and_then(|item| item.text_bytes),
             final_agent_text_bytes,
-            activity_count: activity_kinds.len(),
+            activity_count,
             activity_kinds,
             unknown_event_kinds: self.unknown_event_kinds,
         }
@@ -807,6 +812,79 @@ mod tests {
         assert_eq!(digest.user_text_bytes, Some(5));
         assert_eq!(digest.final_agent_text_bytes, Some(5));
         assert_eq!(digest.activity_kinds, ["reasoning", "commandExecution"]);
+        Ok(())
+    }
+
+    #[test]
+    fn summary_compacts_repeated_activity_kinds_without_losing_count()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut file = std::fs::File::create(&path)?;
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"turn","started_at":10}}}}"#
+        )?;
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","payload":{{"type":"user_message","message":"hello"}}}}"#
+        )?;
+        for index in 0..300 {
+            writeln!(
+                file,
+                r#"{{"type":"event_msg","payload":{{"type":"exec_command_begin","call_id":"call-{index}"}}}}"#
+            )?;
+        }
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","payload":{{"type":"agent_message","message":"done"}}}}"#
+        )?;
+        writeln!(
+            file,
+            r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"turn","completed_at":12}}}}"#
+        )?;
+        file.sync_all()?;
+
+        let projected = project_summary_turn(
+            &path,
+            &TurnRef {
+                id: "turn".into(),
+                start_offset: 0,
+                end_offset: file.metadata()?.len(),
+                completed: true,
+            },
+        )?;
+
+        assert_eq!(projected["codewide"]["activity"]["count"], 300);
+        assert_eq!(
+            projected["codewide"]["activity"]["kinds"],
+            serde_json::json!(["commandExecution"])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_v2_summary_compacts_activity_without_reindexing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = SummaryProjectionState::new("turn".into());
+        for index in 0..300 {
+            state.digest.items.push(super::ProjectedItem {
+                key: format!("command-{index}"),
+                kind: "commandExecution".into(),
+                text_bytes: None,
+            });
+        }
+        let mut serialized = serde_json::to_value(&state)?;
+        serialized["projection_version"] = serde_json::json!(2);
+        let restored: SummaryProjectionState = serde_json::from_value(serialized)?;
+
+        assert!(restored.is_current());
+        let projected = restored.project();
+        assert_eq!(projected["codewide"]["activity"]["count"], 300);
+        assert_eq!(
+            projected["codewide"]["activity"]["kinds"],
+            serde_json::json!(["commandExecution"])
+        );
         Ok(())
     }
 

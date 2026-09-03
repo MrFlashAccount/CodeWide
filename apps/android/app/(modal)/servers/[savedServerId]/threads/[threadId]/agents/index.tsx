@@ -1,7 +1,7 @@
 import { Redirect, useLocalSearchParams } from "expo-router";
 
-import { AgentsScreen } from "../../../../../../../src/v2/features/agents/AgentsScreen";
-import { qualifiedThreadRouteParams } from "../../../../../../../src/v2/features/navigation/routeParams";
+import { AgentsScreen } from "@/v2/features/agents/AgentsScreen";
+import { qualifiedThreadRouteParams } from "@/v2/features/navigation/routeParams";
 
 export default function AgentsRoute(): React.JSX.Element {
   const params = useLocalSearchParams<"/servers/[savedServerId]/threads/[threadId]/agents">();

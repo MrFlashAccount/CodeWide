@@ -48,11 +48,11 @@ export function ActionMenu(props: ActionMenuProps): React.JSX.Element {
   const close = useEvent(() => setOpen(false));
   const press = useEvent((event: GestureResponderEvent) => {
     children.props.onPress?.(event);
-    if (trigger === "press") open();
+    open();
   });
   const longPress = useEvent((event: GestureResponderEvent) => {
     children.props.onLongPress?.(event);
-    if (trigger === "long-press") open();
+    open();
   });
   const select = useEvent((id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
@@ -75,13 +75,15 @@ export function ActionMenu(props: ActionMenuProps): React.JSX.Element {
           accessibilityRole={children.props.accessibilityRole}
           accessibilityState={children.props.accessibilityState}
           delayLongPress={350}
-          onLongPress={longPress}
-          onPress={press}
+          onLongPress={trigger === "long-press" ? longPress : undefined}
+          onPress={trigger === "press" ? press : children.props.onPress}
+          style={styles.trigger}
         >
           <View
             accessible={false}
             importantForAccessibility="no-hide-descendants"
             pointerEvents="none"
+            style={styles.triggerContent}
           >
             {children}
           </View>
@@ -91,4 +93,8 @@ export function ActionMenu(props: ActionMenuProps): React.JSX.Element {
   );
 }
 
-const styles = StyleSheet.create({ root: { minWidth: 0 } });
+const styles = StyleSheet.create({
+  root: { minWidth: 0 },
+  trigger: { alignSelf: "stretch" },
+  triggerContent: { alignSelf: "stretch" },
+});

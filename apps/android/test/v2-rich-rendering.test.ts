@@ -69,6 +69,31 @@ describe("V2 rich rendering", () => {
     ]);
   });
 
+  it("resolves Markdown images when the native runtime has no Array.toSorted", () => {
+    const toSortedDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "toSorted");
+    Reflect.deleteProperty(Array.prototype, "toSorted");
+    try {
+      const first = {
+        alt: "first",
+        id: "image-first",
+        reference: "https://example.test/first.png",
+      };
+      const second = {
+        alt: "second",
+        id: "image-second",
+        reference: "https://example.test/second.png",
+      };
+
+      const resource = new ResolvedImageResource([first, second], undefined);
+
+      expect(resource.snapshot().map((item) => item.id)).toEqual([first.id, second.id]);
+    } finally {
+      if (toSortedDescriptor !== undefined) {
+        Object.defineProperty(Array.prototype, "toSorted", toSortedDescriptor);
+      }
+    }
+  });
+
   it("collects gallery images in document order", () => {
     const root = parseRichMarkdown(
       "[![one](https://a.test/1.png)](https://a.test/full)\n\n![two](private://two)",

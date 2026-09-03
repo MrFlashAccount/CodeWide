@@ -68,6 +68,7 @@ function ProjectedAttachmentPreviewRoute(
   props: ProjectedAttachmentPreviewRouteProps,
 ): React.JSX.Element {
   const { attachmentId, onRetry, owner, resource } = props;
+  const runtime = useV2Runtime();
   const snapshot = useSyncExternalStore(resource.subscribe, resource.snapshot, resource.snapshot);
   const openWorkspaceFile = useEvent((path: string) => {
     router.push(workspaceFilePreviewDestination(owner, path));
@@ -85,6 +86,28 @@ function ProjectedAttachmentPreviewRoute(
         onRetry={onRetry}
         status={snapshot.status === "error" ? "error" : "loading"}
       />
+    );
+  }
+  const prepared = runtime.attachmentPreviews.selection(owner, attachmentId);
+  if (prepared !== null) {
+    return (
+      <>
+        <Stack.Screen options={SCREEN_OPTIONS} />
+        <WorkspaceSafeAreaView>
+          <AttachmentPreviewWorkspace
+            attachments={prepared.attachments}
+            imageSource={quickdrawImageSource}
+            initialAttachmentId={prepared.selectedId}
+            navigate={router.push}
+            openExternalLink={openExternalMarkdownLink}
+            openWorkspaceFile={openWorkspaceFile}
+            owner={owner}
+            Player={ExpoVideoPlayer}
+            WebPreview={NativeWebPreview}
+            workspace={thread.workspace}
+          />
+        </WorkspaceSafeAreaView>
+      </>
     );
   }
   // This render prop is intentionally a render-time callback. useEvent rejects

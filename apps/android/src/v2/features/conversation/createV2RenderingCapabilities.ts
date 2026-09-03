@@ -48,6 +48,9 @@ export function createV2RenderingCapabilities(
       router.push(workspaceFilePreviewDestination(input.owner, path));
     },
     owner: input.owner,
+    preparePreview(attachments, selected) {
+      input.runtime.attachmentPreviews.present(input.owner, attachments, selected);
+    },
     preview(savedServerId, sourceUrl, mode) {
       return input.runtime.preview(savedServerId, sourceUrl, mode);
     },

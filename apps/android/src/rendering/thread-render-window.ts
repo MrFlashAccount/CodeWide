@@ -7,6 +7,7 @@ export const LIVE_ACTIVITY_WINDOW = 16;
 export type TurnRenderWindow = {
   userItemIndexes: number[];
   preTurnActivityIndexes: number[];
+  compactionIndexes: number[];
   latestAgentIndex: number;
   collapsedActivityIndexes: number[];
   liveActivityIndexes: number[];
@@ -76,25 +77,28 @@ export function selectTurnRenderWindow(
     materializedIndexes.push(index);
   }
 
-  // App Server may perform work such as context compaction after accepting a
-  // command but before it materializes the canonical user message. Those
-  // items are lifecycle state, not an agent response, and must remain visible
-  // outside the response bubble. If the user item has not arrived yet, every
-  // materialized item observed so far belongs to that pre-turn interval.
+  // App Server may perform work before it materializes the canonical user
+  // message. Keep that activity in the response bubble. Context compaction is
+  // the only lifecycle event intentionally presented outside it.
   const firstUserIndex = userItemIndexes[0] ?? Number.POSITIVE_INFINITY;
+  const compactionIndexes = materializedIndexes.filter((index) => (
+    turn.items[index]?.type === "contextCompaction"
+  ));
   const preTurnActivityIndexes = materializedIndexes.filter((index) => {
     const item = turn.items[index] as (Turn["items"][number] & { codewidePreTurn?: boolean }) | undefined;
-    return index < firstUserIndex || item?.codewidePreTurn === true || item?.type === "contextCompaction";
+    return item?.type !== "contextCompaction"
+      && (index < firstUserIndex || item?.codewidePreTurn === true);
   });
-  const preTurnIndexSet = new Set(preTurnActivityIndexes);
+  const separatedIndexSet = new Set([...preTurnActivityIndexes, ...compactionIndexes]);
 
   if (turn.status !== "inProgress") {
     return {
       userItemIndexes,
       preTurnActivityIndexes,
+      compactionIndexes,
       latestAgentIndex,
       collapsedActivityIndexes: materializedIndexes.filter((index) => (
-        index !== latestAgentIndex && !preTurnIndexSet.has(index)
+        index !== latestAgentIndex && !separatedIndexSet.has(index)
       )),
       liveActivityIndexes: [],
     };
@@ -105,10 +109,10 @@ export function selectTurnRenderWindow(
     // App Server streams the final_answer item while the turn is still active.
     // Hiding that phase until turn/completed turns a real token stream into one
     // large visual jump at the boundary.
-    return !preTurnIndexSet.has(index) && item?.type === "agentMessage" && item.text.trim() !== "";
+    return !separatedIndexSet.has(index) && item?.type === "agentMessage" && item.text.trim() !== "";
   });
   const activityIndexes = materializedIndexes.filter((index) => (
-    turn.items[index]?.type !== "agentMessage" && !preTurnIndexSet.has(index)
+    turn.items[index]?.type !== "agentMessage" && !separatedIndexSet.has(index)
   ));
   const liveCount = Math.max(0, Math.min(liveActivityLimit, activityIndexes.length));
   const liveActivityIndexes = [
@@ -120,6 +124,7 @@ export function selectTurnRenderWindow(
   return {
     userItemIndexes,
     preTurnActivityIndexes,
+    compactionIndexes,
     latestAgentIndex,
     collapsedActivityIndexes: activityIndexes.filter((index) => !liveIndexSet.has(index)),
     liveActivityIndexes,

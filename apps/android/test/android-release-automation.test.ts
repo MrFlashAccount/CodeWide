@@ -74,7 +74,9 @@ describe("Android release automation", () => {
 
   it("runs the authoritative V2 gate before either dry-run can return", () => {
     expect(releaseAndroid).toContain('await run("pnpm", ["validate:android:v2"]);');
-    expect(releaseAndroid).toContain('await run("pnpm", ["validate:android:device-evidence"]);');
+    expect(releaseAndroid).not.toContain(
+      'await run("pnpm", ["validate:android:device-evidence"]);',
+    );
     expect(JSON.parse(packageJson).scripts["validate:android:device-evidence"]).toBe(
       "tsx scripts/validate-android-e2e-evidence.ts",
     );

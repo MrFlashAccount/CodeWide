@@ -61,6 +61,7 @@ import { createThreadProjectionStore } from "./thread-projection-store";
 import { loadThreadCatalog } from "./thread-catalog-loader";
 import { streamRepairThreadIds, terminalProjectionMatches, terminalProjectionProofs } from "./stream-recovery";
 import {
+  materializeAuthoritativeThreadWindow,
   materializeReadOnlyThreadWindow,
   materializeResumedThread,
   type CompanionThreadResumeResponse,
@@ -1233,18 +1234,20 @@ function createWorkspaceActions(): WorkspaceActions {
         };
         if (mutableHeadOnly && cached !== null) {
           const readStartedAt = performance.now();
-          const page = await rpcAfterAttach<ThreadTurnsListResponse>(session, "thread/turns/list", {
+          const response = await rpcAfterAttach<CompanionThreadResumeResponse>(session, "companion/threadWindow/read", {
             threadId,
-            cursor: null,
-            limit: initialTurnsLimit,
-            sortDirection: "desc",
-            itemsView: "summary",
+            initialTurnsPage: {
+              limit: initialTurnsLimit,
+              sortDirection: "desc",
+              itemsView: "summary",
+            },
           });
           recordTiming("thread_mutable_head_read_ms", performance.now() - readStartedAt);
-          const hydrated = materializeReadOnlyThreadWindow(cached, [...page.data].reverse(), cached);
-          await persistHydratedThread(hydrated, page.nextCursor);
+          const hydrated = materializeAuthoritativeThreadWindow(response, cached);
+          const historyCursor = response.initialTurnsPage?.nextCursor ?? null;
+          await persistHydratedThread(hydrated, historyCursor);
           void loadTurnControls(connectionId, hydrated.cwd).catch(() => undefined);
-          return { thread: hydrated, nextCursor: page.nextCursor };
+          return { thread: hydrated, nextCursor: historyCursor };
         }
         let hydratedWindow: ThreadWindow;
         try {

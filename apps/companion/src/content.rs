@@ -1010,17 +1010,23 @@ fn activity_summary(items: &[Value]) -> Option<Value> {
     let final_agent = items
         .iter()
         .rposition(|item| item.get("type").and_then(Value::as_str) == Some("agentMessage"));
-    let kinds = items
-        .iter()
-        .enumerate()
-        .filter_map(|(index, item)| {
-            let kind = item.get("type").and_then(Value::as_str)?;
-            (kind != "userMessage" && Some(index) != final_agent).then_some(kind)
-        })
-        .collect::<Vec<_>>();
-    (!kinds.is_empty()).then(|| {
+    let mut count = 0;
+    let mut kinds = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let Some(kind) = item.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        if kind == "userMessage" || Some(index) == final_agent {
+            continue;
+        }
+        count += 1;
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    (count > 0).then(|| {
         let output_footprint = aggregate_output_footprint(items);
-        let mut activity = json!({"count": kinds.len(), "kinds": kinds});
+        let mut activity = json!({"count": count, "kinds": kinds});
         if let (Some(activity), Some(output_footprint)) =
             (activity.as_object_mut(), output_footprint)
         {
@@ -1616,8 +1622,26 @@ mod tests {
         ];
 
         let summary = activity_summary(&items).expect("activity summary");
+        assert_eq!(summary["count"], 3);
+        assert_eq!(summary["kinds"], json!(["commandExecution", "reasoning"]));
         assert_eq!(summary["outputFootprint"]["bytes"], 8);
         assert_eq!(summary["outputFootprint"]["estimatedTokens"], 3);
+    }
+
+    #[test]
+    fn activity_summary_compacts_repeated_kinds_beyond_protocol_limit() {
+        let items = (0..300)
+            .map(|index| {
+                json!({
+                    "id": format!("command-{index}"),
+                    "type": "commandExecution"
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let summary = activity_summary(&items).expect("activity summary");
+        assert_eq!(summary["count"], 300);
+        assert_eq!(summary["kinds"], json!(["commandExecution"]));
     }
 
     #[tokio::test]

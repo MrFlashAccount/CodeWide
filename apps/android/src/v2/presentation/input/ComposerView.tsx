@@ -33,12 +33,14 @@ interface ComposerLargePasteEvent {
 interface ComposerViewProps {
   attachmentTray?: ReactNode;
   disabled: boolean;
+  deliveryActions?: readonly ActionMenuItem[];
   error?: string | null;
   hasAttachments?: boolean;
   InputComponent?: ComponentType<ComposerTextInputProps>;
   largePasteThreshold?: number;
   menuActions?: readonly ActionMenuItem[];
   onChangeText(text: string): void;
+  onSelectDeliveryAction?(id: string): void;
   onLargePaste?(event: ComposerLargePasteEvent): void;
   onSelectMenu?(id: string): void;
   onSubmit(): void;
@@ -59,6 +61,7 @@ interface ComposerViewProps {
 export function ComposerView(props: ComposerViewProps): React.JSX.Element {
   const {
     disabled,
+    deliveryActions,
     attachmentTray,
     error,
     hasAttachments = false,
@@ -68,6 +71,7 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
     onChangeText,
     onLargePaste,
     onSelectMenu,
+    onSelectDeliveryAction,
     onSubmit,
     onVoice,
     onVoiceCancel,
@@ -105,6 +109,7 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
     voiceState === "retry" ||
     (primaryAction === "send" && !voiceCanSubmit && text.trim() === "" && !hasAttachments);
   const selectMenu = useEvent((id: string) => onSelectMenu?.(id));
+  const selectDeliveryAction = useEvent((id: string) => onSelectDeliveryAction?.(id));
   const activateVoice = useEvent(() => {
     if (onVoice === undefined || voiceActionDisabled) return;
     void onVoice().catch(() => undefined);
@@ -235,15 +240,36 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
               size={20}
             />
           </Pressable>
-          <ComposerPrimaryActionView
-            disabled={sendDisabled}
-            mode={primaryAction}
-            onPress={onSubmit}
-            pending={pending}
-            voiceActive={voiceActive}
-            voiceFinishing={voiceState === "finishing"}
-            voiceStarting={voiceState === "starting"}
-          />
+          {deliveryActions === undefined || onSelectDeliveryAction === undefined || voiceActive ? (
+            <ComposerPrimaryActionView
+              disabled={sendDisabled}
+              mode={primaryAction}
+              onPress={onSubmit}
+              pending={pending}
+              voiceActive={voiceActive}
+              voiceFinishing={voiceState === "finishing"}
+              voiceStarting={voiceState === "starting"}
+            />
+          ) : (
+            <ActionMenu
+              accessibilityLabel="Delivery mode"
+              actions={deliveryActions}
+              onSelect={selectDeliveryAction}
+              placement="top"
+              style={styles.primaryActionMenu}
+              trigger="long-press"
+            >
+              <ComposerPrimaryActionView
+                disabled={sendDisabled}
+                mode={primaryAction}
+                onPress={onSubmit}
+                pending={pending}
+                voiceActive={false}
+                voiceFinishing={false}
+                voiceStarting={false}
+              />
+            </ActionMenu>
+          )}
         </View>
       </View>
     </View>
@@ -320,6 +346,7 @@ const styles = StyleSheet.create({
   },
   menuAnchor: { flexShrink: 0, height: touchTarget, width: touchTarget },
   pressed: { opacity: 0.68 },
+  primaryActionMenu: { flexShrink: 0, height: touchTarget, width: touchTarget },
   row: {
     alignItems: "flex-end",
     alignSelf: "stretch",

@@ -23,7 +23,7 @@ export function ServerWorkspaceView(
   const desktop = isDesktopWindow(window);
   return (
     <View style={styles.row}>
-      <View style={desktop ? undefined : styles.hidden}>{rail}</View>
+      {desktop ? rail : null}
       <View style={styles.main}>{children}</View>
     </View>
   );

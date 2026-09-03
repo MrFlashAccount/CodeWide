@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
+import { StyleSheet } from "react-native";
 
 import { ThreadListView } from "../src/v2/presentation/navigation/ThreadListView";
 import type {
@@ -60,6 +61,21 @@ describe("V2 thread list", () => {
     expect(screen.getByLabelText("Read thread")).toBeTruthy();
     expect(screen.getByLabelText("Archive thread")).toBeTruthy();
     expect(screen.queryByLabelText("Delete thread")).toBeNull();
+  });
+
+  it("keeps menu-backed rows stretched across the thread list", () => {
+    render(
+      <ThreadListView
+        actions={actionSpies()}
+        onOpen={() => undefined}
+        rows={[row("thread-a", 0, null)]}
+      />,
+    );
+
+    const trigger = screen.getByLabelText("Open thread thread-a thread-a");
+    expect(StyleSheet.flatten(trigger.props.style)).toEqual(
+      expect.objectContaining({ alignSelf: "stretch" }),
+    );
   });
 
   it("prewarms a thread on press-in before navigation", () => {

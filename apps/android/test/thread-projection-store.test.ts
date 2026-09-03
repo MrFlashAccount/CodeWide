@@ -3,6 +3,41 @@ import { describe, expect, it } from "vitest";
 import { createThreadProjectionStore } from "../src/data/thread-projection-store";
 
 describe("thread projection store", () => {
+  it("normalizes a persisted metadata-only snapshot before either projection reads turns", async () => {
+    const projectedTurnLengths: number[] = [];
+    const store = createThreadProjectionStore({
+      details: {
+        async applySnapshot(_connectionId, snapshots) {
+          projectedTurnLengths.push(snapshots[0]!.thread.turns.length);
+        },
+        async applyEvents() {
+          return { checkpoint: Promise.resolve(), threads: new Map() };
+        },
+      },
+      summaries: {
+        async applySnapshot(_connectionId, snapshots) {
+          projectedTurnLengths.push(snapshots[0]!.thread.turns.length);
+        },
+        async applyEvents() {},
+      },
+    });
+    const persistedSnapshot = {
+      archived: false,
+      thread: {
+        id: "thread",
+        name: "Thread",
+        preview: "",
+        cwd: "/repo",
+        updatedAt: 1,
+        status: { type: "idle" },
+      },
+    } as never;
+
+    await store.applySnapshot("server", [persistedSnapshot], 1);
+
+    expect(projectedTurnLengths).toEqual([0, 0]);
+  });
+
   it("durably applies detail before publishing the summary lifecycle", async () => {
     const order: string[] = [];
     const threads = new Map();

@@ -5,6 +5,7 @@ import type { V2Attachment } from "@codewide/sync-client/v2";
 import type { PreviewTransport } from "../src/v2/application/preview/previewTransport";
 import { isolatedPreviewHtml } from "../src/v2/application/preview/isolatedHtml";
 import { PreviewResource } from "../src/v2/application/resources/previewResource";
+import { AttachmentPreviewSelections } from "../src/v2/application/preview/attachmentPreviewSelection";
 import { savedServerId, threadId } from "../src/v2/domain/ids";
 import { qualifiedThread } from "../src/v2/domain/qualifiedThread";
 import {
@@ -164,6 +165,28 @@ describe("V2 attachment preview model", () => {
   });
 });
 
+describe("V2 attachment preview navigation", () => {
+  it("carries an already-authoritative attachment into the route without requerying resources", () => {
+    const selections = new AttachmentPreviewSelections();
+    const owner = qualifiedThread(savedServerId("server-1"), threadId("thread-1"));
+    const first = attachment("first.txt", "text/plain");
+    const selected = attachment("selected.txt", "text/plain");
+
+    selections.present(owner, [first, selected], selected);
+
+    expect(selections.selection(owner, selected.id)).toEqual({
+      attachments: [first, selected],
+      selectedId: selected.id,
+    });
+    expect(
+      selections.selection(
+        qualifiedThread(savedServerId("server-2"), threadId("thread-1")),
+        selected.id,
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("V2 attachment rendering capabilities", () => {
   it("invalidates image resolution across servers and changed attachment sources", () => {
     const image = attachment("photo.png", "image/png");
@@ -173,6 +196,7 @@ describe("V2 attachment rendering capabilities", () => {
         navigate: vi.fn(),
         openWorkspaceFile: vi.fn(),
         owner: qualifiedThread(savedServerId(server), threadId("thread-1")),
+        preparePreview: vi.fn(),
         preview: () => readyPreviewResource("file:///unused"),
       });
 
@@ -195,12 +219,14 @@ describe("V2 attachment rendering capabilities", () => {
 
   it("routes private documents and galleries through the qualified attachment route", () => {
     const navigate = vi.fn();
+    const preparePreview = vi.fn();
     const privateImage = attachment("images/photo.png", "image/png");
     const capabilities = createAttachmentRenderingCapabilities({
       attachments: [privateImage],
       navigate,
       openWorkspaceFile: vi.fn(),
       owner: qualifiedThread(savedServerId("server-1"), threadId("thread-1")),
+      preparePreview,
       preview: () => readyPreviewResource("file:///unused"),
     });
 
@@ -212,6 +238,8 @@ describe("V2 attachment rendering capabilities", () => {
       ),
     ).toBe(true);
     expect(capabilities.openImagePreview([], "missing")).toBe(false);
+    expect(preparePreview).toHaveBeenCalledTimes(2);
+    expect(preparePreview).toHaveBeenLastCalledWith([privateImage], privateImage);
     expect(navigate).toHaveBeenCalledTimes(2);
     expect(navigate).toHaveBeenLastCalledWith({
       params: { attachmentId: privateImage.id, savedServerId: "server-1", threadId: "thread-1" },
@@ -227,6 +255,7 @@ describe("V2 attachment rendering capabilities", () => {
       navigate: vi.fn(),
       openWorkspaceFile: vi.fn(),
       owner: qualifiedThread(savedServerId("server-1"), threadId("thread-1")),
+      preparePreview: vi.fn(),
       preview,
     });
 
@@ -254,6 +283,7 @@ describe("V2 attachment rendering capabilities", () => {
       navigate: vi.fn(),
       openWorkspaceFile: vi.fn(),
       owner: qualifiedThread(savedServerId("server-1"), threadId("thread-1")),
+      preparePreview: vi.fn(),
       preview: () => ({ ...readyPreviewResource("file:///stream.png"), materialize }),
     });
 
@@ -274,6 +304,7 @@ describe("V2 attachment rendering capabilities", () => {
       navigate: vi.fn(),
       openWorkspaceFile,
       owner: qualifiedThread(savedServerId("server-1"), threadId("thread-1")),
+      preparePreview: vi.fn(),
       preview: () => readyPreviewResource("file:///unused"),
     });
 
@@ -284,11 +315,11 @@ describe("V2 attachment rendering capabilities", () => {
 });
 
 describe("V2 workspace file references", () => {
-  it("normalizes relative paths and rejects absolute or escaping references", () => {
+  it("normalizes relative and absolute host paths while rejecting relative escapes", () => {
     expect(workspaceFileReference("docs/./guide.md#section")).toBe("docs/guide.md");
     expect(workspaceFileReference("docs/%E2%9C%93.md")).toBe("docs/✓.md");
     expect(workspaceFileReference("../private.md")).toBeNull();
-    expect(workspaceFileReference("/etc/passwd")).toBeNull();
+    expect(workspaceFileReference("/tmp/../etc/hosts")).toBe("/etc/hosts");
     expect(workspaceFileReference("%00private.md")).toBeNull();
   });
 });

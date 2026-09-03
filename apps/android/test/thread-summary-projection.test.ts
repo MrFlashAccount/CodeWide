@@ -276,7 +276,7 @@ describe("thread summary projection", () => {
   });
 
   it("marks only the final agent bubble of a completed turn unread", () => {
-    const current = summary();
+    const current = { ...summary(), status: { type: "active", activeFlags: [] } as const };
     const mutation = projectThreadSummaryEvent("server", semanticEvent({
       kind: "turnCompleted",
       summary: {
@@ -294,7 +294,24 @@ describe("thread summary projection", () => {
       latestActivityCursor: 8,
       lastSeenCursor: 0,
       unread: 1,
+      status: { type: "idle" },
     });
+  });
+
+  it("reflects turn lifecycle in the sidebar without waiting for a separate thread status event", () => {
+    const started = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "turnStarted",
+      summary: { activity: true, conversationMessage: true, previewText: "New prompt" },
+    }), () => summary(), 42, 7);
+
+    expect(started?.value?.status).toEqual({ type: "active", activeFlags: [] });
+
+    const completed = projectThreadSummaryEvent("server", semanticEvent({
+      kind: "turnCompleted",
+      summary: { activity: true, conversationMessage: true, finalAgentResponse: true, previewText: "Done" },
+    }), () => started?.value ?? undefined, 43, 8);
+
+    expect(completed?.value?.status).toEqual({ type: "idle" });
   });
 
   it("does not write the summary or relight unread state for token usage", () => {

@@ -36,6 +36,7 @@ import { createVolatileTerminalSessionStore } from "./ports/terminalSessionStore
 import type { PortTransport } from "./ports/portTransport";
 import type { VoiceTransport } from "./ports/voiceTransport";
 import type { PreviewMode, PreviewTransport } from "./preview/previewTransport";
+import { AttachmentPreviewSelections } from "./preview/attachmentPreviewSelection";
 import { PortsResource } from "./resources/portsResource";
 import { PreviewResource } from "./resources/previewResource";
 import type {
@@ -104,6 +105,7 @@ interface V2RuntimeInput {
 }
 
 export class V2Runtime {
+  readonly attachmentPreviews = new AttachmentPreviewSelections();
   readonly composerAttachments: ComposerAttachmentController;
   readonly aggregate: AggregateProjectionResource;
   readonly aggregateThreadCatalog: AggregateThreadCatalogResource;
@@ -358,6 +360,7 @@ export class V2Runtime {
     await this.terminal.closeSavedServer(savedServerId);
     await this.sessions.close(savedServerId);
     await this.#repository.delete(savedServerId);
+    this.attachmentPreviews.deleteSavedServer(savedServerId);
     this.#ports.get(savedServerId)?.stopResource();
     this.#ports.delete(savedServerId);
     for (const [key, processes] of this.#backgroundProcesses) {

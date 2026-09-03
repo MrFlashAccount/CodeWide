@@ -178,6 +178,7 @@ const observations: E2EObservation[] = [];
 const visualParityCaptures = new Map<string, VisualParityRowCapture>();
 const visualParityMacroFailures: string[] = [];
 const captureProvenance: AndroidE2eCaptureProvenance[] = [];
+let currentFoldPosture: "folded" | "unfolded" = "unfolded";
 let parityArchivedCatalogState: "empty" | "populated" | null = null;
 const startedAt = performance.now();
 const {
@@ -342,6 +343,7 @@ async function main(): Promise<void> {
       await openDeepLink(device!, REPO_ROOT, PACKAGE_NAME, devClientUrl);
       await waitForApplicationReady(driver!);
       await captureZeroServerParityAcrossGenerations(driver!, device!);
+      await openAddServerFromCurrentSurface(driver!);
       await captureManualPairingParityState(driver!, device!, "v1");
       await openDeepLink(device!, REPO_ROOT, PACKAGE_NAME, pairingLink);
       await connectAndCapturePairingParityStates(
@@ -807,6 +809,7 @@ async function main(): Promise<void> {
           await captureNewThreadParityStates(
             driver!,
             "v1",
+            "wide",
             nonce,
             requireResourceParityFixture(resourceParityFixture).control,
             async () => {
@@ -822,6 +825,7 @@ async function main(): Promise<void> {
             driver!,
             device!,
             "v1",
+            "wide",
             reversedPorts.companionDevicePort,
             companionPort,
             async () => {
@@ -1142,6 +1146,7 @@ async function main(): Promise<void> {
           await captureNewThreadParityStates(
             driver!,
             "v2",
+            "wide",
             nonce,
             requireResourceParityFixture(resourceParityFixture).control,
             async () => {
@@ -1152,6 +1157,7 @@ async function main(): Promise<void> {
             driver!,
             device!,
             "v2",
+            "wide",
             reversedPorts.companionDevicePort,
             companionPort,
             async () => {
@@ -1229,7 +1235,7 @@ async function main(): Promise<void> {
           content: Buffer.from(secondPairingLink).toString("base64"),
           contentType: "plaintext",
         });
-        await clickAccessibility(driver!, "Paste connection link");
+        await clickPasteConnectionLink(driver!);
         await connectAndCapturePairingParityStates(
           driver!,
           device!,
@@ -1510,7 +1516,7 @@ async function main(): Promise<void> {
         content: Buffer.from(secondPairingLink).toString("base64"),
         contentType: "plaintext",
       });
-      await clickAccessibility(driver!, "Paste connection link");
+      await clickPasteConnectionLink(driver!);
       await connectAndCapturePairingParityStates(
         driver!,
         device!,
@@ -1955,9 +1961,12 @@ async function main(): Promise<void> {
 
     await caseWithVideo(driver, "10-isolated-server-state-parity", async () => {
       await returnToThreadListSurface(driver!);
-      const { unfoldedState } = await resolveFoldStates(device!);
-      await adb(device!, REPO_ROOT, ["shell", "cmd", "device_state", "state", unfoldedState]);
-      await delay(750);
+      if (TARGET_FAMILY !== "phone") {
+        const { unfoldedState } = await resolveFoldStates(device!);
+        await adb(device!, REPO_ROOT, ["shell", "cmd", "device_state", "state", unfoldedState]);
+        currentFoldPosture = "unfolded";
+        await delay(750);
+      }
       await waitForAccessibility(driver!, "New thread");
       const fixture = await startEmptyServerStateFixture({
         artifactDir,
@@ -1989,10 +1998,23 @@ async function main(): Promise<void> {
       for (let index = 0; index < primaryRecordCount; index += 1) {
         await deleteSavedServer(driver!, "CodeWide E2E");
       }
-      await captureEmptyAndMultipleServerStates(driver!, device!, "v2", serverNames, "wide");
+      const catalogLayout: VisualParityLayout = TARGET_FAMILY === "phone" ? "phone" : "wide";
+      await captureEmptyAndMultipleServerStates(
+        driver!,
+        device!,
+        "v2",
+        serverNames,
+        catalogLayout,
+      );
       if (!process.argv.includes("--v2-only")) {
         await switchUiGenerationFromThreadList(driver!, "v1");
-        await captureEmptyAndMultipleServerStates(driver!, device!, "v1", serverNames, "wide");
+        await captureEmptyAndMultipleServerStates(
+          driver!,
+          device!,
+          "v1",
+          serverNames,
+          catalogLayout,
+        );
         await switchUiGenerationFromThreadList(driver!, "v2");
       }
       await fixture.revokeAllDevices();
@@ -2910,6 +2932,13 @@ async function resizeAndroidViewport(
   driver: AppiumBrowser,
   expectedAccessibility: string,
 ): Promise<void> {
+  if (TARGET_FAMILY === "phone") {
+    await waitForAccessibility(driver, expectedAccessibility);
+    if (expectedAccessibility === "Message Codex" && (await driver.isKeyboardShown())) {
+      await assertComposerAboveIme(driver, "phone");
+    }
+    return;
+  }
   const before = await driver.getWindowSize();
   const keyboardWasOpen = await driver.isKeyboardShown();
   if (expectedAccessibility === "Message Codex") {
@@ -2993,8 +3022,15 @@ async function transitionFoldableState(
   state: string,
   previous: { height: number; width: number },
 ): Promise<{ height: number; width: number }> {
+  if (TARGET_FAMILY === "phone") {
+    throw new Error("Phone Android E2E shard must not call fold/device_state controls");
+  }
   await adb(device, REPO_ROOT, ["shell", "cmd", "device_state", "state", state]);
-  return waitForWindowSizeChange(driver, previous);
+  const current = await waitForWindowSizeChange(driver, previous);
+  currentFoldPosture = current.width * current.height < previous.width * previous.height
+    ? "folded"
+    : "unfolded";
+  return current;
 }
 
 async function resolveFoldStates(
@@ -3347,7 +3383,15 @@ async function openAddServerFromCurrentSurface(driver: AppiumBrowser): Promise<v
     await addServer.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
   }
   await addServer.click();
-  await waitForAccessibility(driver, "Open manual server setup");
+  await waitForAccessibility(driver, "Paste connection link");
+}
+
+async function clickPasteConnectionLink(driver: AppiumBrowser): Promise<void> {
+  await clickAccessibility(driver, "Paste connection link");
+  if ((await driver.getCurrentPackage()) !== "com.google.android.gms") return;
+  await driver.back();
+  await waitForAccessibility(driver, "Paste connection link");
+  await clickAccessibility(driver, "Paste connection link");
 }
 
 async function captureManualPairingParityState(
@@ -3355,6 +3399,15 @@ async function captureManualPairingParityState(
   device: AndroidDevice,
   generation: VisualGeneration,
 ): Promise<void> {
+  if (TARGET_FAMILY !== null) {
+    await captureManualPairingForLayout(
+      driver,
+      device,
+      generation,
+      TARGET_FAMILY === "phone" ? "phone" : "wide",
+    );
+    return;
+  }
   const { foldedState, unfoldedState } = await resolveFoldStates(device);
   await adb(device, REPO_ROOT, ["shell", "cmd", "device_state", "state", unfoldedState]);
   await delay(750);
@@ -3365,7 +3418,7 @@ async function captureManualPairingParityState(
     content: Buffer.from("not-a-codewide-pairing-link").toString("base64"),
     contentType: "plaintext",
   });
-  await clickAccessibility(driver, "Paste connection link");
+  await clickPasteConnectionLink(driver);
   await captureVisualParityRow(
     driver,
     generation,
@@ -3415,8 +3468,10 @@ async function captureManualPairingParityState(
       }
     },
   );
-  await clickAccessibility(driver, "Close QR scanner");
-  await waitForAccessibility(driver, "Open manual server setup");
+  const closeScanner = await driver.$("~Close QR scanner");
+  if (await closeScanner.isDisplayed().catch(() => false)) await closeScanner.click();
+  await waitForAccessibility(driver, "Paste connection link");
+  await scrollAccessibilityIntoView(driver, "Open manual server setup");
   await clickAccessibility(driver, "Open manual server setup");
   await captureVisualParityRow(driver, generation, "PAIR-01", "phone-pairing-manual-entry", () =>
     assertManualPairingEntry(driver),
@@ -3429,7 +3484,7 @@ async function captureManualPairingParityState(
     content: Buffer.from("not-a-codewide-pairing-link").toString("base64"),
     contentType: "plaintext",
   });
-  await clickAccessibility(driver, "Paste connection link");
+  await clickPasteConnectionLink(driver);
   await captureVisualParityRow(
     driver,
     generation,
@@ -3439,8 +3494,84 @@ async function captureManualPairingParityState(
       await waitForVisibleTextContaining(driver, "This is not a CodeWide connection code");
     },
   );
+  await scrollAccessibilityIntoView(driver, "Open manual server setup");
   await clickAccessibility(driver, "Open manual server setup");
   await captureVisualParityRow(driver, generation, "PAIR-01", "wide-pairing-manual-entry", () =>
+    assertManualPairingEntry(driver),
+  );
+  await clickAccessibility(driver, "Back to connection methods");
+  await waitForAccessibility(driver, "Paste connection link");
+}
+
+async function captureManualPairingForLayout(
+  driver: AppiumBrowser,
+  device: AndroidDevice,
+  generation: VisualGeneration,
+  layout: VisualParityLayout,
+): Promise<void> {
+  await waitForAccessibility(driver, "Paste connection link");
+  await driver.execute("mobile: setClipboard", {
+    content: Buffer.from("not-a-codewide-pairing-link").toString("base64"),
+    contentType: "plaintext",
+  });
+  await clickPasteConnectionLink(driver);
+  await captureVisualParityRow(
+    driver,
+    generation,
+    "PAIR-05",
+    `${layout}-pairing-invalid-link`,
+    async () => {
+      await waitForVisibleTextContaining(driver, "This is not a CodeWide connection code");
+    },
+  );
+  if (layout === "phone") {
+    await adb(
+      device,
+      REPO_ROOT,
+      ["shell", "pm", "revoke", PACKAGE_NAME, "android.permission.CAMERA"],
+      { allowFailure: true },
+    );
+    await activateApplication(driver, PACKAGE_NAME);
+    await waitForApplicationReady(driver);
+    const scanPairingQr = await driver.$("~Scan pairing QR");
+    if (!(await scanPairingQr.isDisplayed().catch(() => false))) {
+      await openAddServerFromCurrentSurface(driver);
+    }
+    await clickAccessibility(driver, "Scan pairing QR");
+    await captureVisualParityRow(
+      driver,
+      generation,
+      "PAIR-02",
+      "phone-pairing-qr-permission-prompt",
+      async () => {
+        const permissionController = await driver.$(
+          'android=new UiSelector().resourceIdMatches("com\\.android\\.permissioncontroller:id/permission_(?:message|allow_foreground_only_button|allow_button)")',
+        );
+        await permissionController.waitForDisplayed({ timeout: UI_TIMEOUT_MS, interval: 250 });
+      },
+    );
+    await allowAndroidCameraPermission(driver);
+    await waitForAccessibility(driver, "Close QR scanner");
+    await captureVisualParityRow(
+      driver,
+      generation,
+      "PAIR-03",
+      "phone-pairing-qr-scanner-active",
+      async () => {
+        await waitForAccessibility(driver, "Close QR scanner");
+        const source = await driver.getPageSource();
+        if (source.includes("Camera permission is required") || source.includes("Starting camera")) {
+          throw new Error("QR scanner did not reach its active camera state");
+        }
+      },
+    );
+    const closeScanner = await driver.$("~Close QR scanner");
+    if (await closeScanner.isDisplayed().catch(() => false)) await closeScanner.click();
+    await waitForAccessibility(driver, "Paste connection link");
+  }
+  await scrollAccessibilityIntoView(driver, "Open manual server setup");
+  await clickAccessibility(driver, "Open manual server setup");
+  await captureVisualParityRow(driver, generation, "PAIR-01", `${layout}-pairing-manual-entry`, () =>
     assertManualPairingEntry(driver),
   );
   await clickAccessibility(driver, "Back to connection methods");
@@ -3451,8 +3582,33 @@ async function captureZeroServerParityAcrossGenerations(
   driver: AppiumBrowser,
   device: AndroidDevice,
 ): Promise<void> {
-  const initialViewport = await driver.getWindowSize();
+  if (TARGET_FAMILY !== null) {
+    const layout = TARGET_FAMILY === "phone" ? "phone" : "wide";
+    const captureGeneration = async (generation: VisualGeneration): Promise<void> => {
+      await captureZeroServerNavigationParity({
+        capture: (rowId, state, assertion) =>
+          captureVisualParityRow(driver, generation, rowId, state, assertion),
+        driver,
+        generation,
+        layout,
+        timeoutMs: UI_TIMEOUT_MS,
+      });
+    };
+    await captureGeneration("v1");
+    await clickAccessibility(driver, "Settings");
+    await clickAccessibility(driver, "Use V2 interface");
+    await waitForApplicationReady(driver);
+    await captureGeneration("v2");
+    await clickAccessibility(driver, "Settings");
+    await clickAccessibility(driver, "Use legacy interface");
+    await waitForApplicationReady(driver);
+    await waitForAccessibility(driver, "New thread");
+    return;
+  }
   const { foldedState, unfoldedState } = await resolveFoldStates(device);
+  await adb(device, REPO_ROOT, ["shell", "cmd", "device_state", "state", unfoldedState]);
+  await delay(750);
+  const initialViewport = await driver.getWindowSize();
   const captureGeneration = async (generation: VisualGeneration): Promise<void> => {
     await captureZeroServerNavigationParity({
       capture: (rowId, state, assertion) =>
@@ -3495,7 +3651,7 @@ async function captureEmptyAndMultipleServerStates(
   device: AndroidDevice,
   generation: VisualGeneration,
   serverNames: readonly string[],
-  layout: "wide",
+  layout: VisualParityLayout,
 ): Promise<void> {
   const firstServer = serverNames[0];
   if (firstServer === undefined) throw new Error("Empty-server parity fixture has no records");
@@ -3517,6 +3673,7 @@ async function captureEmptyAndMultipleServerStates(
     orderedServerNames: serverNames,
     timeoutMs: UI_TIMEOUT_MS,
   });
+  if (TARGET_FAMILY !== null) return;
   const opened = await driver.getWindowSize();
   const { foldedState, unfoldedState } = await resolveFoldStates(device);
   const folded = await transitionFoldableState(device, driver, foldedState, opened);
@@ -3597,9 +3754,11 @@ async function capturePhoneServerStatusAcrossGenerations(
   status: "Access required" | "Disabled",
 ): Promise<void> {
   const opened = await driver.getWindowSize();
-  const { foldedState, unfoldedState } = await resolveFoldStates(device);
   const captureGeneration = async (generation: VisualGeneration): Promise<void> => {
-    const folded = await transitionFoldableState(device, driver, foldedState, opened);
+    const foldStates = TARGET_FAMILY === "phone" ? null : await resolveFoldStates(device);
+    const folded = foldStates === null
+      ? null
+      : await transitionFoldableState(device, driver, foldStates.foldedState, opened);
     await waitForAccessibility(driver, "New thread");
     await captureServerStatusParity({
       capture: (rowId, state, assertion) =>
@@ -3611,9 +3770,16 @@ async function capturePhoneServerStatusAcrossGenerations(
       status,
       timeoutMs: UI_TIMEOUT_MS,
     });
-    const restored = await transitionFoldableState(device, driver, unfoldedState, folded);
-    if (restored.width !== opened.width || restored.height !== opened.height) {
-      throw new Error(`${status} parity did not restore the original unfolded viewport`);
+    if (foldStates !== null && folded !== null) {
+      const restored = await transitionFoldableState(
+        device,
+        driver,
+        foldStates.unfoldedState,
+        folded,
+      );
+      if (restored.width !== opened.width || restored.height !== opened.height) {
+        throw new Error(`${status} parity did not restore the original unfolded viewport`);
+      }
     }
     await waitForAccessibility(driver, "New thread");
   };
@@ -3648,6 +3814,9 @@ async function assertManualPairingEntry(driver: AppiumBrowser): Promise<void> {
   await Promise.all([
     waitForAccessibility(driver, "Server endpoint"),
     waitForAccessibility(driver, "One-time pairing token"),
+  ]);
+  await scrollAccessibilityIntoView(driver, "Connect server manually");
+  await Promise.all([
     waitForAccessibility(driver, "TLS certificate pin"),
     waitForAccessibility(driver, "Connect server manually"),
   ]);
@@ -3675,6 +3844,16 @@ async function connectAndCapturePairingParityStates(
   control: SurfaceFaultControl,
   nonce: string,
 ): Promise<void> {
+  if (TARGET_FAMILY !== null) {
+    await connectAndCapturePairingForLayout(
+      driver,
+      generation,
+      control,
+      nonce,
+      TARGET_FAMILY === "phone" ? "phone" : "wide",
+    );
+    return;
+  }
   const opened = await driver.getWindowSize();
   const { foldedState, unfoldedState } = await resolveFoldStates(device);
   const folded = await transitionFoldableState(device, driver, foldedState, opened);
@@ -3730,6 +3909,56 @@ async function connectAndCapturePairingParityStates(
     generation,
     "PAIR-07",
     "wide-pairing-success-workspace-reveal",
+    async () => {
+      await waitForVisibleTextContaining(driver, "Connected. Syncing your threads now.");
+    },
+  );
+}
+
+async function connectAndCapturePairingForLayout(
+  driver: AppiumBrowser,
+  generation: VisualGeneration,
+  control: SurfaceFaultControl,
+  nonce: string,
+  layout: VisualParityLayout,
+): Promise<void> {
+  await waitForAccessibility(driver, "Connect server");
+  await capturePairingFailureParity({
+    capture: (rowId, state, assertion) =>
+      captureVisualParityRow(driver, generation, rowId, state, assertion),
+    control,
+    driver,
+    generation,
+    layout,
+    nonce,
+    timeoutMs: UI_TIMEOUT_MS,
+  });
+  await clickAccessibility(driver, "Connect server");
+  const assertPairingPending = async (): Promise<void> => {
+    await waitForVisibleTextContaining(driver, "Securing this device");
+  };
+  await captureVisualParityRow(
+    driver,
+    generation,
+    "PAIR-04",
+    `${layout}-pairing-connecting-pending`,
+    assertPairingPending,
+  );
+  await capturePendingActionParity({
+    action: "pairing-connect",
+    assertPending: assertPairingPending,
+    capture: (rowId, state, assertion) =>
+      captureVisualParityRow(driver, generation, rowId, state, assertion),
+    driver,
+    generation,
+    layout,
+    timeoutMs: UI_TIMEOUT_MS,
+  });
+  await captureVisualParityRow(
+    driver,
+    generation,
+    "PAIR-07",
+    `${layout}-pairing-success-workspace-reveal`,
     async () => {
       await waitForVisibleTextContaining(driver, "Connected. Syncing your threads now.");
     },
@@ -4399,6 +4628,23 @@ async function captureAdditionalPhoneParityStates(
     input.nonce,
     input.reopenConversation,
   );
+  await captureNewThreadParityStates(
+    input.driver,
+    input.generation,
+    "phone",
+    input.nonce,
+    input.resourceFixture.control,
+    input.reopenConversation,
+  );
+  await captureSettingsParityStates(
+    input.driver,
+    input.device,
+    input.generation,
+    "phone",
+    input.companionDevicePort,
+    input.companionHostPort,
+    input.reopenConversation,
+  );
   const captureResourceRow = (
     rowId: string,
     state: string,
@@ -4541,6 +4787,7 @@ async function captureFoldableParityStates(
         throw new Error("Unfolded-to-folded parity transition did not resize the viewport");
       }
     },
+    "unfoldedToFolded",
   );
   if (TARGET_FAMILY === "fold") {
     const captureResourceRow = (
@@ -4588,6 +4835,7 @@ async function captureFoldableParityStates(
       "RESP-06",
       "folded-to-unfolded-conversation",
       async () => waitForAccessibility(driver, "Message Codex").then(() => undefined),
+      "foldedToUnfolded",
     );
     return;
   }
@@ -4796,6 +5044,7 @@ async function captureFoldableParityStates(
     async () => {
       await waitForAccessibility(driver, "Message Codex");
     },
+    "foldedToUnfolded",
   );
 }
 
@@ -5967,6 +6216,7 @@ async function firstDisplayedAccessibilityLabel(
 async function captureNewThreadParityStates(
   driver: AppiumBrowser,
   generation: VisualGeneration,
+  layout: VisualParityLayout,
   nonce: string,
   control: SurfaceFaultControl,
   reopenConversation: () => Promise<void>,
@@ -5977,7 +6227,7 @@ async function captureNewThreadParityStates(
     driver,
     generation,
     "EMPTY-02",
-    "wide-new-thread-project-prompt",
+    `${layout}-new-thread-project-prompt`,
     async () => {
       await waitForVisibleTextContaining(driver, "What would you like to work on?");
     },
@@ -5986,7 +6236,7 @@ async function captureNewThreadParityStates(
     driver,
     generation,
     "NEW-01",
-    "wide-new-thread-project-selector",
+    `${layout}-new-thread-project-selector`,
     async () => {
       const project = await driver.$(
         'android=new UiSelector().descriptionStartsWith("Change project, currently ")',
@@ -5998,7 +6248,7 @@ async function captureNewThreadParityStates(
     driver,
     generation,
     "EMPTY-03",
-    "wide-new-thread-workspace-prompt",
+    `${layout}-new-thread-workspace-prompt`,
     async () => {
       const workspace = await driver.$(
         'android=new UiSelector().descriptionStartsWith("Workspace mode, ")',
@@ -6013,7 +6263,7 @@ async function captureNewThreadParityStates(
     driver,
     generation,
     "NEW-02",
-    "wide-new-thread-workspace-mode",
+    `${layout}-new-thread-workspace-mode`,
     async () => {
       const workspace = await driver.$(
         'android=new UiSelector().descriptionStartsWith("Workspace mode, ")',
@@ -6025,7 +6275,7 @@ async function captureNewThreadParityStates(
     driver,
     generation,
     "NEW-03",
-    "wide-new-thread-model-thinking-permissions",
+    `${layout}-new-thread-model-thinking-permissions`,
     async () => {
       const model = await driver.$(
         'android=new UiSelector().descriptionStartsWith("Model and thinking: ")',
@@ -6045,7 +6295,7 @@ async function captureNewThreadParityStates(
     control,
     driver,
     generation,
-    layout: "wide",
+    layout,
     nonce,
     reopenNewThread: async () => {
       await clickAccessibility(driver, "New thread");
@@ -6127,13 +6377,21 @@ async function captureSettingsParityStates(
   driver: AppiumBrowser,
   device: AndroidDevice,
   generation: VisualGeneration,
+  layout: VisualParityLayout,
   companionDevicePort: number,
   companionHostPort: number,
   reopenConversation: () => Promise<void>,
 ): Promise<void> {
+  if (layout === "phone") {
+    await returnToThreadListSurface(driver);
+    const settings = await driver.$("~Settings");
+    if (!(await settings.isDisplayed().catch(() => false))) {
+      await clickAccessibility(driver, "Choose server");
+    }
+  }
   await clickAccessibility(driver, "Settings");
   await waitForAccessibility(driver, "Close server settings");
-  await captureVisualParityRow(driver, generation, "SET-01", "wide-settings-root", async () => {
+  await captureVisualParityRow(driver, generation, "SET-01", `${layout}-settings-root`, async () => {
     await waitForVisibleTextContaining(driver, "Settings");
     await scrollAccessibilityIntoView(driver, "Actions for CodeWide E2E");
   });
@@ -6143,7 +6401,7 @@ async function captureSettingsParityStates(
     disconnectTransport: () => removeReversePort(device, REPO_ROOT, companionDevicePort),
     driver,
     generation,
-    layout: "wide",
+    layout,
     reconnectTransport: async () => {
       await reverseHostPort(device, REPO_ROOT, companionHostPort, companionDevicePort);
     },
@@ -6155,7 +6413,7 @@ async function captureSettingsParityStates(
       driver,
       generation,
       "SET-07",
-      "wide-account-settings",
+      `${layout}-account-settings`,
       async () => {
         await waitForVisibleTextContaining(driver, "Codex accounts");
       },
@@ -6168,7 +6426,7 @@ async function captureSettingsParityStates(
       driver,
       generation,
       "SET-02",
-      "wide-saved-server-live",
+      `${layout}-saved-server-live`,
       async () => {
         await Promise.all([
           waitForVisibleTextContaining(driver, "CodeWide E2E"),
@@ -6183,7 +6441,7 @@ async function captureSettingsParityStates(
       driver,
       generation,
       "SET-02",
-      "wide-saved-server-live",
+      `${layout}-saved-server-live`,
       async () => {
         await waitForAccessibility(driver, "Actions for CodeWide E2E");
       },
@@ -6194,7 +6452,7 @@ async function captureSettingsParityStates(
       driver,
       generation,
       "SET-07",
-      "wide-account-settings",
+      `${layout}-account-settings`,
       async () => {
         await Promise.all([
           waitForVisibleTextContaining(driver, "Codex accounts"),
@@ -6212,7 +6470,7 @@ async function captureSettingsParityStates(
     driver,
     generation,
     "SET-05",
-    "wide-saved-server-delete-confirmation",
+    `${layout}-saved-server-delete-confirmation`,
     async () => {
       await waitForAccessibility(driver, "Confirm delete server");
     },
@@ -6791,9 +7049,9 @@ async function captureVisualParityRow(
   rowId: string,
   state: string,
   assertExactState: () => Promise<void>,
+  postureOverride?: AndroidE2eCapturePosture,
 ): Promise<void> {
   await assertExactState();
-  if (!captureBelongsToShard(state)) return;
   const key = `${rowId}-${state}`;
   const prefix = `${rowId.toLowerCase()}-${state}-${generation}`;
   const screenshot = `${prefix}.png`;
@@ -6810,7 +7068,16 @@ async function captureVisualParityRow(
   }
   current[generation] = { screenshot, xml };
   visualParityCaptures.set(key, current);
-  recordCaptureProvenance(driver, generation, rowId, state, screenshot, xml, viewport);
+  recordCaptureProvenance(
+    driver,
+    generation,
+    rowId,
+    state,
+    screenshot,
+    xml,
+    viewport,
+    postureOverride,
+  );
   const interactionAliases = await collectInteractionInventoryAliases({
     driver,
     pageSource,
@@ -6836,12 +7103,6 @@ async function captureVisualParityRow(
   });
 }
 
-function captureBelongsToShard(state: string): boolean {
-  if (TARGET_FAMILY === null) return true;
-  const phoneState = state.startsWith("phone-");
-  return TARGET_FAMILY === "phone" ? phoneState : !phoneState;
-}
-
 function recordCaptureProvenance(
   driver: AppiumBrowser,
   generation: VisualGeneration,
@@ -6850,6 +7111,7 @@ function recordCaptureProvenance(
   screenshot: string,
   xml: string,
   viewport: { height: number; width: number },
+  postureOverride?: AndroidE2eCapturePosture,
 ): void {
   if (TARGET_FAMILY === null) return;
   captureProvenance.push({
@@ -6857,7 +7119,7 @@ function recordCaptureProvenance(
     capturedAt: new Date().toISOString(),
     generation,
     origin: { kind: "appium", sessionId: driver.sessionId },
-    posture: capturePosture(state, viewport),
+    posture: postureOverride ?? capturePosture(viewport),
     rowId,
     screenshot,
     state,
@@ -6867,19 +7129,11 @@ function recordCaptureProvenance(
   });
 }
 
-function capturePosture(
-  state: string,
-  viewport: { height: number; width: number },
-): AndroidE2eCapturePosture {
+function capturePosture(viewport: { height: number; width: number }): AndroidE2eCapturePosture {
   if (TARGET_FAMILY === "phone") {
-    return state.startsWith("phone-landscape-") || viewport.width > viewport.height
-      ? "phoneLandscape"
-      : "phonePortrait";
+    return viewport.width > viewport.height ? "phoneLandscape" : "phonePortrait";
   }
-  if (state.startsWith("folded-to-unfolded-")) return "foldedToUnfolded";
-  if (state.startsWith("unfolded-to-folded-")) return "unfoldedToFolded";
-  if (state.startsWith("folded-")) return "folded";
-  return "unfolded";
+  return currentFoldPosture;
 }
 
 function parityBlocker(rowId: string): { code: string; evidence: string } {

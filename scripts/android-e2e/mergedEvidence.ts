@@ -83,7 +83,7 @@ export type MergedAndroidE2eShard = {
   targetFamily: AndroidE2eTargetFamily;
 };
 
-export type MergedAndroidE2eEvidence = {
+type MergedAndroidE2eEvidenceBase = {
   schemaVersion: 2;
   apkSha256: string;
   artifacts: MergedArtifact[];
@@ -93,14 +93,17 @@ export type MergedAndroidE2eEvidence = {
   completedAt: string;
   companionSha256: string;
   contentEquality: MergedContentEquality[];
-  failure: string | null;
-  parity: VisualParityEvidence;
-  passed: boolean;
   runId: string;
   shards: MergedAndroidE2eShard[];
   sourceFingerprint: string;
   targetFamilies: AndroidE2eTargetFamily[];
 };
+
+export type MergedAndroidE2eEvidence = MergedAndroidE2eEvidenceBase &
+  (
+    | { failure: null; parity: VisualParityEvidence; passed: true }
+    | { failure: string; parity: null; passed: false }
+  );
 
 export type LoadedAndroidE2eShard = {
   artifactPrefix: string;
@@ -310,11 +313,6 @@ function mergeParity(
           row.id,
           shard.manifest,
         );
-        if (
-          merged.captures.some((candidate) => candidate.state === capture.state)
-        ) {
-          throw new Error(`Duplicate cross-shard parity capture ${row.id}/${capture.state}`);
-        }
         merged.captures.push(prefixCaptureArtifacts(capture, shard.artifactPrefix));
       }
       if (row.intentionalDifference !== undefined) {

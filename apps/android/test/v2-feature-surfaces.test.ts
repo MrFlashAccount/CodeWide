@@ -33,7 +33,7 @@ describe("V2 feature surfaces", () => {
       "../app/(workspace)/_layout.tsx",
       "../app/(workspace)/servers/[savedServerId]/_layout.tsx",
       "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/_layout.tsx",
-      "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/agents/_layout.tsx",
+      "../app/(modal)/servers/[savedServerId]/threads/[threadId]/agents/_layout.tsx",
     ];
     for (const layout of layouts) {
       const source = readFileSync(new URL(layout, import.meta.url), "utf8");
@@ -132,7 +132,7 @@ describe("V2 feature surfaces", () => {
       "../app/(workspace)/_layout.tsx",
       "../app/(workspace)/servers/[savedServerId]/_layout.tsx",
       "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/_layout.tsx",
-      "../app/(workspace)/servers/[savedServerId]/threads/[threadId]/agents/_layout.tsx",
+      "../app/(modal)/servers/[savedServerId]/threads/[threadId]/agents/_layout.tsx",
       "../app/(modal)/_layout.tsx",
     ]) {
       const source = readFileSync(new URL(layout, import.meta.url), "utf8");
@@ -489,7 +489,7 @@ describe("V2 feature surfaces", () => {
       "utf8",
     );
     expect(terminal).toContain("generation: projection.sourceGeneration");
-    expect(terminal).toContain('currentThread?.id !== props.owner.threadId');
+    expect(terminal).toContain("currentThread?.id !== props.owner.threadId");
     expect(terminal).not.toContain("projection.generationId");
     expect(voice).toContain("sourceGeneration: V2U64");
     expect(voice).not.toContain("generationId");

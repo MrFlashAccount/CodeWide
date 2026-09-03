@@ -5,6 +5,7 @@ import { useTransition } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
+import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ProductText as Text } from "../../presentation/text/ProductText";
 import { ShimmerText } from "../../presentation/text/ShimmerText";
@@ -21,6 +22,7 @@ interface AttachmentListProps {
 
 interface AttachmentRowProps {
   attachment: V2Attachment;
+  attachments: readonly V2Attachment[];
   owner: QualifiedThread;
 }
 
@@ -63,7 +65,12 @@ export function AttachmentList(props: AttachmentListProps): React.JSX.Element {
       </View>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {attachments.map((attachment) => (
-          <AttachmentRow key={attachment.id} attachment={attachment} owner={owner} />
+          <AttachmentRow
+            key={attachment.id}
+            attachment={attachment}
+            attachments={attachments}
+            owner={owner}
+          />
         ))}
         {attachments.length === 0 ? (
           <View accessibilityLabel="No attachments" accessible style={styles.empty}>
@@ -77,9 +84,11 @@ export function AttachmentList(props: AttachmentListProps): React.JSX.Element {
 }
 
 function AttachmentRow(props: AttachmentRowProps): React.JSX.Element {
-  const { attachment, owner } = props;
+  const { attachment, attachments, owner } = props;
+  const runtime = useV2Runtime();
   const open = useEvent(() => {
     if (attachment.downloadUrl === null) return;
+    runtime.attachmentPreviews.present(owner, attachments, attachment);
     router.push(attachmentPreviewDestination({ attachmentId: attachment.id, owner }));
   });
   const enabled = attachment.downloadUrl !== null;

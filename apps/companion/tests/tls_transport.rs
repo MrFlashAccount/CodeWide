@@ -196,6 +196,7 @@ fn client_for(
     address: SocketAddr,
 ) -> Result<reqwest::Client, Box<dyn std::error::Error>> {
     Ok(reqwest::Client::builder()
+        .no_proxy()
         .tls_built_in_root_certs(false)
         .add_root_certificate(reqwest::Certificate::from_der(certificate)?)
         .resolve("codewide-companion", address)

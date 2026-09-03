@@ -288,7 +288,7 @@ function AttachmentActivity(props: AttachmentActivityProps): React.JSX.Element {
   const { attachment } = activity;
   const open = actions?.onOpenAttachment;
   const activate = useEvent(async () => {
-    await open?.(attachment.id);
+    await open?.(attachment);
   });
   const image = attachment.mediaType.toLowerCase().startsWith("image/");
   const source = attachment.downloadUrl;
