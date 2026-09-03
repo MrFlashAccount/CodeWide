@@ -2,8 +2,8 @@
 useDefault = true
 
 [[allowlists]]
-description = "Generated V2 token counters are schema fields, not credentials"
+description = "Generated V2 token fields are schema counters and limits, not credentials"
 condition = "AND"
 regexTarget = "line"
 paths = ['''^packages/sync-client/src/v2/contract\.generated\.ts$''']
-regexes = ['''^\s+"(?:inputTokens|outputTokens|latestRequestTokens|threadInputTokens|threadOutputTokens|threadTotalTokens)": V2NonNegativeInteger;\s*$''']
+regexes = ['''^\s+"[A-Za-z]*[Tt]oken[A-Za-z]*": V2NonNegativeInteger(?: \| null)?;\s*$''']
