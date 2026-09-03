@@ -23,8 +23,13 @@ describe("biometric app lock", () => {
   });
 
   it("gates the router behind a durable fail-closed preference", () => {
-    expect(rootLayout).toContain("<AppLockGate>");
-    expect(rootLayout.indexOf("<AppLockGate>")).toBeLessThan(rootLayout.indexOf("<Stack screenOptions"));
+    const gateStart = rootLayout.indexOf("<AppLockGate>");
+    const gatedNavigation = rootLayout.indexOf('generation.generation === "v2"', gateStart);
+    const gateEnd = rootLayout.indexOf("</AppLockGate>", gatedNavigation);
+
+    expect(gateStart).toBeGreaterThanOrEqual(0);
+    expect(gatedNavigation).toBeGreaterThan(gateStart);
+    expect(gateEnd).toBeGreaterThan(gatedNavigation);
     expect(gate).toContain("use(database.ready)");
     expect(gate).toContain("database.collection.get(APP_LOCK_PREFERENCE_ID)");
     expect(gate).toContain("if (enabled && !unlocked)");
