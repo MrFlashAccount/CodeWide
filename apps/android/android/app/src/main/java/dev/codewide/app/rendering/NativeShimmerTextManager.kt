@@ -25,6 +25,12 @@ class NativeShimmerTextManager : SimpleViewManager<NativeShimmerTextView>() {
   @ReactProp(name = "fontWeight")
   fun setFontWeight(view: NativeShimmerTextView, value: String?) = view.setPendingFontWeight(value)
 
+  @ReactProp(name = "lineHeight")
+  fun setLineHeight(view: NativeShimmerTextView, value: Float) = view.setPendingLineHeight(value)
+
+  @ReactProp(name = "numberOfLines")
+  fun setNumberOfLines(view: NativeShimmerTextView, value: Int) = view.setPendingNumberOfLines(value)
+
   @ReactProp(name = "textAlign")
   fun setTextAlign(view: NativeShimmerTextView, value: String?) = view.setPendingTextAlign(value)
 

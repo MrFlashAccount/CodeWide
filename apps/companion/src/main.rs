@@ -164,12 +164,6 @@ enum Command {
         #[command(flatten)]
         control: ControlOptions,
     },
-    Scopes {
-        device_id: String,
-        scopes: String,
-        #[command(flatten)]
-        control: ControlOptions,
-    },
     Telemetry(Box<TelemetryOptions>),
     Vcs(VcsOptions),
 }
@@ -469,31 +463,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 )
             );
             let body = control_request(reqwest::Method::DELETE, &path, None, control).await?;
-            println!("{body}");
-        }
-        Command::Scopes {
-            device_id,
-            scopes,
-            control,
-        } => {
-            let scopes = scopes
-                .split(',')
-                .map(str::trim)
-                .filter(|scope| !scope.is_empty())
-                .collect::<Vec<_>>();
-            if scopes.is_empty() {
-                return Err("comma-separated scopes are required".into());
-            }
-            let path = format!(
-                "/v1/devices/{}",
-                percent_encoding::utf8_percent_encode(
-                    &device_id,
-                    percent_encoding::NON_ALPHANUMERIC
-                )
-            );
-            let payload = serde_json::to_string(&serde_json::json!({ "scopes": scopes }))?;
-            let body =
-                control_request(reqwest::Method::PATCH, &path, Some(&payload), control).await?;
             println!("{body}");
         }
         Command::Telemetry(options) => match options.command {
@@ -1105,44 +1074,35 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
     if let Some(staging) = &workspace_upload_staging {
         staging.start_periodic_gc();
     }
-    let sync_v2 = sync_v2_enabled
-        .then(|| {
-            UpstreamHandle::spawn_with_message_limit(
-                app_server_socket.clone(),
-                codewide_companion::sync_v2::V2_UPSTREAM_MAX_MESSAGE_BYTES,
-            )
-        })
-        .map(|upstream| {
-            let source = UpstreamSemanticSource::new(
-                upstream,
-                store.clone(),
-                history,
-                catalog.clone(),
-                ProductionServices {
-                    projects: Some(projects),
-                    workspaces: Some(workspaces),
-                    resources: Some(resources),
-                    accounts: account_pool,
-                    attachments: attachment_staging.clone(),
-                },
-            );
-            SyncV2Runtime::new(
-                source,
-                state_directory.join("sync-v2-operations.redb"),
-                sync_v2_tls_pin,
-            )
-            .map(|runtime| {
-                #[cfg(feature = "e2e-command-fault")]
-                {
-                    runtime.with_e2e_surface_fault_control(sync.e2e_surface_fault_control())
-                }
-                #[cfg(not(feature = "e2e-command-fault"))]
-                {
-                    runtime
-                }
-            })
-        })
-        .transpose()?;
+    let sync_v2 = if sync_v2_enabled {
+        let upstream = UpstreamHandle::spawn_with_message_limit(
+            app_server_socket.clone(),
+            codewide_companion::sync_v2::V2_UPSTREAM_MAX_MESSAGE_BYTES,
+        );
+        let source = UpstreamSemanticSource::new(
+            upstream,
+            store.clone(),
+            history,
+            catalog.clone(),
+            ProductionServices {
+                projects: Some(projects),
+                workspaces: Some(workspaces),
+                resources: Some(resources),
+                accounts: account_pool,
+                attachments: attachment_staging.clone(),
+            },
+        );
+        let runtime = SyncV2Runtime::new(
+            source,
+            state_directory.join("sync-v2-operations.redb"),
+            sync_v2_tls_pin,
+        )?;
+        #[cfg(feature = "e2e-command-fault")]
+        let runtime = runtime.with_e2e_surface_fault_control(sync.e2e_surface_fault_control());
+        Some(runtime)
+    } else {
+        None
+    };
     let token: Arc<str> = Arc::from(token);
     let registry = Arc::new(DeviceRegistry::open(token, options.device_registry, None).await?);
     tunnels.start_revocation_cleanup(registry.subscribe_authorization_changes());

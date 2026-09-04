@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { Quickdraw, type QuickdrawRef } from "@quickdrawjs/react-native";
 import { type ComponentProps, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useEvent } from "../react/useEvent";
 import { colors, radii, spacing, touchTarget, typeScale } from "../theme";
@@ -31,7 +30,6 @@ export function DrawingWorkspace({
   "use no memo";
   // Quickdraw is an imperative WebView bridge; React Compiler cannot lower
   // the guarded async ref transaction without changing its error semantics.
-  const insets = useSafeAreaInsets();
   const boardRef = useRef<QuickdrawRef>(null);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -71,7 +69,7 @@ export function DrawingWorkspace({
 
   return (
     <View testID="drawing-workspace" style={styles.root}>
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, spacing.sm) }]}>
+      <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close drawing"
@@ -104,7 +102,7 @@ export function DrawingWorkspace({
           <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
-      <View style={[styles.board, { paddingBottom: insets.bottom }]}>
+      <View style={styles.board}>
         {!ready && <ActivityIndicator testID="drawing-loading" size="large" color={colors.accent} style={styles.loader} />}
         <Quickdraw
           ref={boardRef}

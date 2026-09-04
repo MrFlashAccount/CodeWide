@@ -12,5 +12,6 @@ export class NativeEngineSupervisor {
   constructor(_options: { cache: SyncCache; projection: Pick<SyncCache, "applySnapshot" | "applyEvents">; onCommittedEvents?(connectionId: string, events: SyncEvent[]): Promise<void>; onOutboxChange?(delivery: import("./native-transport.web").NativeCommandDelivery): void }) {}
   replaceConnections(_connections: RemoteConnection[]): void {}
   session(_connectionId: string): WebNativeEngineSession | undefined { return undefined; }
+  async reattachRuntime(_connectionId: string): Promise<void> {}
   stop(): void {}
 }

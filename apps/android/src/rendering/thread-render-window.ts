@@ -78,16 +78,19 @@ export function selectTurnRenderWindow(
   }
 
   // App Server may perform work before it materializes the canonical user
-  // message. Keep that activity in the response bubble. Context compaction is
-  // the only lifecycle event intentionally presented outside it.
+  // message. Keep that pre-turn activity in the response bubble. A context
+  // compaction is presented outside only when it belongs to that pre-turn
+  // lifecycle; a compaction after the user boundary belongs inside the turn.
   const firstUserIndex = userItemIndexes[0] ?? Number.POSITIVE_INFINITY;
-  const compactionIndexes = materializedIndexes.filter((index) => (
-    turn.items[index]?.type === "contextCompaction"
-  ));
+  const compactionIndexes = materializedIndexes.filter((index) => {
+    const item = turn.items[index];
+    return item?.type === "contextCompaction"
+      && (index < firstUserIndex || isProjectedPreTurn(item));
+  });
   const preTurnActivityIndexes = materializedIndexes.filter((index) => {
-    const item = turn.items[index] as (Turn["items"][number] & { codewidePreTurn?: boolean }) | undefined;
+    const item = turn.items[index];
     return item?.type !== "contextCompaction"
-      && (index < firstUserIndex || item?.codewidePreTurn === true);
+      && (index < firstUserIndex || isProjectedPreTurn(item));
   });
   const separatedIndexSet = new Set([...preTurnActivityIndexes, ...compactionIndexes]);
 
@@ -129,6 +132,10 @@ export function selectTurnRenderWindow(
     collapsedActivityIndexes: activityIndexes.filter((index) => !liveIndexSet.has(index)),
     liveActivityIndexes,
   };
+}
+
+function isProjectedPreTurn(item: Turn["items"][number] | undefined): boolean {
+  return item !== undefined && "codewidePreTurn" in item && item.codewidePreTurn === true;
 }
 
 function matchingAgentPlaceholderIndexes(turn: Turn): Set<number> {

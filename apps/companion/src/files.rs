@@ -30,7 +30,6 @@ const MANAGED_ATTACHMENT_RETENTION: Duration = Duration::from_hours(168);
 #[derive(Clone)]
 pub struct FileService {
     roots: Arc<HashMap<String, PathBuf>>,
-    preview_roots: Arc<Vec<PathBuf>>,
     preview_path_mappings: Arc<Vec<PreviewPathMapping>>,
     observed: Arc<tokio::sync::RwLock<HashSet<PathBuf>>>,
     preview_registry_path: Option<PathBuf>,
@@ -194,10 +193,8 @@ impl FileService {
         .await
     }
 
-    /// Creates a scoped file service whose app-server paths may be translated
-    /// to separate read-only mounts visible inside the companion namespace.
-    /// Authorization still applies to exact canonical files observed from the
-    /// trusted app-server stream; a mapping never grants a whole directory.
+    /// Creates a file service whose app-server paths may be translated to
+    /// separate read-only mounts visible inside the companion namespace.
     ///
     /// # Errors
     ///
@@ -252,7 +249,7 @@ impl FileService {
 
     async fn open_internal(
         roots: HashMap<String, PathBuf>,
-        preview_roots: Vec<PathBuf>,
+        _preview_roots: Vec<PathBuf>,
         preview_path_mappings: HashMap<PathBuf, PathBuf>,
         preview_registry_path: Option<PathBuf>,
         managed_attachment_root_id: Option<String>,
@@ -273,10 +270,6 @@ impl FileService {
                 Ok::<ManagedAttachmentRoot, FileError>(ManagedAttachmentRoot { root_id, root })
             })
             .transpose()?;
-        let mut canonical_preview_roots = Vec::with_capacity(preview_roots.len());
-        for root in preview_roots {
-            canonical_preview_roots.push(tokio::fs::canonicalize(root).await?);
-        }
         let mut canonical_preview_path_mappings = Vec::with_capacity(preview_path_mappings.len());
         for (reported_root, readable_root) in preview_path_mappings {
             if !reported_root.is_absolute() {
@@ -300,7 +293,6 @@ impl FileService {
         let observed = load_preview_registry(preview_registry_path.as_deref()).await?;
         Ok(Self {
             roots: Arc::new(canonical_roots),
-            preview_roots: Arc::new(canonical_preview_roots),
             preview_path_mappings: Arc::new(canonical_preview_path_mappings),
             observed: Arc::new(tokio::sync::RwLock::new(observed)),
             preview_registry_path,
@@ -352,30 +344,15 @@ impl FileService {
         self.record_observed_preview_paths(canonical).await;
     }
 
-    /// Resolves one reported workspace path, rejects symlink escapes, and
-    /// grants the exact canonical file to the private preview endpoint.
+    /// Resolves one reported file path and grants its canonical target to the
+    /// private preview endpoint. Read access is intentionally host-wide for an
+    /// authenticated device; the workspace is retained only as source context.
     pub(crate) async fn preview_metadata_within(
         &self,
-        root: PathBuf,
+        _root: PathBuf,
         path: PathBuf,
     ) -> Result<(u64, String), FileError> {
-        let canonical_root = self
-            .canonical_preview_path(&root)
-            .await
-            .ok_or_else(|| client(StatusCode::NOT_FOUND, "workspace_not_found"))?;
-        let canonical = self
-            .canonical_preview_path(&path)
-            .await
-            .ok_or_else(|| client(StatusCode::NOT_FOUND, "file_not_found"))?;
-        if !is_child(&canonical_root, &canonical) {
-            return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
-        }
-        let metadata = tokio::fs::metadata(&canonical).await?;
-        if !metadata.is_file() {
-            return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
-        }
-        self.record_observed_preview_paths(vec![canonical]).await;
-        Ok((metadata.len(), content_type(&path).to_owned()))
+        self.host_preview_metadata(path).await
     }
 
     /// Resolves one explicitly requested host file and grants its exact canonical
@@ -442,12 +419,13 @@ impl FileService {
         }
     }
 
-    /// Resolves a remote input to an existing regular file within one root.
+    /// Resolves a remote input to an existing regular host file. Relative paths
+    /// use the named root as their base but may resolve outside it.
     ///
     /// # Errors
     ///
-    /// Returns a stable client error for missing roots, traversal, symlink
-    /// escapes, missing paths, and non-files.
+    /// Returns a stable client error for missing roots, invalid or missing
+    /// paths, and non-files.
     pub async fn resolve_input_file(
         &self,
         root_id: &str,
@@ -537,7 +515,7 @@ impl FileService {
             let path = query
                 .path
                 .ok_or_else(|| client(StatusCode::BAD_REQUEST, "path_required"))?;
-            self.resolve_preview(&path).await?
+            self.resolve_host_preview(&path).await?
         } else {
             let root_id = query
                 .root_id
@@ -550,7 +528,8 @@ impl FileService {
         self.serve_file(&path, headers, head_only, preview).await
     }
 
-    /// Returns resumable-upload state.
+    /// Returns resumable-upload state for any host path addressable through a
+    /// configured root or an absolute path.
     ///
     /// # Errors
     ///
@@ -566,7 +545,7 @@ impl FileService {
         let temporary = resumable_path(&target, upload_id);
         if let Ok(metadata) = tokio::fs::symlink_metadata(&temporary).await {
             if !metadata.is_file() || metadata.file_type().is_symlink() {
-                return Err(client(StatusCode::FORBIDDEN, "unsafe_upload_state"));
+                return Err(client(StatusCode::CONFLICT, "invalid_upload_state"));
             }
             return response_with_headers(
                 StatusCode::NO_CONTENT,
@@ -742,9 +721,8 @@ impl FileService {
             .header("x-content-type-options", "nosniff");
         if inline {
             response = response.header("content-security-policy", "default-src 'none'; sandbox");
-        } else {
-            response = response.header("x-content-sha256", hash_file(path).await?);
         }
+        response = response.header("x-content-sha256", hash_file(path).await?);
         let (start, length) = range.as_ref().map_or((0, metadata.len()), |range| {
             (range.start, range.end - range.start + 1)
         });
@@ -854,7 +832,7 @@ impl FileService {
             Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
                 metadata.len()
             }
-            Ok(_) => return Err(client(StatusCode::FORBIDDEN, "unsafe_upload_state")),
+            Ok(_) => return Err(client(StatusCode::CONFLICT, "invalid_upload_state")),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
             Err(error) => return Err(error.into()),
         };
@@ -926,13 +904,18 @@ impl FileService {
         relative_path: &str,
     ) -> Result<PathBuf, FileError> {
         let root = self.root(root_id)?;
-        let candidate = lexical_child(root, relative_path)?;
+        if relative_path.is_empty() || relative_path.contains('\0') {
+            return Err(client(StatusCode::BAD_REQUEST, "invalid_path"));
+        }
+        let requested = Path::new(relative_path);
+        let candidate = if requested.is_absolute() {
+            self.readable_preview_path(requested)
+        } else {
+            root.join(requested)
+        };
         let canonical = tokio::fs::canonicalize(candidate)
             .await
             .map_err(|error| map_not_found(error, "file_not_found"))?;
-        if !is_child(root, &canonical) {
-            return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
-        }
         let metadata = tokio::fs::metadata(&canonical).await?;
         if !metadata.is_file() {
             return Err(client(StatusCode::BAD_REQUEST, "not_a_regular_file"));
@@ -940,23 +923,14 @@ impl FileService {
         Ok(canonical)
     }
 
-    async fn resolve_preview(&self, path: &str) -> Result<PathBuf, FileError> {
+    async fn resolve_host_preview(&self, path: &str) -> Result<PathBuf, FileError> {
         if path.len() > 16_384 || path.contains('\0') || !Path::new(path).is_absolute() {
             return Err(client(StatusCode::BAD_REQUEST, "invalid_absolute_path"));
         }
         let reported = normalize_absolute_path(Path::new(path));
-        let canonical = tokio::fs::canonicalize(self.readable_preview_path(&reported))
+        tokio::fs::canonicalize(self.readable_preview_path(&reported))
             .await
-            .map_err(|error| map_not_found(error, "file_not_found"))?;
-        let configured = self.roots.values().any(|root| is_child(root, &canonical))
-            || self
-                .preview_roots
-                .iter()
-                .any(|root| is_child(root, &canonical));
-        if !configured && !self.observed.read().await.contains(&canonical) {
-            return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
-        }
-        Ok(canonical)
+            .map_err(|error| map_not_found(error, "file_not_found"))
     }
 
     fn readable_preview_path(&self, reported: &Path) -> PathBuf {
@@ -970,34 +944,28 @@ impl FileService {
         normalized
     }
 
-    async fn resolve_upload_target(
-        &self,
-        root_id: &str,
-        relative_path: &str,
-    ) -> Result<PathBuf, FileError> {
+    async fn resolve_upload_target(&self, root_id: &str, path: &str) -> Result<PathBuf, FileError> {
         let root = self.root(root_id)?;
-        let candidate = lexical_child(root, relative_path)?;
-        self.ensure_managed_attachment_parent(root_id, relative_path)
-            .await?;
+        if path.is_empty() || path.contains('\0') {
+            return Err(client(StatusCode::BAD_REQUEST, "invalid_path"));
+        }
+        let requested = Path::new(path);
+        let candidate = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else {
+            root.join(requested)
+        };
+        self.ensure_managed_attachment_parent(root_id, path).await?;
         let parent = candidate
             .parent()
-            .ok_or_else(|| client(StatusCode::FORBIDDEN, "path_outside_root"))?;
+            .ok_or_else(|| client(StatusCode::BAD_REQUEST, "invalid_path"))?;
         let canonical_parent = tokio::fs::canonicalize(parent)
             .await
             .map_err(|error| map_not_found(error, "parent_not_found"))?;
-        if !is_child(root, &canonical_parent) {
-            return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
-        }
         let name = candidate
             .file_name()
             .ok_or_else(|| client(StatusCode::BAD_REQUEST, "invalid_path"))?;
-        let target = canonical_parent.join(name);
-        if let Ok(existing) = tokio::fs::canonicalize(&target).await
-            && !is_child(root, &existing)
-        {
-            return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
-        }
-        Ok(target)
+        Ok(canonical_parent.join(name))
     }
 
     async fn ensure_managed_attachment_parent(
@@ -1017,10 +985,6 @@ impl FileService {
         set_private_directory(&configured.root.join("sessions")).await?;
         set_private_directory(&session).await?;
         set_private_directory(&files).await?;
-        let canonical = tokio::fs::canonicalize(&files).await?;
-        if !is_child(&configured.root, &canonical) {
-            return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
-        }
         Ok(())
     }
 
@@ -1323,23 +1287,6 @@ fn parse_content_range(value: &str) -> Result<ContentRange, FileError> {
         return Err(client(StatusCode::BAD_REQUEST, "invalid_content_range"));
     }
     Ok(range)
-}
-
-fn lexical_child(root: &Path, relative: &str) -> Result<PathBuf, FileError> {
-    let path = Path::new(relative);
-    if relative.is_empty()
-        || relative.contains('\0')
-        || path.is_absolute()
-        || path.components().any(|part| {
-            matches!(
-                part,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err(client(StatusCode::FORBIDDEN, "path_outside_root"));
-    }
-    Ok(root.join(path))
 }
 
 fn is_child(root: &Path, path: &Path) -> bool {

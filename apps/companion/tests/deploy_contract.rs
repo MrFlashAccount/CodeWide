@@ -44,6 +44,8 @@ fn one_shot_release_validates_builds_installs_verifies_and_rolls_back() {
     assert!(RELEASE_SCRIPT.contains("cargo fmt --all -- --check"));
     assert!(RELEASE_SCRIPT.contains("cargo clippy --workspace --all-targets --all-features"));
     assert!(RELEASE_SCRIPT.contains("cargo test --workspace --all-features"));
+    assert!(RELEASE_SCRIPT.contains("run_quiet 'running tests'"));
+    assert!(RELEASE_SCRIPT.contains("cat \"$log\" >&2"));
     assert!(RELEASE_SCRIPT.contains("./scripts/build-companion.sh"));
     assert!(RELEASE_SCRIPT.contains("./apps/companion/deploy/install.sh"));
     assert!(RELEASE_SCRIPT.contains("./apps/companion/deploy/verify.sh"));

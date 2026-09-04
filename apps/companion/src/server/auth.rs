@@ -184,7 +184,6 @@ async fn complete_pairing_claim(
         Json(json!({
             "deviceId": result.device_id,
             "capabilityToken": result.capability_token,
-            "scopes": result.scopes,
             // Kept for clients from the rollout window. This is no longer a
             // per-device mode: the outer server has no private data routes.
             "secureTransportRequired": true,
@@ -258,42 +257,6 @@ async fn devices_list(State(state): State<AppState>, headers: HeaderMap) -> Resp
     Json(json!({"devices": registry.devices().await})).into_response()
 }
 
-#[derive(Deserialize)]
-struct ScopeUpdate {
-    scopes: Vec<String>,
-}
-
-async fn device_update(
-    State(state): State<AppState>,
-    Path(device_id): Path<String>,
-    headers: HeaderMap,
-    Json(update): Json<ScopeUpdate>,
-) -> Response {
-    let Some(registry) = registry(&state.authorization) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if headers.get("origin").is_some() || !registry.authorize_admin(header_auth(&headers)).await {
-        return json_error(StatusCode::UNAUTHORIZED, "admin_authorization_required");
-    }
-    match registry.update_scopes(&device_id, update.scopes).await {
-        Ok(device) => {
-            if let Some(media) = &state.services.media {
-                media.purge_owner(&device_id);
-            }
-            if let Some(runtime) = &state.services.sync_v2
-                && !runtime.purge_device_context(&device_id).await
-            {
-                return json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "sync_v2_context_purge_failed",
-                );
-            }
-            Json(device).into_response()
-        }
-        Err(error) => auth_error(&error),
-    }
-}
-
 async fn device_revoke(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
@@ -348,15 +311,9 @@ async fn authorize_sync(state: &AppState, headers: &HeaderMap) -> Option<Authori
                 Some(context @ AuthorizationContext::Admin) if state.allow_admin_data_plane => {
                     Some(context)
                 }
-                Some(ref context @ AuthorizationContext::Session { ref scopes, .. })
-                    if scopes.iter().any(|scope| scope == "threads.read") =>
-                {
-                    Some(context.clone())
-                }
+                Some(context @ AuthorizationContext::Session { .. }) => Some(context),
                 Some(
-                    AuthorizationContext::Admin
-                    | AuthorizationContext::Device { .. }
-                    | AuthorizationContext::Session { .. },
+                    AuthorizationContext::Admin | AuthorizationContext::Device { .. },
                 )
                 | None => None,
             }
@@ -364,16 +321,15 @@ async fn authorize_sync(state: &AppState, headers: &HeaderMap) -> Option<Authori
     }
 }
 
-async fn authorize_scope(state: &AppState, headers: &HeaderMap, scope: &str) -> bool {
-    authorization_for_scope(state, headers, scope)
+async fn is_authenticated_session(state: &AppState, headers: &HeaderMap) -> bool {
+    authenticated_session(state, headers)
         .await
         .is_some()
 }
 
-pub(crate) async fn authorization_for_scope(
+pub(crate) async fn authenticated_session(
     state: &AppState,
     headers: &HeaderMap,
-    scope: &str,
 ) -> Option<AuthorizationContext> {
     match &state.authorization {
         Authorization::AdminOnly(token) => (state.allow_admin_data_plane
@@ -384,19 +340,9 @@ pub(crate) async fn authorization_for_scope(
                 Some(AuthorizationContext::Admin) if state.allow_admin_data_plane => {
                     Some(AuthorizationContext::Admin)
                 }
-                Some(context @ AuthorizationContext::Session { .. })
-                    if matches!(
-                        &context,
-                        AuthorizationContext::Session { scopes, .. }
-                            if scopes.iter().any(|candidate| candidate == scope)
-                    ) =>
-                {
-                    Some(context)
-                }
+                Some(context @ AuthorizationContext::Session { .. }) => Some(context),
                 Some(
-                    AuthorizationContext::Admin
-                    | AuthorizationContext::Device { .. }
-                    | AuthorizationContext::Session { .. },
+                    AuthorizationContext::Admin | AuthorizationContext::Device { .. },
                 )
                 | None => None,
             }
@@ -438,10 +384,6 @@ fn auth_error(error: &AuthError) -> Response {
         }
         AuthError::DeviceKeyMismatch => (StatusCode::CONFLICT, "device_key_mismatch_repair"),
         AuthError::DeviceNotFound => (StatusCode::NOT_FOUND, "device_not_found"),
-        AuthError::InvalidScopes => (
-            StatusCode::BAD_REQUEST,
-            "valid_scopes_with_threads_read_required",
-        ),
         AuthError::InvalidRegistry
         | AuthError::Io(_)
         | AuthError::Json(_)

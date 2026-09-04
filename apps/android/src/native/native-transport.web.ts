@@ -97,6 +97,7 @@ export async function writeNativeTerminal(): Promise<void> { throw new Error("Te
 export async function resizeNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
 export async function readNativeTerminalOutput(): Promise<NativeTerminalOutput> { throw new Error("Terminal is available on Android only"); }
 export function closeNativeTerminal(): void {}
+export function startLegacyNativeRuntimeResources(): Promise<void> { return Promise.resolve(); }
 export function stopLegacyNativeRuntimeResources(): Promise<void> { return Promise.resolve(); }
 export function subscribeNativeTerminal(): () => void { return () => {}; }
 export type NativeCommandMethod =
@@ -131,6 +132,7 @@ export async function startVoiceRecognition(): Promise<() => void> {
 export function cancelVoiceRecognition(): void {}
 
 export type PcmAudioChunk = {
+  encoding?: "pcm_s16le";
   data: string;
   sampleRate: number;
   numChannels: number;
@@ -138,7 +140,18 @@ export type PcmAudioChunk = {
   level: number;
 };
 
-export async function startPcmCapture(): Promise<{ stop(): void; info: null }> {
+export type OpusAudioChunk = {
+  encoding: "opus";
+  data: string;
+  sampleRate: number;
+  numChannels: number;
+  samplesPerChannel: number;
+  level: number;
+};
+
+export type CapturedAudioChunk = PcmAudioChunk | OpusAudioChunk;
+
+export async function startPcmCapture(): Promise<{ stop(): Promise<void>; info: null }> {
   throw new Error("Native audio capture is available on Android only");
 }
 

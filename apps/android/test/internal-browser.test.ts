@@ -57,7 +57,7 @@ describe("internal browser", () => {
     expect(browser).toContain("accessibilityLabel={header.closeLabel}");
     expect(browser).toContain("<BrowserButton label=\"Back\"");
     expect(browser).toContain("<BrowserButton label=\"Reload\"");
-    const forwardedBrowser = screen.slice(screen.indexOf("function ForwardedLoopbackBrowser"), screen.indexOf("function ServerRail"));
+    const forwardedBrowser = screen.slice(screen.indexOf("function ForwardedLoopbackBrowser"), screen.indexOf("type ConnectionActivity"));
     expect(forwardedBrowser).not.toContain("styles.previewHeader");
   });
 

@@ -105,7 +105,6 @@ mod tests {
     fn session(device_id: &str, expires_at: u64) -> AuthorizationContext {
         AuthorizationContext::Session {
             device_id: device_id.to_owned(),
-            scopes: vec!["shell.explicit".into()],
             expires_at,
         }
     }

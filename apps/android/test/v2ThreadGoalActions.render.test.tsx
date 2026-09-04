@@ -6,6 +6,17 @@ import type { V2ThreadGoal } from "@codewide/sync-client/v2";
 import { ThreadGoalSheetView } from "../src/v2/presentation/goal/ThreadGoalSheetView";
 
 describe("V2 thread goal mutation states", () => {
+  it("shows the authoritative goal status, duration, tokens, and cost availability", () => {
+    render(<GoalHarness goal={goalFixture()} onClose={jest.fn()} />);
+
+    expect(screen.getByLabelText("Goal details")).toBeTruthy();
+    expect(screen.getByText("Active")).toBeTruthy();
+    expect(screen.getByText("1m 30s")).toBeTruthy();
+    expect(screen.getByText("⟡5,000")).toBeTruthy();
+    expect(screen.getByText("Not reported")).toBeTruthy();
+    expect(screen.getByDisplayValue("Ship V2")).toBeTruthy();
+  });
+
   it("restores save after rejection and keeps the editor open", async () => {
     const save = deferred<void>();
     const onClose = jest.fn();
@@ -73,9 +84,9 @@ function goalFixture(): V2ThreadGoal {
     objective: "Ship V2",
     status: "active",
     threadId: "thread-1",
-    timeUsedSeconds: 0,
+    timeUsedSeconds: 90,
     tokenBudget: null,
-    tokensUsed: 0,
+    tokensUsed: 5_000,
     updatedAtMs: 2,
   };
 }

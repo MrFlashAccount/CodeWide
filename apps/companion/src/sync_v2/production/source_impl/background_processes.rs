@@ -205,7 +205,6 @@ mod tests {
     fn context(device_id: &str) -> AuthenticatedContextKey {
         AuthenticatedContextKey::derive(&AuthorizationContext::Session {
             device_id: device_id.into(),
-            scopes: vec!["threads.read".into()],
             expires_at: u64::MAX,
         })
         .unwrap_or_else(|error| panic!("authenticated context failed: {:?}", error.code))

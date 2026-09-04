@@ -4,7 +4,10 @@ import { useEffect } from "react";
 import { CodeWideScreen } from "../src/CodeWideScreen";
 import { activateRuntime, stopRuntime } from "../src/boot/runtimeSlot";
 import { useUiGenerationSnapshot } from "../src/boot/useUiGenerationSnapshot";
-import { stopLegacyNativeRuntimeResources } from "../src/native/native-transport";
+import {
+  startLegacyNativeRuntimeResources,
+  stopLegacyNativeRuntimeResources,
+} from "../src/native/native-transport";
 
 export default function LegacyRoute(): React.JSX.Element {
   const generation = useUiGenerationSnapshot();
@@ -16,9 +19,10 @@ export default function LegacyRoute(): React.JSX.Element {
 
 function LegacyApplication(): React.JSX.Element {
   useEffect(() => {
-    activateRuntime("legacy", () => ({ stop: stopLegacyNativeRuntimeResources })).catch(
-      () => undefined,
-    );
+    activateRuntime("legacy", () => ({
+      start: startLegacyNativeRuntimeResources,
+      stop: stopLegacyNativeRuntimeResources,
+    })).catch(() => undefined);
     return () => {
       stopRuntime("legacy").catch(() => undefined);
     };

@@ -23,6 +23,7 @@ export type PresentationIconName =
   | "create"
   | "filter"
   | "fingerprint"
+  | "flag"
   | "flash"
   | "folder"
   | "forward"
@@ -99,6 +100,7 @@ const glyphs: Record<PresentationIconName, string> = {
   create: "+",
   filter: "≡",
   fingerprint: "◎",
+  flag: "⚑",
   flash: "↯",
   folder: "□",
   forward: "›",

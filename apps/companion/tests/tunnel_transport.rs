@@ -278,12 +278,6 @@ async fn pair_device(
             proof: general_purpose::STANDARD.encode(proof.to_der().as_bytes()),
         })
         .await?;
-    registry
-        .update_scopes(
-            &claim.device_id,
-            vec!["threads.read".into(), "localhost.forward".into()],
-        )
-        .await?;
     let device_bearer = format!("Bearer {}", claim.capability_token);
     let challenge = registry.challenge(Some(&device_bearer)).await?;
     let message = general_purpose::URL_SAFE_NO_PAD.decode(&challenge.challenge)?;

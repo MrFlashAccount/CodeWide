@@ -9,7 +9,7 @@ async fn telemetry_ingest(
     if headers.get("origin").is_some() {
         return json_error(StatusCode::UNAUTHORIZED, "session_authorization_required");
     }
-    let Some(context) = authorization_for_scope(&state, &headers, "threads.read").await else {
+    let Some(context) = authenticated_session(&state, &headers).await else {
         return json_error(StatusCode::UNAUTHORIZED, "session_authorization_required");
     };
     if !store.enabled() {
@@ -126,7 +126,7 @@ async fn tunnel_create(
     let authorization = if headers.get("origin").is_some() {
         None
     } else {
-        authorization_for_scope(&state, &headers, "localhost.forward").await
+        authenticated_session(&state, &headers).await
     };
     let Some(authorization) = authorization else {
         return TunnelError::Unauthorized.into_response();
@@ -168,7 +168,7 @@ async fn tunnel_exact(
     let authorization = if headers.get("origin").is_some() {
         None
     } else {
-        authorization_for_scope(&state, &headers, "localhost.forward").await
+        authenticated_session(&state, &headers).await
     };
     let Some(authorization) = authorization else {
         return TunnelError::Unauthorized.into_response();
@@ -282,7 +282,7 @@ async fn tunnel_proxy_inner(
     };
     let (mut parts, body) = request.into_parts();
     let bearer = if parts.headers.get("origin").is_none() {
-        authorization_for_scope(&state, &parts.headers, "localhost.forward").await
+        authenticated_session(&state, &parts.headers).await
     } else {
         None
     };
@@ -358,7 +358,7 @@ async fn media_materialize(
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
     let Some(authorization) =
-        authorization_for_scope(&state, &headers, "files.download.workspace").await
+        authenticated_session(&state, &headers).await
     else {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     };
@@ -389,7 +389,7 @@ async fn media_read(
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
     let Some(authorization) =
-        authorization_for_scope(&state, &headers, "files.download.workspace").await
+        authenticated_session(&state, &headers).await
     else {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     };
@@ -425,7 +425,7 @@ async fn app_server_upgrade(
 
 async fn port_discovery(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "localhost.forward").await
+        || !is_authenticated_session(&state, &headers).await
     {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
@@ -446,7 +446,7 @@ async fn port_forward_upgrade(
     let authorization = if headers.get("origin").is_some() {
         None
     } else {
-        authorization_for_scope(&state, &headers, "localhost.forward").await
+        authenticated_session(&state, &headers).await
     };
     let Some(authorization) = authorization else {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
@@ -488,10 +488,13 @@ async fn terminal_upgrade(
     let authorization = if headers.get("origin").is_some() {
         None
     } else {
-        authorization_for_scope(&state, &headers, "shell.explicit").await
+        authenticated_session(&state, &headers).await
     };
     let Some(authorization) = authorization else {
-        return json_error(StatusCode::FORBIDDEN, "shell_explicit_scope_required");
+        return json_error(
+            StatusCode::UNAUTHORIZED,
+            "authenticated_device_session_required",
+        );
     };
     #[cfg(feature = "e2e-command-fault")]
     if let Some(response) = e2e_v1_surface_fault(
@@ -622,7 +625,7 @@ async fn content_read(
         return StatusCode::NOT_FOUND.into_response();
     };
     if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "files.download.workspace").await
+        || !is_authenticated_session(&state, &headers).await
     {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
@@ -661,7 +664,7 @@ async fn file_read(
         return StatusCode::NOT_FOUND.into_response();
     };
     if headers.get("origin").is_some()
-        || !authorize_scope(&state, &headers, "files.download.workspace").await
+        || !is_authenticated_session(&state, &headers).await
     {
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
@@ -744,5 +747,5 @@ async fn file_upload(
 
 async fn file_upload_authorized(state: &AppState, headers: &HeaderMap) -> bool {
     headers.get("origin").is_none()
-        && authorize_scope(state, headers, "files.upload.workspace").await
+        && is_authenticated_session(state, headers).await
 }

@@ -69,7 +69,7 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> Result<(), V2Error> {
-        require_scope(authorization, "threads.read")?;
+        require_authenticated_session(authorization)?;
         ensure_generation(self, generation)?;
         if let Some(current) = &intent.current_thread {
             self.authorize_thread_access(authorization, context, &current.thread_id, generation)
@@ -125,7 +125,7 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> Result<WatchedThreadData, V2Error> {
-        require_scope(authorization, "threads.read")?;
+        require_authenticated_session(authorization)?;
         ensure_generation(self, generation)?;
         self.authorize_thread_access(authorization, context, &current.thread_id, generation)
             .await?;
@@ -192,7 +192,7 @@ impl SemanticSource for UpstreamSemanticSource {
         context: &AuthenticatedContextKey,
         generation: u64,
     ) -> Result<SnapshotData, V2Error> {
-        require_scope(authorization, "threads.read")?;
+        require_authenticated_session(authorization)?;
         ensure_generation(self, generation)?;
         let (mut active, active_next) = if intent.catalog.active_limit == 0 {
             (Vec::new(), None)
@@ -568,7 +568,7 @@ impl SemanticSource for UpstreamSemanticSource {
                 path,
                 scope,
             } => {
-                require_scope(authorization, "threads.read")?;
+                require_authenticated_session(authorization)?;
                 self.authorize_thread_access(authorization, context, &thread_id, generation)
                     .await?;
                 let resources = self.services.resources.as_ref().ok_or_else(|| {

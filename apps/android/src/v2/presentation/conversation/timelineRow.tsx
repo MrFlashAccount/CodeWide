@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
-import type { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 
 import type {
   TimelineActivityActions,
@@ -8,6 +8,7 @@ import type {
   TimelineTurnActionsResolver,
 } from "./timelineTypes";
 import { TimelineTurnView } from "./timelineTurnView";
+import { TimelineDateSeparator } from "./timelineDateSeparator";
 
 interface TimelineRenderItem {
   item: TimelineDisplayTurn;
@@ -16,6 +17,7 @@ interface TimelineRenderItem {
 interface TimelineRowContextValue {
   activityActions?: TimelineActivityActions;
   actionsForTurn?: TimelineTurnActionsResolver;
+  dateLabels: ReadonlyMap<string, string>;
   latestAssistantTurnId: string | null;
   latestAssistantMeasurementKey?: string | null;
   onLatestAssistantLayout?(): void;
@@ -32,6 +34,7 @@ interface TimelineRowProps {
 }
 
 const TimelineRowContext = createContext<TimelineRowContextValue>({
+  dateLabels: new Map(),
   latestAssistantTurnId: null,
 });
 
@@ -49,23 +52,33 @@ function TimelineRow(props: TimelineRowProps): React.JSX.Element {
   const context = useContext(TimelineRowContext);
   const actions = context.actionsForTurn?.(turn);
   const latestAssistant = context.latestAssistantTurnId === turn.id;
+  const dateLabel = context.dateLabels.get(turn.id);
   return (
-    <TimelineTurnView
-      {...(context.activityActions === undefined
-        ? {}
-        : { activityActions: context.activityActions })}
-      {...(actions === undefined ? {} : { actions })}
-      {...(latestAssistant && context.onLatestAssistantLayout !== undefined
-        ? { onLatestAssistantLayout: context.onLatestAssistantLayout }
-        : {})}
-      {...(latestAssistant
-        ? { latestAssistantMeasurementKey: context.latestAssistantMeasurementKey ?? null }
-        : {})}
-      {...(context.onLoadActivity === undefined ? {} : { onLoadActivity: context.onLoadActivity })}
-      {...(latestAssistant && context.setLatestAssistantNode !== undefined
-        ? { latestAssistantRef: context.setLatestAssistantNode }
-        : {})}
-      turn={turn}
-    />
+    <View style={styles.row}>
+      {dateLabel === undefined ? null : <TimelineDateSeparator label={dateLabel} />}
+      <TimelineTurnView
+        {...(context.activityActions === undefined
+          ? {}
+          : { activityActions: context.activityActions })}
+        {...(actions === undefined ? {} : { actions })}
+        {...(latestAssistant && context.onLatestAssistantLayout !== undefined
+          ? { onLatestAssistantLayout: context.onLatestAssistantLayout }
+          : {})}
+        {...(latestAssistant
+          ? { latestAssistantMeasurementKey: context.latestAssistantMeasurementKey ?? null }
+          : {})}
+        {...(context.onLoadActivity === undefined
+          ? {}
+          : { onLoadActivity: context.onLoadActivity })}
+        {...(latestAssistant && context.setLatestAssistantNode !== undefined
+          ? { latestAssistantRef: context.setLatestAssistantNode }
+          : {})}
+        turn={turn}
+      />
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  row: { width: "100%" },
+});

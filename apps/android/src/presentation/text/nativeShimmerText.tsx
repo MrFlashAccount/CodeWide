@@ -12,6 +12,8 @@ interface NativeShimmerTextProps {
   fontFamily?: string;
   fontSize: number;
   fontWeight?: string;
+  lineHeight: number;
+  numberOfLines: number;
   pointerEvents?: "auto" | "box-none" | "box-only" | "none";
   style: StyleProp<ViewStyle>;
   text: string;

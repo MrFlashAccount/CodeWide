@@ -28,9 +28,6 @@ mod transport;
 
 pub use commands::*;
 pub use kinds::{COMMAND_KINDS, QUERY_KINDS};
-pub(crate) use kinds::{
-    command_required_scope, command_scope_for_kind, query_required_scope, query_scope_for_kind,
-};
 pub use transport::*;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

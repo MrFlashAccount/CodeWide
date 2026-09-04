@@ -24,21 +24,12 @@ impl SyncV2Runtime {
     ) -> bool {
         if let Query::OperationGet { operation_id } = query {
             let frame = match self.ledger.authorized_receipt(context, &operation_id) {
-                Ok(Some(record)) if has_scope(authorization, &record.required_scope) => {
-                    ServerFrame::QueryCompleted {
-                        request_id,
-                        result: QueryResult::OperationGet {
-                            operation_id,
-                            receipt: Box::new(record.receipt),
-                        },
-                    }
-                }
-                Ok(Some(record)) => ServerFrame::QueryFailed {
+                Ok(Some(receipt)) => ServerFrame::QueryCompleted {
                     request_id,
-                    error: V2Error::forbidden(format!(
-                        "{} scope is required",
-                        record.required_scope
-                    )),
+                    result: QueryResult::OperationGet {
+                        operation_id,
+                        receipt: Box::new(receipt),
+                    },
                 },
                 Ok(None) => {
                     operation_receipt_not_found(request_id, "operation receipt was not found")
@@ -155,15 +146,5 @@ fn operation_receipt_not_found(request_id: Id, message: &str) -> ServerFrame {
             recovery: Recovery::Requery,
             message: message.into(),
         },
-    }
-}
-
-fn has_scope(authorization: &AuthorizationContext, required: &str) -> bool {
-    match authorization {
-        AuthorizationContext::Admin => true,
-        AuthorizationContext::Session { scopes, .. } => {
-            scopes.iter().any(|scope| scope == required)
-        }
-        AuthorizationContext::Device { .. } => false,
     }
 }

@@ -19,7 +19,7 @@ impl UpstreamSemanticSource {
             return Ok(());
         }
         if new_thread {
-            return require_scope(authorization, "files.upload.workspace");
+            return require_authenticated_session(authorization);
         }
         for attachment_id in attachment_ids {
             match self
@@ -28,9 +28,9 @@ impl UpstreamSemanticSource {
                 .as_ref()
                 .map(|stages| stages.status(context, attachment_id))
             {
-                Some(Ok(_)) => require_scope(authorization, "files.upload.workspace")?,
+                Some(Ok(_)) => require_authenticated_session(authorization)?,
                 None | Some(Err(AttachmentStageError::NotFound)) => {
-                    require_scope(authorization, "files.download.workspace")?;
+                    require_authenticated_session(authorization)?;
                 }
                 Some(Err(error)) => return Err(stage_error(&error)),
             }

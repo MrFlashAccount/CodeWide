@@ -5,6 +5,7 @@ import { colors, spacing, typeScale } from "../../theme";
 import { TOKEN_SYMBOL } from "../../ui/tokenDisplay";
 import { formatEstimatedTurnCost } from "../../turnCost";
 import { Bubble, BubbleContent } from "../../rendering/Bubble";
+import { richMarkdownLayout } from "../../rendering/RichMarkdown";
 import { PresentationText as Text, ProductText } from "../text/ProductText";
 import { ShimmerText } from "../text/ShimmerText";
 import { MessageActionRailView } from "./MessageActionRailView";
@@ -48,6 +49,7 @@ export function TimelineTurnView(props: TimelineTurnViewProps): React.JSX.Elemen
   const sentAt = timelineClockLabel(turn.createdAt);
   const completedAt = timelineClockLabel(turn.completedAt);
   const duration = timelineDurationLabel(turn.durationMs);
+  const agentBubbleFill = turn.assistantText.some((text) => richMarkdownLayout(text) === "fill");
   const showAgentBubble =
     turn.activityCount > 0 ||
     assistantText !== "" ||
@@ -100,7 +102,7 @@ export function TimelineTurnView(props: TimelineTurnViewProps): React.JSX.Elemen
             : { onLayout: handleLatestAssistantLayout })}
           style={styles.agentMessageRow}
         >
-          <Bubble variant="agent" testID="codex-bubble">
+          <Bubble fill={agentBubbleFill} variant="agent" testID="codex-bubble">
             <BubbleContent>
               <TimelineActivityView
                 {...(activityActions === undefined ? {} : { actions: activityActions })}

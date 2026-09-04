@@ -612,6 +612,7 @@ dependencies = [
  "memchr",
  "mime_guess",
  "notify",
+ "opus-pure",
  "p256",
  "percent-encoding",
  "portable-pty",
@@ -633,6 +634,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "tokio-util",
+ "tower-layer",
  "tower-service",
  "tracing",
  "tracing-subscriber",
@@ -2012,6 +2014,12 @@ dependencies = [
  "pkg-config",
  "vcpkg",
 ]
+
+[[package]]
+name = "opus-pure"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de6a3cef053e1fdea38a5e50edb0789590a31184c5a59f6cd5e462fe844793e7"
 
 [[package]]
 name = "ordered-stream"

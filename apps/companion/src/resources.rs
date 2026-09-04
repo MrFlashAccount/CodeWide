@@ -353,13 +353,12 @@ pub enum ResourceError {
 }
 
 impl ResourceService {
-    /// Authorizes one workspace-relative preview against the authoritative
-    /// workspace root and returns its current length and media type.
+    /// Resolves one workspace-originated preview and returns its current length
+    /// and media type. Authenticated file reads are intentionally host-wide.
     ///
     /// # Errors
     ///
-    /// Returns an error when the workspace/path is invalid, escapes the
-    /// workspace root, or the file cannot be inspected.
+    /// Returns an error when the path is invalid or the file cannot be inspected.
     pub async fn workspace_preview_metadata(
         &self,
         workspace: PathBuf,
@@ -680,11 +679,9 @@ impl ResourceService {
         tokio::spawn(async move {
             match service.refresh_projection(&thread_id).await {
                 Ok(projection) => {
-                    // A thread read must make its exact attachment and changed-file
-                    // paths available immediately. Previously this happened only
-                    // after the Changes/Attachments sheet made a separate resource
-                    // RPC, so opening the same file directly from a message could
-                    // race that RPC and receive path_outside_root (403).
+                    // Keep the persisted preview registry current for older local
+                    // state readers even though authenticated HTTP reads are now
+                    // host-wide in both protocol generations.
                     service
                         .files
                         .observe_preview_paths(projection.materialized_summary().preview_paths())
@@ -828,7 +825,20 @@ impl ResourceService {
     pub async fn observe_rpc_result(&self, method: &str, result: &Value) {
         let mut data = ResourceData::default();
         match method {
-            "companion/threadWindow/read" | "thread/read" | "thread/resume" => {
+            "companion/thread/sync" => {
+                let cwd = result
+                    .get("thread")
+                    .and_then(|thread| thread.get("cwd"))
+                    .and_then(Value::as_str)
+                    .map(Path::new);
+                observe_turns(&mut data, result.pointer("/history/turns"), cwd);
+                if let Some(active_turn) = result.get("activeTurn")
+                    && !active_turn.is_null()
+                {
+                    observe_turn(&mut data, active_turn, cwd);
+                }
+            }
+            "thread/read" | "thread/resume" => {
                 let Some(thread) = result.get("thread") else {
                     return;
                 };
@@ -1129,13 +1139,17 @@ fn observe_turns(data: &mut ResourceData, turns: Option<&Value>, cwd: Option<&Pa
         return;
     };
     for turn in turns {
-        let turn_id = turn.get("id").and_then(Value::as_str).unwrap_or("");
-        let Some(items) = turn.get("items").and_then(Value::as_array) else {
-            continue;
-        };
-        for item in items {
-            data.apply_materialized_item(turn_id, item, cwd);
-        }
+        observe_turn(data, turn, cwd);
+    }
+}
+
+fn observe_turn(data: &mut ResourceData, turn: &Value, cwd: Option<&Path>) {
+    let turn_id = turn.get("id").and_then(Value::as_str).unwrap_or("");
+    let Some(items) = turn.get("items").and_then(Value::as_array) else {
+        return;
+    };
+    for item in items {
+        data.apply_materialized_item(turn_id, item, cwd);
     }
 }
 
@@ -2473,7 +2487,7 @@ mod tests {
             root_id: None,
             path: Some(path.to_string_lossy().into_owned()),
         };
-        assert!(matches!(
+        assert_eq!(
             files
                 .download(
                     preview_query(&changed),
@@ -2481,12 +2495,11 @@ mod tests {
                     false,
                     true
                 )
-                .await,
-            Err(crate::files::FileError::Client {
-                status: axum::http::StatusCode::FORBIDDEN,
-                code: "path_outside_root"
-            })
-        ));
+                .await
+                .expect("unobserved changed file preview")
+                .status(),
+            axum::http::StatusCode::OK
+        );
 
         let value = thread_resources_from_vcs("thread".into(), snapshot, &rollout, &files)
             .await
@@ -2505,7 +2518,7 @@ mod tests {
                 .status(),
             axum::http::StatusCode::OK
         );
-        assert!(matches!(
+        assert_eq!(
             files
                 .download(
                     preview_query(&escaped),
@@ -2513,12 +2526,11 @@ mod tests {
                     false,
                     true
                 )
-                .await,
-            Err(crate::files::FileError::Client {
-                status: axum::http::StatusCode::FORBIDDEN,
-                code: "path_outside_root"
-            })
-        ));
+                .await
+                .expect("escaped file preview")
+                .status(),
+            axum::http::StatusCode::OK
+        );
 
         assert_eq!(
             value["changes"][0]["path"].as_str(),

@@ -102,7 +102,7 @@ describe("thread projection store", () => {
     expect(summaryApplied).toBe(true);
   });
 
-  it("repairs the detail projection before publishing its terminal summary", async () => {
+  it("publishes summaries after the detail checkpoint without a second projection", async () => {
     const order: string[] = [];
     const store = createThreadProjectionStore({
       details: {
@@ -112,10 +112,6 @@ describe("thread projection store", () => {
           return { checkpoint: Promise.resolve().then(() => { order.push("checkpoint"); }), threads: new Map() };
         },
       },
-      async reconcileBeforeSummary(_connectionId, _events, projected) {
-        order.push("repair");
-        return projected;
-      },
       summaries: {
         async applySnapshot() {},
         async applyEvents() { order.push("summary"); },
@@ -123,6 +119,6 @@ describe("thread projection store", () => {
     });
 
     await store.applyEvents("server", []);
-    expect(order).toEqual(["detail", "checkpoint", "repair", "summary"]);
+    expect(order).toEqual(["detail", "checkpoint", "summary"]);
   });
 });

@@ -666,7 +666,6 @@ mod queue_tests {
     fn authorization(device_id: &str) -> AuthorizationContext {
         AuthorizationContext::Session {
             device_id: device_id.into(),
-            scopes: vec!["turns.start".into()],
             expires_at: u64::MAX,
         }
     }

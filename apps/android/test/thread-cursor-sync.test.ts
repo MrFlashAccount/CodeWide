@@ -1,70 +1,248 @@
 import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { describe, expect, it } from "vitest";
 
-import { collectThreadCursorDelta, latestSealedTurnId, planThreadOpenSync, shouldUseBoundedThreadWindowRead, threadOpenNeedsCursorCatchUp } from "../src/data/thread-cursor-sync";
+import { ThreadSyncLane, assertThreadSyncReachedHead, latestSealedTurnId, materializeThreadSync, parseThreadSyncResponse } from "../src/data/thread-cursor-sync";
 
 describe("thread cursor sync", () => {
-  it("uses the existing shell only for a cached bounded head repair", () => {
-    expect(shouldUseBoundedThreadWindowRead(true)).toBe(true);
-    expect(shouldUseBoundedThreadWindowRead(false)).toBe(false);
+  it("keeps immutable cache rows and appends only the server delta", () => {
+    const cached = thread([turn("a"), turn("b"), turn("stale-active", "inProgress")]);
+    const result = materializeThreadSync(cached, {
+      readModelVersion: 2,
+      thread: thread([]),
+      history: {
+        kind: "delta",
+        headTurnId: "d",
+        turns: [turn("c"), turn("d")],
+        hasMore: false,
+        olderCursor: null,
+      },
+      activeTurn: turn("live", "inProgress"),
+    }, "older");
+
+    expect(result.thread.turns.map(({ id }) => id)).toEqual(["a", "b", "c", "d", "live"]);
+    expect(result.historyCursor).toBe("older");
   });
 
-  it("opens a healthy known thread locally and reserves imports for missing state", () => {
-    expect(planThreadOpenSync(true, null, false)).toBe("local");
-    expect(planThreadOpenSync(true, 42, false)).toBe("cursor-catch-up");
-    expect(planThreadOpenSync(true, null, true)).toBe("snapshot-import");
-    expect(planThreadOpenSync(true, 42, true)).toBe("snapshot-import");
-    expect(planThreadOpenSync(false, null, false)).toBe("snapshot-import");
+  it("replaces a disconnected cache with the bounded server reset", () => {
+    const result = materializeThreadSync(thread([turn("wrong")]), {
+      readModelVersion: 2,
+      thread: thread([]),
+      history: {
+        kind: "reset",
+        headTurnId: "b",
+        turns: [turn("a"), turn("b")],
+        hasMore: false,
+        olderCursor: "older-reset",
+      },
+      activeTurn: null,
+    }, "ignored");
+
+    expect(result.thread.turns.map(({ id }) => id)).toEqual(["a", "b"]);
+    expect(result.historyCursor).toBe("older-reset");
   });
 
-  it("catches up a nominally local thread when a delivered receipt has no canonical turn", () => {
-    expect(threadOpenNeedsCursorCatchUp("local", true)).toBe(true);
-    expect(threadOpenNeedsCursorCatchUp("local", false)).toBe(false);
-    expect(threadOpenNeedsCursorCatchUp("cursor-catch-up", false)).toBe(true);
-    expect(threadOpenNeedsCursorCatchUp("snapshot-import", true)).toBe(false);
-  });
-
-  it("collects only immutable turns newer than the local cursor", async () => {
-    const pages = new Map<string | null, { data: Turn[]; nextCursor: string | null }>([
-      [null, { data: [turn("d"), turn("c")], nextCursor: "older" }],
-      ["older", { data: [turn("b"), turn("a")], nextCursor: null }],
-    ]);
-
-    await expect(collectThreadCursorDelta("b", async (cursor) => pages.get(cursor)!)).resolves.toEqual({
-      turns: [turn("b"), turn("c"), turn("d")],
-      historyCursor: "older",
-      anchorFound: true,
-    });
-  });
-
-  it("loads one bounded tail page for a first import", async () => {
+  it("reruns one authoritative sync when a live event arrives during it", async () => {
+    const lane = new ThreadSyncLane<number>();
+    const resolvers: Array<(value: number) => void> = [];
     let calls = 0;
-    const result = await collectThreadCursorDelta(null, async () => {
+    const result = lane.run("server/thread", async () => await new Promise<number>((resolve) => {
       calls += 1;
-      return { data: [turn("b"), turn("a")], nextCursor: "older" };
-    });
-
-    expect(calls).toBe(1);
-    expect(result).toEqual({ turns: [turn("a"), turn("b")], historyCursor: "older", anchorFound: true });
-  });
-
-  it("does not append a disconnected history island", async () => {
-    const result = await collectThreadCursorDelta("missing", async () => ({
-      data: [turn("b"), turn("a")],
-      nextCursor: null,
+      resolvers.push(resolve);
     }));
 
-    expect(result).toEqual({ turns: [], historyCursor: null, anchorFound: false });
+    await Promise.resolve();
+    expect(lane.markDirty("server/thread")).toBe(true);
+    resolvers[0]?.(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    resolvers[1]?.(2);
+
+    await expect(result).resolves.toBe(2);
+    expect(calls).toBe(2);
   });
 
-  it("falls back cleanly when the cursor is beyond the bounded catch-up budget", async () => {
-    let page = 0;
-    const result = await collectThreadCursorDelta("far-away", async () => ({
-      data: [turn(`turn-${page += 1}`)],
-      nextCursor: `page-${page}`,
-    }), 2);
+  it("coalesces concurrent readers without scheduling an unnecessary second sync", async () => {
+    let resolve: ((value: number) => void) | undefined;
+    let calls = 0;
+    const lane = new ThreadSyncLane<number>();
+    const synchronize = async (): Promise<number> => await new Promise<number>((currentResolve) => {
+      calls += 1;
+      resolve = currentResolve;
+    });
 
-    expect(result).toEqual({ turns: [], historyCursor: "page-1", anchorFound: false });
+    const first = lane.run("server/thread", synchronize);
+    const second = lane.run("server/thread", synchronize);
+    expect(first).toBe(second);
+    resolve?.(1);
+
+    await expect(first).resolves.toBe(1);
+    expect(calls).toBe(1);
+  });
+
+  it("preserves an authoritative completed turn without a final-answer phase", () => {
+    const unphased = {
+      ...turn("unphased"),
+      items: [{
+        id: "agent-unphased",
+        type: "agentMessage" as const,
+        text: "done",
+        phase: null,
+      }],
+    };
+    const result = materializeThreadSync(thread([unphased]), {
+      readModelVersion: 2,
+      thread: thread([]),
+      history: {
+        kind: "current",
+        headTurnId: "unphased",
+        turns: [],
+        hasMore: false,
+        olderCursor: null,
+      },
+      activeTurn: null,
+    }, null);
+
+    expect(result.thread.turns).toEqual([unphased]);
+  });
+
+  it("rejects a malformed transport response before it reaches projection code", () => {
+    expect(() => parseThreadSyncResponse({
+      readModelVersion: 2,
+      thread: { id: "thread", cwd: "/workspace", status: { type: "idle" } },
+      history: { kind: "current", headTurnId: null, turns: [], hasMore: false, olderCursor: null },
+      activeTurn: null,
+    })).toThrow("invalid response");
+  });
+
+  it("materializes metadata-only recovery turns at the Conversation boundary", () => {
+    const response = parseThreadSyncResponse({
+      readModelVersion: 2,
+      thread: thread([]),
+      history: {
+        kind: "reset",
+        headTurnId: "legacy",
+        turns: [{
+          id: "legacy",
+          status: "interrupted",
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        }],
+        hasMore: false,
+        olderCursor: null,
+      },
+      activeTurn: null,
+    });
+
+    expect(response.history.turns).toEqual([{
+      id: "legacy",
+      items: [],
+      itemsView: "notLoaded",
+      status: "interrupted",
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1,
+    }]);
+  });
+
+  it("materializes a size-bounded active turn at the Conversation boundary", () => {
+    const contentReference = {
+      version: 1 as const,
+      fields: {},
+      whole: {
+        id: "content-digest",
+        byteLength: 311_730,
+        contentType: "application/json",
+      },
+    };
+    const response = parseThreadSyncResponse({
+      readModelVersion: 2,
+      thread: thread([]),
+      history: {
+        kind: "current",
+        headTurnId: null,
+        turns: [],
+        hasMore: false,
+        olderCursor: null,
+      },
+      activeTurn: {
+        id: "active",
+        itemsView: "full",
+        status: "inProgress",
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+        codewideContent: contentReference,
+      },
+    });
+
+    const result = materializeThreadSync(null, response, null);
+
+    expect(result.thread.turns).toEqual([{
+      id: "active",
+      items: [],
+      itemsView: "notLoaded",
+      status: "inProgress",
+      error: null,
+      startedAt: 1,
+      completedAt: null,
+      durationMs: null,
+      codewideContent: contentReference,
+    }]);
+  });
+
+  it("keeps an unreferenced malformed active turn as a Conversation sync failure", () => {
+    expect(() => parseThreadSyncResponse({
+      readModelVersion: 2,
+      thread: thread([]),
+      history: {
+        kind: "current",
+        headTurnId: null,
+        turns: [],
+        hasMore: false,
+        olderCursor: null,
+      },
+      activeTurn: { id: "active", status: "inProgress" },
+    })).toThrow("invalid response");
+  });
+
+  it("rejects a terminal delta that did not reach the server head", () => {
+    expect(() => assertThreadSyncReachedHead({
+      readModelVersion: 2,
+      thread: thread([]),
+      history: {
+        kind: "delta",
+        headTurnId: "missing-head",
+        turns: [turn("partial")],
+        hasMore: false,
+        olderCursor: null,
+      },
+      activeTurn: null,
+    }, "cached")).toThrow("advertised history head");
+  });
+
+  it("accepts current, delta, and reset responses only after reaching their head", () => {
+    expect(() => assertThreadSyncReachedHead({
+      readModelVersion: 2,
+      thread: thread([]),
+      history: { kind: "current", headTurnId: "cached", turns: [], hasMore: false, olderCursor: null },
+      activeTurn: null,
+    }, "cached")).not.toThrow();
+    expect(() => assertThreadSyncReachedHead({
+      readModelVersion: 2,
+      thread: thread([]),
+      history: { kind: "delta", headTurnId: "new", turns: [turn("new")], hasMore: false, olderCursor: null },
+      activeTurn: null,
+    }, "cached")).not.toThrow();
+    expect(() => assertThreadSyncReachedHead({
+      readModelVersion: 2,
+      thread: thread([]),
+      history: { kind: "reset", headTurnId: "tail", turns: [turn("tail")], hasMore: false, olderCursor: "older" },
+      activeTurn: null,
+    }, "disconnected")).not.toThrow();
   });
 
   it("uses the latest completed turn as the stable cursor", () => {
@@ -114,5 +292,25 @@ function turn(id: string, status: Turn["status"] = "completed", withAgent = true
       phase: "final_answer",
       memoryCitation: null,
     }] : [],
+  };
+}
+
+function thread(turns: Turn[]): import("@codewide/codex-protocol/v0.147.0/v2").Thread {
+  return {
+    id: "thread",
+    preview: "",
+    modelProvider: "openai",
+    createdAt: 1,
+    updatedAt: 1,
+    status: { type: turns.some(({ status }) => status === "inProgress") ? "active" : "idle" },
+    path: null,
+    cwd: "/workspace",
+    cliVersion: "test",
+    source: "appServer",
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: null,
+    turns,
   };
 }

@@ -18,7 +18,7 @@ use crate::{
         DictationError,
         v2::{FinishOutcome, VoiceBatch},
     },
-    server::{AppState, Authorization, authorization_for_scope},
+    server::{AppState, Authorization, authenticated_session},
     session_authority::SessionAuthority,
 };
 
@@ -80,7 +80,7 @@ async fn voice_upgrade(
     if headers.get("origin").is_some() {
         return unauthorized();
     }
-    let Some(authorization) = authorization_for_scope(&state, &headers, "turns.start").await else {
+    let Some(authorization) = authenticated_session(&state, &headers).await else {
         return unauthorized();
     };
     let Ok(audience) = AuthenticatedContextKey::derive(&authorization) else {
@@ -750,6 +750,7 @@ fn dictation_error(error: &DictationError) -> (TransportErrorCode, &'static str)
         }
         DictationError::InvalidBase64
         | DictationError::InvalidChunkSize
+        | DictationError::InvalidOpus
         | DictationError::Empty
         | DictationError::InvalidParams(_) => {
             (TransportErrorCode::InvalidRequest, "invalid Voice request")
@@ -800,7 +801,7 @@ fn unauthorized() -> Response {
     http::error(
         StatusCode::UNAUTHORIZED,
         TransportErrorCode::Unauthorized,
-        "turns.start session scope required",
+        "authenticated device session required",
     )
 }
 

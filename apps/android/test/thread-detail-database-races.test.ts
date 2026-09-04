@@ -9,7 +9,6 @@ const harness = vi.hoisted(() => ({
   loadBoundary: vi.fn(),
   loadResolvedWindow: vi.fn(),
   loadAdjacentWindow: vi.fn(),
-  invalidations: new Map<string, { id: string; connectionId: string; threadId: string; cursor: number }>(),
   failNextWrite: false,
   rollbacks: 0,
 }));
@@ -63,18 +62,6 @@ vi.mock("../src/data/thread-detail-sqlite.native", () => ({
       loadAdjacentWindow: harness.loadAdjacentWindow,
       loadAuthoritativeFacts: async () => [],
       loadPrependFacts: async () => [],
-      loadInvalidations: async () => [...harness.invalidations.values()].map(({ connectionId, threadId, cursor }) => ({ connectionId, threadId, cursor })),
-      upsertInvalidations: async (rows: Array<{ connectionId: string; threadId: string; cursor: number }>) => {
-        for (const row of rows) harness.invalidations.set(`${row.connectionId}\u0000${row.threadId}`, {
-          id: `${row.connectionId}\u0000${row.threadId}`,
-          ...row,
-        });
-      },
-      clearInvalidation: async (connectionId: string, threadId: string, throughCursor: number) => {
-        const id = `${connectionId}\u0000${threadId}`;
-        const current = harness.invalidations.get(id);
-        if (current !== undefined && current.cursor <= throughCursor) harness.invalidations.delete(id);
-      },
     };
   },
 }));
@@ -204,7 +191,6 @@ describe("thread detail ownership races", () => {
   beforeEach(() => {
     harness.persisted.length = 0;
     harness.commits.length = 0;
-    harness.invalidations.clear();
     harness.failNextWrite = false;
     harness.rollbacks = 0;
     harness.loadBoundary.mockReset().mockImplementation(async (
@@ -824,6 +810,50 @@ describe("thread detail ownership races", () => {
     await details.close();
   });
 
+  it("keeps an edited prompt in the queue after the native edit receipt is delivered", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    const queued = details.createPending({
+      connectionId: "server",
+      threadId: "thread",
+      commandId: "queued-prompt",
+      method: "turn/start",
+      presentation: "queue",
+      text: "edited prompt",
+      attachments: [],
+      state: "queued",
+      attempts: 0,
+      lastError: null,
+      createdAt: 1_000_000,
+      updatedAt: 1_000_001,
+    });
+    await details.commitPending(queued);
+
+    await details.applyCommandDelivery({
+      connectionId: "server",
+      commandId: "queue-edit-receipt",
+      targetCommandId: "queued-prompt",
+      method: "companion/queue/edit",
+      threadId: null,
+      text: "edited prompt",
+      attachments: [],
+      state: "delivered",
+      attempts: 1,
+      lastError: null,
+      createdAt: 1_000_001,
+      updatedAt: 1_000_002,
+    });
+
+    expect(details.listQueued("server", "thread")).toEqual([
+      expect.objectContaining({
+        commandId: "queued-prompt",
+        state: "queued",
+        text: "edited prompt",
+      }),
+    ]);
+    await details.close();
+  });
+
   it("does not reconstruct historical direct deliveries from a companion queue snapshot", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
@@ -1347,7 +1377,61 @@ describe("thread detail ownership races", () => {
     await details.close();
   });
 
-  it("keeps the partial live head mutable when a reconnect snapshot reports terminal metadata", async () => {
+  it("keeps a materialized not-loaded history turn mutable until complete history repairs it", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    const incomplete = {
+      ...completedTurn("remote-turn", "command"),
+      items: [],
+      itemsView: "notLoaded",
+    } satisfies Turn;
+
+    await expect(details.importThreadSnapshot("server", {
+      ...authoritativeThread("command"),
+      turns: [incomplete],
+    }, "recovery")).resolves.toBeUndefined();
+
+    expect(harness.persisted).toContainEqual(expect.objectContaining({
+      value: expect.objectContaining({
+        kind: "turn",
+        remoteTurnId: "remote-turn",
+        sealed: false,
+        turn: incomplete,
+      }),
+    }));
+
+    const repaired = completedTurn("remote-turn", "command");
+    await details.appendTurns("server", "thread", [repaired]);
+
+    expect(details.getThread("server", "thread")?.turns).toEqual([repaired]);
+    expect(harness.persisted).toContainEqual(expect.objectContaining({
+      value: expect.objectContaining({ kind: "turn", remoteTurnId: "remote-turn", sealed: true }),
+    }));
+    await details.close();
+  });
+
+  it("keeps resident items when a reconnect refresh carries materialized turn metadata", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    const complete = authoritativeThread("command");
+    await details.importThreadSnapshot("server", complete, "initial");
+    const incomplete = {
+      ...complete.turns[0]!,
+      items: [],
+      itemsView: "notLoaded",
+    } satisfies Turn;
+
+    await expect(details.importThreadSnapshot("server", {
+      ...complete,
+      turns: [incomplete],
+    }, "reconnect")).resolves.toBeUndefined();
+
+    expect(details.getThread("server", "thread")?.turns[0]?.items)
+      .toEqual(complete.turns[0]?.items);
+    await details.close();
+  });
+
+  it("keeps the active projection when a catalog snapshot updates metadata", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
     await details.importThreadSnapshot("server", liveThread("command"), "initial");
@@ -1357,7 +1441,6 @@ describe("thread detail ownership races", () => {
       archived: false,
     }], 17);
 
-    expect(details.captureRefreshCursor("server", "thread")).toBe(17);
     expect(details.getThread("server", "thread")).toMatchObject({
       name: "Renamed",
       status: { type: "active" },
@@ -1368,17 +1451,16 @@ describe("thread detail ownership races", () => {
     }));
 
     const repaired = completedTurn("remote-turn", "command");
-    await details.appendTurns("server", "thread", [repaired], 17);
+    await details.appendTurns("server", "thread", [repaired]);
 
-    expect(details.captureRefreshCursor("server", "thread")).toBeNull();
     expect(details.getThread("server", "thread")?.turns).toEqual([repaired]);
     await details.close();
   });
 
-  it("derives durable event checkpoints from semantic operations, not raw methods", async () => {
+  it("keeps live projection updates out of the durable SQLite cache", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
-    await details.importThreadSnapshot("server", authoritativeThread("command"), "initial", null, "older");
+    await details.importThreadSnapshot("server", authoritativeThread("command"), "initial", "older");
 
     harness.commits.length = 0;
     const semanticBoundary = await details.applyEvents("server", [{
@@ -1394,7 +1476,7 @@ describe("thread detail ownership races", () => {
       },
     }]);
     await semanticBoundary.checkpoint;
-    expect(harness.commits).toContainEqual({ durable: true });
+    expect(harness.commits).toEqual([]);
 
     harness.commits.length = 0;
     const rawBoundary = await details.applyEvents("server", [{
@@ -1410,39 +1492,134 @@ describe("thread detail ownership races", () => {
       },
     }]);
     await rawBoundary.checkpoint;
-    expect(harness.commits).not.toContainEqual({ durable: true });
+    expect(harness.commits).toEqual([]);
+    await details.close();
+  });
+
+  it("keeps the authoritative active turn only in the live projection", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    await details.importThreadSnapshot("server", authoritativeThread("sealed"), "initial");
+    harness.commits.length = 0;
+
+    const live = liveThread("streaming");
+    const active: Thread = {
+      ...live,
+      turns: live.turns.map((turn) => ({ ...turn, id: "active-turn" })),
+    };
+    await details.replaceActiveThread("server", active);
+
+    expect(details.getThread("server", "thread")?.status).toEqual(active.status);
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id))
+      .toEqual(["remote-turn", "active-turn"]);
+    expect(harness.commits).toEqual([]);
+    await details.close();
+  });
+
+  it("commits sealed history and the active head atomically without overwriting a concurrent live patch", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    const active = {
+      ...liveThread("streaming").turns[0]!,
+      id: "active-turn",
+    } satisfies Turn;
+    const stale = {
+      ...authoritativeThread("sealed"),
+      status: { type: "active", activeFlags: [] },
+      turns: [completedTurn("sealed-turn", "sealed"), active],
+    } satisfies Thread;
+    await details.importThreadSnapshot("server", stale, "initial", "older");
+    const revision = details.liveRevision("server", "thread");
+    const item = {
+      type: "agentMessage",
+      id: "streamed-agent",
+      text: "newer live text",
+      phase: null,
+    } as Turn["items"][number];
+
+    const projected = await details.applyEvents("server", [{
+      cursor: 1,
+      payload: {
+        method: "item/completed",
+        params: { threadId: "thread", turnId: "active-turn", item },
+        codewideThreadPatch: {
+          version: 1,
+          threadId: "thread",
+          operation: { kind: "itemUpsert", itemPhase: "completed", turnId: "active-turn", item },
+        },
+      },
+    }]);
+    await projected.checkpoint;
+    harness.commits.length = 0;
+
+    await details.synchronizeThread({
+      connectionId: "server",
+      thread: stale,
+      mode: "merge",
+      historyCursor: "older",
+      expectedLiveRevision: revision,
+    });
+
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id))
+      .toEqual(["sealed-turn", "active-turn"]);
+    expect(details.getThread("server", "thread")?.turns[1]?.items)
+      .toContainEqual(expect.objectContaining({ id: "streamed-agent", text: "newer live text" }));
+    expect(harness.commits).toHaveLength(1);
+    await details.close();
+  });
+
+  it("replaces a disconnected sealed history when the server returns reset", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    await details.importThreadSnapshot("server", authoritativeThread("stale"), "initial", "stale-older");
+    const replacement: Thread = {
+      ...authoritativeThread("fresh"),
+      turns: [completedTurn("fresh-turn", "fresh")],
+    };
+    const commitsBeforeReset = harness.commits.length;
+
+    await details.replaceThreadSnapshot("server", replacement, "recovery", "fresh-older");
+
+    expect(details.getThread("server", "thread")?.turns.map(({ id }) => id)).toEqual(["fresh-turn"]);
+    expect(details.historyCursor("server", "thread")).toBe("fresh-older");
+    expect(harness.commits).toHaveLength(commitsBeforeReset + 1);
+    await details.close();
+  });
+
+  it("rolls back the complete server reset when its atomic write fails", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    const stale = authoritativeThread("stale");
+    await details.importThreadSnapshot("server", stale, "initial", "stale-older");
+    const replacement: Thread = {
+      ...authoritativeThread("fresh"),
+      turns: [completedTurn("fresh-turn", "fresh")],
+    };
+    harness.failNextWrite = true;
+
+    await expect(details.replaceThreadSnapshot("server", replacement, "recovery", "fresh-older"))
+      .rejects.toThrow("simulated projection failure");
+
+    expect(details.getThread("server", "thread")?.turns).toEqual(stale.turns);
+    expect(details.historyCursor("server", "thread")).toBe("stale-older");
     await details.close();
   });
 
   it("persists the older-history cursor with the durable thread epoch", async () => {
     const details = createThreadDetailDatabase();
     await details.prepare();
-    await details.importThreadSnapshot("server", authoritativeThread("first"), "initial", null, "older-1");
+    await details.importThreadSnapshot("server", authoritativeThread("first"), "initial", "older-1");
 
     expect(details.historyCursor("server", "thread")).toBe("older-1");
     expect(harness.persisted).toContainEqual(expect.objectContaining({
       value: expect.objectContaining({ kind: "thread", historyHadTurns: true }),
     }));
-    await details.appendTurns("server", "thread", [completedTurn("second", "second")], null, "tail-refresh");
+    await details.appendTurns("server", "thread", [completedTurn("second", "second")], "tail-refresh");
     expect(details.historyCursor("server", "thread")).toBe("older-1");
 
     await details.prependTurns("server", "thread", 0, [], "older-2");
     expect(details.historyCursor("server", "thread")).toBe("older-2");
     expect(harness.persisted.some((change) => change.value?.historyCursor === "older-2")).toBe(true);
-    await details.close();
-  });
-
-  it("turns a replay-expiry snapshot into one lazy cursor catch-up", async () => {
-    const details = createThreadDetailDatabase();
-    await details.prepare();
-    const thread = authoritativeThread("first");
-    await details.importThreadSnapshot("server", thread, "initial");
-
-    await details.applySnapshot("server", [{ thread, archived: false }], 99);
-    expect(details.captureRefreshCursor("server", "thread")).toBe(99);
-
-    await details.appendTurns("server", "thread", [], 99);
-    expect(details.captureRefreshCursor("server", "thread")).toBeNull();
     await details.close();
   });
 

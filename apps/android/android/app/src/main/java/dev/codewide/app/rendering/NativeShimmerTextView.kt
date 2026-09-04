@@ -9,6 +9,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.TextUtils
 import android.view.View
@@ -38,13 +40,14 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
   private var pendingFontSize = 14f
   private var pendingFontFamily: String? = null
   private var pendingFontWeight: String? = null
+  private var pendingLineHeight = 16.8f
+  private var pendingNumberOfLines = 1
   private var pendingTextAlign = "left"
   private var pendingAnimate = true
 
-  private var displayText = ""
+  private var textLayout: StaticLayout? = null
+  private var textTopPx = 0f
   private var bandWidthPx = 0f
-  private var textStartPx = 0f
-  private var textBaselinePx = 0f
   private var animationGeneration = 0
   private var aggregatedVisible = true
 
@@ -60,6 +63,8 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
   fun setPendingFontSize(value: Float) { pendingFontSize = value }
   fun setPendingFontFamily(value: String?) { pendingFontFamily = value }
   fun setPendingFontWeight(value: String?) { pendingFontWeight = value }
+  fun setPendingLineHeight(value: Float) { pendingLineHeight = value }
+  fun setPendingNumberOfLines(value: Int) { pendingNumberOfLines = if (value <= 0) Int.MAX_VALUE else value }
   fun setPendingTextAlign(value: String?) { pendingTextAlign = value ?: "left" }
   fun setPendingAnimate(value: Boolean) { pendingAnimate = value }
 
@@ -119,11 +124,14 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
 
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
-    if (displayText.isEmpty()) return
+    val layout = textLayout ?: return
     paint.shader = null
     val baseAlpha = (Color.alpha(pendingColor) * 0.58f).toInt().coerceIn(0, 255)
     paint.color = ColorUtils.setAlphaComponent(pendingColor, baseAlpha)
-    canvas.drawText(displayText, textStartPx, textBaselinePx, paint)
+    val checkpoint = canvas.save()
+    canvas.translate(0f, textTopPx)
+    layout.draw(canvas)
+    canvas.restoreToCount(checkpoint)
   }
 
   override fun dispatchDraw(canvas: Canvas) {
@@ -142,21 +150,42 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
 
   private fun rebuildTextGeometry() {
     if (width <= 0) {
-      displayText = pendingText
+      textLayout = null
       textPath.reset()
       return
     }
-    displayText = TextUtils.ellipsize(
-      pendingText,
-      paint,
-      width.toFloat(),
-      TextUtils.TruncateAt.END,
-    ).toString()
-    textStartPx = horizontalStart(displayText)
-    textBaselinePx = (height - paint.fontMetrics.descent - paint.fontMetrics.ascent) / 2f
+    val alignment = when (pendingTextAlign) {
+      "center" -> Layout.Alignment.ALIGN_CENTER
+      "right" -> Layout.Alignment.ALIGN_OPPOSITE
+      else -> Layout.Alignment.ALIGN_NORMAL
+    }
+    val lineHeightPx = PixelUtil.toPixelFromSP(max(1f, pendingLineHeight))
+    val lineSpacing = lineHeightPx - paint.fontSpacing
+    val layout = StaticLayout.Builder.obtain(pendingText, 0, pendingText.length, paint, width)
+      .setAlignment(alignment)
+      .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+      .setEllipsize(TextUtils.TruncateAt.END)
+      .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+      .setIncludePad(false)
+      .setLineSpacing(lineSpacing, 1f)
+      .setMaxLines(pendingNumberOfLines)
+      .build()
+    textLayout = layout
+    textTopPx = max(0f, (height - layout.height) / 2f)
     textPath.reset()
-    if (displayText.isNotEmpty()) {
-      paint.getTextPath(displayText, 0, displayText.length, textStartPx, textBaselinePx, textPath)
+    for (line in 0 until layout.lineCount) {
+      val start = layout.getLineStart(line)
+      val end = layout.getLineVisibleEnd(line)
+      if (start < end) {
+        paint.getTextPath(
+          pendingText,
+          start,
+          end,
+          layout.getLineLeft(line),
+          textTopPx + layout.getLineBaseline(line),
+          textPath,
+        )
+      }
     }
   }
 
@@ -170,7 +199,7 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
 
   private fun shouldAnimate(): Boolean =
     pendingAnimate && ValueAnimator.areAnimatorsEnabled() && isAttachedToWindow && aggregatedVisible && isShown &&
-      width > 0 && height > 0 && displayText.isNotEmpty()
+      width > 0 && height > 0 && pendingText.isNotEmpty()
 
   private fun updateAnimation() {
     stopAnimation()
@@ -205,15 +234,6 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
   private fun fontWeight(): Int = when (pendingFontWeight) {
     "bold" -> 700
     else -> pendingFontWeight?.toIntOrNull() ?: 400
-  }
-
-  private fun horizontalStart(text: String): Float {
-    val remaining = max(0f, width - ceil(paint.measureText(text)))
-    return when (pendingTextAlign) {
-      "center" -> remaining / 2f
-      "right" -> remaining
-      else -> 0f
-    }
   }
 }
 

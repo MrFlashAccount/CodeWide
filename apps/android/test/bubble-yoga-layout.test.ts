@@ -56,10 +56,12 @@ describe("Yoga-owned bubble layout", () => {
     expect(screen).toContain('testID="user-bubble"');
   });
 
-  it("fills tool-only agent bubbles and keeps non-compaction pre-turn rows inside them", () => {
-    expect(screen).toContain("const hasBubbleActivity = preTurnBlocks.length > 0");
+  it("fills only disclosed activity while keeping thinking intrinsically sized", () => {
+    expect(screen).toContain("const hasDisclosedBubbleActivity = preTurnBlocks.some(preTurnBlockUsesDisclosure)");
     expect(screen).toContain("|| completedActivityCount > 0");
-    expect(screen).toContain('visibleLiveActivitySequence.some((part) => part.kind !== "agent")');
+    expect(screen).toContain('part.kind === "collapsedActivity"');
+    expect(screen).toContain('part.kind === "activity" && activitySegmentUsesDisclosure(part)');
+    expect(screen).toContain('thinkingStatusSection: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", alignItems: "flex-start" }');
 
     const turnStart = screen.indexOf("function TurnTimelineItem(");
     const agentBubbleStart = screen.indexOf('<Bubble\n            variant="agent"', turnStart);
@@ -79,5 +81,12 @@ describe("Yoga-owned bubble layout", () => {
     expect(mermaidNative).toContain('style={styles.inlineReveal}');
     expect(mermaidNative).toContain('card: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch"');
     expect(mermaidWeb).toContain('image: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch"');
+  });
+
+  it("stretches copyable code through completed and streaming Markdown wrappers", () => {
+    expect(screen).toContain('fill={richMarkdownLayout(part.block.body ?? "") === "fill"}');
+    expect(screen).toContain("const documentStyle = [styles.agentMarkdownDocument, fill && styles.agentMarkdownDocumentFill]");
+    expect(screen).toContain('agentMarkdownDocumentFill: { width: "100%", alignSelf: "stretch" }');
+    expect(screen).toContain('(mode === "code" || fill) && styles.liveAgentResponseFill');
   });
 });

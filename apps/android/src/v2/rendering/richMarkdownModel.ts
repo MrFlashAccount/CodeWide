@@ -49,7 +49,9 @@ export function collectMarkdownImages(root: Root): MarkdownImageReference[] {
 
 export function markdownImageRevision(images: MarkdownImageReference[]): string {
   return images
-    .map((image) => `${image.id}\u0001${image.reference}\u0001${image.link ?? ""}`)
+    .map(
+      (image) => `${image.id}\u0001${image.alt}\u0001${image.reference}\u0001${image.link ?? ""}`,
+    )
     .join("\u0002");
 }
 

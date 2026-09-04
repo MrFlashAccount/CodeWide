@@ -13,6 +13,7 @@ import { incrementDiagnosticMetric, liveStreamMetricKey, markLiveBatchDelivered,
 import { recordTelemetryEvent } from "../data/telemetry";
 import type { ThreadEventProjection } from "../data/thread-projection-store";
 import { OrderedProjectionAcknowledger } from "./ordered-projection-acknowledger";
+import { nativeEngineErrorDiagnostic } from "./native-engine-error-diagnostic";
 import { parseNativeCommandDelivery, type NativeCommandDelivery } from "./native-transport.native";
 import { OrderedProjectionGate, type ProjectionWork } from "./ordered-projection-gate";
 
@@ -105,7 +106,7 @@ export class NativeEngineSession implements RpcClient {
     const projectionFailed = (cause: unknown) => {
       this.#stateGeneration += 1;
       this.#journalReadCursor = undefined;
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Native projection update failed"));
+      void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native projection update failed"));
       this.#scheduleProjectionRecovery();
     };
     this.#projectionGate = new OrderedProjectionGate(projectionFailed);
@@ -119,8 +120,13 @@ export class NativeEngineSession implements RpcClient {
     }
     void this.#connectionState.setConnectionState(this.connectionId, "connecting", null, false);
     void bridge.attachSocket(this.connectionId).catch((cause: unknown) => {
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Could not start native remote engine"), false);
+      void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Could not start native remote engine"), false);
     });
+  }
+
+  async reattachRuntime(): Promise<void> {
+    if (this.#stopped || bridge === undefined) return;
+    await bridge.attachSocket(this.connectionId);
   }
 
   stop(): void {
@@ -170,7 +176,7 @@ export class NativeEngineSession implements RpcClient {
           ));
         }
       } catch (cause: unknown) {
-        void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Native engine state is invalid"), false);
+        void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native engine state is invalid"), false);
       }
       return;
     }
@@ -180,7 +186,7 @@ export class NativeEngineSession implements RpcClient {
         if (!Array.isArray(requests)) throw new Error("Native pending request projection is invalid");
         this.#onPendingRequests?.(this.connectionId, requests);
       } catch (cause: unknown) {
-        void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Native pending request projection is invalid"));
+        void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native pending request projection is invalid"));
       }
       return;
     }
@@ -475,7 +481,7 @@ export class NativeEngineSession implements RpcClient {
       this.#projectionRecoveryTimer = undefined;
       if (this.#stopped) return;
       void bridge.attachSocket(this.connectionId).catch((cause: unknown) => {
-        void this.#connectionState.setConnectionState(this.connectionId, "degraded", errorMessage(cause, "Native projection recovery failed"));
+        void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native projection recovery failed"));
         this.#scheduleProjectionRecovery();
       });
     }, delay);
@@ -551,6 +557,12 @@ export class NativeEngineSupervisor {
     return this.#sessions.get(connectionId);
   }
 
+  async reattachRuntime(connectionId: string): Promise<void> {
+    const session = this.#sessions.get(connectionId);
+    if (session === undefined) return;
+    await session.reattachRuntime();
+  }
+
   stop(): void {
     for (const session of this.#sessions.values()) session.stop();
     this.#sessions.clear();
@@ -616,8 +628,4 @@ function agentMessageDeltaMetric(connectionId: string, event: SyncEvent): { stre
     turnId: value.turnId as string,
     itemId: value.itemId as string,
   };
-}
-
-function errorMessage(cause: unknown, fallback: string): string {
-  return cause instanceof Error && cause.message.length > 0 ? cause.message : fallback;
 }

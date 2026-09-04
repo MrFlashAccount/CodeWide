@@ -142,16 +142,16 @@ async fn run_authoritative_refresh_scenarios(
     for client in [&mut *control, &mut *reconnecting] {
         let response = client
             .rpc(
-                "observe",
-                "companion/thread/observe",
-                json!({"threadId": thread_id}),
+                "sync",
+                "companion/thread/sync",
+                json!({"threadId": thread_id, "afterTurnId": null, "limit": 36}),
             )
             .await?;
         require_rpc_result(&response)?;
     }
     let empty_snapshot = refresh_thread(control, thread_id).await?;
     if empty_snapshot
-        .pointer("/initialTurnsPage/data")
+        .pointer("/history/turns")
         .and_then(Value::as_array)
         .is_none_or(|turns| !turns.is_empty())
     {
@@ -353,9 +353,9 @@ async fn verify_two_thread_delivery(
     for client in [&mut *control, &mut *reconnecting] {
         let response = client
             .rpc(
-                "observe-secondary",
-                "companion/thread/observe",
-                json!({"threadId": secondary_thread_id}),
+                "sync-secondary",
+                "companion/thread/sync",
+                json!({"threadId": secondary_thread_id, "afterTurnId": null, "limit": 36}),
             )
             .await?;
         require_rpc_result(&response)?;
@@ -584,15 +584,11 @@ async fn refresh_thread(client: &mut SyncClient, thread_id: &str) -> TestResult<
     let response = client
         .rpc(
             "refresh-thread",
-            "thread/resume",
+            "companion/thread/sync",
             json!({
                 "threadId": thread_id,
-                "excludeTurns": true,
-                "initialTurnsPage": {
-                    "limit": 20,
-                    "sortDirection": "desc",
-                    "itemsView": "full",
-                },
+                "afterTurnId": null,
+                "limit": 36,
             }),
         )
         .await?;
@@ -637,9 +633,9 @@ fn assert_snapshot_contains_completed_message(snapshot: &Value, client_id: &str)
         return Err(format!("authoritative snapshot omitted {client_id}").into());
     }
     let turns = snapshot
-        .pointer("/initialTurnsPage/data")
+        .pointer("/history/turns")
         .and_then(Value::as_array)
-        .ok_or("authoritative snapshot omitted initialTurnsPage.data")?;
+        .ok_or("authoritative sync omitted history.turns")?;
     if !turns
         .iter()
         .any(|turn| turn["status"] == "completed" && value_contains_string(turn, client_id))
@@ -651,7 +647,7 @@ fn assert_snapshot_contains_completed_message(snapshot: &Value, client_id: &str)
 
 fn normalized_turns(snapshot: &Value) -> TestResult<Value> {
     snapshot
-        .pointer("/initialTurnsPage/data")
+        .pointer("/history/turns")
         .cloned()
         .ok_or_else(|| "authoritative snapshot omitted turns".into())
 }
@@ -671,9 +667,9 @@ fn value_contains_string(value: &Value, needle: &str) -> bool {
 
 fn count_page_user_items_with_client_id(snapshot: &Value, client_id: &str) -> TestResult<usize> {
     let turns = snapshot
-        .pointer("/initialTurnsPage/data")
+        .pointer("/history/turns")
         .and_then(Value::as_array)
-        .ok_or("authoritative snapshot omitted initialTurnsPage.data")?;
+        .ok_or("authoritative sync omitted history.turns")?;
     Ok(turns
         .iter()
         .filter_map(|turn| turn.get("items").and_then(Value::as_array))

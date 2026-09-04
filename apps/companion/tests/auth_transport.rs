@@ -49,7 +49,7 @@ struct TestDeviceIdentity {
 }
 
 #[tokio::test]
-async fn pairing_proof_session_and_scope_gate_work_over_wire()
+async fn pairing_proof_session_and_full_grant_work_over_wire()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let directory = tempfile::tempdir()?;
     let socket_path = directory.path().join("app-server.sock");

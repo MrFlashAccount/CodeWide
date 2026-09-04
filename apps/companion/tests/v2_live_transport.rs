@@ -437,17 +437,6 @@ async fn paired_session(registry: &DeviceRegistry) -> Result<(String, String), B
             proof: general_purpose::STANDARD.encode(proof.to_der().as_bytes()),
         })
         .await?;
-    registry
-        .update_scopes(
-            &claim.device_id,
-            vec![
-                "threads.read".into(),
-                "localhost.forward".into(),
-                "shell.explicit".into(),
-                "turns.start".into(),
-            ],
-        )
-        .await?;
     let bearer = format!("Bearer {}", claim.capability_token);
     let challenge = registry.challenge(Some(&bearer)).await?;
     let signature: Signature =

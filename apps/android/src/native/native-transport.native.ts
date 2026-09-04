@@ -7,6 +7,7 @@ type NativeVoiceEvent = {
 };
 
 export type PcmAudioChunk = {
+  encoding?: "pcm_s16le";
   data: string;
   sampleRate: number;
   numChannels: number;
@@ -14,7 +15,18 @@ export type PcmAudioChunk = {
   level: number;
 };
 
-type NativeAudioEvent = PcmAudioChunk & {
+export type OpusAudioChunk = {
+  encoding: "opus";
+  data: string;
+  sampleRate: number;
+  numChannels: number;
+  samplesPerChannel: number;
+  level: number;
+};
+
+export type CapturedAudioChunk = PcmAudioChunk | OpusAudioChunk;
+
+type NativeAudioEvent = CapturedAudioChunk & {
   type: "started" | "chunk" | "stopped" | "error";
   error?: string;
 };
@@ -54,6 +66,7 @@ type NativeBridge = {
   resizeTerminal?(sessionId: string, cols: number, rows: number): Promise<void>;
   readTerminalOutput?(sessionId: string, offset: number, maxBytes: number): Promise<string>;
   closeTerminal?(sessionId: string): void;
+  startLegacyRuntimeResources?: () => Promise<void>;
   stopLegacyRuntimeResources?: () => Promise<void>;
   engineEnqueueCommand(connectionId: string, commandId: string, method: string, paramsJson: string): Promise<string>;
   engineListCommands(): Promise<string>;
@@ -424,6 +437,10 @@ export function closeNativeTerminal(sessionId: string): void {
   bridge?.closeTerminal?.(sessionId);
 }
 
+export function startLegacyNativeRuntimeResources(): Promise<void> {
+  return bridge?.startLegacyRuntimeResources?.() ?? Promise.resolve();
+}
+
 export function stopLegacyNativeRuntimeResources(): Promise<void> {
   return bridge?.stopLegacyRuntimeResources?.() ?? Promise.resolve();
 }
@@ -642,17 +659,23 @@ export function setNativeVoiceAuraTarget(reactTag: number | null): void {
 }
 
 export async function startPcmCapture(
-  onChunk: (chunk: PcmAudioChunk) => void,
+  onChunk: (chunk: CapturedAudioChunk) => void,
   onError: (message: string) => void,
-): Promise<{ stop(): void; info: PcmCaptureInfo | null }> {
+): Promise<{ stop(): Promise<void>; info: PcmCaptureInfo | null }> {
   if (bridge === undefined || emitter === null || Platform.OS !== "android") throw new Error("Native audio capture is unavailable");
   const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
   if (permission !== PermissionsAndroid.RESULTS.GRANTED) throw new Error("Microphone permission was denied");
   let stopped = false;
+  let stopPromise: Promise<void> | null = null;
+  let resolveStopped: (() => void) | null = null;
   const subscription = emitter.addListener("CodeWideAudioEvent", (event: NativeAudioEvent) => {
-    if (stopped) return;
     if (event.type === "chunk") onChunk(event);
     else if (event.type === "error") onError(event.error ?? "audio_capture_failed");
+    else if (event.type === "stopped") {
+      stopped = true;
+      subscription.remove();
+      resolveStopped?.();
+    }
   });
   try {
     const capture = await bridge.startPcmCapture();
@@ -667,11 +690,14 @@ export async function startPcmCapture(
     }
     return {
       info,
-      stop: () => {
+      stop: async () => {
         if (stopped) return;
-        stopped = true;
-        subscription.remove();
+        if (stopPromise !== null) return await stopPromise;
+        stopPromise = new Promise<void>((resolve) => {
+          resolveStopped = resolve;
+        });
         bridge.stopPcmCapture();
+        await stopPromise;
       },
     };
   } catch (cause) {

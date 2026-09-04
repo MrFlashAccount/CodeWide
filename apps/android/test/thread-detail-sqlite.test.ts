@@ -49,22 +49,8 @@ describe("thread detail SQLite adapter", () => {
     expect(sql).not.toContain("collection_registry");
     expect(sql).not.toContain("__tanstack_db_sqlite_bootstrap");
     expect(sql).not.toContain("c_thread_details");
-    expect(sql).toContain('CREATE TABLE IF NOT EXISTS "codewide_thread_detail_invalidations"');
+    expect(sql).toContain('DROP TABLE IF EXISTS "codewide_thread_detail_invalidations"');
     expect(sql).toContain('DROP TABLE IF EXISTS "codewide_thread_invalidations"');
-    await storage.close();
-  });
-
-  it("persists refresh cursors through the chat-specific adapter", async () => {
-    const storage = createThreadDetailSqlite(() => undefined);
-    await storage.prepare();
-    sqlite.execute.mockClear();
-
-    await storage.upsertInvalidations([{ connectionId: "server", threadId: "thread", cursor: 17 }]);
-    await storage.clearInvalidation("server", "thread", 17);
-
-    const statements = sqlite.execute.mock.calls.map(([statement]) => String(statement));
-    expect(statements).toContainEqual(expect.stringContaining('INSERT INTO "codewide_thread_detail_invalidations"'));
-    expect(statements).toContainEqual(expect.stringContaining('DELETE FROM "codewide_thread_detail_invalidations"'));
     await storage.close();
   });
 

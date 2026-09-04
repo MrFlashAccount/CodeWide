@@ -24,7 +24,7 @@ use crate::{
     content::{ContentError, ContentQuery},
     files::{FileError, FileQuery, UploadCommitGuard},
     media::MediaError,
-    server::{AppState, Authorization, authorization_for_scope},
+    server::{AppState, Authorization, authenticated_session},
 };
 
 use super::workspace_upload_staging::WorkspaceUploadError;
@@ -100,7 +100,7 @@ async fn attachment_stage(
     let Some(store) = state.services.attachment_staging.as_ref() else {
         return unavailable("attachment staging unavailable");
     };
-    let Some(owner) = authorized_context(&state, &headers, "files.upload.workspace").await else {
+    let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
     match store.stage(&owner, &request) {
@@ -129,7 +129,7 @@ async fn attachment_upload(
     let Some(store) = state.services.attachment_staging.as_ref() else {
         return unavailable("attachment staging unavailable");
     };
-    let Some(owner) = authorized_context(&state, &headers, "files.upload.workspace").await else {
+    let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
     let Ok(id) = super::scalar::Id::new(raw_id) else {
@@ -160,7 +160,7 @@ async fn attachment_upload_status(
     let Some(store) = state.services.attachment_staging.as_ref() else {
         return unavailable("attachment staging unavailable");
     };
-    let Some(owner) = authorized_context(&state, &headers, "files.upload.workspace").await else {
+    let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
     let Ok(id) = super::scalar::Id::new(raw_id) else {
@@ -183,7 +183,7 @@ async fn attachment_delete(
     let Some(store) = state.services.attachment_staging.as_ref() else {
         return unavailable("attachment staging unavailable");
     };
-    let Some(owner) = authorized_context(&state, &headers, "files.upload.workspace").await else {
+    let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
     let Ok(id) = super::scalar::Id::new(raw_id) else {
@@ -249,7 +249,7 @@ async fn file_read(
     let Some(files) = state.services.files.clone() else {
         return unavailable("file service unavailable");
     };
-    if !authorized(&state, &headers, "files.download.workspace").await {
+    if !authorized(&state, &headers).await {
         return unauthorized();
     }
     #[cfg(feature = "e2e-command-fault")]
@@ -290,7 +290,7 @@ pub(crate) async fn protected_file_upload_status(
     let Some(files) = state.services.files.clone() else {
         return unavailable("file service unavailable");
     };
-    let Some(owner) = authorized_context(&state, &headers, "files.upload.workspace").await else {
+    let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
     let Some(staging) = state.services.workspace_upload_staging.as_ref() else {
@@ -346,7 +346,7 @@ pub(crate) async fn protected_file_upload_cancel(
     let Some(location) = file_location(query) else {
         return invalid_request();
     };
-    let Some(owner) = authorized_context(&state, &headers, "files.upload.workspace").await else {
+    let Some(owner) = authorized_context(&state, &headers).await else {
         return unauthorized();
     };
     let Some(staging) = state.services.workspace_upload_staging.as_ref() else {
@@ -449,7 +449,7 @@ pub(crate) async fn protected_file_upload(
     let guard = UploadCommitGuard::new(move || {
         let state = reauthorize_state.clone();
         let headers = reauthorize_headers.clone();
-        async move { authorized(&state, &headers, "files.upload.workspace").await }
+        async move { authorized(&state, &headers).await }
     })
     .with_temporary_upload_id(&upload_id);
     let result = files
@@ -529,7 +529,7 @@ async fn content_read(
     let Some(content) = state.services.content.clone() else {
         return unavailable("content service unavailable");
     };
-    if !authorized(&state, &headers, "files.download.workspace").await {
+    if !authorized(&state, &headers).await {
         return unauthorized();
     }
     content
@@ -558,7 +558,7 @@ async fn media_materialize(
     let Some(media) = state.services.media.clone() else {
         return unavailable("media service unavailable");
     };
-    let Some(owner) = authorized_device(&state, &headers, "files.download.workspace").await else {
+    let Some(owner) = authorized_device(&state, &headers).await else {
         return unauthorized();
     };
     match media.materialize_for_owner(&owner, &request.url).await {
@@ -587,7 +587,7 @@ async fn media_read(
     let Some(media) = state.services.media.clone() else {
         return unavailable("media service unavailable");
     };
-    let Some(owner) = authorized_device(&state, &headers, "files.download.workspace").await else {
+    let Some(owner) = authorized_device(&state, &headers).await else {
         return unauthorized();
     };
     media
@@ -607,7 +607,7 @@ async fn media_stream_create(
     let Some(media) = state.services.media.clone() else {
         return unavailable("media service unavailable");
     };
-    let Some(owner) = authorized_device(&state, &headers, "files.download.workspace").await else {
+    let Some(owner) = authorized_device(&state, &headers).await else {
         return unauthorized();
     };
     match media.register_stream(&owner, &request.url).await {
@@ -636,7 +636,7 @@ async fn media_stream_read(
     let Some(media) = state.services.media.clone() else {
         return unavailable("media service unavailable");
     };
-    let Some(owner) = authorized_device(&state, &headers, "files.download.workspace").await else {
+    let Some(owner) = authorized_device(&state, &headers).await else {
         return unauthorized();
     };
     media
@@ -645,18 +645,15 @@ async fn media_stream_read(
         .unwrap_or_else(|error| media_error(&error))
 }
 
-async fn authorized(state: &AppState, headers: &HeaderMap, scope: &str) -> bool {
-    headers.get("origin").is_none()
-        && authorization_for_scope(state, headers, scope)
-            .await
-            .is_some()
+async fn authorized(state: &AppState, headers: &HeaderMap) -> bool {
+    headers.get("origin").is_none() && authenticated_session(state, headers).await.is_some()
 }
 
-async fn authorized_device(state: &AppState, headers: &HeaderMap, scope: &str) -> Option<String> {
+async fn authorized_device(state: &AppState, headers: &HeaderMap) -> Option<String> {
     if headers.get("origin").is_some() {
         return None;
     }
-    authorization_for_scope(state, headers, scope)
+    authenticated_session(state, headers)
         .await?
         .device_id()
         .map(str::to_owned)
@@ -665,12 +662,11 @@ async fn authorized_device(state: &AppState, headers: &HeaderMap, scope: &str) -
 async fn authorized_context(
     state: &AppState,
     headers: &HeaderMap,
-    scope: &str,
 ) -> Option<AuthenticatedContextKey> {
     if headers.get("origin").is_some() {
         return None;
     }
-    let authorization = authorization_for_scope(state, headers, scope).await?;
+    let authorization = authenticated_session(state, headers).await?;
     AuthenticatedContextKey::derive(&authorization).ok()
 }
 
@@ -686,7 +682,7 @@ async fn authorized_upload_context(
     if headers.get("origin").is_some() {
         return None;
     }
-    let authorization = authorization_for_scope(state, headers, "files.upload.workspace").await?;
+    let authorization = authenticated_session(state, headers).await?;
     let owner = AuthenticatedContextKey::derive(&authorization).ok()?;
     let device_id = authorization.device_id().map(str::to_owned);
     Some(AuthorizedUploadContext { owner, device_id })

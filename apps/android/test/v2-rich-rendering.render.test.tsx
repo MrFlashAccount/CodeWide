@@ -1,9 +1,11 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
-import { Text } from "react-native";
+import type { Table } from "mdast";
+import { StyleSheet, Text } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { MarkdownLink } from "../src/v2/rendering/MarkdownLink";
+import { MarkdownTable } from "../src/v2/rendering/MarkdownTable";
 import { ImagePreviewModal } from "../src/v2/rendering/ImagePreviewModal";
 import {
   ResolvedImageGroup,
@@ -29,7 +31,29 @@ const PRIVATE_REFERENCE: MarkdownImageReference = {
   reference: "private://screenshot",
 };
 
+const TABLE: Table = {
+  align: [null, null],
+  children: [
+    {
+      children: [
+        { children: [{ type: "text", value: "First" }], type: "tableCell" },
+        { children: [{ type: "text", value: "Second" }], type: "tableCell" },
+      ],
+      type: "tableRow",
+    },
+    {
+      children: [
+        { children: [{ type: "text", value: "A" }], type: "tableCell" },
+        { children: [{ type: "text", value: "B" }], type: "tableCell" },
+      ],
+      type: "tableRow",
+    },
+  ],
+  type: "table",
+};
+
 interface ImageResourceHarnessProps {
+  renderRevision?: string;
   resolver: NonNullable<V2RenderingCapabilities["resolveImageSource"]>;
   revision: string;
 }
@@ -39,7 +63,10 @@ function ImageResourceHarness(props: ImageResourceHarnessProps): React.JSX.Eleme
     <V2RenderingCapabilityProvider
       capabilities={{ imageSourceRevision: props.revision, resolveImageSource: props.resolver }}
     >
-      <ResolvedImageGroup key={props.revision} references={[PRIVATE_REFERENCE]}>
+      <ResolvedImageGroup
+        key={props.renderRevision ?? props.revision}
+        references={[PRIVATE_REFERENCE]}
+      >
         <ImageUriProbe />
       </ResolvedImageGroup>
     </V2RenderingCapabilityProvider>
@@ -52,6 +79,18 @@ function ImageUriProbe(): React.JSX.Element {
 }
 
 describe("V2 rich rendering interactions", () => {
+  it("stretches narrow Markdown tables across the available bubble width", () => {
+    render(<MarkdownTable table={TABLE} />);
+
+    fireEvent(screen.getByTestId("markdown-table-viewport"), "layout", {
+      nativeEvent: { layout: { height: 100, width: 360, x: 0, y: 0 } },
+    });
+
+    expect(StyleSheet.flatten(screen.getByTestId("markdown-table").props.style)).toMatchObject({
+      width: 360,
+    });
+  });
+
   it("uses one interactive gallery surface for Markdown images", () => {
     const close = jest.fn();
     render(
@@ -155,5 +194,20 @@ describe("V2 rich rendering interactions", () => {
     expect(screen.getByText("file:///private/screenshot.png")).toBeTruthy();
     expect(initialResolver).toHaveBeenCalledWith("private://screenshot");
     expect(loadedResolver).toHaveBeenCalledWith("private://screenshot");
+  });
+
+  it("does not resolve the same image again when streaming remounts its row", () => {
+    const resolver = jest.fn(() => ({ uri: "file:///private/screenshot.png" }));
+    const view = render(
+      <ImageResourceHarness renderRevision="stream-1" resolver={resolver} revision="source-1" />,
+    );
+
+    expect(screen.getByText("file:///private/screenshot.png")).toBeTruthy();
+    view.rerender(
+      <ImageResourceHarness renderRevision="stream-2" resolver={resolver} revision="source-1" />,
+    );
+
+    expect(screen.getByText("file:///private/screenshot.png")).toBeTruthy();
+    expect(resolver).toHaveBeenCalledTimes(1);
   });
 });

@@ -215,7 +215,6 @@ impl SyncV2Runtime {
     pub async fn purge_device_context(&self, device_id: &str) -> bool {
         let authorization = AuthorizationContext::Session {
             device_id: device_id.to_owned(),
-            scopes: Vec::new(),
             expires_at: 0,
         };
         let Ok(context) = AuthenticatedContextKey::derive(&authorization) else {

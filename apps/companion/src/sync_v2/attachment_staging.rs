@@ -1235,7 +1235,6 @@ fn now_ms() -> u64 {
 fn owner_for_device(device_id: &str) -> Option<AuthenticatedContextKey> {
     AuthenticatedContextKey::derive(&AuthorizationContext::Session {
         device_id: device_id.to_owned(),
-        scopes: Vec::new(),
         expires_at: u64::MAX,
     })
     .ok()
@@ -1290,7 +1289,6 @@ mod tests {
     fn owner(device_id: &str) -> AuthenticatedContextKey {
         AuthenticatedContextKey::derive(&AuthorizationContext::Session {
             device_id: device_id.to_owned(),
-            scopes: vec!["files.upload.workspace".to_owned()],
             expires_at: u64::MAX,
         })
         .unwrap_or_else(|error| panic!("{error:?}"))

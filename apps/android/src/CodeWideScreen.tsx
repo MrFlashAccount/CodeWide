@@ -119,6 +119,7 @@ import {
 } from "./data/interactive-terminal-store";
 import { isThreadLifecycleActive, pendingDeliveryMayOwnTurn } from "./data/thread-lifecycle";
 import type { StoredConnection } from "./data/connection-profile-types";
+import { connectionDiagnosticReport } from "./data/connection-diagnostic-report";
 import type { PendingServerRequest } from "./data/pending-request-types";
 import type { StoredThreadSummary } from "./data/thread-summary-types";
 import { normalizePendingDeliveryState, type VisiblePendingDeliveryState } from "./data/thread-delivery-state";
@@ -163,6 +164,7 @@ import { richMarkdownLayout } from "./rendering/rich-markdown-layout";
 import { selectLiveTurnPlan } from "./rendering/live-turn-plan";
 import { isAgentMessageStillStreaming, selectTurnRenderWindow } from "./rendering/thread-render-window";
 import { ThreadTimelineList, type ThreadTimelineListRef, type TimelineInitialPosition } from "./rendering/ThreadTimelineList";
+import { TimelineDateSeparator, timelineDateSeparatorLabel } from "./rendering/TimelineDateSeparator";
 import { optimisticTimelineKey, remoteTurnTimelineKey } from "./rendering/timeline-identity";
 import { activeTurnSequence, type TurnSequencePart } from "./rendering/turn-sequence";
 import { Bubble, BubbleContent } from "./rendering/Bubble";
@@ -188,6 +190,7 @@ import { SwipeDiscardAction, swipeDiscardDistanceForWidth } from "./ui/SwipeDisc
 import { ContextRing, UsagePopover } from "./ui/UsagePopover";
 import { CostBreakdownPopover } from "./ui/CostBreakdownPopover";
 import { LiveTurnPlanPopover } from "./ui/LiveTurnPlanPopover";
+import { ThreadGoalChip, threadGoalStatusLabel } from "./ui/ThreadGoalChip";
 import { TOKEN_SYMBOL } from "./ui/token-display";
 import { formatEstimatedTurnCost } from "./turn-cost";
 import { AnimatedNumber, compactNumberFormat, integerNumberFormat } from "./ui/AnimatedNumber";
@@ -1001,13 +1004,34 @@ function timelineItemKey(item: TimelineItem): string {
   return `turn-meta-${item.key}`;
 }
 
+function projectTimelineDateLabels(items: readonly TimelineItem[]): ReadonlyMap<TimelineItem, string> {
+  const labels = new Map<TimelineItem, string>();
+  let previousTimestampMs: number | null = null;
+  for (const item of items) {
+    const timestampMs = timelineItemTimestampMs(item);
+    if (timestampMs === null) continue;
+    const label = timelineDateSeparatorLabel(timestampMs, previousTimestampMs);
+    if (label !== null) labels.set(item, label);
+    previousTimestampMs = timestampMs;
+  }
+  return labels;
+}
+
+function timelineItemTimestampMs(item: TimelineItem): number | null {
+  if (item.kind === "optimistic") return Number.isFinite(item.createdAt) ? item.createdAt : null;
+  if (item.kind !== "turn") return null;
+  const timestamp = item.turn.startedAt;
+  if (timestamp === null || !Number.isFinite(timestamp)) return null;
+  return timestamp < 10_000_000_000 ? timestamp * 1_000 : timestamp;
+}
+
 const timelineSearchTextCache = new WeakMap<object, string>();
 
 class ScrollOffsetMemory {
-  #value = 0;
+  #values = new Map<string, number>();
 
-  read(): number { return this.#value; }
-  write(value: number): void { this.#value = value; }
+  read(key: string): number { return this.#values.get(key) ?? 0; }
+  write(key: string, value: number): void { this.#values.set(key, value); }
 }
 
 class ThreadListItemProjection {
@@ -1246,9 +1270,6 @@ function CodeWideWorkspaceContent({
   const [threadServerProjection] = useState(() => new ThreadServerProjection());
   const servers = threadServerProjection.project(remote.connections);
   const settingsConnections: StoredConnection[] = remote.connections;
-  const projectCatalog = useRemoteProjectCatalog(remote.native, remote.connections, remote.listProjects);
-  const projectsByConnection = projectCatalog.projectsByConnection;
-  const projectErrorsByConnection = projectCatalog.errorsByConnection;
   const [requestedServerId, setActiveServerId] = useState(desktop ? "" : ALL_SERVERS_ID);
   const activeServerId = servers.length === 0
     ? desktop ? "" : ALL_SERVERS_ID
@@ -1417,6 +1438,14 @@ function CodeWideWorkspaceContent({
     ?? activeThread?.serverId
     ?? requestedThreadTarget?.connectionId
     ?? (activeServerId === ALL_SERVERS_ID ? "" : activeServerId);
+  const projectCatalogConnections = newThreadVisible
+    ? remote.connections
+    : activeConnectionId === ""
+      ? []
+      : remote.connections.filter((connection) => connection.id === activeConnectionId);
+  const projectCatalog = useRemoteProjectCatalog(remote.native, projectCatalogConnections, remote.listProjects);
+  const projectsByConnection = projectCatalog.projectsByConnection;
+  const projectErrorsByConnection = projectCatalog.errorsByConnection;
   const activeAccountRateLimits = accountRateLimits.find((row) => row.connectionId === activeConnectionId) ?? null;
   const selectedServerAccountRateLimits = accountRateLimits.find((row) => row.connectionId === activeServerId) ?? null;
   const activeConnectionState = remote.connections.find((connection) => connection.id === activeConnectionId)?.state ?? "offline";
@@ -1834,8 +1863,8 @@ function CodeWideWorkspaceContent({
             onQueryChange={setMobileThreadQuery}
             onModeChange={setThreadListMode}
             onLoadMore={loadMoreThreads}
-            initialOffset={mobileThreadOffset.read()}
-            onOffsetChange={(offset) => mobileThreadOffset.write(offset)}
+            initialOffset={mobileThreadOffset.read(`${activeServerId}:${threadListMode}`)}
+            onOffsetChange={(offset) => mobileThreadOffset.write(`${activeServerId}:${threadListMode}`, offset)}
             onSelectThread={selectThread}
             onPreloadThread={preloadThread}
             onSelectServer={selectServer}
@@ -2000,13 +2029,6 @@ function CodeWideWorkspaceContent({
         onCommit={commitDefaultDesktopThread}
       />
       <View style={styles.desktopWorkspace}>
-        <ServerRail
-          servers={servers}
-          activeServerId={activeServerId}
-          onSelect={selectServer}
-          onAdd={openConnectionSheet}
-          onSettings={() => setSettingsVisible(true)}
-        />
         <RecoverableRenderBoundary
           scope="surface"
           label="Chat list"
@@ -2015,7 +2037,8 @@ function CodeWideWorkspaceContent({
         <Suspense fallback={<ThreadListSuspenseFallback />}>
         <ThreadSidebar
           width={Math.max(280, Math.min(480, Math.floor(viewportWidth * 0.32)))}
-          server={servers.find((server) => server.id === activeServerId)}
+          servers={servers}
+          activeServerId={activeServerId}
           threads={serverThreads}
           archivedThreads={archivedThreads}
           mode={threadListMode}
@@ -2024,13 +2047,16 @@ function CodeWideWorkspaceContent({
           onLoadMore={loadMoreThreads}
           onSelect={selectThread}
           onPreload={preloadThread}
+          onSelectServer={selectServer}
+          onAddServer={openConnectionSheet}
+          onSettings={() => setSettingsVisible(true)}
           onNewThread={() => void createThread()}
           onTogglePin={toggleListThreadPin}
           onArchive={archiveListThread}
           onUnarchive={unarchiveListThread}
           onMarkRead={markListThreadRead}
           accountRateLimits={selectedServerAccountRateLimits}
-          {...(activeServerId === "" ? {} : {
+          {...(activeServerId === ALL_SERVERS_ID ? {} : {
             onRefreshAccountRateLimits: async () => await remote.refreshAccountRateLimits(activeServerId),
           })}
         />
@@ -2199,86 +2225,6 @@ function ForwardedLoopbackBrowser({
   );
 }
 
-function ServerRail({
-  servers,
-  activeServerId,
-  onSelect,
-  onAdd,
-  onSettings,
-}: {
-  servers: ThreadListServer[];
-  activeServerId: string;
-  onSelect(id: string): void;
-  onAdd(): void;
-  onSettings(): void;
-}) {
-  const [pendingSelection, setPendingSelection] = useState<{ base: string; target: string } | null>(null);
-  const visibleServerId = pendingSelection?.base === activeServerId ? pendingSelection.target : activeServerId;
-  const select = (serverId: string) => {
-    if (serverId === visibleServerId) return;
-    setPendingSelection({ base: activeServerId, target: serverId });
-    // Commit the visual selection before the conversation tree changes.
-    requestAnimationFrame(() => onSelect(serverId));
-  };
-  return (
-    <View testID="server-rail" style={styles.serverRail}>
-      <ScrollView
-        style={styles.serverRailScroll}
-        contentContainerStyle={styles.serverRailScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {servers.map((server) => (
-          <Pressable
-            key={server.id}
-            {...(server.id === visibleServerId ? { testID: "active-server" } : {})}
-            accessibilityLabel={`${server.name}, ${connectionStateLabel(server.status)}`}
-            accessibilityRole="button"
-            onPress={() => select(server.id)}
-            style={[styles.serverAvatar, server.id === visibleServerId && styles.serverAvatarActive]}
-          >
-            {server.id === visibleServerId && <View testID="active-server-marker" style={styles.serverActiveMarker} />}
-            <Text style={styles.serverEmoji}>{serverGlyph(server)}</Text>
-            <StatusDot status={server.status} />
-          </Pressable>
-        ))}
-        <RailButton icon="add" accessibilityLabel="Add server" onPress={onAdd} />
-      </ScrollView>
-      <RailButton icon="settings-outline" accessibilityLabel="Settings" onPress={onSettings} />
-    </View>
-  );
-}
-
-function RailButton({
-  icon,
-  accessibilityLabel,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  accessibilityLabel: string;
-  onPress?(): void;
-}) {
-  return (
-    <Pressable
-      accessibilityLabel={accessibilityLabel}
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.railButton, pressed && styles.pressed]}
-    >
-      <Ionicons name={icon} color={colors.text} size={23} />
-    </Pressable>
-  );
-}
-
-function StatusDot({ status }: { status: ServerStatus }) {
-  const activity = connectionActivity(status);
-  if (activity === null) return null;
-  return (
-    <View style={[styles.statusDot, { backgroundColor: colors.surfaceContainerHigh }]}> 
-      <ActivityIndicator size={8} color={connectionActivityColor(activity)} />
-    </View>
-  );
-}
-
 type ConnectionActivity = "connecting" | "updating";
 
 function connectionActivity(status: ServerStatus): ConnectionActivity | null {
@@ -2293,7 +2239,15 @@ function connectionActivityColor(activity: ConnectionActivity): string {
 
 function ConnectionActivityIndicator({ status, size = 14 }: { status: ServerStatus; size?: number }) {
   const activity = connectionActivity(status);
-  if (activity === null) return null;
+  if (status === "live") return null;
+  if (activity === null) {
+    const icon = status === "offline" ? "cloud-offline-outline" : status === "authRequired" ? "key-outline" : "alert-circle-outline";
+    return (
+      <View accessible accessibilityLabel={connectionStateLabel(status)} style={styles.connectionActivityIndicator}>
+        <Ionicons name={icon} size={size} color={connectionStateColor(status)} />
+      </View>
+    );
+  }
   return (
     <View accessible accessibilityLabel={activity === "connecting" ? "Connecting" : "Updating"} style={styles.connectionActivityIndicator}>
       <ActivityIndicator size={size} color={connectionActivityColor(activity)} />
@@ -2318,6 +2272,11 @@ function connectionStateColor(status: ServerStatus): string {
   return colors.red;
 }
 
+function aggregateServerStatus(servers: readonly ThreadListServer[]): ServerStatus {
+  const priority: readonly ServerStatus[] = ["authRequired", "degraded", "connecting", "syncing", "offline"];
+  return priority.find((status) => servers.some((server) => server.status === status)) ?? "live";
+}
+
 function connectionDiagnosticSummary(diagnostic: string): string {
   if (diagnostic.includes("session_expired") || diagnostic.startsWith("4003:")) {
     return "Session expired. Refreshing credentials and reconnecting.";
@@ -2325,7 +2284,7 @@ function connectionDiagnosticSummary(diagnostic: string): string {
   if (diagnostic === "native_frame_journal_overflow") return "Incoming update buffer overflowed. A fresh sync is required.";
   if (diagnostic.includes("Pairing or access grant required")) return "This device needs to be paired again.";
   if (diagnostic === "IOException") return "The server could not be reached.";
-  return diagnostic;
+  return diagnostic.split("\n", 1)[0]?.trim() || "Unknown connection error";
 }
 
 function connectionDiagnosticTime(timestamp: number | null): string | null {
@@ -2336,6 +2295,15 @@ function connectionDiagnosticTime(timestamp: number | null): string | null {
 type ThreadListRow =
   | { kind: "header"; title: string }
   | { kind: "thread"; thread: ThreadListItem };
+
+const THREAD_LIST_ROW_CONTENT_HEIGHT = 64;
+const THREAD_LIST_ROW_VERTICAL_MARGIN = 1;
+const THREAD_LIST_ROW_HEIGHT = THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;
+const THREAD_LIST_SECTION_HEIGHT = 26;
+
+function threadListRowHeight(row: ThreadListRow): number {
+  return row.kind === "header" ? THREAD_LIST_SECTION_HEIGHT : THREAD_LIST_ROW_HEIGHT;
+}
 
 type ThreadListMode = "active" | "archived";
 
@@ -2361,7 +2329,8 @@ function threadListRowsEqual(previous: ThreadListRow, next: ThreadListRow): bool
 
 function ThreadSidebar({
   width,
-  server,
+  servers,
+  activeServerId,
   threads,
   archivedThreads,
   mode,
@@ -2370,6 +2339,9 @@ function ThreadSidebar({
   onLoadMore,
   onSelect,
   onPreload,
+  onSelectServer,
+  onAddServer,
+  onSettings,
   onNewThread,
   onTogglePin,
   onArchive,
@@ -2379,7 +2351,8 @@ function ThreadSidebar({
   onRefreshAccountRateLimits,
 }: {
   width: number;
-  server: ThreadListServer | undefined;
+  servers: ThreadListServer[];
+  activeServerId: string;
   threads: ThreadListItem[];
   archivedThreads: ThreadListItem[];
   mode: ThreadListMode;
@@ -2388,6 +2361,9 @@ function ThreadSidebar({
   onLoadMore(): void;
   onSelect(id: string): void;
   onPreload(id: string): (() => void) | undefined;
+  onSelectServer(id: string): void;
+  onAddServer(): void;
+  onSettings(): void;
   onNewThread(): void;
   onTogglePin(thread: ThreadListItem): Promise<void>;
   onArchive(thread: ThreadListItem): Promise<void>;
@@ -2396,10 +2372,12 @@ function ThreadSidebar({
   accountRateLimits?: AccountRateLimitsRow | null;
   onRefreshAccountRateLimits?(): Promise<unknown>;
 }) {
-  const windowLayout = useWindowLayout();
   const hideThreadLists = usePerformanceExperiment("hideThreadLists");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ThreadListFilter>("all");
+  const [serverPickerVisible, setServerPickerVisible] = useState(false);
+  const server = servers.find((candidate) => candidate.id === activeServerId);
+  const selectorStatus = server?.status ?? aggregateServerStatus(servers);
   const filtered = threads.filter((thread) => threadMatchesFilter(thread, filter) &&
     `${thread.title} ${thread.preview}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
   );
@@ -2431,10 +2409,20 @@ function ThreadSidebar({
               <Ionicons name="arrow-back" size={22} color={colors.text} />
             </Pressable>
           )}
-          <Text testID="server-title" numberOfLines={1} ellipsizeMode="tail" style={styles.serverTitle}>
-            {mode === "archived" ? "Archived threads" : server?.name ?? "Server"}
-          </Text>
-          {mode === "active" && server !== undefined && <ConnectionActivityIndicator status={server.status} />}
+          {mode === "archived" ? (
+            <Text testID="server-title" numberOfLines={1} ellipsizeMode="tail" style={styles.serverTitle}>Archived threads</Text>
+          ) : (
+            <Pressable
+              accessibilityLabel="Choose server"
+              onPress={() => setServerPickerVisible(true)}
+              style={styles.mobileTitleSelector}
+            >
+              <View style={styles.serverSelectorIdentity}>
+                <Text testID="server-title" numberOfLines={1} style={styles.mobileTitle}>{server?.name ?? "All servers"}</Text>
+                <ConnectionActivityIndicator status={selectorStatus} />
+              </View>
+            </Pressable>
+          )}
           {mode === "active" && (
             <>
               <Pressable onPress={onNewThread} style={styles.headerIcon} accessibilityLabel="New thread">
@@ -2445,6 +2433,7 @@ function ThreadSidebar({
                 onOpenArchived={() => onModeChange("archived")}
                 accountRateLimits={accountRateLimits}
                 showAccountLimits={server !== undefined}
+                onOpenAccounts={onSettings}
                 {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
               />
             </>
@@ -2467,9 +2456,8 @@ function ThreadSidebar({
       </View>
       {hideThreadLists ? <ThreadListExperimentSuspended /> : <LegendList
         data={rows}
-        dataKey={`desktop-threads:${windowLayout.measurementRevision}`}
-        extraData={windowLayout.measurementRevision}
-        estimatedItemSize={64}
+        dataKey={`desktop-threads:${activeServerId}:${mode}`}
+        getFixedItemSize={threadListRowHeight}
         drawDistance={320}
         recycleItems
         getItemType={(row) => row.kind}
@@ -2481,7 +2469,7 @@ function ThreadSidebar({
         ListEmptyComponent={<ThreadListEmpty archived={mode === "archived"} />}
         renderItem={({ item }) =>
           item.kind === "header" ? (
-            <Text style={styles.sectionHeader}>{item.title}</Text>
+            <Text numberOfLines={1} style={styles.sectionHeader}>{item.title}</Text>
           ) : (
             <SelectableThreadRow
               navigation={navigation}
@@ -2495,6 +2483,15 @@ function ThreadSidebar({
             />
           )
         }
+      />}
+      {serverPickerVisible && <MobileServerSheet
+        visible={serverPickerVisible}
+        servers={servers}
+        activeServerId={activeServerId}
+        onSelect={(id) => { onSelectServer(id); setServerPickerVisible(false); }}
+        onAddServer={() => { setServerPickerVisible(false); onAddServer(); }}
+        onSettings={() => { setServerPickerVisible(false); onSettings(); }}
+        onClose={() => setServerPickerVisible(false)}
       />}
     </View>
   );
@@ -2515,12 +2512,14 @@ function SelectableThreadRow({
 function ThreadListMenu({
   archivedCount,
   onOpenArchived,
+  onOpenAccounts,
   accountRateLimits = null,
   showAccountLimits = true,
   onRefreshAccountRateLimits,
 }: {
   archivedCount: number;
   onOpenArchived(): void;
+  onOpenAccounts(): void;
   accountRateLimits?: AccountRateLimitsRow | null;
   showAccountLimits?: boolean;
   onRefreshAccountRateLimits?(): Promise<unknown>;
@@ -2532,13 +2531,22 @@ function ThreadListMenu({
       {...(onRefreshAccountRateLimits === undefined ? {} : { onRefresh: onRefreshAccountRateLimits })}
       placement="bottom"
       align="end"
-      actions={[{
-        id: "archived",
-        label: "Archived threads",
-        description: archivedCount === 1 ? "1 thread" : `${archivedCount} threads`,
-        icon: "archive-outline",
-        onPress: onOpenArchived,
-      }]}
+      actions={[
+        {
+          id: "accounts",
+          label: "Accounts",
+          description: "Profiles and usage limits",
+          icon: "people-outline",
+          onPress: onOpenAccounts,
+        },
+        {
+          id: "archived",
+          label: "Archived threads",
+          description: archivedCount === 1 ? "1 thread" : `${archivedCount} threads`,
+          icon: "archive-outline",
+          onPress: onOpenArchived,
+        },
+      ]}
     >
       <Pressable accessibilityLabel="Thread list menu" style={styles.headerIcon}>
         <Ionicons name="ellipsis-vertical" size={22} color={colors.text} />
@@ -2906,7 +2914,6 @@ function MobileThreads({
   accountRateLimits?: AccountRateLimitsRow | null;
   onRefreshAccountRateLimits?(): Promise<unknown>;
 }) {
-  const windowLayout = useWindowLayout();
   const hideThreadLists = usePerformanceExperiment("hideThreadLists");
   const [filter, setFilter] = useState<ThreadListFilter>("all");
   const [serverPickerVisible, setServerPickerVisible] = useState(false);
@@ -2917,6 +2924,7 @@ function MobileThreads({
     `${thread.title} ${thread.preview}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()),
   );
   const activeServer = servers.find((server) => server.id === activeServerId);
+  const selectorStatus = activeServer?.status ?? aggregateServerStatus(servers);
   const mobileRows: ThreadListRow[] = [];
   if (mode === "archived") {
     mobileRows.push(...filteredArchived.map((thread) => ({ kind: "thread" as const, thread })));
@@ -2948,11 +2956,10 @@ function MobileThreads({
           </View>
         ) : (
           <Pressable accessibilityLabel="Choose server" onPress={() => setServerPickerVisible(true)} style={styles.mobileTitleSelector}>
-            <View style={styles.mobileIdentity}>
-              <Text numberOfLines={1} style={styles.mobileTitle}>{activeServer?.name ?? "All threads"}</Text>
-              <Text numberOfLines={1} style={styles.mobileSubtitle}>{activeServer === undefined ? `${servers.length} servers` : connectionStateLabel(activeServer.status)}</Text>
+            <View style={styles.serverSelectorIdentity}>
+              <Text numberOfLines={1} style={styles.mobileTitle}>{activeServer?.name ?? "All servers"}</Text>
+              <ConnectionActivityIndicator status={selectorStatus} />
             </View>
-            <Ionicons name="chevron-down" size={17} color={colors.textMuted} />
           </Pressable>
         )}
         {mode === "active" && (
@@ -2961,6 +2968,7 @@ function MobileThreads({
             <ThreadListMenu
               archivedCount={archivedThreads.length}
               onOpenArchived={() => onModeChange("archived")}
+              onOpenAccounts={onSettings}
               accountRateLimits={accountRateLimits}
               showAccountLimits={activeServer !== undefined}
               {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
@@ -2986,10 +2994,9 @@ function MobileThreads({
       </View>
       {hideThreadLists ? <ThreadListExperimentSuspended /> : <LegendList
         data={mobileRows}
-        dataKey={`mobile-threads:${windowLayout.measurementRevision}`}
-        extraData={windowLayout.measurementRevision}
+        dataKey={`mobile-threads:${activeServerId}:${mode}`}
         initialScrollOffset={initialOffset}
-        estimatedItemSize={64}
+        getFixedItemSize={threadListRowHeight}
         drawDistance={320}
         recycleItems
         getItemType={(item) => item.kind}
@@ -3001,7 +3008,7 @@ function MobileThreads({
         keyExtractor={(item) => item.kind === "header" ? `header-${item.title}` : threadSelectionKey(item.thread)}
         ListEmptyComponent={<ThreadListEmpty archived={mode === "archived"} />}
         renderItem={({ item }) => (
-          item.kind === "header" ? <Text style={styles.sectionHeader}>{item.title}</Text> : <ThreadRow
+          item.kind === "header" ? <Text numberOfLines={1} style={styles.sectionHeader}>{item.title}</Text> : <ThreadRow
               thread={item.thread}
               selected={false}
               onPressIn={() => onPreloadThread(threadSelectionKey(item.thread))}
@@ -3040,16 +3047,22 @@ function TopBarAction({ icon, accessibilityLabel, active = false, onPress }: { i
 }
 
 function MobileServerSheet({ visible, servers, activeServerId, onSelect, onAddServer, onSettings, onClose }: { visible: boolean; servers: ThreadListServer[]; activeServerId: string; onSelect(id: string): void; onAddServer(): void; onSettings(): void; onClose(): void }) {
+  const allServersStatus = aggregateServerStatus(servers);
   return (
     <AppSheet isOpen={visible} onOpenChange={(open) => { if (!open) onClose(); }} contentProps={{ index: 0, enableDynamicSizing: true }}>
       <Text style={styles.sheetTitle}>Server</Text>
-      <ControlOption title="All servers" selected={activeServerId === ALL_SERVERS_ID} onPress={() => onSelect(ALL_SERVERS_ID)} />
+      <ControlOption
+        title="All servers"
+        titleAccessory={<ConnectionActivityIndicator status={allServersStatus} />}
+        selected={activeServerId === ALL_SERVERS_ID}
+        onPress={() => onSelect(ALL_SERVERS_ID)}
+      />
       {servers.map((server) => (
         <ControlOption
           key={server.id}
           accessibilityLabel={`${server.name}, ${connectionStateLabel(server.status)}`}
           title={`${serverGlyph(server)} ${server.name}`}
-          subtitle={connectionStateLabel(server.status)}
+          titleAccessory={<ConnectionActivityIndicator status={server.status} />}
           selected={activeServerId === server.id}
           onPress={() => onSelect(server.id)}
         />
@@ -3595,6 +3608,12 @@ function ConversationPane({
     ? null
     : workspaceResources.turnControls.get(controlsResourceId) ?? null;
   const controlsResource = currentControlsResource();
+  const goalResource = useThreadGoalRow(workspaceResources, goalResourceId);
+  useAsyncResource<ThreadGoal | null>(
+    onGetGoal === undefined || goalResourceId === null ? null : "conversation-thread-goal",
+    goalResourceId ?? "inactive",
+    async () => onGetGoal === undefined ? null : await onGetGoal(),
+  );
   const [narrowConversationPane, setNarrowConversationPane] = useState(false);
   const timelineCompact = compact || narrowConversationPane;
   const [composerTrayVisible, setComposerTrayVisible] = useState(false);
@@ -4005,9 +4024,13 @@ function ConversationPane({
   })();
   const threadSearchActive = threadSearch.trim() !== "";
   const liveTurnPlanVisible = liveTurnPlan !== null && timelinePositioned && !threadSearchActive;
+  const currentGoal = goalResource?.goal ?? null;
+  const threadGoalVisible = currentGoal !== null && timelinePositioned && !threadSearchActive;
+  const liveStatusVisible = liveTurnPlanVisible || threadGoalVisible;
   const displayedTimeline = threadSearchActive
     ? threadSearchMatches.flatMap((index) => timeline[index] === undefined ? [] : [timeline[index]])
     : timeline;
+  const timelineDateLabels = projectTimelineDateLabels(displayedTimeline);
   // LegendList may consult its initial target again while a bootstrap layout
   // is still settling. Freeze both the target and its index for the lifetime
   // of this keyed ConversationPane; window prepend/append must be governed
@@ -4093,14 +4116,17 @@ function ConversationPane({
       ? `Thread: ${item.threadId}\nTurn: ${item.id}`
       : `Timeline item: ${boundaryKey}`;
     const usage = item.kind === "turn" ? projectedTurnMetadata(item.turn)?.usage ?? null : null;
+    const dateLabel = timelineDateLabels.get(item);
     const row = (
-    // The virtualized row owns one stable document identity. Recycling is off,
-    // so leaving the render window unmounts this subtree instead of rebinding
-    // its markdown/activity state to a different turn.
-    <RecoverableRenderBoundary key={boundaryKey} scope="bubble" label="Conversation item" context={boundaryContext} resetKey={boundaryKey}>
-    <MarkdownLocalLinkProvider onOpen={openThreadDocumentLink}>
-    <PrivateImageAccessProvider scope={composerScope} {...(getTransferAccess === undefined ? {} : { getAccess: getStableTransferAccess })}>
-    <View style={[styles.timelineItem, !timelineCompact && styles.timelineItemWide]}>
+      // The virtualized row owns one stable document identity. Recycling is off,
+      // so leaving the render window unmounts this subtree instead of rebinding
+      // its markdown/activity state to a different turn.
+      <View key={boundaryKey} style={styles.timelineRow}>
+        {dateLabel === undefined ? null : <TimelineDateSeparator label={dateLabel} />}
+        <RecoverableRenderBoundary key={boundaryKey} scope="bubble" label="Conversation item" context={boundaryContext} resetKey={boundaryKey}>
+        <MarkdownLocalLinkProvider onOpen={openThreadDocumentLink}>
+        <PrivateImageAccessProvider scope={composerScope} {...(getTransferAccess === undefined ? {} : { getAccess: getStableTransferAccess })}>
+        <View style={[styles.timelineItem, !timelineCompact && styles.timelineItemWide]}>
       {item.kind === "turn" && (
         <TurnTimelineItem
           turn={item}
@@ -4131,10 +4157,11 @@ function ConversationPane({
           <Text style={styles.turnMetaText}>{formatTurnMeta(item.status, item.durationMs, item.completedAt)}</Text>
         </View>
       )}
-    </View>
-    </PrivateImageAccessProvider>
-    </MarkdownLocalLinkProvider>
-    </RecoverableRenderBoundary>
+        </View>
+        </PrivateImageAccessProvider>
+        </MarkdownLocalLinkProvider>
+        </RecoverableRenderBoundary>
+      </View>
     );
     return item.kind === "turn"
       ? <ThreadNavigationRowCommitBoundary connectionId={item.connectionId} threadId={item.threadId} rowKey={item.key}>{row}</ThreadNavigationRowCommitBoundary>
@@ -4294,10 +4321,13 @@ function ConversationPane({
     void saveDraft(draftConnectionId, draftThreadId, text).catch(() => undefined);
   };
 
-  const updateAttachments = (next: ComposerAttachment[]) => {
+  const persistAttachments = async (next: ComposerAttachment[]): Promise<void> => {
     latestAttachmentsRef.current.latest = next;
     if (saveDraftAttachments === undefined || draftConnectionId === null || draftThreadId === null) return;
-    void saveDraftAttachments(draftConnectionId, draftThreadId, next).catch(() => undefined);
+    await saveDraftAttachments(draftConnectionId, draftThreadId, next);
+  };
+  const updateAttachments = (next: ComposerAttachment[]) => {
+    void persistAttachments(next).catch(() => undefined);
   };
 
   const insertSkillInvocation = (skill: { name: string; path: string }) => {
@@ -4570,18 +4600,20 @@ function ConversationPane({
       quickdrawPngBytes(value.pngDataUrl),
     );
     if (existing === null) {
-      const uploaded = await uploadSelectedAttachment(selected, (attachment) => {
-        const next: ComposerAttachment = {
-          ...attachment,
-          editor: { kind: "quickdraw", mode, snapshot: value.snapshot, revision: Date.now() },
-        };
-        updateAttachments([...latestAttachmentsRef.current.latest.filter((candidate) => candidate.id !== next.id), next]);
-      }, false);
-      return uploaded !== null;
+      const uploaded = await uploadSelectedAttachment(selected, () => undefined, false);
+      if (uploaded === null) return false;
+      const next: ComposerAttachment = {
+        ...uploaded,
+        editor: { kind: "quickdraw", mode, snapshot: value.snapshot, revision: Date.now() },
+      };
+      await persistAttachments([
+        ...latestAttachmentsRef.current.latest.filter((candidate) => candidate.id !== next.id),
+        next,
+      ]);
+      return true;
     }
 
     try {
-      let committed = false;
       await fileTransferController.start({
         scope: composerScope,
         mode: "upload",
@@ -4591,16 +4623,13 @@ function ConversationPane({
         upload: selected,
         directory: null,
         getAccess: getStableTransferAccess,
-        onUploaded: () => {
-          const current = latestAttachmentsRef.current.latest;
-          if (!current.some((candidate) => candidate.id === existing.id)) return;
-          updateAttachments(current.map((candidate) => candidate.id === existing.id
-            ? { ...existing, editor: { kind: "quickdraw", mode, snapshot: value.snapshot, revision: Date.now() } }
-            : candidate));
-          committed = true;
-        },
       });
-      return committed;
+      const current = latestAttachmentsRef.current.latest;
+      if (!current.some((candidate) => candidate.id === existing.id)) return false;
+      await persistAttachments(current.map((candidate) => candidate.id === existing.id
+        ? { ...existing, editor: { kind: "quickdraw", mode, snapshot: value.snapshot, revision: Date.now() } }
+        : candidate));
+      return true;
     } catch (cause) {
       dialog.alert(
         "Could not save drawing",
@@ -4847,6 +4876,7 @@ function ConversationPane({
     openControls(action);
     if (action === "goal") void onGetGoal?.();
   };
+  const openGoalDetails = useEvent(() => openAccessoryAction("goal"));
   const useAnchoredComposerMenu = Platform.OS === "android";
   const anchoredComposerActions: ActionMenuItem[] = [
     { id: "files", label: "Attach file", icon: "attach-outline", disabled: !fileAttachmentEnabled },
@@ -5142,7 +5172,7 @@ function ConversationPane({
         renderRevision={composerScope}
         measurementRevision={windowLayout.measurementRevision}
         style={styles.conversationScroll}
-        contentContainerStyle={[styles.conversationContent, timelineCompact ? styles.conversationContentCompact : styles.conversationContentWide, liveTurnPlanVisible && styles.conversationContentLivePlanInset]}
+        contentContainerStyle={[styles.conversationContent, timelineCompact ? styles.conversationContentCompact : styles.conversationContentWide, liveStatusVisible && styles.conversationContentLivePlanInset]}
         keyboardLiftBehavior="whenAtEnd"
         keyboardOffset={conversationInsets.bottom}
         followTail={historyViewport.containsLatest && !awayFromLatest && !threadSearchActive}
@@ -5348,9 +5378,10 @@ function ConversationPane({
         resourceId={historyActivityResourceId}
         hasTimeline={timeline.length > 0}
       />
-      {liveTurnPlanVisible && (
+      {liveStatusVisible && (
         <View pointerEvents="box-none" testID="live-plan-float" style={styles.livePlanFloat}>
-          <LiveTurnPlanPopover plan={liveTurnPlan} />
+          {liveTurnPlan === null ? null : <LiveTurnPlanPopover plan={liveTurnPlan} />}
+          {currentGoal === null ? null : <ThreadGoalChip goal={currentGoal} onPress={openGoalDetails} />}
         </View>
       )}
       </View>
@@ -5827,7 +5858,12 @@ function ThreadResourcesSheet({
       dialog.alert("File unavailable", "The companion returned an invalid file path.");
       return;
     }
-    openPreview({ kind: remoteFileKind(name, resolvedPath), name, path: resolvedPath, getTransferAccess });
+    openPreview({
+      kind: remoteFileKind(name, resolvedPath),
+      name,
+      path: resolvedPath,
+      getTransferAccess,
+    });
   };
   const openAttachment = (attachment: ThreadAttachmentResource) => {
     if (attachment.path !== null) {
@@ -5841,7 +5877,10 @@ function ThreadResourcesSheet({
     if (document === null) return false;
     const target = resolvePreviewableDocumentLink(href, remoteDocumentDirectory(document.request.path));
     if (target === null) return false;
-    const request = { ...target, getTransferAccess };
+    const request = {
+      ...target,
+      getTransferAccess,
+    };
     if (target.kind === "text") openPreview(request);
     else openPreview(request);
     return true;
@@ -6639,11 +6678,19 @@ function ThreadGoalDialog({
               <Dialog.Title>{goal === null ? "Create goal" : "Edit goal"}</Dialog.Title>
               {goal !== null && (
                 <Dialog.Description>
-                  {TOKEN_SYMBOL}{goal.tokensUsed.toLocaleString()} · {formatDuration(goal.timeUsedSeconds * 1_000)}
-                  {usagePercent === null ? "" : ` · ${usagePercent}% of budget`}
+                  {usagePercent === null ? "Goal details" : `${usagePercent}% of token budget`}
                 </Dialog.Description>
               )}
             </View>
+
+            {goal !== null && (
+              <View accessibilityLabel="Goal details" style={styles.goalDetails} testID="thread-goal-details">
+                <ThreadGoalDetail label="Status" value={threadGoalStatusLabel(goal.status)} />
+                <ThreadGoalDetail label="Duration" value={formatDuration(goal.timeUsedSeconds * 1_000)} />
+                <ThreadGoalDetail label="Tokens spent" value={`${TOKEN_SYMBOL}${goal.tokensUsed.toLocaleString()}`} />
+                <ThreadGoalDetail label="Cost" value="Not reported" />
+              </View>
+            )}
 
             <TextField isRequired isInvalid={effectiveError !== null}>
               <Label>What should Codex work toward?</Label>
@@ -6709,6 +6756,21 @@ function ThreadGoalDialog({
         </KeyboardAvoidingView>
       </Dialog.Portal>
     </Dialog>
+  );
+}
+
+interface ThreadGoalDetailProps {
+  label: string;
+  value: string;
+}
+
+function ThreadGoalDetail(props: ThreadGoalDetailProps): React.JSX.Element {
+  const { label, value } = props;
+  return (
+    <View style={styles.goalDetailItem}>
+      <Text style={styles.goalDetailLabel}>{label}</Text>
+      <Text style={styles.goalDetailValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -7225,11 +7287,14 @@ function MenuAction({
   );
 }
 
-function ControlOption({ accessibilityLabel, title, subtitle, selected, attention = false, disabled = false, onPress }: { accessibilityLabel?: string; title: string; subtitle?: string; selected: boolean; attention?: boolean; disabled?: boolean; onPress(): void }) {
+function ControlOption({ accessibilityLabel, title, titleAccessory, subtitle, selected, attention = false, disabled = false, onPress }: { accessibilityLabel?: string; title: string; titleAccessory?: ReactNode; subtitle?: string; selected: boolean; attention?: boolean; disabled?: boolean; onPress(): void }) {
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={`${accessibilityLabel ?? title}${selected ? ", selected" : ""}`} accessibilityState={{ selected, disabled }} disabled={disabled} style={({ pressed }) => [styles.controlOption, selected && (attention ? styles.controlOptionAttention : styles.controlOptionSelected), pressed && styles.pressed, disabled && styles.disabled]} onPress={onPress}>
       <View style={styles.controlOptionText}>
-        <Text numberOfLines={2} ellipsizeMode="tail" style={styles.menuActionTitle}>{title}</Text>
+        <View style={titleAccessory === undefined ? undefined : styles.controlOptionTitleRow}>
+          <Text numberOfLines={titleAccessory === undefined ? 2 : 1} ellipsizeMode="tail" style={[styles.menuActionTitle, titleAccessory !== undefined && styles.controlOptionTitleText]}>{title}</Text>
+          {titleAccessory}
+        </View>
         {subtitle !== undefined && <Text numberOfLines={2} style={styles.menuActionSubtitle}>{subtitle}</Text>}
       </View>
       <Ionicons name={selected ? "checkmark-circle" : "ellipse-outline"} size={20} color={selected ? (attention ? colors.amber : colors.accent) : colors.textDim} />
@@ -7627,11 +7692,14 @@ function MessageActionRail({ request, completedAt, showActions }: { request: Mes
   );
 }
 
-function OptimisticTurn({ item, onRetry, getTransferAccess }: {
+interface OptimisticTurnProps {
   item: Extract<TimelineItem, { kind: "optimistic" }>;
   onRetry?(commandId: string): Promise<void>;
   getTransferAccess?: GetTransferAccess;
-}) {
+}
+
+function OptimisticTurn(props: OptimisticTurnProps) {
+  const { getTransferAccess, item, onRetry } = props;
   const failed = item.status === "failed";
   const deliveryLabel = failed
     ? "Failed"
@@ -7674,6 +7742,7 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
             <UserMessageContent
               content={item.text === "" ? [] : [{ type: "text", text: item.text }]}
               localAttachments={item.attachments}
+              pendingText={!failed}
               {...(getTransferAccess === undefined ? {} : { getTransferAccess })}
             />
           </BubbleContent>
@@ -7681,30 +7750,36 @@ function OptimisticTurn({ item, onRetry, getTransferAccess }: {
         </View>
         </ImagePreviewGroup>
       </RecoverableRenderBoundary>
-      <View
-        accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}
-        testID="optimistic-turn-footer"
-        style={[styles.turnFooter, styles.turnFooterEnd]}
-      >
-        {failed
-          ? <View style={[styles.turnStatusDot, styles.turnStatusFailed]} />
-          : <CalmSpinner size={9} color={colors.textMuted} durationMs={3_000} />}
-        <Text style={styles.turnMetaText}>{deliveryLabel}</Text>
-        {failed && onRetry !== undefined && (
-          <Pressable
-            accessibilityLabel="Retry message"
-            disabled={retrying}
-            hitSlop={7}
-            onPress={retry}
-            style={({ pressed }) => [styles.retryMessageButton, pressed && styles.pressed, retrying && styles.disabled]}
-          >
-            {retrying
-              ? <CalmSpinner size={9} color={colors.textMuted} durationMs={1_400} />
-              : <Ionicons name="refresh" size={14} color={colors.accent} />}
-            <Text style={styles.retryMessageText}>Retry</Text>
-          </Pressable>
-        )}
-      </View>
+      {failed ? (
+        <View
+          accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}
+          testID="optimistic-turn-footer"
+          style={[styles.turnFooter, styles.turnFooterEnd]}
+        >
+          <View style={[styles.turnStatusDot, styles.turnStatusFailed]} />
+          <Text style={styles.turnMetaText}>{deliveryLabel}</Text>
+          {onRetry !== undefined && (
+            <Pressable
+              accessibilityLabel="Retry message"
+              disabled={retrying}
+              hitSlop={7}
+              onPress={retry}
+              style={({ pressed }) => [styles.retryMessageButton, pressed && styles.pressed, retrying && styles.disabled]}
+            >
+              {retrying
+                ? <CalmSpinner size={9} color={colors.textMuted} durationMs={1_400} />
+                : <Ionicons name="refresh" size={14} color={colors.accent} />}
+              <Text style={styles.retryMessageText}>Retry</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : (
+        <View
+          accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}
+          testID="optimistic-turn-footer-spacer"
+          style={[styles.turnFooter, styles.turnFooterEnd]}
+        />
+      )}
       {failed && (
         <Text accessibilityLiveRegion="polite" selectable style={styles.optimisticError}>
           {item.lastError === null
@@ -7750,6 +7825,22 @@ function projectTurnProjection(turn: Extract<TimelineItem, { kind: "turn" }>): C
     return item === undefined ? [] : [projectThreadItem(turn, item, index)];
   });
   return { renderWindow, userBlocks, preTurnBlocks, compactionBlocks, latestAgentBlock, liveActivityBlocks };
+}
+
+function preTurnBlockUsesDisclosure(block: RenderBlock): boolean {
+  return block.body !== null || isToolActivityKind(block.kind);
+}
+
+function activitySegmentUsesDisclosure(
+  part: Extract<TurnSequencePart, { kind: "activity" }>,
+): boolean {
+  const thinkingOnly = part.blocks.length > 0
+    && part.blocks.every((block) => block.kind === "reasoning");
+  const agentNavigationOnly = part.blocks.length > 0
+    && part.blocks.every((block) => (
+      block.kind === "collabAgentToolCall" || block.kind === "subAgentActivity"
+    ));
+  return !thinkingOnly && !agentNavigationOnly;
 }
 
 function TurnTimelineItem({
@@ -7826,10 +7917,13 @@ function TurnTimelineItem({
   const showMessageActions = copyText !== "" || canForkThrough || canReviewResponse;
   const completedWithoutFinal = rawTurn.status === "completed" && latestAgentBlock === null;
   const completedActivityCount = rawTurn.status === "inProgress" ? 0 : completedActivityItemCount(rawTurn);
-  const hasBubbleActivity = preTurnBlocks.length > 0
+  const hasDisclosedBubbleActivity = preTurnBlocks.some(preTurnBlockUsesDisclosure)
     || completedActivityCount > 0
-    || visibleLiveActivitySequence.some((part) => part.kind !== "agent");
-  const agentBubbleFill = hasBubbleActivity
+    || visibleLiveActivitySequence.some((part) => (
+      part.kind === "collapsedActivity"
+      || part.kind === "activity" && activitySegmentUsesDisclosure(part)
+    ));
+  const agentBubbleFill = hasDisclosedBubbleActivity
     || latestAgentBlock?.content?.fields["/text"] !== undefined
     || (latestAgentBlock !== null && richMarkdownLayout(latestAgentBlock.body ?? "") === "fill");
   const hasAgentContent = (rawTurn.status !== "inProgress"
@@ -7937,6 +8031,7 @@ function TurnTimelineItem({
               ? <LiveAgentResponse
                   key={`${part.key}:${index}`}
                   cacheKey={part.block.key}
+                  fill={richMarkdownLayout(part.block.body ?? "") === "fill"}
                   projection={liveMarkdownProjections.get(part.block.key)!}
                   streamMetricKey={liveStreamMetricKey(turn.connectionId, turn.threadId, rawTurn.id, part.block.raw.id)}
                 />
@@ -7996,7 +8091,7 @@ function StableLiveTextSegment({ text, mode, streaming = false }: { text: string
     : <Text selectable style={styles.codeLine}>{text}</Text>;
 }
 
-function AppendOnlyLiveContent({ cacheKey, source, mode, streamMetricKey = null, markdownProjection }: { cacheKey: string; source: string; mode: LiveContentMode; streamMetricKey?: string | null; markdownProjection?: LiveMarkdownProjection }) {
+function AppendOnlyLiveContent({ cacheKey, source, mode, streamMetricKey = null, markdownProjection, fill = false }: { cacheKey: string; source: string; mode: LiveContentMode; streamMetricKey?: string | null; markdownProjection?: LiveMarkdownProjection; fill?: boolean }) {
   const singleMarkdownTree = mode === "markdown";
   const projection = markdownProjection ?? projectCachedLiveText(cacheKey, source);
   const visibleRemainder = markdownProjection?.visibleRemainder ?? projection.remainder;
@@ -8007,7 +8102,7 @@ function AppendOnlyLiveContent({ cacheKey, source, mode, streamMetricKey = null,
     <>
     <View
       testID={mode === "markdown" ? "live-agent-response" : "live-tool-output"}
-      style={[styles.liveAgentResponse, mode === "code" && styles.liveAgentResponseFill, mode === "markdown" && styles.liveMarkdownResponse]}
+      style={[styles.liveAgentResponse, (mode === "code" || fill) && styles.liveAgentResponseFill, mode === "markdown" && styles.liveMarkdownResponse]}
     >
       {singleMarkdownTree
         ? visibleMarkdownSource === "" ? null : <StableLiveTextSegment text={visibleMarkdownSource} mode={mode} streaming />
@@ -8027,8 +8122,8 @@ function AppendOnlyLiveContent({ cacheKey, source, mode, streamMetricKey = null,
   );
 }
 
-function LiveAgentResponse({ cacheKey, projection, streamMetricKey }: { cacheKey: string; projection: LiveMarkdownProjection; streamMetricKey: string | null }) {
-  return <AppendOnlyLiveContent cacheKey={cacheKey} source={projection.source} mode="markdown" streamMetricKey={streamMetricKey} markdownProjection={projection} />;
+function LiveAgentResponse({ cacheKey, fill, projection, streamMetricKey }: { cacheKey: string; fill: boolean; projection: LiveMarkdownProjection; streamMetricKey: string | null }) {
+  return <AppendOnlyLiveContent cacheKey={cacheKey} source={projection.source} mode="markdown" streamMetricKey={streamMetricKey} markdownProjection={projection} fill={fill} />;
 }
 
 function PreTurnLifecycleRows({
@@ -8051,7 +8146,7 @@ function PreTurnLifecycleRows({
         const running = lifecyclePhase === "started"
           || block.status === "inProgress"
           || block.status === "running";
-        const simpleStatus = block.body === null && !isToolActivityKind(block.kind);
+        const simpleStatus = !preTurnBlockUsesDisclosure(block);
         if (!simpleStatus) {
           return (
             <ExpansionItemKeyContext.Provider key={block.key} value={`${turnKey}:pre-turn:${block.key}`}>
@@ -8341,6 +8436,7 @@ function TurnActivitySegment({
         ? [{ raw: block.raw, visibleOutput: block.body }]
         : []))}
       onToggle={() => setExpanded((value) => !value)}
+      showToggle={!shouldAutoExpand}
     >
       {part.blocks.map((block, index) => (
         <ActiveToolCallContext.Provider key={block.key} value={shouldAutoExpand && index === part.blocks.length - 1}>
@@ -8357,21 +8453,49 @@ function TurnActivitySegment({
   );
 }
 
-function TurnActivity({ expanded, forceExpandCards = false, loading = false, label, outputFootprint = null, onToggle, children }: { expanded: boolean; forceExpandCards?: boolean; loading?: boolean; label: string; outputFootprint?: OutputFootprintProjection | null; onToggle(): void; children: React.ReactNode }) {
+interface TurnActivityProps {
+  children: React.ReactNode;
+  expanded: boolean;
+  forceExpandCards?: boolean;
+  label: string;
+  loading?: boolean;
+  onToggle(): void;
+  outputFootprint?: OutputFootprintProjection | null;
+  showToggle?: boolean;
+}
+
+function TurnActivity(props: TurnActivityProps) {
+  const {
+    children,
+    expanded,
+    forceExpandCards = false,
+    label,
+    loading = false,
+    onToggle,
+    outputFootprint = null,
+    showToggle = true,
+  } = props;
   return (
     <View testID="turn-activity" style={[styles.turnActivity, expanded && styles.turnActivityExpanded]}>
-      <Pressable accessibilityRole="button" accessibilityLabel={`${expanded ? "Collapse" : "Expand"} activity ${label}`} hitSlop={10} onPress={onToggle} style={({ pressed }) => [styles.turnActivityToggle, pressed && styles.pressed]}>
-        <View style={styles.activityIconSlot}><Ionicons name="construct-outline" size={13} color={colors.textMuted} /></View>
-        {loading
-          ? <WaveText testID="turn-activity-loading-shimmer" text={label} style={styles.turnActivityLabel} containerStyle={styles.turnActivityLabelWave} />
-          : <Text numberOfLines={1} style={styles.turnActivityLabel}>{label}</Text>}
-        <OutputFootprintMetric footprint={outputFootprint} />
-        <View style={styles.activityChevronSlot}><Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={12} color={colors.textDim} /></View>
-      </Pressable>
+      {showToggle && (
+        <Pressable accessibilityRole="button" accessibilityLabel={`${expanded ? "Collapse" : "Expand"} activity ${label}`} hitSlop={10} onPress={onToggle} style={({ pressed }) => [styles.turnActivityToggle, pressed && styles.pressed]}>
+          <View style={styles.activityIconSlot}><Ionicons name="construct-outline" size={13} color={colors.textMuted} /></View>
+          {loading
+            ? <WaveText testID="turn-activity-loading-shimmer" text={label} style={styles.turnActivityLabel} containerStyle={styles.turnActivityLabelWave} />
+            : <Text numberOfLines={1} style={styles.turnActivityLabel}>{label}</Text>}
+          <OutputFootprintMetric footprint={outputFootprint} />
+          <View style={styles.activityChevronSlot}><Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={12} color={colors.textDim} /></View>
+        </Pressable>
+      )}
       {expanded && (
         <ForceExpandCardsContext.Provider value={forceExpandCards}>
           <TurnActivityContentContext.Provider value>
-            <View testID="turn-activity-list" style={styles.turnActivityList}>{children}</View>
+            <View
+              testID="turn-activity-list"
+              style={[styles.turnActivityList, !showToggle && styles.turnActivityListWithoutToggle]}
+            >
+              {children}
+            </View>
           </TurnActivityContentContext.Provider>
         </ForceExpandCardsContext.Provider>
       )}
@@ -8654,10 +8778,13 @@ function AgentResponseMarkdown({ block, getTransferAccess, visibilityRef, onVisi
   const segments = resource.value ?? [];
   const loading = resource.status === "loading";
   const error = resource.error;
+  const fill = richMarkdownLayout(block.body ?? "") === "fill"
+    || segments.some((segment) => richMarkdownLayout(segment) === "fill");
+  const documentStyle = [styles.agentMarkdownDocument, fill && styles.agentMarkdownDocumentFill];
 
   if (reference === null || segments.length === 0) {
     return (
-      <View ref={visibilityRef} onLayout={onVisibilityLayout} style={styles.agentMarkdownDocument}>
+      <View ref={visibilityRef} onLayout={onVisibilityLayout} style={documentStyle}>
         <CompleteAgentMarkdown source={block.body ?? ""} reviewTarget={reviewTarget} />
         {loading && <ActivityIndicator accessibilityLabel="Loading complete response" size="small" color={colors.textMuted} />}
         {error !== null && <Text style={styles.errorText}>{error}</Text>}
@@ -8665,7 +8792,7 @@ function AgentResponseMarkdown({ block, getTransferAccess, visibilityRef, onVisi
     );
   }
   return (
-    <View ref={visibilityRef} onLayout={onVisibilityLayout} style={styles.agentMarkdownDocument}>
+    <View ref={visibilityRef} onLayout={onVisibilityLayout} style={documentStyle}>
       {segments.map((segment, index) => <RichMarkdown key={`${reference.id}:${index}`} source={segment} reviewTarget={reviewTarget} reviewPathPrefix={`segment-${index}`} />)}
       <ContentReviewComments targetId={reviewTarget.id} />
       {loading && <ActivityIndicator accessibilityLabel="Loading complete response" size="small" color={colors.textMuted} />}
@@ -8680,8 +8807,9 @@ function markdownSegmentsWeight(segments: string[]): number {
 
 function CompleteAgentMarkdown({ source, reviewTarget }: { source: string; reviewTarget?: ContentReviewTarget }) {
   const segments = projectCompleteMarkdown(source);
+  const fill = richMarkdownLayout(source) === "fill";
   return (
-    <View style={styles.agentMarkdownDocument}>
+    <View style={[styles.agentMarkdownDocument, fill && styles.agentMarkdownDocumentFill]}>
       {segments.map((segment, index) => <RichMarkdown key={index} source={segment} {...(reviewTarget === undefined ? {} : { reviewTarget, reviewPathPrefix: `segment-${index}` })} />)}
       {reviewTarget !== undefined && <ContentReviewComments targetId={reviewTarget.id} />}
     </View>
@@ -9449,7 +9577,12 @@ function DocumentAttachmentChip({
       accessibilityRole="button"
       accessibilityLabel={`Open ${name}`}
       onPress={() => {
-        const request = { kind, name, path: resolvedPath, getTransferAccess };
+        const request = {
+          kind,
+          name,
+          path: resolvedPath,
+          getTransferAccess,
+        };
         if (kind === "text" && openCodeDocument !== null) openCodeDocument(request);
         else openDocument(request);
       }}
@@ -9469,17 +9602,22 @@ function fileKindIcon(kind: DocumentPreviewKind): "document-text-outline" | "glo
   return "document-text-outline";
 }
 
-function UserMessageContent({
-  content,
-  projectedAttachments,
-  localAttachments = [],
-  getTransferAccess,
-}: {
+interface UserMessageContentProps {
   content: unknown[];
   projectedAttachments?: unknown;
   localAttachments?: readonly ComposerAttachment[];
+  pendingText?: boolean;
   getTransferAccess?(): Promise<{ baseUrl: string; authorization: string }>;
-}) {
+}
+
+function UserMessageContent(props: UserMessageContentProps) {
+  const {
+    content,
+    getTransferAccess,
+    localAttachments = [],
+    pendingText = false,
+    projectedAttachments,
+  } = props;
   const parts = content.flatMap((raw) => raw !== null && typeof raw === "object" && !Array.isArray(raw) ? [raw as Record<string, unknown>] : []);
   const attachments = projectUserMessageAttachments(content, projectedAttachments, localAttachments);
   const imageAttachments = attachments.filter((attachment) => attachment.kind === "image");
@@ -9497,7 +9635,9 @@ function UserMessageContent({
         const type = typeof part.type === "string" ? part.type : "unknown";
         if (type === "text" && typeof part.text === "string") {
           const normalized = normalizeUserMessage(part.text);
-          return normalized.text === "" ? null : <CollapsibleUserMessage key={index} text={normalized.text} partIndex={index} />;
+          return normalized.text === "" ? null : (
+            <CollapsibleUserMessage key={index} text={normalized.text} partIndex={index} pending={pendingText} />
+          );
         }
         const label = type === "skill" && typeof part.name === "string" ? `Skill · ${part.name}` : `Attachment · ${type}`;
         return (
@@ -9518,15 +9658,33 @@ function UserMessageContent({
   );
 }
 
-function CollapsibleUserMessage({ text, partIndex }: { text: string; partIndex: number }) {
+interface CollapsibleUserMessageProps {
+  partIndex: number;
+  pending?: boolean;
+  text: string;
+}
+
+function CollapsibleUserMessage(props: CollapsibleUserMessageProps) {
+  const { partIndex, pending = false, text } = props;
   const canCollapse = text.length > USER_MESSAGE_COLLAPSED_CHARS || text.split("\n").length > USER_MESSAGE_COLLAPSED_LINES;
   const [expanded, setExpanded] = usePersistentExpansion(`user-message:${partIndex}:${textFingerprint(text)}`, false);
+  const maxLines = !expanded && canCollapse ? USER_MESSAGE_COLLAPSED_LINES : 0;
   return (
     <View style={styles.userMessageTextBlock}>
-      <RichMarkdown
-        source={text}
-        {...(!expanded && canCollapse ? { maxLines: USER_MESSAGE_COLLAPSED_LINES } : {})}
-      />
+      {pending ? (
+        <WaveText
+          containerStyle={styles.pendingUserMessageShimmer}
+          numberOfLines={maxLines}
+          style={styles.userBubbleText}
+          testID="pending-user-message-shimmer"
+          text={text}
+        />
+      ) : (
+        <RichMarkdown
+          source={text}
+          {...(!expanded && canCollapse ? { maxLines: USER_MESSAGE_COLLAPSED_LINES } : {})}
+        />
+      )}
       {canCollapse && (
         <Pressable accessibilityRole="button" onPress={() => setExpanded((current) => !current)} style={styles.userMessageExpandButton}>
           <Text style={styles.userMessageExpandText}>{expanded ? "Collapse" : "Show full message"}</Text>
@@ -10260,6 +10418,20 @@ function ConnectionRowEditor({
     { id: "move-down", label: "Move down", icon: "arrow-down" },
     { id: "delete", label: "Delete server", icon: "trash-outline", destructive: true },
   ];
+  const secureLive = connection.enabled && connection.state === "live";
+  const copyDiagnostic = async () => {
+    if (connection.lastError === null) return;
+    await Clipboard.setStringAsync(connectionDiagnosticReport({
+      appVersion: Constants.expoConfig?.version ?? null,
+      connectionId: connection.id,
+      enabled: connection.enabled,
+      error: connection.lastError,
+      occurredAt: connection.lastErrorAt,
+      platform: Platform.OS,
+      platformVersion: Platform.Version,
+      state: connection.state,
+    }));
+  };
   const handleConnectionAction = (id: string) => {
     if (id === "reconnect") void onReconnect(connection.id);
     else if (id === "edit") setEditing(true);
@@ -10298,18 +10470,24 @@ function ConnectionRowEditor({
             <Text style={styles.serverEmoji}>{Platform.OS === "web" ? connection.displayName.slice(0, 1).toLocaleUpperCase() : connection.emoji}</Text>
             <View style={styles.controlOptionText}>
               <Text numberOfLines={1} ellipsizeMode="tail" style={styles.menuActionTitle}>{connection.displayName}</Text>
-              <Text numberOfLines={1} ellipsizeMode="middle" style={styles.menuActionSubtitle}>{connection.endpoint}</Text>
-              <View style={styles.connectionStateRow}>
-                <View style={styles.connectionStateIcon}>
-                  {connection.enabled && connectionActivity(connection.state) !== null
+              <View style={styles.connectionEndpointRow}>
+                {secureLive && (
+                  <Ionicons accessibilityLabel="Secure connection" name="lock-closed" size={12} color={colors.green} />
+                )}
+                <Text numberOfLines={1} ellipsizeMode="middle" style={[styles.menuActionSubtitle, styles.connectionEndpointText]}>{connection.endpoint}</Text>
+              </View>
+              {!secureLive && (
+                <View style={styles.connectionStateRow}>
+                  <View style={styles.connectionStateIcon}>
+                    {connection.enabled && connectionActivity(connection.state) !== null
                     ? <ConnectionActivityIndicator status={connection.state} size={12} />
                     : <View style={[styles.connectionStateDot, { backgroundColor: connection.enabled ? connectionStateColor(connection.state) : colors.textDim }]} />}
+                  </View>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.connectionStateText, { color: connection.enabled ? connectionStateColor(connection.state) : colors.textDim }]}>
+                    {connectionStateLabel(connection.state, connection.enabled)}
+                  </Text>
                 </View>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.connectionStateText, { color: connection.enabled ? connectionStateColor(connection.state) : colors.textDim }]}> 
-                  {connectionStateLabel(connection.state, connection.enabled)}
-                </Text>
-                {connection.tlsPinSha256 !== undefined && <Text style={styles.connectionPinned}>TLS pinned</Text>}
-              </View>
+              )}
             </View>
             <Switch
               accessibilityLabel={`Enable ${connection.displayName}`}
@@ -10338,7 +10516,7 @@ function ConnectionRowEditor({
                 <Pressable accessibilityLabel={`${diagnosticExpanded ? "Hide" : "Show"} error details for ${connection.displayName}`} onPress={() => setDiagnosticExpanded((value) => !value)}>
                   <Text style={styles.rawLink}>{diagnosticExpanded ? "Hide details" : "Error details"}</Text>
                 </Pressable>
-                <Pressable accessibilityLabel={`Copy error for ${connection.displayName}`} onPress={() => void Clipboard.setStringAsync(connection.lastError ?? "")}>
+                <Pressable accessibilityLabel={`Copy error for ${connection.displayName}`} onPress={() => void copyDiagnostic()}>
                   <Text style={styles.rawLink}>Copy</Text>
                 </Pressable>
               </View>
@@ -10832,15 +11010,7 @@ const styles = StyleSheet.create({
   desktopWorkspace: { flex: 1, flexDirection: "row" },
   flex: { flex: 1 },
   pressed: { opacity: 0.68 },
-  serverRail: { width: 64, backgroundColor: colors.surfaceContainerLowest, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, alignItems: "center" },
-  serverRailScroll: { flex: 1, width: "100%" },
-  serverRailScrollContent: { alignItems: "center", gap: spacing.xs, paddingVertical: spacing.xs },
-  railButton: { width: touchTarget, height: touchTarget, borderRadius: radii.large, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerLow },
-  serverAvatar: { width: touchTarget, height: touchTarget, borderRadius: radii.large, backgroundColor: colors.surfaceContainerLow, alignItems: "center", justifyContent: "center", position: "relative" },
-  serverAvatarActive: { backgroundColor: colors.primaryContainer, borderRadius: radii.selected },
-  serverActiveMarker: { position: "absolute", left: -10, width: 3, height: 24, borderRadius: 2, backgroundColor: colors.primary },
   serverEmoji: { fontSize: 22 },
-  statusDot: { position: "absolute", right: -1, bottom: 1, width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.surfaceContainerLowest, alignItems: "center", justifyContent: "center" },
   connectionActivityIndicator: { flexShrink: 0, alignItems: "center", justifyContent: "center" },
   threadSidebar: {
     minWidth: 280,
@@ -10861,13 +11031,13 @@ const styles = StyleSheet.create({
   threadFilterActiveDot: { position: "absolute", top: 8, right: 8, width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
   searchBox: { height: 44, borderRadius: radii.large, backgroundColor: colors.surfaceContainerLow, flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.sm, gap: spacing.xs },
   searchInput: { flex: 1, color: colors.text, fontSize: 14, lineHeight: 20, paddingVertical: 0 },
-  sectionHeader: { color: colors.textMuted, fontSize: 10, lineHeight: 14, fontWeight: "700", paddingHorizontal: spacing.sm, paddingTop: spacing.xs, paddingBottom: spacing.xxs, textTransform: "uppercase", letterSpacing: 0.7 },
+  sectionHeader: { height: THREAD_LIST_SECTION_HEIGHT, color: colors.textMuted, fontSize: 10, lineHeight: 14, fontWeight: "700", paddingHorizontal: spacing.sm, paddingTop: spacing.xs, paddingBottom: spacing.xxs, textTransform: "uppercase", letterSpacing: 0.7 },
   threadListEmpty: { alignItems: "center", justifyContent: "center", gap: spacing.xs, paddingHorizontal: spacing.lg, paddingTop: 48 },
   threadListEmptyText: { color: colors.textMuted, ...typeScale.bodyMedium },
-  threadRow: { minWidth: 0, maxWidth: "100%", minHeight: 64, alignSelf: "stretch", marginHorizontal: spacing.xs, marginVertical: 1, paddingVertical: 6, paddingHorizontal: spacing.xs, borderRadius: radii.selected, flexDirection: "row", alignItems: "center", gap: spacing.xs, position: "relative" },
+  threadRow: { minWidth: 0, maxWidth: "100%", height: THREAD_LIST_ROW_CONTENT_HEIGHT, alignSelf: "stretch", marginHorizontal: spacing.xs, marginVertical: THREAD_LIST_ROW_VERTICAL_MARGIN, paddingVertical: 6, paddingHorizontal: spacing.xs, borderRadius: radii.selected, flexDirection: "row", alignItems: "center", gap: spacing.xs, position: "relative" },
   threadContextMenu: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", flexShrink: 1 },
   threadRowSwipeChild: { marginHorizontal: 0, marginVertical: 0, borderRadius: radii.selected, backgroundColor: colors.surface },
-  swipeContainer: { minWidth: 0, maxWidth: "100%", alignSelf: "stretch", marginHorizontal: spacing.xs, marginVertical: 1, borderRadius: radii.selected, overflow: "hidden", backgroundColor: colors.surface },
+  swipeContainer: { minWidth: 0, maxWidth: "100%", alignSelf: "stretch", marginHorizontal: spacing.xs, marginVertical: THREAD_LIST_ROW_VERTICAL_MARGIN, borderRadius: radii.selected, overflow: "hidden", backgroundColor: colors.surface },
   swipeChildren: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", backgroundColor: colors.surface },
   swipeActionsLeft: { flexDirection: "row", alignSelf: "stretch", backgroundColor: colors.surfaceContainerHigh },
   swipeActionsRight: { flexDirection: "row", alignSelf: "stretch", backgroundColor: colors.surfaceContainerHigh },
@@ -10897,6 +11067,7 @@ const styles = StyleSheet.create({
   mobileTitleRow: { minHeight: 64, paddingHorizontal: spacing.sm, flexDirection: "row", alignItems: "center", gap: 2 },
   mobileTitleSelector: { flex: 1, minWidth: 0, minHeight: touchTarget, paddingHorizontal: spacing.xs, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.medium },
   mobileIdentity: { flex: 1, minWidth: 0 },
+  serverSelectorIdentity: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
   mobileTitle: { flexShrink: 1, color: colors.text, ...typeScale.titleLarge },
   mobileSubtitle: { color: colors.textMuted, ...typeScale.labelMedium },
   mobileServers: { gap: 8, paddingHorizontal: 14, paddingVertical: 10 },
@@ -10933,11 +11104,12 @@ const styles = StyleSheet.create({
   timelineShell: { flex: 1 },
   historyLoadingIndicator: { position: "absolute", top: spacing.xs, left: 0, right: 0, zIndex: 11, alignItems: "center" },
   historyLoadingIndicatorPill: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh },
-  livePlanFloat: { position: "absolute", left: 0, right: 0, bottom: spacing.sm, zIndex: 10, alignItems: "center" },
+  livePlanFloat: { position: "absolute", left: 0, right: 0, bottom: spacing.sm, zIndex: 10, alignItems: "center", flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.xs, paddingHorizontal: spacing.sm },
   conversationContent: { paddingHorizontal: spacing.xs, paddingTop: 6 },
   conversationContentLivePlanInset: { paddingBottom: 58 },
   conversationContentCompact: { flexGrow: 1, justifyContent: "flex-end" },
   conversationContentWide: { flexGrow: 1, paddingLeft: 52, paddingRight: spacing.md },
+  timelineRow: { width: "100%" },
   timelineItem: { width: "100%", maxWidth: 880, alignSelf: "center" },
   timelineItemWide: { alignSelf: "flex-start" },
   turnGroup: { gap: 5 },
@@ -10970,6 +11142,7 @@ const styles = StyleSheet.create({
   userMessageMediaContent: { width: 320, maxWidth: "100%" },
   userMessageBlock: { minWidth: 0 },
   userMessageTextBlock: { minWidth: 0 },
+  pendingUserMessageShimmer: { alignSelf: "stretch" },
   userMessageExpandButton: { minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4, paddingTop: 4 },
   userMessageExpandText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
   userImageGallery: { width: "100%", flexDirection: "row", flexWrap: "wrap", gap: 4, overflow: "hidden", borderRadius: radii.medium },
@@ -10987,6 +11160,7 @@ const styles = StyleSheet.create({
   retryMessageText: { color: colors.accent, fontSize: 11, fontWeight: "700" },
   agentMessage: { paddingHorizontal: 2, paddingVertical: 3 },
   agentMarkdownDocument: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", gap: 5 },
+  agentMarkdownDocumentFill: { width: "100%", alignSelf: "stretch" },
   waveTextShell: { minWidth: 0, maxWidth: "100%", flexShrink: 1, alignSelf: "flex-start", overflow: "hidden" },
   waveTextRest: { opacity: 0.58 },
   waveTextMask: { color: "#000000" },
@@ -11008,6 +11182,7 @@ const styles = StyleSheet.create({
   outputFootprintMetric: { flexShrink: 0, justifyContent: "center" },
   outputFootprintMetricText: { color: colors.textDim, fontSize: 9, lineHeight: 13, fontVariant: ["tabular-nums"] },
   turnActivityList: { width: "100%", minWidth: 0, maxWidth: "100%", gap: 5, paddingTop: 2, paddingLeft: 18, paddingRight: 1, paddingBottom: 2 },
+  turnActivityListWithoutToggle: { paddingLeft: 0 },
   activityMoreButton: { minHeight: 36, alignItems: "center", justifyContent: "center", borderRadius: radii.medium, backgroundColor: colors.surfaceContainerLow },
   activityMoreText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" },
   copyButton: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 12 },
@@ -11045,7 +11220,7 @@ const styles = StyleSheet.create({
   planText: { flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16 },
   reasoningCard: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: spacing.xs, backgroundColor: colors.surfaceRaised, borderRadius: 14, paddingHorizontal: 10 },
   reasoningText: { flex: 1, color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-  thinkingStatusSection: { minWidth: 0 },
+  thinkingStatusSection: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", alignItems: "flex-start" },
   thinkingStatus: { minWidth: 0, minHeight: 25, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 2 },
   thinkingStatusInActivity: { paddingLeft: 8 },
   monospaceStrong: { color: colors.text, fontFamily: Platform.select({ android: "monospace", default: "Courier" }), fontSize: 11, fontWeight: "700", marginBottom: 2 },
@@ -11201,6 +11376,8 @@ const styles = StyleSheet.create({
   controlSectionLabel: { color: colors.textMuted, fontSize: 12, fontWeight: "700", textTransform: "uppercase", paddingTop: 18, paddingBottom: 7 },
   controlOption: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radii.selected },
   controlOptionText: { flex: 1, minWidth: 0 },
+  controlOptionTitleRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  controlOptionTitleText: { minWidth: 0, flexShrink: 1 },
   controlOptionSelected: { backgroundColor: colors.primaryContainer },
   controlOptionAttention: { backgroundColor: colors.warningContainer },
   runtimeSelector: { flexShrink: 0, marginBottom: spacing.xs },
@@ -11274,6 +11451,10 @@ const styles = StyleSheet.create({
   pairingSuccessIcon: { width: 60, height: 60, borderRadius: 30, alignItems: "center", justifyContent: "center", backgroundColor: colors.primary },
   pairingSuccessTitle: { color: colors.text, ...typeScale.titleLarge, textAlign: "center" },
   goalDialogContent: { gap: spacing.md },
+  goalDetailItem: { minWidth: 112, flexBasis: "47%", flexGrow: 1, gap: spacing.xxs, padding: spacing.sm, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerLow },
+  goalDetailLabel: { color: colors.textDim, ...typeScale.caption },
+  goalDetailValue: { color: colors.text, ...typeScale.labelMedium, fontWeight: "600" },
+  goalDetails: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
   goalDialogIntro: { gap: spacing.xxs, paddingRight: spacing.xl },
   goalObjectiveInput: { minHeight: 112, color: colors.text, backgroundColor: colors.surfaceContainerLow, borderRadius: radii.medium, borderWidth: 1, borderColor: colors.outline, paddingHorizontal: spacing.md, paddingTop: spacing.sm, paddingBottom: spacing.sm, textAlignVertical: "top", ...typeScale.bodyLarge },
   goalClearPrompt: { color: colors.red, fontSize: 12, lineHeight: 16 },
@@ -11297,9 +11478,10 @@ const styles = StyleSheet.create({
   connectionEmojiInput: { width: 52, minHeight: 46, color: colors.text, backgroundColor: colors.surface, borderRadius: radii.medium, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 8, fontSize: 20 },
   connectionStateRow: { minHeight: 18, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6, marginTop: 3 },
   connectionStateIcon: { width: 12, height: 12, flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  connectionEndpointRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  connectionEndpointText: { flex: 1, minWidth: 0 },
   connectionStateDot: { width: 7, height: 7, borderRadius: 4 },
   connectionStateText: { minWidth: 0, flexShrink: 1, fontSize: 11, lineHeight: 15, fontWeight: "600" },
-  connectionPinned: { color: colors.green, fontSize: 10, fontWeight: "700", marginLeft: 3 },
   connectionDiagnostic: { gap: 7, marginLeft: 48, padding: 10, borderRadius: radii.medium, backgroundColor: colors.errorContainer },
   connectionDiagnosticHeader: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
   connectionDiagnosticSummary: { flex: 1, color: colors.onErrorContainer, fontSize: 12, lineHeight: 17 },

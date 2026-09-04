@@ -57,6 +57,7 @@ const sessionCredentialClient = readFileSync(new URL("../android/app/src/main/ja
 const deviceKeyStore = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/DeviceKeyStore.kt", import.meta.url), "utf8");
 const innerTlsTransport = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt", import.meta.url), "utf8");
 const nativeModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt", import.meta.url), "utf8");
+const opusAudioEncoder = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/OpusAudioEncoder.kt", import.meta.url), "utf8");
 const nativePackage = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWidePackage.kt", import.meta.url), "utf8");
 const nativeCodeManager = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockManager.kt", import.meta.url), "utf8");
 const nativeCodeView = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockView.kt", import.meta.url), "utf8");
@@ -235,7 +236,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(codeReviewEditor).toContain('document: CodeReviewDocument | null;');
     expect(codeReviewEditor).not.toContain('showInitialLoading');
     expect(codeReviewEditor).not.toContain('<ActivityIndicator');
-    expect(codeReviewRuntime).toContain('setEmptyState(previewEmptyHost, currentWorkspace.files.length === 0');
+    expect(codeReviewRuntime).toContain('setEmptyState(previewEmptyHost, LOADING_CHANGE_STATE, true)');
     expect(screen).toContain('initialLine: request.line');
     expect(screen).toContain('initialColumn: request.column');
     expect(codeReviewWorkspace).toContain('revealReference={selectedReference === null ? revealReference : null}');
@@ -259,7 +260,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(codeReviewRuntime).toContain('new FileDiff<AnnotationMetadata>');
     expect(codeReviewRuntime).toContain('icons: "complete"');
     expect(codeReviewRuntime).toContain('density: "compact"');
-    expect(codeReviewRuntime).toContain('"list.hoverBackground": "#101113"');
+    expect(codeReviewRuntime).not.toContain('"list.hoverBackground"');
     expect(codeReviewRuntime).toContain("stickyFolders: false");
     expect(codeReviewRuntime).toContain("overscan: 4");
     expect(codeReviewRuntime).toContain("themeToTreeStyles(treeTheme)");
@@ -267,11 +268,14 @@ describe("checked-in Android project mirrors app config", () => {
     expect(codeReviewRuntime).not.toContain("Object.assign(treeContainer.style, treeThemeStyles)");
     expect(codeReviewRuntime).toContain('new Map(payload.files.map((file) => [file.treePath, file]))');
     expect(codeReviewRuntime).toContain('if (nextTreePath === selectedTreePath && !scroll) return;');
-    expect(codeReviewRuntime).toContain('setEmptyState(previewEmptyHost, currentWorkspace.files.length === 0');
+    expect(codeReviewRuntime).toContain('if (currentWorkspace.files.length === 0)');
+    expect(codeReviewRuntime).toContain('else if (currentWorkspace.selectedPath !== null)');
     expect(codeReviewRuntime).toContain('codeReviewDocumentEmptyState(currentDocument, currentMode)');
     expect(codeReviewRuntime).toContain('renderCurrentDocument(true)');
     expect(codeReviewRuntime).toContain('forceRender,');
-    expect(codeReviewRuntime).not.toContain("unsafeCSS");
+    expect(codeReviewRuntime).toContain("unsafeCSS: TOUCH_FILE_TREE_CSS");
+    expect(codeReviewRuntime).toContain("@media (hover: none), (pointer: coarse)");
+    expect(codeReviewRuntime).toContain('[data-type="item"]:hover:not([data-item-selected="true"])');
     expect(codeReviewRuntime).not.toContain('class ReviewLineMarker extends GutterMarker');
     expect(codeReviewRuntime).toContain('openComposer(referenceForFileLine(currentDocument.path, event.lineNumber))');
     expect(codeReviewAsset).toMatch(/code-review-editor\.js\?v=[a-f0-9]{16}/);
@@ -294,7 +298,13 @@ describe("checked-in Android project mirrors app config", () => {
     expect(voiceWorkspace).toContain("threadObserverDesired.set(connectionId, threadId)");
     expect(threadDetailDatabase).toContain("remoteLoader?.observe?.({ connectionId, threadId })");
     expect(voiceWorkspace).toContain("Could not attach retained thread observer");
-    expect(voiceWorkspace).toContain("Thread observer reattach failed after reconnect");
+    expect(voiceWorkspace).toContain("Thread sync failed after reconnect");
+    expect(voiceWorkspace).toContain('"companion/thread/sync"');
+    expect(nativeEngine).toContain("async reattachRuntime(): Promise<void>");
+    expect(nativeEngine).toContain("await session.reattachRuntime()");
+    expect(voiceWorkspace).toContain("await supervisor.reattachRuntime(connectionId)");
+    expect(voiceWorkspace).toContain("workspaceActions.readThread(row.connectionId, desiredThreadId, undefined, true)");
+    expect(voiceWorkspace).toContain('AppState.addEventListener("change", repairForegroundRuntime)');
     expect(screen).not.toContain("refreshIfSelected");
     expect(screen).toContain("reloadSelected = false");
     expect(screen).toContain("setActiveThreadId(value, navigationId, true, undefined, true);");
@@ -322,8 +332,17 @@ describe("checked-in Android project mirrors app config", () => {
     expect(quickdrawPatch).toContain("record.props?.locked === true");
     expect(drawingWorkspace).toContain('boardRef.current?.setTool("draw")');
     expect(drawingWorkspace).toContain('{ background: false, scale: 1, margin: 0 }');
+    expect(drawingWorkspace).not.toContain("useSafeAreaInsets");
+    expect(drawingWorkspace).toContain("<View style={styles.header}>");
+    expect(drawingWorkspace).toContain("<View style={styles.board}>");
     expect(screen).toContain("loadQuickdrawImageSnapshot(item.source)");
     expect(screen).toContain('mode: "image-annotation"');
+    const drawingCommit = screen.slice(
+      screen.indexOf("const commitDrawing = async"),
+      screen.indexOf("const presentDrawing ="),
+    );
+    expect(drawingCommit).toContain("await persistAttachments([");
+    expect(drawingCommit).toContain("await persistAttachments(current.map(");
   });
 
   it("keeps a server-scoped new chat local until the first send", () => {
@@ -507,6 +526,11 @@ describe("checked-in Android project mirrors app config", () => {
     expect(connectionService).toContain("RETIRING_SOCKET_GRACE_MS");
     expect(connectionService).toContain('previous.close(1000, "credential_rotated")');
     expect(nativeProtocolEngine).toContain('.put("protocolVersion", 1)');
+    expect(nativeProtocolEngine).toContain("SYNC_KEEPALIVE_INTERVAL_MS = 5_000L");
+    expect(nativeProtocolEngine).toContain('.put("type", "ping")');
+    expect(nativeProtocolEngine).toContain("startKeepalive()");
+    expect(nativeProtocolEngine).toContain("stopKeepalive()");
+    expect(nativeProtocolEngine).toContain('resetTransport("keepalive_send_failed")');
     expect(nativeProtocolEngine).toContain("frameStore.syncCursor(connectionId)");
     expect(nativeProtocolEngine).toContain("frameStore.appendEvents(connectionId, batch)");
     expect(nativeProtocolEngine).toContain('"journalAdvanced"');
@@ -589,7 +613,10 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeEngine).toContain("state.rpcAvailable");
     expect(nativeEngine).toContain('setConnectionState(this.connectionId, "connecting", null, false)');
     expect(nativeEngine).not.toContain("waitUntilLive");
-    expect(nativeModule).toContain("private const val AUDIO_CHUNKS_PER_SECOND = 4");
+    expect(nativeModule).toContain("private const val AUDIO_CHUNKS_PER_SECOND = 5");
+    expect(nativeModule).toContain("private const val OPUS_BITRATE = 24_000");
+    expect(nativeModule).toContain('putString("encoding", "opus")');
+    expect(opusAudioEncoder).toContain("MediaFormat.MIMETYPE_AUDIO_OPUS");
     expect(nativeEngine).toContain("this.#projection.applySnapshot");
     expect(nativeEngine).toContain("this.#projection.applyEvents");
     expect(nativeEngine).toContain("bridge?.acknowledgeProjection");
@@ -823,6 +850,10 @@ describe("checked-in Android project mirrors app config", () => {
     expect(voiceController).not.toContain('this.patch(binding.scope, { level: chunk.level })');
     expect(voiceController).not.toContain('setInterval(() => this.patch(binding.scope');
     expect(screen).toContain('<View testID="turn-activity" style={[styles.turnActivity, expanded && styles.turnActivityExpanded]}>');
+    expect(screen).toContain('showToggle={!shouldAutoExpand}');
+    expect(screen).toContain('{showToggle && (');
+    expect(screen).toContain('style={[styles.turnActivityList, !showToggle && styles.turnActivityListWithoutToggle]}');
+    expect(screen).toContain('turnActivityListWithoutToggle: { paddingLeft: 0 }');
     expect(screen).toContain('testID="turn-activity-loading-shimmer"');
     expect(screen).toContain('{expanded && (');
     expect(screen).toContain('turnActivityExpanded: { width: "100%"');
@@ -946,7 +977,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).not.toContain("<Modal visible={open}");
     expect(screen).toContain('text={normalized.text}');
     expect(screen).toContain('normalizeUserMessage(part.text)');
-    expect(screen).toContain('<RichMarkdown\n        source={text}');
+    expect(screen).toContain('<RichMarkdown\n          source={text}');
     expect(richMarkdown).toContain('accessibilityLabel={`Copy ${language} code block`}');
     expect(richMarkdown).toContain('<NativeCodeBlock value={value} language={language} />');
     expect(screen).toContain('<NativeCodeBlock value={projection.renderSource} language={nativeCodeLanguageForPath(path)} variant="diff"');
@@ -987,10 +1018,14 @@ describe("checked-in Android project mirrors app config", () => {
     expect(mermaidDocument).toContain("window.diagramZoom");
     expect(mermaidDocument).toContain("window.diagramReset");
     expect(mermaidDocument).toContain('#root[data-mode="inline"] #canvas svg { display: block; width: 100%');
-    expect(mermaidDocument).toContain('#root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center');
+    expect(mermaidDocument).toContain('#root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; }');
+    expect(mermaidDocument).toContain('#root[data-mode="fullscreen"] #canvas { position: absolute; inset: 0 auto auto 0;');
     expect(mermaidDocument).toContain("const horizontalGutter = Math.min(160, Math.max(48, innerWidth * .14));");
     expect(mermaidDocument).toContain("const verticalGutter = Math.min(180, Math.max(72, innerHeight * .16));");
     expect(mermaidDocument).toContain("panzoom = Panzoom(canvas");
+    expect(mermaidDocument).toContain("const startX = (stage.clientWidth - naturalWidth) / (2 * fitScale);");
+    expect(mermaidDocument).toContain("const startY = (stage.clientHeight - naturalHeight) / (2 * fitScale);");
+    expect(mermaidDocument).toContain("pinchAndPan: true");
     expect(mermaidNative).toContain('mode="inline"');
     expect(mermaidNative).toContain('mode="fullscreen"');
     expect(mermaidNative).toContain('if (message.type === "ready")');
@@ -1040,6 +1075,10 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain("isProfileOnlyConnectionUpdate(input, current)");
     expect(screen).toContain("remote.updateConnectionProfile(connectionId, profile.displayName, profile.emoji)");
     expect(screen).toContain("connectionStateLabel(connection.state, connection.enabled)");
+    expect(screen).toContain('<View style={styles.connectionEndpointRow}>');
+    expect(screen).toContain('<Ionicons accessibilityLabel="Secure connection" name="lock-closed" size={12} color={colors.green} />');
+    expect(screen).toContain('style={[styles.menuActionSubtitle, styles.connectionEndpointText]}');
+    expect(screen).not.toContain("TLS pinned</Text>");
     expect(screen).toContain("connectionDiagnosticSummary(connection.lastError)");
     expect(screen).toContain("Error details");
     expect(screen).toContain('<ThreadTimelineList\n        ref={timelineRef}');
@@ -1078,17 +1117,17 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeFrameStore).toContain("applyPendingRequestEvents(connectionId, fresh.mapNotNull { it.pendingRequestPayload })");
     expect(nativeProtocolEngine).toContain('emitEngineEvent(connectionId, "pendingRequests"');
     expect(voiceWorkspace).toContain('createThreadSummaryDatabase()');
-    expect(voiceWorkspace).toContain("async reconcileBeforeSummary(connectionId, events, projected)");
+    expect(voiceWorkspace).not.toContain("reconcileBeforeSummary");
     expect(voiceWorkspace).toContain('projection.applySnapshot(connectionId, snapshots, cursor)');
     expect(voiceWorkspace).toContain('projection.applyEvents(connectionId, events)');
     const liveProjectionStart = voiceWorkspace.indexOf("async applyEvents(connectionId, events) {");
     const liveProjectionEnd = voiceWorkspace.indexOf("onPendingRequests:", liveProjectionStart);
     const liveProjection = voiceWorkspace.slice(liveProjectionStart, liveProjectionEnd);
-    expect(voiceWorkspace).toContain("streamRepairThreadIds(events, projected.threads)");
+    expect(liveProjection).not.toContain("workspaceRuntime.threadSyncLane.markDirty");
     expect(liveProjection).toContain("projectedThreads.get(threadId)?.cwd");
     expect(liveProjection).not.toContain("details.getThread(");
     expect(threadProjectionStore.indexOf('details.applyEvents(connectionId, events)')).toBeLessThan(threadProjectionStore.indexOf('summaries.applyEvents(connectionId, events)'));
-    expect(threadProjectionStore.indexOf("reconcileBeforeSummary?.(connectionId, events, projected)")).toBeLessThan(threadProjectionStore.indexOf('summaries.applyEvents(connectionId, events)'));
+    expect(threadProjectionStore).not.toContain("reconcileBeforeSummary");
     expect(uiCachePersistence).toContain('registerUiCacheCollectionFlusher');
     expect(uiCachePersistence).not.toContain('createReactNativeSQLitePersistence');
     expect(voiceWorkspace).toContain('useLiveQuery(');
@@ -1160,7 +1199,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).not.toContain("windowCoverage.complete ? remoteThread : null");
     expect(screen).not.toContain("const windowCoverage = chatDatabase.windowCoverage");
     expect(threadDetailDatabase).toContain("const coverage = threadWindowCoverage(request, cachedWindow)");
-    expect(threadDetailDatabase).toContain("const requiresHydration = !coverage.complete || cachedThread === null || invalidated");
+    expect(threadDetailDatabase).toContain("const requiresHydration = !coverage.complete || cachedThread === null");
     expect(threadDetailDatabase).not.toContain('if (!source.has(threadMetaKey(connectionId, threadId)) || turns.length === 0');
     expect(threadDetailDatabase).not.toContain("collection.startSyncImmediate();");
     expect(screen).not.toContain('remoteThreadCacheRef');
@@ -1311,7 +1350,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('onSelect={handleAction}');
     expect(screen).toContain('const TOOL_RESULT_MAX_HEIGHT = 400');
     expect(screen).toContain('expandedMaxHeight={TOOL_RESULT_MAX_HEIGHT}');
-    expect(screen).toContain('<AppendOnlyLiveContent cacheKey={cacheKey} source={projection.source} mode="markdown" streamMetricKey={streamMetricKey} markdownProjection={projection} />');
+    expect(screen).toContain('<AppendOnlyLiveContent cacheKey={cacheKey} source={projection.source} mode="markdown" streamMetricKey={streamMetricKey} markdownProjection={projection} fill={fill} />');
     expect(screen).toContain('mode === "markdown" ? "live-agent-response" : "live-tool-output"');
     expect(screen).toContain('const singleMarkdownTree = mode === "markdown";');
     expect(screen).toContain('const visibleLiveActivitySequence = liveActivitySequence.map((part) => {');
@@ -1322,6 +1361,11 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('composerInput: { flex: 1, flexBasis: 0, flexShrink: 1, width: 0, minWidth: 0');
     expect(timelineList).toContain('<KeyboardAwareTimelineList');
     expect(screen.match(/<LegendList/g)).toHaveLength(2);
+    expect(screen.match(/getFixedItemSize=\{threadListRowHeight\}/g)).toHaveLength(2);
+    expect(screen).toContain('const THREAD_LIST_ROW_HEIGHT = THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;');
+    expect(screen).toContain('const THREAD_LIST_SECTION_HEIGHT = 26;');
+    expect(screen).not.toContain('estimatedItemSize={64}');
+    expect(screen).not.toContain('extraData={windowLayout.measurementRevision}');
     expect(screen).not.toContain('<FlatList');
     expect(timelineList).toContain('<KeyboardAwareTimelineList');
     expect(timelineList).toContain('keyboardLiftBehavior={keyboardLiftBehavior}');
@@ -1359,7 +1403,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('const TurnActivityContentContext = createContext(false);');
     expect(screen).toContain('<TurnActivityContentContext.Provider value>');
     expect(screen).toContain('insideTurnActivity && styles.thinkingStatusInActivity');
-    expect(screen).toContain('thinkingStatusSection: { minWidth: 0 }');
+    expect(screen).toContain('thinkingStatusSection: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", alignItems: "flex-start" }');
     expect(screen).toContain('thinkingStatus: { minWidth: 0, minHeight: 25, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 2 }');
     expect(screen).toContain('thinkingStatusInActivity: { paddingLeft: 8 }');
     expect(screen).toContain('<ThreadTimelineList');
@@ -1471,23 +1515,22 @@ describe("checked-in Android project mirrors app config", () => {
     expect(privateAsset).toContain('getAccess(attempt > 0)');
     expect(remoteWorkspace).not.toContain('liveEventQueueRef');
     expect(remoteWorkspace).not.toContain('subscribeThreadEvents');
-    expect(remoteWorkspace).toContain("const initialTurnsLimit = threadResumePageLimit(cached?.turns.length ?? 0)");
-    expect(remoteWorkspace).toContain("limit: initialTurnsLimit");
+    expect(remoteWorkspace).toContain('session, "companion/thread/sync"');
+    expect(remoteWorkspace).toContain("afterTurnId");
+    expect(remoteWorkspace).toContain("response.history.hasMore");
+    expect(remoteWorkspace).toContain("materializeThreadSync(local, response, existingHistoryCursor)");
+    expect(remoteWorkspace).toContain("details.synchronizeThread(");
     expect(remoteWorkspace).toContain("limit: THREAD_HISTORY_PAGE_SIZE");
     expect(remoteWorkspace).toContain('itemsView: "summary"');
     expect(remoteWorkspace).toContain('session, "thread/items/list"');
     expect(remoteWorkspace).toContain('loadTurnItemsFromFullTurns(session, threadId, turnId)');
     expect(remoteWorkspace).toContain('itemsView: "full"');
-    expect(remoteWorkspace).toContain('session, "thread/read"');
-    expect(remoteWorkspace).toContain("includeTurns: false");
-    expect(remoteWorkspace).toContain("CodeWide read-only thread fallback failed:");
-    expect(remoteWorkspace).toContain("cached !== null && cached.turns.length > 0");
+    expect(remoteWorkspace).not.toContain('session, "companion/threadWindow/read"');
     expect(remoteWorkspace).not.toContain("threadReadInFlightRef");
-    expect(remoteWorkspace).toContain("workspaceRuntime.threadReadInFlight.get(requestKey)");
+    expect(remoteWorkspace).toContain("workspaceRuntime.threadSyncLane.run(requestKey");
     expect(remoteWorkspace).toContain("workspaceRuntime.turnItemsInFlight.get(requestKey)");
     expect(remoteWorkspace).not.toContain("lifecycleRepairAttempt");
-    expect(remoteWorkspace).toContain("indexedHeadOnly && cached !== null && cached !== undefined");
-    expect(remoteWorkspace).toContain("terminalThreadIds.has(threadId)");
+    expect(remoteWorkspace).not.toContain("terminalThreadIds.has(threadId)");
     expect(screen).not.toContain("turnItemsInFlightRef");
     expect(screen).not.toContain("lifecycleRepairAttemptRef");
     expect(screen).toContain("activeConnectionState");
@@ -1511,7 +1554,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).not.toContain("applyThreadEventsImmutable(window.thread, bufferedPayloads)");
     expect(screen).toContain('status: remoteThread === null ? "initial-loading" : "ready"');
     expect(screen).not.toContain("requiresJournalCatchUp");
-    expect(threadDetailDatabase).toContain("const requiresHydration = !coverage.complete || cachedThread === null || invalidated");
+    expect(threadDetailDatabase).toContain("const requiresHydration = !coverage.complete || cachedThread === null");
     expect(screen).not.toContain('recordTiming("thread_cached_visible_ms"');
     expect(screen).not.toContain('recordTiming("thread_fresh_visible_ms"');
     expect(screen).toContain('const activeConnectionAvailable = activeConnectionState === "live" || activeConnectionState === "syncing"');
@@ -1570,6 +1613,9 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativePackage).toContain("NativeShimmerTextManager()");
     expect((nativePackage.match(/NativeShimmerTextManager\(\)/gu) ?? [])).toHaveLength(1);
     expect(nativeShimmerView).toContain("LinearGradient(");
+    expect(nativeShimmerView).toContain("StaticLayout.Builder.obtain");
+    expect(nativeShimmerView).toContain("setMaxLines(pendingNumberOfLines)");
+    expect(waveText).toContain("numberOfLines={numberOfLines}");
     expect(nativeShimmerView).toContain("class NativeShimmerTextView(context: Context) : ViewGroup(context)");
     expect(nativeShimmerView).toContain("canvas.clipPath(textPath)");
     expect(nativeShimmerView).toContain("bandView.animate()");

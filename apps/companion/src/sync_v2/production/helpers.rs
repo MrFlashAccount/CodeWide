@@ -1019,7 +1019,7 @@ pub(super) fn rollout_witness(
 
 #[cfg(test)]
 mod tests {
-    use super::super::capabilities::{command_scope, query_scope, require_scope};
+    use super::super::capabilities::{authorize_command, authorize_query};
     use super::*;
 
     fn id(value: &str) -> Id {
@@ -1027,10 +1027,9 @@ mod tests {
     }
 
     #[test]
-    fn sensitive_families_do_not_inherit_broad_thread_scopes() {
-        let read_only = AuthorizationContext::Session {
+    fn paired_session_authorizes_sensitive_families() {
+        let paired = AuthorizationContext::Session {
             device_id: "device".into(),
-            scopes: vec!["threads.read".into()],
             expires_at: u64::MAX,
         };
         let sensitive_queries = [
@@ -1057,9 +1056,7 @@ mod tests {
             Query::AccountsList,
         ];
         for query in &sensitive_queries {
-            let required = query_scope(query);
-            assert_ne!(required, "threads.read");
-            assert!(require_scope(&read_only, required).is_err());
+            assert!(authorize_query(&paired, query).is_ok());
         }
 
         let sensitive_commands = [
@@ -1081,42 +1078,7 @@ mod tests {
             },
         ];
         for command in &sensitive_commands {
-            let required = command_scope(command);
-            assert_ne!(required, "threads.write");
-            assert!(require_scope(&read_only, required).is_err());
+            assert!(authorize_command(&paired, command).is_ok());
         }
-    }
-
-    #[test]
-    fn account_scopes_are_least_privilege_and_do_not_grant_each_other() {
-        let account_reader = AuthorizationContext::Session {
-            device_id: "reader".into(),
-            scopes: vec!["threads.read".into(), "accounts.read".into()],
-            expires_at: u64::MAX,
-        };
-        let account_manager = AuthorizationContext::Session {
-            device_id: "manager".into(),
-            scopes: vec!["threads.read".into(), "accounts.manage".into()],
-            expires_at: u64::MAX,
-        };
-        let process_manager = AuthorizationContext::Session {
-            device_id: "process-manager".into(),
-            scopes: vec!["threads.read".into(), "processes.manage".into()],
-            expires_at: u64::MAX,
-        };
-        let account_update = Command::AccountUpdate {
-            change: AccountChange::Activate {
-                profile_id: id("profile"),
-            },
-        };
-
-        assert_eq!(query_scope(&Query::AccountsList), "accounts.read");
-        assert_eq!(command_scope(&account_update), "accounts.manage");
-        assert!(require_scope(&account_reader, query_scope(&Query::AccountsList)).is_ok());
-        assert!(require_scope(&account_reader, command_scope(&account_update)).is_err());
-        assert!(require_scope(&account_manager, query_scope(&Query::AccountsList)).is_err());
-        assert!(require_scope(&account_manager, command_scope(&account_update)).is_ok());
-        assert!(require_scope(&process_manager, query_scope(&Query::AccountsList)).is_err());
-        assert!(require_scope(&process_manager, command_scope(&account_update)).is_err());
     }
 }

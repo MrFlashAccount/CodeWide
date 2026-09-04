@@ -69,6 +69,12 @@ describe("CodeWide effect ownership", () => {
     expect(codeReviewEffects[0]).not.toMatch(/\b(?:load|read|fetch|refresh)[A-Z_a-z]*\s*\(/u);
   });
 
+  it("does not fetch every server project catalog while painting the all-servers thread list", () => {
+    expect(screen).toContain("const projectCatalogConnections = newThreadVisible");
+    expect(screen).toContain('activeConnectionId === ""');
+    expect(screen).toContain("useRemoteProjectCatalog(remote.native, projectCatalogConnections, remote.listProjects)");
+  });
+
   it("keeps chat-adjacent resources in granular owners while voice capture stays global", () => {
     const workspace = screen.slice(
       screen.indexOf("function CodeWideWorkspaceScreen"),

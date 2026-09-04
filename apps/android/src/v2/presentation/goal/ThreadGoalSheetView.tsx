@@ -12,6 +12,7 @@ import { threadGoalSheetStyles as styles } from "./threadGoalSheetStyles";
 import { ThreadGoalSheetHeader } from "./ThreadGoalSheetHeader";
 import { ThreadGoalAdvancedFields } from "./ThreadGoalAdvancedFields";
 import { ThreadGoalActions } from "./ThreadGoalActions";
+import { ThreadGoalDetails } from "./threadGoalDetails";
 
 interface ThreadGoalSheetViewProps {
   error: string | null;
@@ -119,6 +120,7 @@ export function ThreadGoalSheetView(props: ThreadGoalSheetViewProps): React.JSX.
       <ThreadGoalSheetHeader disabled={pending !== null} goal={goal} onClose={close} />
       <View style={styles.content}>
         {loading ? <ShimmerText text="Loading goal…" /> : null}
+        {goal === null ? null : <ThreadGoalDetails goal={goal} />}
         <ProductText style={styles.label} weight="medium">
           What should Codex work toward?
         </ProductText>

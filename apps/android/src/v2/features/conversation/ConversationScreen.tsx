@@ -8,6 +8,7 @@ import type {
   V2Query,
   V2QueryResult,
   V2ThreadSettings,
+  V2ThreadGoal,
   V2ThreadWindow,
 } from "@codewide/sync-client/v2";
 import { setStringAsync } from "expo-clipboard";
@@ -91,6 +92,7 @@ import { DrawingWorkspace, type DrawingWorkspaceRequest } from "../drawing/Drawi
 import { createAttachmentAnnotationCapability } from "../drawing/attachmentAnnotation";
 import { drawingWorkspaceRequest } from "../drawing/drawingDraft";
 import { ThreadGoalSheet } from "../goal/ThreadGoalSheet";
+import { ThreadGoalChip } from "../../presentation/goal/threadGoalChip";
 import {
   accountSettingsDestination,
   agentDestination,
@@ -328,6 +330,11 @@ function useProjectedConversationSurface(
     limit: 100,
     threadId: owner.threadId,
   });
+  const goalSnapshot = useLiveQuery(runtime, owner.savedServerId, {
+    kind: "thread.goal",
+    threadId: owner.threadId,
+  });
+  const goal = currentThreadGoal(goalSnapshot.value, owner.threadId);
   const projection = snapshot.value.projections.live ?? snapshot.value.projections.retained;
   const window =
     projection?.currentThread?.thread.id === owner.threadId ? projection.currentThread : null;
@@ -552,6 +559,7 @@ function useProjectedConversationSurface(
   const closeResourceMenu = useEvent(() => setResourceMenuVisible(false));
   const closeDrawing = useEvent(() => setDrawingRequest(null));
   const closeGoal = useEvent(() => setGoalVisible(false));
+  const openGoal = useEvent(() => setGoalVisible(true));
   const closeSkills = useEvent(() => setSkillsVisible(false));
   const completeDrawing = useEvent(() => setDrawingRequest(null));
   const editDrawing = useEvent((item: ComposerAttachmentDraftItem) => {
@@ -626,7 +634,7 @@ function useProjectedConversationSurface(
       router.push(reviewStartDestination(owner));
       return;
     }
-    if (id === "goal") setGoalVisible(true);
+    if (id === "goal") openGoal();
   });
   const openContext = useEvent((id: string) => {
     if (isThreadResourceName(id)) {
@@ -915,6 +923,7 @@ function useProjectedConversationSurface(
     drawingNow,
     drawingRequest,
     goalVisible,
+    goal,
     initialAnchorTurnId: searchActive ? search.selectedTurnId : initialHistoryRestore.turnId,
     initialAnchorOffsetPx: searchActive ? 0 : initialHistoryRestore.viewportOffsetPx,
     latestActivityMarker: searchActive ? null : unreadMarker,
@@ -943,6 +952,7 @@ function useProjectedConversationSurface(
     onLoadOlder: loadOlder,
     onOpenContext: openContext,
     onOpenAccounts: openAccounts,
+    onOpenGoal: openGoal,
     onRetryAuthority: retryThreadAuthority,
     onReleaseUnsettled: releaseUnsettled,
     onSelectComposerAction: selectComposerAction,
@@ -1040,6 +1050,7 @@ interface ConversationSurfaceProps {
   drawingNow(): Date;
   drawingRequest: DrawingWorkspaceRequest | null;
   goalVisible: boolean;
+  goal: V2ThreadGoal | null;
   initialAnchorOffsetPx: number | null;
   initialAnchorTurnId: string | null;
   latestActivityMarker: string | null;
@@ -1057,6 +1068,7 @@ interface ConversationSurfaceProps {
   onEditComposer(): void;
   onOpenContext(id: string): void;
   onOpenAccounts(): void;
+  onOpenGoal(): void;
   onRetryAuthority(): Promise<void>;
   onReleaseUnsettled(): Promise<void>;
   onLoadNewer(): Promise<void>;
@@ -1139,6 +1151,7 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
     drawingNow,
     drawingRequest,
     goalVisible,
+    goal,
     initialAnchorOffsetPx,
     initialAnchorTurnId,
     latestActivityMarker,
@@ -1156,6 +1169,7 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
     onEditComposer,
     onOpenContext,
     onOpenAccounts,
+    onOpenGoal,
     onRetryAuthority,
     onReleaseUnsettled,
     onLoadNewer,
@@ -1316,9 +1330,10 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
                 )}
               </>
             )}
-            {livePlan === null && usageBreakdown === null ? null : (
+            {livePlan === null && goal === null && usageBreakdown === null ? null : (
               <View style={styles.liveStatus}>
                 {livePlan === null ? null : <LiveTurnPlanPopover plan={livePlan} />}
+                {goal === null ? null : <ThreadGoalChip goal={goal} onPress={onOpenGoal} />}
                 {usageBreakdown === null ? null : (
                   <CostBreakdownPopover breakdown={usageBreakdown} />
                 )}
@@ -1922,6 +1937,19 @@ const styles = StyleSheet.create({
   liveStatus: {
     alignItems: "center",
     flexDirection: "row",
-    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+    justifyContent: "center",
   },
 });
+
+function currentThreadGoal(
+  value: V2QueryResult | null,
+  expectedThreadId: string,
+): V2ThreadGoal | null {
+  if (value === null || value.kind !== "thread.goal" || value.threadId !== expectedThreadId) {
+    return null;
+  }
+  if (value.goal !== null && value.goal.threadId !== expectedThreadId) return null;
+  return value.goal;
+}

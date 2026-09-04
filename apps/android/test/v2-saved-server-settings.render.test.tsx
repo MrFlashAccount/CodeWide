@@ -1,14 +1,16 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { act, fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen, within } from "@testing-library/react-native";
 
 import type { V2Runtime } from "../src/v2/application/v2Runtime";
 import { V2RuntimeProvider } from "../src/v2/application/react/V2RuntimeContext";
 import { VoiceInputController } from "../src/v2/application/voiceInputController";
 import type { SavedServerConnection } from "../src/v2/application/ports/savedServerRepository";
 import { ObservableResource } from "../src/v2/application/resources/resource";
+import type { ServerConnectionStatus } from "../src/v2/application/resources/serverConnectionStatusesResource";
 import type { SavedServer } from "../src/v2/domain/savedServer";
 import { savedServerId } from "../src/v2/domain/ids";
 import { SavedServerSettingsScreen } from "../src/v2/features/settings/SavedServerSettingsScreen";
+import { colors } from "../src/v2/theme";
 
 const SERVER_ID = savedServerId("removed-server");
 
@@ -87,9 +89,27 @@ describe("V2 saved server settings", () => {
     expect(screen.queryByLabelText("TLS pin for Server")).toBeNull();
     expect(screen.getByText("Server")).toBeTruthy();
   });
+
+  it("shows a green lock without redundant connected or TLS labels", () => {
+    renderSettings(
+      readyServerRuntime({ connectionStatus: { detail: null, state: "connected" } }),
+    );
+
+    const lock = screen.getByLabelText("Secure connection");
+    const endpoint = screen.getByText("https://companion.test");
+    expect(lock.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ color: colors.green })]),
+    );
+    const endpointRow = screen.getByTestId("saved-server-endpoint-row");
+    expect(within(endpointRow).getByLabelText("Secure connection")).toBe(lock);
+    expect(within(endpointRow).getByText("https://companion.test")).toBe(endpoint);
+    expect(screen.queryByText("Connected")).toBeNull();
+    expect(screen.queryByText("TLS pinned")).toBeNull();
+  });
 });
 
 interface ReadyRuntimeOverrides {
+  connectionStatus?: ServerConnectionStatus;
   moveSavedServer?: () => Promise<void>;
   refreshConnection?: () => Promise<void>;
   updateSavedServer?: () => Promise<void>;
@@ -122,7 +142,11 @@ function readyServerRuntime(overrides: ReadyRuntimeOverrides): V2Runtime {
       id: SERVER_ID,
     },
   ]);
-  const statuses = new ObservableResource(new Map());
+  const statuses = new ObservableResource(
+    overrides.connectionStatus === undefined
+      ? new Map()
+      : new Map([[SERVER_ID, overrides.connectionStatus]]),
+  );
   const session = new ObservableResource({
     operations: [],
     projections: { live: null, retained: null },
@@ -131,7 +155,7 @@ function readyServerRuntime(overrides: ReadyRuntimeOverrides): V2Runtime {
   });
   connection.publish({ status: "ready", value: connection.snapshot().value });
   servers.publish({ status: "ready", value: servers.snapshot().value });
-  statuses.publish({ status: "ready", value: new Map() });
+  statuses.publish({ status: "ready", value: statuses.snapshot().value });
   return {
     connectionStatuses: statuses,
     moveSavedServer: overrides.moveSavedServer ?? jest.fn().mockResolvedValue(undefined),

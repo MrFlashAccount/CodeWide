@@ -22,7 +22,7 @@ function turn(items: FakeItem[], status: "inProgress" | "completed" = "inProgres
 }
 
 describe("thread render window", () => {
-  it("keeps compaction outside the bubble while projecting other pre-turn activity into it", () => {
+  it("keeps pre-turn compaction outside the bubble while projecting other pre-turn activity into it", () => {
     const items: FakeItem[] = [
       { type: "contextCompaction", id: "compaction" },
       { type: "commandExecution", id: "preflight" },
@@ -41,6 +41,35 @@ describe("thread render window", () => {
     expect(completed.compactionIndexes).toEqual([0]);
     expect(completed.preTurnActivityIndexes).toEqual([1]);
     expect(completed.collapsedActivityIndexes).toEqual([3]);
+  });
+
+  it("keeps compaction after the user boundary inside the turn activity", () => {
+    const items: FakeItem[] = [
+      { type: "userMessage", id: "user" },
+      { type: "commandExecution", id: "tool-before" },
+      { type: "contextCompaction", id: "compaction" },
+      { type: "commandExecution", id: "tool-after" },
+      { type: "agentMessage", id: "agent" },
+    ];
+
+    const active = selectTurnRenderWindow(turn(items));
+    expect(active.compactionIndexes).toEqual([]);
+    expect(active.liveActivityIndexes).toEqual([1, 2, 3, 4]);
+
+    const completed = selectTurnRenderWindow(turn(items, "completed"));
+    expect(completed.compactionIndexes).toEqual([]);
+    expect(completed.collapsedActivityIndexes).toEqual([1, 2, 3]);
+  });
+
+  it("keeps a compaction explicitly marked as pre-turn outside after canonical reordering", () => {
+    const window = selectTurnRenderWindow(turn([
+      { type: "userMessage", id: "user" },
+      { type: "contextCompaction", id: "compaction", codewidePreTurn: true },
+      { type: "agentMessage", id: "agent" },
+    ]));
+
+    expect(window.compactionIndexes).toEqual([1]);
+    expect(window.liveActivityIndexes).toEqual([2]);
   });
 
   it("keeps projected pre-turn state outside activity when canonical ordering moves it after the user", () => {

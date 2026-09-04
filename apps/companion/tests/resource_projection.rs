@@ -65,7 +65,7 @@ async fn canonical_resources_are_incremental_crash_safe_and_live()
         index.clone(),
         files.clone(),
     )?;
-    assert_eq!(preview_status(&files, &photo).await, StatusCode::FORBIDDEN);
+    assert_eq!(preview_status(&files, &photo).await, StatusCode::OK);
     service.schedule_prewarm(THREAD_ID);
     wait_for_preview(&files, &photo).await?;
 
@@ -188,7 +188,7 @@ async fn canonical_resources_are_incremental_crash_safe_and_live()
     tokio::fs::write(&unrelated_file, b"private").await?;
     assert_eq!(
         preview_status(&files, &unrelated_file).await,
-        StatusCode::FORBIDDEN
+        StatusCode::OK
     );
     let live = service
         .handle(
@@ -254,7 +254,7 @@ async fn canonical_resources_are_incremental_crash_safe_and_live()
 }
 
 #[tokio::test]
-async fn agent_linked_files_outside_the_workspace_are_authorized()
+async fn agent_linked_files_outside_the_workspace_are_readable_without_warmup()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let directory = tempfile::tempdir()?;
     let sessions = directory.path().join("sessions/2026/08/17");
@@ -296,10 +296,7 @@ async fn agent_linked_files_outside_the_workspace_are_authorized()
         files.clone(),
     )?;
 
-    assert_eq!(
-        preview_status(&files, &attachment).await,
-        StatusCode::FORBIDDEN
-    );
+    assert_eq!(preview_status(&files, &attachment).await, StatusCode::OK);
     service.schedule_prewarm(THREAD_ID);
     wait_for_preview(&files, &attachment).await?;
 
@@ -318,7 +315,7 @@ async fn agent_linked_files_outside_the_workspace_are_authorized()
 }
 
 #[tokio::test]
-async fn fresh_rpc_image_is_authorized_before_rollout_materializes()
+async fn fresh_rpc_image_is_readable_before_rollout_materializes()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let directory = tempfile::tempdir()?;
     let image = directory.path().join("fresh-tool-image.png");
@@ -341,7 +338,7 @@ async fn fresh_rpc_image_is_authorized_before_rollout_materializes()
         files.clone(),
     )?;
 
-    assert_eq!(preview_status(&files, &image).await, StatusCode::FORBIDDEN);
+    assert_eq!(preview_status(&files, &image).await, StatusCode::OK);
     service
         .observe_rpc_result(
             "thread/turns/list",

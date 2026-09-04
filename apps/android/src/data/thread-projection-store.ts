@@ -25,11 +25,6 @@ type ThreadProjectionAdapters = {
     applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;
   };
   details: ThreadProjectionStore;
-  reconcileBeforeSummary?(
-    connectionId: string,
-    events: SyncEvent[],
-    projected: ThreadEventProjection,
-  ): Promise<ThreadEventProjection>;
 };
 
 function normalizePersistedSnapshots(snapshots: SyncSnapshotThread[]): SyncSnapshotThread[] {
@@ -94,7 +89,6 @@ export function createThreadProjectionStore(adapters: ThreadProjectionAdapters):
         // summary must not become visible before that checkpoint or lifecycle
         // and final TURN content can describe two different journal positions.
         await projected.checkpoint;
-        projected = await adapters.reconcileBeforeSummary?.(connectionId, events, projected) ?? projected;
       } finally {
         if (measureDiagnostics) recordDiagnosticTiming("thread_detail_projection_ms", performance.now() - detailStartedAt);
       }

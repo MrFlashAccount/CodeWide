@@ -1010,7 +1010,6 @@ mod tests {
     fn context(device_id: &str) -> AuthenticatedContextKey {
         AuthenticatedContextKey::derive(&AuthorizationContext::Session {
             device_id: device_id.to_owned(),
-            scopes: vec!["threads.read".into()],
             expires_at: u64::MAX,
         })
         .unwrap()

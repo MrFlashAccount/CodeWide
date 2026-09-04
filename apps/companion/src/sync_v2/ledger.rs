@@ -34,8 +34,8 @@ struct OperationRecord {
     fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     command_kind: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    required_scope: Option<String>,
+    #[serde(default, rename = "requiredScope", skip_serializing)]
+    _legacy_permission: Option<String>,
     accepted_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     terminal_at: Option<Timestamp>,
@@ -113,14 +113,6 @@ pub enum LedgerError {
     TimestampFormat(#[from] time::error::Format),
     #[error("operation ledger timestamp invariant failed: {0}")]
     TimestampInvariant(#[from] ScalarError),
-    #[error("operation ledger record has no recoverable command authority")]
-    MissingAuthority,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct AuthorizedOperationReceipt {
-    pub receipt: OperationReceipt,
-    pub required_scope: String,
 }
 
 impl LedgerError {
@@ -128,10 +120,7 @@ impl LedgerError {
     pub(crate) const fn is_permanently_unreadable_receipt(&self) -> bool {
         matches!(
             self,
-            Self::Corrupt(_)
-                | Self::InvalidTimestamp(_)
-                | Self::TimestampInvariant(_)
-                | Self::MissingAuthority
+            Self::Corrupt(_) | Self::InvalidTimestamp(_) | Self::TimestampInvariant(_)
         )
     }
 }
@@ -232,9 +221,7 @@ impl OperationLedger {
                     operation_id: operation_id.as_str().into(),
                     fingerprint: Some(fingerprint),
                     command_kind: Some(command.kind().into()),
-                    required_scope: Some(
-                        super::protocol::command_required_scope(command).to_owned(),
-                    ),
+                    _legacy_permission: None,
                     accepted_at: accepted_at.clone(),
                     terminal_at: None,
                     payload_expired_at: None,
@@ -276,16 +263,14 @@ impl OperationLedger {
         context_key: &AuthenticatedContextKey,
         operation_id: &OperationId,
     ) -> Result<Option<OperationReceipt>, LedgerError> {
-        Ok(self
-            .authorized_receipt(context_key, operation_id)?
-            .map(|record| record.receipt))
+        self.authorized_receipt(context_key, operation_id)
     }
 
     pub(crate) fn authorized_receipt(
         &self,
         context_key: &AuthenticatedContextKey,
         operation_id: &OperationId,
-    ) -> Result<Option<AuthorizedOperationReceipt>, LedgerError> {
+    ) -> Result<Option<OperationReceipt>, LedgerError> {
         let key = ledger_key(context_key, operation_id);
         let read = self.database.begin_read()?;
         let table = read.open_table(OPERATIONS)?;
@@ -296,17 +281,6 @@ impl OperationLedger {
         let Some(record) = record else {
             return Ok(None);
         };
-        let required_scope = record
-            .required_scope
-            .clone()
-            .or_else(|| {
-                record
-                    .command_kind
-                    .as_deref()
-                    .and_then(super::protocol::command_scope_for_kind)
-                    .map(str::to_owned)
-            })
-            .ok_or(LedgerError::MissingAuthority)?;
         let receipt = match record.state {
             OperationState::Admitted => OperationReceipt::Admitted {
                 accepted_at: record.accepted_at,
@@ -332,10 +306,7 @@ impl OperationLedger {
                 },
             },
         };
-        Ok(Some(AuthorizedOperationReceipt {
-            receipt,
-            required_scope,
-        }))
+        Ok(Some(receipt))
     }
 
     pub fn complete(
@@ -531,13 +502,6 @@ impl OperationLedger {
                     _ => continue,
                 };
                 record.fingerprint = None;
-                if record.required_scope.is_none() {
-                    record.required_scope = record
-                        .command_kind
-                        .as_deref()
-                        .and_then(super::protocol::command_scope_for_kind)
-                        .map(str::to_owned);
-                }
                 record.command_kind = None;
                 record.terminal_at = Some(terminal_at);
                 record.payload_expired_at = Some(Timestamp::new(
@@ -665,7 +629,6 @@ mod tests {
     fn context(device: &str) -> AuthenticatedContextKey {
         AuthenticatedContextKey::derive(&crate::auth::AuthorizationContext::Session {
             device_id: device.into(),
-            scopes: vec!["threads.read".into()],
             expires_at: u64::MAX,
         })
         .unwrap()
@@ -757,15 +720,13 @@ mod tests {
         ));
     }
 
-    fn assert_recovery_authority_after_restart(
-        commands: Vec<(&'static str, Command, &'static str)>,
-    ) {
+    fn assert_recovery_after_restart(commands: Vec<(&'static str, Command)>) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("ledger.redb");
         let context = context("device-a");
         {
             let ledger = OperationLedger::open(&path).unwrap();
-            for (operation_id, command, _) in &commands {
+            for (operation_id, command) in &commands {
                 assert!(matches!(
                     ledger
                         .admit(
@@ -780,7 +741,7 @@ mod tests {
         }
 
         let reopened = OperationLedger::open(&path).unwrap();
-        for (operation_id, _, expected_scope) in commands {
+        for (operation_id, _) in commands {
             let receipt = reopened
                 .authorized_receipt(
                     &context,
@@ -788,18 +749,14 @@ mod tests {
                 )
                 .unwrap()
                 .unwrap();
-            assert_eq!(receipt.required_scope, expected_scope);
-            assert!(matches!(
-                receipt.receipt,
-                OperationReceipt::Indeterminate { .. }
-            ));
+            assert!(matches!(receipt, OperationReceipt::Indeterminate { .. }));
         }
     }
 
     #[test]
     fn approval_and_turn_recovery_authority_survives_restart() {
         let thread_id = Id::new("thread").unwrap();
-        assert_recovery_authority_after_restart(vec![
+        assert_recovery_after_restart(vec![
             (
                 "approval",
                 Command::RequestResolve {
@@ -809,7 +766,6 @@ mod tests {
                         decision: ApprovalDecision::Decline,
                     },
                 },
-                "approvals.respond",
             ),
             (
                 "submit",
@@ -820,7 +776,6 @@ mod tests {
                     intent: TurnIntent::Chat,
                     settings: None,
                 },
-                "turns.start",
             ),
             (
                 "steer",
@@ -829,7 +784,6 @@ mod tests {
                     turn_id: Id::new("turn").unwrap(),
                     input: Vec::new(),
                 },
-                "turns.steer",
             ),
         ]);
     }
@@ -837,16 +791,15 @@ mod tests {
     #[test]
     fn management_and_thread_recovery_authority_survives_restart() {
         let thread_id = Id::new("thread").unwrap();
-        assert_recovery_authority_after_restart(vec![
+        assert_recovery_after_restart(vec![
             (
                 "interrupt",
                 Command::TurnInterrupt {
                     thread_id: thread_id.clone(),
                     turn_id: Id::new("turn").unwrap(),
                 },
-                "processes.manage",
             ),
-            ("account", Command::AccountLoginStart, "accounts.manage"),
+            ("account", Command::AccountLoginStart),
             (
                 "project",
                 Command::ProjectAdd {
@@ -854,14 +807,12 @@ mod tests {
                     name: None,
                     pinned: false,
                 },
-                "files.upload.workspace",
             ),
             (
                 "thread",
                 Command::ThreadDelete {
                     thread_id: thread_id.clone(),
                 },
-                "threads.write",
             ),
         ]);
     }
@@ -869,7 +820,7 @@ mod tests {
     #[test]
     fn queue_payload_recovery_authority_survives_restart() {
         let thread_id = Id::new("thread").unwrap();
-        assert_recovery_authority_after_restart(vec![
+        assert_recovery_after_restart(vec![
             (
                 "queue-put",
                 Command::QueueMutate {
@@ -878,7 +829,6 @@ mod tests {
                         input: Vec::new(),
                     },
                 },
-                "turns.start",
             ),
             (
                 "queue-steer",
@@ -889,7 +839,6 @@ mod tests {
                         expected_revision: "revision".into(),
                     },
                 },
-                "turns.steer",
             ),
         ]);
     }
@@ -1020,7 +969,7 @@ mod tests {
             serde_json::from_slice(table.get(key.as_str()).unwrap().unwrap().value()).unwrap();
         assert!(tombstone.get("fingerprint").is_none());
         assert!(tombstone.get("commandKind").is_none());
-        assert_eq!(tombstone["requiredScope"], "threads.write");
+        assert!(tombstone.get("requiredScope").is_none());
         assert_eq!(tombstone["payloadExpiredAt"], "2020-01-31T00:00:00Z");
         assert_eq!(tombstone["state"]["kind"], "tombstone");
         drop(table);
@@ -1033,14 +982,12 @@ mod tests {
             reopened.admit(&context_a, &expired_id, &command).unwrap(),
             Admission::Expired
         ));
-        assert_eq!(
+        assert!(matches!(
             reopened
                 .authorized_receipt(&context_a, &expired_id)
-                .unwrap()
-                .unwrap()
-                .required_scope,
-            "threads.write"
-        );
+                .unwrap(),
+            Some(OperationReceipt::Expired { .. })
+        ));
         let other = context("device-b");
         assert!(matches!(
             reopened.admit(&other, &retained_id, &command).unwrap(),
@@ -1078,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_receipt_authority_is_derived_and_authorityless_rows_fail_closed() {
+    fn legacy_permission_metadata_is_ignored() {
         let directory = tempfile::tempdir().unwrap();
         let ledger = OperationLedger::open(directory.path().join("ledger.redb")).unwrap();
         let operation_id = OperationId::new("legacy-operation").unwrap();
@@ -1097,35 +1044,15 @@ mod tests {
             let mut table = write.open_table(OPERATIONS).unwrap();
             let mut value: serde_json::Value =
                 serde_json::from_slice(table.get(key.as_str()).unwrap().unwrap().value()).unwrap();
-            value.as_object_mut().unwrap().remove("requiredScope");
+            value["requiredScope"] = serde_json::Value::String("threads.write".into());
             let encoded = serde_json::to_vec(&value).unwrap();
             table.insert(key.as_str(), encoded.as_slice()).unwrap();
         }
         write.commit().unwrap();
-        assert_eq!(
-            ledger
-                .authorized_receipt(&context, &operation_id)
-                .unwrap()
-                .unwrap()
-                .required_scope,
-            "threads.write"
-        );
-
-        let write = ledger.database.begin_write().unwrap();
-        {
-            let mut table = write.open_table(OPERATIONS).unwrap();
-            let mut value: serde_json::Value =
-                serde_json::from_slice(table.get(key.as_str()).unwrap().unwrap().value()).unwrap();
-            value.as_object_mut().unwrap().remove("commandKind");
-            let encoded = serde_json::to_vec(&value).unwrap();
-            table.insert(key.as_str(), encoded.as_slice()).unwrap();
-        }
-        write.commit().unwrap();
-        let error = ledger
-            .authorized_receipt(&context, &operation_id)
-            .unwrap_err();
-        assert!(matches!(error, LedgerError::MissingAuthority));
-        assert!(error.is_permanently_unreadable_receipt());
+        assert!(matches!(
+            ledger.authorized_receipt(&context, &operation_id).unwrap(),
+            Some(OperationReceipt::Admitted { .. })
+        ));
     }
 
     #[test]

@@ -15,6 +15,8 @@ import { ResolvedImageGroup } from "./ResolvedImageGroup";
 import type { RichExtensionRenderer } from "./richExtensionRenderer";
 import { collectMarkdownImages, markdownImageRevision, markdownNodeKey } from "./richMarkdownModel";
 
+export { richMarkdownLayout } from "./richMarkdownLayout";
+
 const EMPTY_EXTENSIONS: Record<string, RichExtensionRenderer> = {};
 
 export interface RichMarkdownProps {

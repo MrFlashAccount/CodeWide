@@ -60,6 +60,27 @@ describe("thread event projection", () => {
     });
   });
 
+  it("repairs missing reasoning arrays before applying stream deltas", () => {
+    const value = thread();
+    const reasoning = value.turns[0]?.items.find((item) => item.type === "reasoning");
+    if (reasoning?.type !== "reasoning") throw new Error("Reasoning fixture is missing");
+    Reflect.deleteProperty(reasoning, "summary");
+    Reflect.deleteProperty(reasoning, "content");
+
+    expect(applyThreadEvent(value, event("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning",
+      summaryIndex: 0,
+      delta: "summary",
+    }))).toBe(true);
+    expect(applyThreadEvent(value, event("item/reasoning/textDelta", {
+      itemId: "reasoning",
+      contentIndex: 0,
+      delta: "detail",
+    }))).toBe(true);
+    expect(reasoning.summary).toEqual(["summary"]);
+    expect(reasoning.content).toEqual(["detail"]);
+  });
+
   it("ignores events for another thread", () => {
     const value = thread();
     expect(applyThreadEvent(value, { method: "thread/name/updated", params: { threadId: "other", name: "Wrong" } })).toBe(false);
@@ -240,6 +261,19 @@ describe("thread event projection", () => {
 
     const merged = preserveProjectedTurnMetadata(incoming, cached);
 
+    expect(projectedTurnMetadata(merged.turns[0]!)?.diff).toBe("+live");
+  });
+
+  it("preserves metadata without reading absent items from a recovery envelope", () => {
+    const cached = thread();
+    applyThreadEvent(cached, event("turn/diff/updated", { diff: "+live" }));
+    const incoming = structuredClone(cached);
+    Reflect.deleteProperty(incoming.turns[0]!, "items");
+    Reflect.deleteProperty(incoming.turns[0]!, "codewide");
+
+    const merged = preserveProjectedTurnMetadata(incoming, cached);
+
+    expect(merged.turns[0]).not.toHaveProperty("items");
     expect(projectedTurnMetadata(merged.turns[0]!)?.diff).toBe("+live");
   });
 

@@ -4,7 +4,6 @@ import type { V2ThreadGoal } from "@codewide/sync-client/v2";
 import { colors } from "../../theme";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { ProductText } from "../text/ProductText";
-import { TOKEN_SYMBOL } from "../../ui/tokenDisplay";
 import { iconButtonStyle, threadGoalSheetStyles as styles } from "./threadGoalSheetStyles";
 
 interface ThreadGoalSheetHeaderProps {
@@ -23,7 +22,9 @@ export function ThreadGoalSheetHeader(props: ThreadGoalSheetHeaderProps): React.
           {goal === null ? "Create goal" : "Edit goal"}
         </ProductText>
         <ProductText style={styles.subtitle} tone="muted">
-          {goal === null ? "Keep this thread focused on one outcome." : goalUsageLabel(goal)}
+          {goal === null
+            ? "Keep this thread focused on one outcome."
+            : "Goal details and controls."}
         </ProductText>
       </View>
       <Pressable
@@ -37,24 +38,4 @@ export function ThreadGoalSheetHeader(props: ThreadGoalSheetHeaderProps): React.
       </Pressable>
     </View>
   );
-}
-
-function goalUsageLabel(goal: V2ThreadGoal): string {
-  const budget =
-    goal.tokenBudget === null || goal.tokenBudget === 0
-      ? ""
-      : ` · ${goalUsagePercent(goal)}% of budget`;
-  return `${TOKEN_SYMBOL}${goal.tokensUsed.toLocaleString()} · ${formatGoalDuration(goal.timeUsedSeconds)}${budget}`;
-}
-
-function goalUsagePercent(goal: V2ThreadGoal): number {
-  if (goal.tokenBudget === null) return 0;
-  return Math.min(100, Math.round((goal.tokensUsed / goal.tokenBudget) * 100));
-}
-
-function formatGoalDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}m ${remainder}s`;
 }

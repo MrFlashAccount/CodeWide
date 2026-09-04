@@ -249,7 +249,10 @@ describe("V2 Drawing, Goal, and Skills", () => {
       />,
     );
 
-    expect(screen.getByText(/5,000 · 1m 30s · 25% of budget/u)).toBeTruthy();
+    expect(screen.getByText("Active")).toBeTruthy();
+    expect(screen.getByText("1m 30s")).toBeTruthy();
+    expect(screen.getByText(/5,000 · 25% of budget/u)).toBeTruthy();
+    expect(screen.getByText("Not reported")).toBeTruthy();
     fireEvent.press(screen.getByLabelText("Clear goal"));
     expect(onClear).not.toHaveBeenCalled();
     expect(screen.getByText("Remove this goal from the thread?")).toBeTruthy();

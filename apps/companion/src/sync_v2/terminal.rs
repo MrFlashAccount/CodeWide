@@ -15,7 +15,7 @@ use axum::{
 use futures_util::SinkExt;
 
 use crate::{
-    server::{AppState, Authorization, authorization_for_scope, resolve_terminal_spawn_query},
+    server::{AppState, Authorization, authenticated_session, resolve_terminal_spawn_query},
     session_authority::SessionAuthority,
     terminal::{self, TerminalQuery, TerminalSession},
 };
@@ -43,8 +43,7 @@ async fn terminal_upgrade(
     if headers.get("origin").is_some() {
         return unauthorized();
     }
-    let Some(authorization) = authorization_for_scope(&state, &headers, "shell.explicit").await
-    else {
+    let Some(authorization) = authenticated_session(&state, &headers).await else {
         return unauthorized();
     };
     let Ok(owner) = AuthenticatedContextKey::derive(&authorization) else {
@@ -394,12 +393,9 @@ async fn current_terminal_authority(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     let authorization = registry.authorization_context(credential).await?;
-    let crate::auth::AuthorizationContext::Session { scopes, .. } = &authorization else {
+    let crate::auth::AuthorizationContext::Session { .. } = &authorization else {
         return None;
     };
-    if !scopes.iter().any(|scope| scope == "shell.explicit") {
-        return None;
-    }
     if AuthenticatedContextKey::derive(&authorization)
         .ok()
         .as_ref()
@@ -536,7 +532,7 @@ fn unauthorized() -> Response {
     http::error(
         StatusCode::UNAUTHORIZED,
         TransportErrorCode::Unauthorized,
-        "shell.explicit session scope required",
+        "authenticated device session required",
     )
 }
 
@@ -588,12 +584,6 @@ mod tests {
                 public_key_spki,
                 proof: general_purpose::STANDARD.encode(claim_signature.to_der().as_bytes()),
             })
-            .await?;
-        registry
-            .update_scopes(
-                &claim.device_id,
-                vec!["threads.read".into(), "shell.explicit".into()],
-            )
             .await?;
         let device_bearer = format!("Bearer {}", claim.capability_token);
         let challenge = registry.challenge(Some(&device_bearer)).await?;

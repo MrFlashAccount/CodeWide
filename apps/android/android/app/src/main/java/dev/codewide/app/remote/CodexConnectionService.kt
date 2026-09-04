@@ -538,7 +538,7 @@ class CodexConnectionService : Service() {
   }
 
   @Synchronized
-  private fun activateLegacySync() {
+  internal fun activateLegacySync() {
     if (syncGeneration != NativeSyncGeneration.LEGACY) {
       syncGeneration = NativeSyncGeneration.LEGACY
       if (!syncGenerationStore.write(syncGeneration)) Log.w(LOG_TAG, "Could not persist legacy sync generation")

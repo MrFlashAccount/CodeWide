@@ -63,12 +63,12 @@ async fn private_preview_streams_regular_files_larger_than_the_transfer_ceiling(
         .await?;
 
     assert_eq!(response.status(), reqwest::StatusCode::OK);
-    assert!(response.headers().get("x-content-sha256").is_none());
+    assert_eq!(response.headers()["x-content-sha256"], sha256(b"abcdef"));
     Ok(())
 }
 
 #[tokio::test]
-async fn scoped_file_transport_matches_v1_safety_and_resume_contract()
+async fn file_reads_are_host_wide_in_v1_and_v2_while_uploads_remain_resumable()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let directory = tempfile::tempdir()?;
     let root = directory.path().join("workspace");
@@ -78,6 +78,9 @@ async fn scoped_file_transport_matches_v1_safety_and_resume_contract()
     let outside = directory.path().join("outside.txt");
     tokio::fs::write(&outside, b"private").await?;
     symlink(&outside, root.join("escape.txt"))?;
+    let outside_directory = directory.path().join("outside-directory");
+    tokio::fs::create_dir(&outside_directory).await?;
+    symlink(&outside_directory, root.join("outside-link"))?;
     let mapped_preview_root = directory.path().join("private-tmp");
     tokio::fs::create_dir(&mapped_preview_root).await?;
     tokio::fs::write(mapped_preview_root.join("render.png"), b"observed").await?;
@@ -125,8 +128,8 @@ async fn scoped_file_transport_matches_v1_safety_and_resume_contract()
     let client = reqwest::Client::new();
     let base = format!("http://{address}");
 
-    assert_downloads(&client, &base, &root, &reported_preview_root).await?;
-    assert_uploads(&client, &base, &root).await?;
+    assert_downloads(&client, &base, &root, &reported_preview_root, &outside).await?;
+    assert_uploads(&client, &base, &root, &outside_directory).await?;
 
     task.abort();
     Ok(())
@@ -303,6 +306,8 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
     });
     let expected_hash = sha256(b"hello");
     let client = reqwest::Client::new();
+    let host_wide_upload = directory.path().join("outside-upload.txt");
+    assert_v2_host_wide_upload(&client, address, &device.session, &host_wide_upload).await?;
     let request = client
         .put(format!(
             "http://{address}/v1/files/upload?rootId=workspace&path=revoked.txt"
@@ -334,6 +339,52 @@ async fn v1_registry_upload_cannot_publish_after_device_revoke()
     Ok(())
 }
 
+async fn assert_v2_host_wide_upload(
+    client: &reqwest::Client,
+    address: std::net::SocketAddr,
+    session: &str,
+    host_wide_upload: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let host_wide_bytes = b"host-wide";
+    let host_wide_hash = sha256(host_wide_bytes);
+    let host_wide_url = reqwest::Url::parse(&format!("http://{address}/v2/files/upload"))?;
+    let resume = client
+        .head(host_wide_url.clone())
+        .query(&[
+            ("rootId", "workspace"),
+            ("path", &host_wide_upload.to_string_lossy()),
+        ])
+        .bearer_auth(session)
+        .header("x-upload-id", format!("sha256-{host_wide_hash}"))
+        .header("x-content-sha256", &host_wide_hash)
+        .send()
+        .await?;
+    assert_eq!(resume.status(), reqwest::StatusCode::NOT_FOUND);
+    let host_wide = client
+        .put(host_wide_url)
+        .query(&[
+            ("rootId", "workspace"),
+            ("path", &host_wide_upload.to_string_lossy()),
+        ])
+        .bearer_auth(session)
+        .header("x-upload-id", format!("sha256-{host_wide_hash}"))
+        .header("x-content-sha256", &host_wide_hash)
+        .header(
+            "content-range",
+            format!(
+                "bytes 0-{}/{}",
+                host_wide_bytes.len() - 1,
+                host_wide_bytes.len()
+            ),
+        )
+        .body(host_wide_bytes.to_vec())
+        .send()
+        .await?;
+    assert_eq!(host_wide.status(), reqwest::StatusCode::CREATED);
+    assert_eq!(tokio::fs::read(host_wide_upload).await?, host_wide_bytes);
+    Ok(())
+}
+
 async fn pair_file_device(
     registry: &DeviceRegistry,
     seed: u8,
@@ -355,12 +406,6 @@ async fn pair_file_device(
             public_key_spki,
             proof: general_purpose::STANDARD.encode(proof.to_der().as_bytes()),
         })
-        .await?;
-    registry
-        .update_scopes(
-            &claim.device_id,
-            vec!["threads.read".into(), "files.upload.workspace".into()],
-        )
         .await?;
     let bearer = format!("Bearer {}", claim.capability_token);
     let challenge = registry.challenge(Some(&bearer)).await?;
@@ -387,6 +432,7 @@ async fn assert_downloads(
     base: &str,
     root: &std::path::Path,
     reported_preview_root: &Path,
+    outside: &Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let download = client
         .get(format!(
@@ -444,16 +490,11 @@ async fn assert_downloads(
         .bearer_auth(TOKEN)
         .send()
         .await?;
-    assert_eq!(mapped_sibling.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_eq!(mapped_sibling.status(), reqwest::StatusCode::OK);
+    assert_eq!(mapped_sibling.text().await?, "private");
 
-    let escaped = client
-        .get(format!(
-            "{base}/v1/files/download?rootId=workspace&path=escape.txt"
-        ))
-        .bearer_auth(TOKEN)
-        .send()
-        .await?;
-    assert_eq!(escaped.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_host_wide_reads(client, base, reported_preview_root, outside).await?;
+
     let unauthorized = client
         .get(format!(
             "{base}/v1/files/download?rootId=workspace&path=source.txt"
@@ -461,7 +502,77 @@ async fn assert_downloads(
         .send()
         .await?;
     assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let unauthorized_preview = client
+        .get(format!(
+            "{base}/v1/files/preview?path={}",
+            reported_preview_root.join("private.png").display()
+        ))
+        .send()
+        .await?;
+    assert_eq!(
+        unauthorized_preview.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
 
+    Ok(())
+}
+
+async fn assert_host_wide_reads(
+    client: &reqwest::Client,
+    base: &str,
+    reported_preview_root: &Path,
+    outside: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let escaped = client
+        .get(format!(
+            "{base}/v1/files/download?rootId=workspace&path=escape.txt"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(escaped.status(), reqwest::StatusCode::OK);
+    assert_eq!(escaped.text().await?, "private");
+    let absolute_v1 = client
+        .get(format!("{base}/v1/files/download"))
+        .query(&[
+            ("rootId", "workspace"),
+            ("path", &outside.to_string_lossy()),
+        ])
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(absolute_v1.status(), reqwest::StatusCode::OK);
+    assert_eq!(absolute_v1.text().await?, "private");
+    let v2_preview = client
+        .get(format!(
+            "{base}/v2/files/preview?path={}",
+            reported_preview_root.join("private.png").display()
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(v2_preview.status(), reqwest::StatusCode::OK);
+    assert_eq!(v2_preview.text().await?, "private");
+    let v2_escaped = client
+        .get(format!(
+            "{base}/v2/files/download?rootId=workspace&path=escape.txt"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(v2_escaped.status(), reqwest::StatusCode::OK);
+    assert_eq!(v2_escaped.text().await?, "private");
+    let absolute_v2 = client
+        .get(format!("{base}/v2/files/download"))
+        .query(&[
+            ("rootId", "workspace"),
+            ("path", &outside.to_string_lossy()),
+        ])
+        .bearer_auth(TOKEN)
+        .send()
+        .await?;
+    assert_eq!(absolute_v2.status(), reqwest::StatusCode::OK);
+    assert_eq!(absolute_v2.text().await?, "private");
     Ok(())
 }
 
@@ -469,6 +580,7 @@ async fn assert_uploads(
     client: &reqwest::Client,
     base: &str,
     root: &std::path::Path,
+    outside_directory: &Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let uploaded = b"uploaded-content";
     let upload = client
@@ -529,6 +641,31 @@ async fn assert_uploads(
         .await?;
     assert_eq!(final_chunk.status(), reqwest::StatusCode::CREATED);
     assert_eq!(tokio::fs::read(root.join("resumed.txt")).await?, resumable);
+
+    let outside_bytes = b"outside-project";
+    let outside_hash = sha256(outside_bytes);
+    let outside_url =
+        format!("{base}/v1/files/upload?rootId=workspace&path=outside-link%2Fuploaded.txt");
+    let outside_status = client
+        .head(&outside_url)
+        .bearer_auth(TOKEN)
+        .header("x-upload-id", format!("sha256-{outside_hash}"))
+        .header("x-content-sha256", &outside_hash)
+        .send()
+        .await?;
+    assert_eq!(outside_status.status(), reqwest::StatusCode::NOT_FOUND);
+    let outside_upload = client
+        .put(&outside_url)
+        .bearer_auth(TOKEN)
+        .header("x-content-sha256", &outside_hash)
+        .body(outside_bytes.to_vec())
+        .send()
+        .await?;
+    assert_eq!(outside_upload.status(), reqwest::StatusCode::CREATED);
+    assert_eq!(
+        tokio::fs::read(outside_directory.join("uploaded.txt")).await?,
+        outside_bytes
+    );
 
     Ok(())
 }

@@ -47,6 +47,7 @@ export function SavedServerSummary(props: SavedServerSummaryProps): React.JSX.El
     status,
   } = props;
   const color = connectionStateColor(status.state);
+  const connected = status.state === "connected";
   return (
     <View style={styles.serverEditor}>
       <View style={styles.serverRow}>
@@ -55,27 +56,36 @@ export function SavedServerSummary(props: SavedServerSummaryProps): React.JSX.El
           <Text numberOfLines={1} style={styles.serverName}>
             {server.displayName}
           </Text>
-          <Text ellipsizeMode="middle" numberOfLines={1} style={styles.serverEndpoint}>
-            {connection.endpoint}
-          </Text>
-          <View style={styles.stateRow}>
-            {isActiveConnectionState(status.state) ? (
-              <ShimmerText
-                style={[styles.stateText, { color }]}
-                text={connectionStateLabel(status.state)}
+          <View style={styles.endpointRow} testID="saved-server-endpoint-row">
+            {connected ? (
+              <Ionicons
+                accessibilityLabel="Secure connection"
+                color={colors.green}
+                name="lock-closed"
+                size={13}
               />
-            ) : (
-              <>
-                <View style={[styles.stateDot, { backgroundColor: color }]} />
-                <Text style={[styles.stateText, { color }]}>
-                  {connectionStateLabel(status.state)}
-                </Text>
-              </>
-            )}
-            {connection.tlsPinSha256 === null ? null : (
-              <Text style={styles.pinned}>TLS pinned</Text>
-            )}
+            ) : null}
+            <Text ellipsizeMode="middle" numberOfLines={1} style={styles.serverEndpoint}>
+              {connection.endpoint}
+            </Text>
           </View>
+          {connected ? null : (
+            <View style={styles.stateRow}>
+              {isActiveConnectionState(status.state) ? (
+                <ShimmerText
+                  style={[styles.stateText, { color }]}
+                  text={connectionStateLabel(status.state)}
+                />
+              ) : (
+                <>
+                  <View style={[styles.stateDot, { backgroundColor: color }]} />
+                  <Text style={[styles.stateText, { color }]}>
+                    {connectionStateLabel(status.state)}
+                  </Text>
+                </>
+              )}
+            </View>
+          )}
           {status.detail === null ? null : (
             <Text accessibilityLiveRegion="polite" selectable style={styles.diagnostic}>
               {status.detail}
@@ -125,6 +135,12 @@ export function SavedServerSummary(props: SavedServerSummaryProps): React.JSX.El
 
 const styles = StyleSheet.create({
   diagnostic: { color: colors.red, ...typeScale.caption, marginTop: spacing.optical },
+  endpointRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
+  },
   iconButton: {
     alignItems: "center",
     borderRadius: radii.large,
@@ -134,10 +150,9 @@ const styles = StyleSheet.create({
   },
   menuAnchor: { height: touchTarget, width: touchTarget },
   pendingText: { color: colors.textMuted, ...typeScale.caption },
-  pinned: { color: colors.textMuted, ...typeScale.caption },
   serverEditor: { borderBottomColor: colors.borderSoft, borderBottomWidth: 1 },
   serverEmoji: typeScale.emoji,
-  serverEndpoint: { color: colors.textMuted, ...typeScale.label },
+  serverEndpoint: { color: colors.textMuted, ...typeScale.label, flex: 1, minWidth: 0 },
   serverName: { color: colors.text, ...typeScale.title },
   serverRow: {
     alignItems: "center",

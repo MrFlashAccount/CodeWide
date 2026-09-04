@@ -54,6 +54,8 @@ internal class NativeProtocolEngine(
   private var journalBytes = 0
   private var journalFlush: Runnable? = null
   private var journalFlushAtMs: Long? = null
+  private var keepaliveRunnable: Runnable? = null
+  private var keepaliveNonce = 0L
 
   @Synchronized
   fun onSocketOpen() {
@@ -68,11 +70,16 @@ internal class NativeProtocolEngine(
       .put("type", "hello")
       .put("protocolVersion", 1)
       .put("cursor", frameStore.syncCursor(connectionId) ?: JSONObject.NULL)
-    if (!sendFrame(hello.toString())) resetTransport("native_hello_failed")
+    if (!sendFrame(hello.toString())) {
+      resetTransport("native_hello_failed")
+      return
+    }
+    startKeepalive()
   }
 
   @Synchronized
   fun onSocketClosed(message: String = "Connection interrupted") {
+    stopKeepalive()
     flushJournalFrames()
     upstreamLive = false
     snapshotLoading = false
@@ -84,6 +91,7 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun close(message: String = "Connection session closed") {
+    stopKeepalive()
     flushJournalFrames()
     upstreamLive = false
     rejectInFlight(message)
@@ -541,6 +549,32 @@ internal class NativeProtocolEngine(
     CodeWideModule.emitEngineEvent(connectionId, "state", payload.toString(), null)
   }
 
+  private fun startKeepalive() {
+    stopKeepalive()
+    val runnable = Runnable { sendKeepalive() }
+    keepaliveRunnable = runnable
+    handler.postDelayed(runnable, SYNC_KEEPALIVE_INTERVAL_MS)
+  }
+
+  @Synchronized
+  private fun sendKeepalive() {
+    val runnable = keepaliveRunnable ?: return
+    val frame = JSONObject()
+      .put("type", "ping")
+      .put("nonce", "android:${++keepaliveNonce}")
+    if (!sendFrame(frame.toString())) {
+      keepaliveRunnable = null
+      resetTransport("keepalive_send_failed")
+      return
+    }
+    handler.postDelayed(runnable, SYNC_KEEPALIVE_INTERVAL_MS)
+  }
+
+  private fun stopKeepalive() {
+    keepaliveRunnable?.let(handler::removeCallbacks)
+    keepaliveRunnable = null
+  }
+
   private fun rejectInFlight(message: String) {
     val failure = Result.failure<Any?>(IllegalStateException(message))
     pendingRpcs.values.toList().forEach { pending ->
@@ -576,6 +610,7 @@ internal class NativeProtocolEngine(
     private const val THREAD_FORK_RPC_TIMEOUT_MS = 10 * 60_000L
     private const val RPC_LIVE_WAIT_TIMEOUT_MS = 12_000L
     private const val SNAPSHOT_RPC_TIMEOUT_MS = 120_000L
+    private const val SYNC_KEEPALIVE_INTERVAL_MS = 5_000L
     private const val MAX_DEFERRED_RPCS = 128
     private const val MAX_JOURNAL_BATCH = 128
     private const val MAX_JOURNAL_BYTES = 512 * 1024

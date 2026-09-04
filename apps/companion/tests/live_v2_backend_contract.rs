@@ -1703,12 +1703,6 @@ async fn live_upgrade(
             socket,
             AuthorizationContext::Session {
                 device_id,
-                scopes: vec![
-                    "threads.read".into(),
-                    "threads.write".into(),
-                    "turns.start".into(),
-                    "approvals.respond".into(),
-                ],
                 expires_at: u64::MAX,
             },
             None,

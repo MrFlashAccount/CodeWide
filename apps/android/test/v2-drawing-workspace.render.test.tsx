@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import type { ReactNode } from "react";
+import { StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { DrawingWorkspaceView } from "../src/v2/presentation/drawing/DrawingWorkspaceView";
@@ -11,6 +12,26 @@ const SAFE_AREA_METRICS = {
 };
 
 describe("V2 drawing workspace", () => {
+  it("does not apply the parent-owned safe area a second time", () => {
+    render(
+      <DrawingWorkspaceView
+        editing={false}
+        initialSnapshot={null}
+        mode="drawing"
+        onClose={jest.fn()}
+        onCommit={jest.fn(async () => true)}
+      />,
+      { wrapper: TestSafeArea },
+    );
+
+    expect(StyleSheet.flatten(screen.getByTestId("v2-drawing-header").props.style)).not.toHaveProperty(
+      "paddingTop",
+    );
+    expect(StyleSheet.flatten(screen.getByTestId("v2-drawing-board").props.style)).not.toHaveProperty(
+      "paddingBottom",
+    );
+  });
+
   it("leaves pending state after a rejected commit without closing", async () => {
     const commit = deferred<boolean>();
     const onClose = jest.fn();

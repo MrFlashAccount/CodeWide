@@ -21,14 +21,15 @@ describe("windowed typography scaling contract", () => {
     expect(heroNative).toContain("maxFontSizeMultiplier: APP_MAX_FONT_SIZE_MULTIPLIER");
   });
 
-  it("invalidates virtualized measurements when density or font scale changes", () => {
+  it("invalidates variable timeline measurements while keeping fixed thread rows stable", () => {
     expect(screen).toContain("windowLayout.measurementRevision");
     expect(screen).toContain('renderRevision={composerScope}');
     expect(screen).toContain('measurementRevision={windowLayout.measurementRevision}');
     expect(screen).not.toContain('key={`timeline-layout:${windowLayout.measurementRevision}`}');
     expect(timelineList).toContain('clearCaches({ mode: "sizes" })');
-    expect(screen).toContain('dataKey={`desktop-threads:${windowLayout.measurementRevision}`}');
-    expect(screen).toContain('dataKey={`mobile-threads:${windowLayout.measurementRevision}`}');
+    expect(screen).toContain('dataKey={`desktop-threads:${activeServerId}:${mode}`}');
+    expect(screen).toContain('dataKey={`mobile-threads:${activeServerId}:${mode}`}');
+    expect(screen).not.toContain('extraData={windowLayout.measurementRevision}');
   });
 
   it("does not hard-code the diff header height around scalable text", () => {

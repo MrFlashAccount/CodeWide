@@ -1,3 +1,5 @@
+import { companionHttpUrl } from "./companion-http-url";
+
 export type TransferAccess = { baseUrl: string; authorization: string };
 export type GetTransferAccess = (forceRefresh?: boolean) => Promise<TransferAccess>;
 
@@ -190,16 +192,12 @@ async function materializeRemoteAsset(url: string, getAccess: GetTransferAccess)
 }
 
 function companionUrl(access: TransferAccess, path: string): URL {
-  const url = new URL(access.baseUrl);
-  url.pathname = path;
-  url.search = "";
-  url.hash = "";
-  return url;
+  return new URL(companionHttpUrl(access.baseUrl, path));
 }
 
 function validateScopedPath(rootId: string, path: string): void {
   if (!/^[a-zA-Z0-9_-]{1,64}$/u.test(rootId)) throw new Error("Invalid file root id");
-  if (path.length === 0 || path.startsWith("/") || path.includes("\0")) throw new Error("Remote path must be relative");
+  if (path.length === 0 || path.includes("\0")) throw new Error("Remote path is invalid");
 }
 
 function isAuthorizationStatus(status: number): boolean {

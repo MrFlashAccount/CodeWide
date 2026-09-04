@@ -16,6 +16,7 @@ import { TimelineEmptyView } from "./timelineEmptyView";
 import { TimelineEdgeStateView } from "./timelineEdgeStateView";
 import { TimelineNavigationView } from "./timelineNavigationView";
 import { renderTimelineItem, TimelineRowProvider } from "./timelineRow";
+import { timelineDateSeparatorLabel } from "./timelineDateSeparator";
 import type {
   TimelineActivityActions,
   TimelineDisplayResponseRow,
@@ -128,6 +129,7 @@ export function TimelineView(props: TimelineViewProps): React.JSX.Element {
   );
   const anchorIndex =
     initialAnchorTurnId === null ? -1 : turns.findIndex((turn) => turn.id === initialAnchorTurnId);
+  const dateLabels = timelineDateLabels(turns);
 
   return (
     <TimelineRowProvider
@@ -137,6 +139,7 @@ export function TimelineView(props: TimelineViewProps): React.JSX.Element {
       latestAssistantMeasurementKey={readReceiptRetryKey}
       onLatestAssistantLayout={handleVisibilityLayout}
       {...(onLoadActivity === undefined ? {} : { onLoadActivity })}
+      dateLabels={dateLabels}
       setLatestAssistantNode={setLatestAssistantNode}
     >
       <View ref={setViewportNode} onLayout={handleVisibilityLayout} style={styles.container}>
@@ -211,6 +214,19 @@ export function TimelineView(props: TimelineViewProps): React.JSX.Element {
 
 function turnKey(turn: TimelineDisplayTurn): string {
   return turn.id;
+}
+
+function timelineDateLabels(turns: TimelineDisplayTurn[]): ReadonlyMap<string, string> {
+  const labels = new Map<string, string>();
+  let previousTimestamp: string | null = null;
+  for (const turn of turns) {
+    const label = timelineDateSeparatorLabel(turn.createdAt, previousTimestamp);
+    if (label !== null) labels.set(turn.id, label);
+    if (turn.createdAt !== null && Number.isFinite(Date.parse(turn.createdAt))) {
+      previousTimestamp = turn.createdAt;
+    }
+  }
+  return labels;
 }
 
 const styles = StyleSheet.create({

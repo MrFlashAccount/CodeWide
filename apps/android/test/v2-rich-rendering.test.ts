@@ -12,10 +12,23 @@ import {
   stripTerminalControlSequences,
 } from "../src/v2/rendering/nativeCodeBlockModel";
 import { extensionCardModel } from "../src/v2/rendering/richExtensionModel";
+import { richMarkdownLayout } from "../src/v2/rendering/richMarkdownLayout";
+import { markdownTableLayout } from "../src/v2/rendering/markdownTableLayout";
 import { collectMarkdownImages, githubAlert } from "../src/v2/rendering/richMarkdownModel";
 import { ResolvedImageResource } from "../src/v2/rendering/resolvedImageResource";
 
 describe("V2 rich rendering", () => {
+  it("requests the available bubble width for copyable code blocks", () => {
+    expect(richMarkdownLayout("Plain text")).toBe("intrinsic");
+    expect(richMarkdownLayout("```ts\nconst answer = 42;\n```")).toBe("fill");
+    expect(richMarkdownLayout("| A | B |\n| - | - |\n| 1 | 2 |")).toBe("fill");
+  });
+
+  it("fills a table viewport before requiring horizontal scrolling", () => {
+    expect(markdownTableLayout(360, 2)).toEqual({ cellWidth: 180, tableWidth: 360 });
+    expect(markdownTableLayout(360, 4)).toEqual({ cellWidth: 144, tableWidth: 576 });
+  });
+
   it("keeps loopback and remote file links behind injected capabilities", () => {
     expect(classifyMarkdownLink("http://localhost:3000/docs")).toEqual({
       kind: "loopback",

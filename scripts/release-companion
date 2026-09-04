@@ -9,6 +9,8 @@ PLUGIN_ROOT="$INSTALL_ROOT/plugins"
 UNIT_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 TMP_ROOT=${TMPDIR:-/tmp}
 BACKUP_DIR=
+CHECK_LOG_DIR=
+CHECK_INDEX=0
 DEPLOYMENT_STARTED=0
 SERVICE_WAS_ACTIVE=0
 DRY_RUN=0
@@ -52,6 +54,39 @@ cleanup_backup() {
   esac
 }
 
+cleanup_check_logs() {
+  [ -n "$CHECK_LOG_DIR" ] || return 0
+  case "$CHECK_LOG_DIR" in
+    "$TMP_ROOT"/codewide-companion-checks.*) rm -rf -- "$CHECK_LOG_DIR" ;;
+    *) printf '%s\n' "Refusing to remove unexpected check log directory: $CHECK_LOG_DIR" >&2 ;;
+  esac
+}
+
+run_quiet() {
+  label=$1
+  shift
+  CHECK_INDEX=$((CHECK_INDEX + 1))
+  log="$CHECK_LOG_DIR/$CHECK_INDEX.log"
+  printf '%s\n' "release-companion: $label"
+  if "$@" >"$log" 2>&1; then
+    return 0
+  else
+    status=$?
+  fi
+  printf '%s\n' "release-companion: $label failed" >&2
+  cat "$log" >&2
+  return "$status"
+}
+
+validate_release_payload() {
+  test -x target/release/codewide-companion
+  test -x target/release/codewide-vcs-git
+  test -x apps/companion/deploy/memory-watch.sh
+  test -r apps/companion/deploy/codewide-companion.service
+  test -r apps/companion/deploy/codewide-companion-memory-watch.service
+  test -r apps/companion/deploy/codewide-companion-memory-watch.timer
+}
+
 finish_release() {
   status=$?
   trap - EXIT HUP INT TERM
@@ -70,36 +105,28 @@ finish_release() {
     fi
   fi
   cleanup_backup
+  cleanup_check_logs
   exit "$status"
 }
 
 trap finish_release EXIT
 trap 'exit 130' HUP INT TERM
 
+CHECK_LOG_DIR=$(mktemp -d "$TMP_ROOT/codewide-companion-checks.XXXXXX")
 cd "$REPO_ROOT"
 
-printf '%s\n' 'release-companion: validating source'
-git diff --check -- \
+run_quiet 'checking source diff' git diff --check -- \
   Cargo.toml \
   Cargo.lock \
   clippy.toml \
   apps/companion \
   scripts/build-companion.sh \
   scripts/release-companion
-cargo fmt --all -- --check
-CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets --all-features -- -D warnings
-CARGO_INCREMENTAL=0 cargo test --workspace --all-features
-
-printf '%s\n' 'release-companion: building optimized binaries'
-./scripts/build-companion.sh
-
-printf '%s\n' 'release-companion: validating release payload'
-test -x target/release/codewide-companion
-test -x target/release/codewide-vcs-git
-test -x apps/companion/deploy/memory-watch.sh
-test -r apps/companion/deploy/codewide-companion.service
-test -r apps/companion/deploy/codewide-companion-memory-watch.service
-test -r apps/companion/deploy/codewide-companion-memory-watch.timer
+run_quiet 'checking formatting' cargo fmt --all -- --check
+run_quiet 'running clippy' env CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets --all-features --quiet -- -D warnings
+run_quiet 'running tests' env CARGO_INCREMENTAL=0 cargo test --workspace --all-features --quiet
+run_quiet 'building optimized binaries' ./scripts/build-companion.sh --quiet
+run_quiet 'validating release payload' validate_release_payload
 
 SOURCE_REVISION=$(git rev-parse HEAD)
 SOURCE_DIRTY=false
@@ -124,10 +151,9 @@ backup_target "$UNIT_ROOT/codewide-companion.service" unit
 backup_target "$UNIT_ROOT/codewide-companion-memory-watch.service" memory-watch-unit
 backup_target "$UNIT_ROOT/codewide-companion-memory-watch.timer" memory-watch-timer
 
-printf '%s\n' 'release-companion: installing and verifying'
 DEPLOYMENT_STARTED=1
-./apps/companion/deploy/install.sh
-./apps/companion/deploy/verify.sh
+run_quiet 'installing companion' ./apps/companion/deploy/install.sh
+run_quiet 'verifying installation' ./apps/companion/deploy/verify.sh
 DEPLOYMENT_STARTED=0
 
 BINARY_SHA256=$(sha256sum "$INSTALL_ROOT/codewide-companion" | cut -d ' ' -f 1)

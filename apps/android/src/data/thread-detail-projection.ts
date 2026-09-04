@@ -279,7 +279,7 @@ export function pendingTimelineRowId(connectionId: string, threadId: string, com
  * available, otherwise represent the shell explicitly as not loaded.
  */
 export function normalizeConversationTurn(turn: Turn, resident: Turn | null = null): Turn {
-  if (Array.isArray((turn as unknown as { items?: unknown }).items)) return turn;
+  if (turn.itemsView !== "notLoaded" && Array.isArray((turn as unknown as { items?: unknown }).items)) return turn;
   if (resident !== null && Array.isArray((resident as unknown as { items?: unknown }).items)) {
     return { ...turn, items: resident.items, itemsView: resident.itemsView };
   }
@@ -412,20 +412,20 @@ export function planPendingDeliveryProjectionCleanup(
   return { upserts: [], deletes };
 }
 
+/** Keeps only the caller-provided mutable head when it changed after an RPC began. */
 export function reconcileAuthoritativeThread(
   incoming: Thread,
-  current: Thread | null | undefined,
+  currentMutableHead: Thread | null | undefined,
   preserveConcurrentHead: boolean,
 ): Thread {
-  if (!preserveConcurrentHead || current === null || current === undefined) return incoming;
+  if (!preserveConcurrentHead || currentMutableHead === null || currentMutableHead === undefined) return incoming;
   const incomingById = new Map(incoming.turns.map((turn) => [turn.id, turn] as const));
   const turns = incoming.turns.map((turn) => {
-    const previous = current.turns.find((candidate) => candidate.id === turn.id);
-    if (previous === undefined || turn.status !== "inProgress" || previous.status !== "inProgress") return turn;
-    return previous;
+    const previous = currentMutableHead.turns.find((candidate) => candidate.id === turn.id);
+    return previous ?? turn;
   });
-  for (const turn of current.turns) {
-    if (!incomingById.has(turn.id) && turn.status === "inProgress") turns.push(turn);
+  for (const turn of currentMutableHead.turns) {
+    if (!incomingById.has(turn.id)) turns.push(turn);
   }
   turns.sort((left, right) => (left.startedAt ?? 0) - (right.startedAt ?? 0));
   return { ...incoming, turns };

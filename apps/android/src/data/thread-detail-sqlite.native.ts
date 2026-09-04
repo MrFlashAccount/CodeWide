@@ -3,7 +3,6 @@ import { getUiCacheFileDiagnostics, getUiCacheSqliteDatabase } from "./ui-cache-
 import { incrementMetric, recordSqliteSubsetLoad, recordTiming } from "./operational-metrics";
 
 const TABLE = "codewide_thread_details";
-const INVALIDATIONS_TABLE = "codewide_thread_detail_invalidations";
 const META_TABLE = "__tanstack_db_sqlite_meta";
 const CACHE_META_TABLE = "codewide_thread_detail_cache_meta";
 const RUNTIME_ID = "thread-details-v2";
@@ -33,12 +32,6 @@ export type ThreadDetailSqliteControls = {
   write(change: ThreadDetailChange): void;
   rollback(): void;
   commit(options?: { durable?: boolean }): Promise<void>;
-};
-
-export type ThreadDetailInvalidation = {
-  connectionId: string;
-  threadId: string;
-  cursor: number;
 };
 
 export type ThreadDetailWindowQuery = {
@@ -114,9 +107,6 @@ export type ThreadDetailSqlite = ThreadDetailSqliteControls & {
   }): Promise<ThreadDetailWindowRows>;
   loadAuthoritativeFacts(connectionId: string, threadId: string, incomingTurnIds: readonly string[]): Promise<ThreadDetailRow[]>;
   loadPrependFacts(connectionId: string, threadId: string, historyEpoch: number, turnIds: readonly string[]): Promise<ThreadDetailRow[]>;
-  loadInvalidations(): Promise<ThreadDetailInvalidation[]>;
-  upsertInvalidations(rows: readonly ThreadDetailInvalidation[]): Promise<void>;
-  clearInvalidation(connectionId: string, threadId: string, throughCursor: number): Promise<void>;
 };
 
 /**
@@ -416,41 +406,6 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
       ]);
       return deduplicateRows([...families, ...(minimum === null ? [] : [minimum])]);
     },
-    async loadInvalidations() {
-      await ensurePrepared();
-      await flushPending();
-      return extractRows(await database.execute(
-        `SELECT "connection_id", "thread_id", "cursor" FROM "${INVALIDATIONS_TABLE}"`,
-      )).flatMap((row) => (
-        typeof row.connection_id === "string"
-          && typeof row.thread_id === "string"
-          && typeof row.cursor === "number"
-          ? [{ connectionId: row.connection_id, threadId: row.thread_id, cursor: row.cursor }]
-          : []
-      ));
-    },
-    async upsertInvalidations(rows) {
-      if (rows.length === 0) return;
-      await ensurePrepared();
-      await flushPending();
-      await database.transaction(async (executor) => {
-        for (const row of rows) {
-          await executor.execute(
-            `INSERT INTO "${INVALIDATIONS_TABLE}" ("connection_id", "thread_id", "cursor") VALUES (?, ?, ?) `
-            + `ON CONFLICT("connection_id", "thread_id") DO UPDATE SET "cursor" = MAX("cursor", excluded."cursor")`,
-            [row.connectionId, row.threadId, row.cursor],
-          );
-        }
-      });
-    },
-    async clearInvalidation(connectionId, threadId, throughCursor) {
-      await ensurePrepared();
-      await flushPending();
-      await database.execute(
-        `DELETE FROM "${INVALIDATIONS_TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "cursor" <= ?`,
-        [connectionId, threadId, throughCursor],
-      );
-    },
   };
 }
 
@@ -468,14 +423,9 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_0" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "sealed", "kind", "ordinal")`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_1" ON "${TABLE}" ("connection_id", "thread_id", "turn_id")`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_2" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "kind", "ordinal")`);
-    await executor.execute(
-      `CREATE TABLE IF NOT EXISTS "${INVALIDATIONS_TABLE}" (`
-      + `"connection_id" TEXT NOT NULL, "thread_id" TEXT NOT NULL, "cursor" REAL NOT NULL, `
-      + `PRIMARY KEY ("connection_id", "thread_id"))`,
-    );
-    // The previous generic Persistent Collection had a separate ownership and
-    // publication runtime. Its rows are reconstructable from the native
-    // journal snapshot, so remove that storage instead of importing it.
+    // Old invalidation cursors represented the removed replay/repair model.
+    // Authoritative thread sync now compares semantic sealed-turn ids.
+    await executor.execute(`DROP TABLE IF EXISTS "codewide_thread_detail_invalidations"`);
     await executor.execute(`DROP TABLE IF EXISTS "codewide_thread_invalidations"`);
     await prepareHistoryCacheAccounting(executor);
     const storedVersion = numericSqliteValue(extractRows(await executor.execute(

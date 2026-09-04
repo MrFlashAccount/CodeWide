@@ -480,7 +480,10 @@ function upsertTurn(thread: Thread, value: unknown): void {
 }
 
 function mergeTurnMetadata(incoming: Turn, cached: Turn | undefined): Turn {
-  if (cached !== undefined && cached.items.length > 0) {
+  if (cached !== undefined
+    && Array.isArray(cached.items)
+    && cached.items.length > 0
+    && Array.isArray(incoming.items)) {
     incoming.items = reconcileTurnItems(
       cached.items.map((item) => structuredClone(item)),
       incoming.items,
@@ -680,7 +683,9 @@ function addReasoningPart(
 ): void {
   const item = itemInTurn(thread, turnId, itemId);
   if (item?.type !== "reasoning" || !Number.isSafeInteger(index) || (index as number) < 0) return;
-  while (item[field].length <= (index as number)) item[field].push("");
+  const parts = Array.isArray(item[field]) ? item[field] : [];
+  if (parts !== item[field]) item[field] = parts;
+  while (parts.length <= (index as number)) parts.push("");
 }
 
 function appendReasoning(

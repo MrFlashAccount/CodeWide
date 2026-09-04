@@ -23,7 +23,6 @@ use serde_json::json;
 fn authorization(device_id: &str) -> AuthorizationContext {
     AuthorizationContext::Session {
         device_id: device_id.into(),
-        scopes: vec!["turns.start".into(), "threads.read".into()],
         expires_at: u64::MAX,
     }
 }

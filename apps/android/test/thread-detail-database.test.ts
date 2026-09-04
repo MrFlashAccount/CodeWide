@@ -25,7 +25,6 @@ import {
   shouldWriteThreadDetailRow,
   type ThreadDetailRow,
 } from "../src/data/thread-detail-projection";
-import { shouldRefreshInvalidatedThread } from "../src/data/thread-detail-invalidation";
 
 const status = { type: "idle" } as const;
 
@@ -419,13 +418,6 @@ describe("thread detail projection", () => {
       upserts: [],
       deletes: ["stale-pending-row"],
     });
-  });
-
-  it("does not refresh a known hot thread from a lossy active rollout summary", () => {
-    expect(shouldRefreshInvalidatedThread(true, true, true)).toBe(false);
-    expect(shouldRefreshInvalidatedThread(true, true, false)).toBe(true);
-    expect(shouldRefreshInvalidatedThread(false, false, true)).toBe(true);
-    expect(shouldRefreshInvalidatedThread(true, false, false)).toBe(false);
   });
 
   it("compacts completed activity without losing its collapsed index or chat boundary", () => {

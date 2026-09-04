@@ -27,6 +27,7 @@ import {
   codeReviewDocumentEmptyState,
   EMPTY_CHANGES_STATE,
   EMPTY_CHANGES_TREE_STATE,
+  LOADING_CHANGE_STATE,
   type CodeReviewEmptyState,
 } from "../src/rendering/code-review-empty-state";
 import type { CodeReviewComment, CodeReviewLineReference } from "../src/rendering/code-review";
@@ -65,10 +66,6 @@ const treeTheme = {
     "sideBar.border": "rgba(255,255,255,.12)",
     "list.activeSelectionBackground": "#242a33",
     "list.activeSelectionForeground": "#f1f3f5",
-    // Android WebView keeps :hover under the finger while a native scroll is in
-    // progress. Keep touch scrolling paint-stable; selection and focus retain
-    // their own distinct backgrounds below.
-    "list.hoverBackground": "#101113",
     "list.focusBackground": "#242a33",
     "list.focusOutline": "#78a9ff",
     "input.background": "#181a1e",
@@ -81,6 +78,27 @@ const treeTheme = {
   },
 } satisfies TreeThemeInput;
 const treeThemeStyles = themeToTreeStyles(treeTheme);
+const TOUCH_FILE_TREE_CSS = `
+@media (hover: none), (pointer: coarse) {
+  [data-type="item"]:hover:not([data-item-selected="true"]) {
+    background-color: var(--trees-bg);
+    --truncate-marker-background-overlay-color: transparent;
+  }
+
+  [data-type="item"][data-item-focused="true"]::before,
+  [data-type="item"]:focus-visible::before {
+    display: none;
+  }
+
+  [data-item-flattened-subitem]:hover {
+    text-decoration: none;
+  }
+
+  :host(:hover) [data-item-section="spacing-item"] {
+    opacity: 0;
+  }
+}
+`;
 
 const treeHost = requiredElement("tree");
 const treeEmptyHost = requiredElement("tree-empty");
@@ -189,6 +207,7 @@ function ensureTree(payload: CodeReviewWorkspaceState): FileTree {
     search: true,
     fileTreeSearchMode: "expand-matches",
     overscan: 4,
+    unsafeCSS: TOUCH_FILE_TREE_CSS,
     renderRowDecoration: ({ row }) => {
       const file = treePathToFile.get(row.path);
       if (file === undefined) return null;
@@ -242,9 +261,13 @@ function renderCurrentDocument(forceRender = false): void {
   if (currentDocument === null) {
     fileHost.hidden = true;
     diffHost.hidden = true;
-    setEmptyState(previewEmptyHost, currentWorkspace.files.length === 0
-      ? EMPTY_CHANGES_STATE
-      : { title: "Select a file", message: "Choose a changed file from the tree." });
+    if (currentWorkspace.files.length === 0) {
+      setEmptyState(previewEmptyHost, EMPTY_CHANGES_STATE);
+    } else if (currentWorkspace.selectedPath !== null) {
+      setEmptyState(previewEmptyHost, LOADING_CHANGE_STATE, true);
+    } else {
+      setEmptyState(previewEmptyHost, { title: "Select a file", message: "Choose a changed file from the tree." });
+    }
     return;
   }
   const requestId = latestRequestId;
@@ -268,8 +291,10 @@ function renderCurrentDocument(forceRender = false): void {
   }
 }
 
-function setEmptyState(host: HTMLElement, state: CodeReviewEmptyState | null): void {
+function setEmptyState(host: HTMLElement, state: CodeReviewEmptyState | null, loading = false): void {
   host.hidden = state === null;
+  if (loading) host.dataset.loading = "true";
+  else delete host.dataset.loading;
   if (state === null) return;
   const title = host.querySelector<HTMLElement>("[data-empty-title]");
   const message = host.querySelector<HTMLElement>("[data-empty-message]");

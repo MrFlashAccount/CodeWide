@@ -438,6 +438,44 @@ impl HistoryService {
         )
     }
 
+    /// Synchronizes immutable thread history from a semantic turn cursor.
+    ///
+    /// A known cursor is an O(1) index lookup followed by a bounded forward
+    /// read. A missing or expired cursor returns a bounded latest reset; the
+    /// mutable turn is deliberately excluded and remains App Server-owned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the canonical rollout or its derived index cannot
+    /// be read.
+    pub async fn sync_thread_history(
+        &self,
+        thread_id: &str,
+        after_turn_id: Option<&str>,
+        limit: usize,
+        active_turn_id: Option<&str>,
+    ) -> Result<Value, HistoryServiceError> {
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let summaries = self.summaries.clone();
+        let thread_id = thread_id.to_owned();
+        let after_turn_id = after_turn_id.map(str::to_owned);
+        let active_turn_id = active_turn_id.map(str::to_owned);
+        tokio::task::spawn_blocking(move || {
+            sync_history(
+                &catalog,
+                &store,
+                &summaries,
+                &thread_id,
+                after_turn_id.as_deref(),
+                limit,
+                active_turn_id.as_deref(),
+            )
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
+    }
+
     /// Replaces the App Server's first-prompt `Thread.preview` with the newest
     /// canonical conversation text required by the `CodeWide` chat list.
     ///
@@ -782,6 +820,229 @@ fn turns_page(
     }))
 }
 
+fn sync_history(
+    catalog: &SessionCatalog,
+    store: &IndexStore,
+    summaries: &Mutex<SummaryCache>,
+    thread_id: &str,
+    after_turn_id: Option<&str>,
+    limit: usize,
+    active_turn_id: Option<&str>,
+) -> Result<Value, HistoryServiceError> {
+    let limit = limit.clamp(1, MAX_PAGE_SIZE);
+    let path = catalog.resolve(thread_id)?;
+    index_rollout(store, &path)?;
+    let rollout = File::open(&path).map_err(IndexError::from)?;
+    let metadata = rollout.metadata().map_err(IndexError::from)?;
+    let file_bytes = metadata.len();
+    let (device, inode) = file_identity(&metadata);
+    let file_id = rollout_file_id(&path);
+    let scan_limit = limit.saturating_add(2);
+    let (latest_refs, latest_refs_are_indexed) = match current_indexed_turns_from_file(
+        store, &path, &rollout, file_bytes, None, scan_limit,
+    )? {
+        Some(indexed) if !indexed.has_more => (indexed.turns, true),
+        _ => (
+            scan_tail_turns_from_file(&rollout, file_bytes, None, scan_limit)?
+                .turns
+                .into_iter()
+                .map(|turn| TurnRef {
+                    id: turn.id,
+                    start_offset: turn.start_offset,
+                    end_offset: turn.end_offset,
+                    completed: turn.completed,
+                })
+                .collect(),
+            false,
+        ),
+    };
+    let head_turn_id = latest_refs
+        .iter()
+        .find(|turn| is_immutable_turn_ref(turn, active_turn_id))
+        .map(|turn| turn.id.clone());
+
+    // The reverse index is filled from the tail in small background slices.
+    // A semantic cursor inside the bounded tail is still valid even when its
+    // lookup row has not been persisted yet; treating that cache miss as an
+    // unknown cursor would replace the client's whole resident page.
+    let indexed_anchor = after_turn_id
+        .map(|turn_id| store.turn_by_id(&file_id, turn_id))
+        .transpose()?
+        .flatten();
+    if indexed_anchor.is_none()
+        && let Some(delta) = tail_delta(&latest_refs, after_turn_id, limit, active_turn_id)
+    {
+        let turns = project_turn_refs(
+            store,
+            summaries,
+            thread_id,
+            &path,
+            &rollout,
+            device,
+            inode,
+            &delta.turns,
+            latest_refs_are_indexed,
+        )?;
+        return Ok(json!({
+            "kind": if turns.is_empty() { "current" } else { "delta" },
+            "headTurnId": head_turn_id,
+            "turns": turns,
+            "hasMore": delta.has_more,
+            "olderCursor": Value::Null,
+        }));
+    }
+
+    if let Some(anchor) = indexed_anchor
+        && is_immutable_turn_ref(&anchor, active_turn_id)
+    {
+        let discovered =
+            store.turns_asc_after(&file_id, anchor.start_offset, limit.saturating_add(2))?;
+        let mut sealed = discovered
+            .into_iter()
+            .filter(|turn| is_immutable_turn_ref(turn, active_turn_id))
+            .take(limit.saturating_add(1))
+            .collect::<Vec<_>>();
+        let has_more = sealed.len() > limit;
+        sealed.truncate(limit);
+        let turns = project_turn_refs(
+            store, summaries, thread_id, &path, &rollout, device, inode, &sealed, true,
+        )?;
+        return Ok(json!({
+            "kind": if turns.is_empty() { "current" } else { "delta" },
+            "headTurnId": head_turn_id,
+            "turns": turns,
+            "hasMore": has_more,
+            "olderCursor": Value::Null,
+        }));
+    }
+
+    let reset = latest_reset(latest_refs, thread_id, limit, active_turn_id);
+    let mut turns = project_turn_refs(
+        store,
+        summaries,
+        thread_id,
+        &path,
+        &rollout,
+        device,
+        inode,
+        &reset.turns,
+        latest_refs_are_indexed,
+    )?;
+    turns.reverse();
+    Ok(json!({
+        "kind": "reset",
+        "headTurnId": head_turn_id,
+        "turns": turns,
+        "hasMore": false,
+        "olderCursor": reset.older_cursor,
+    }))
+}
+
+struct LatestReset {
+    turns: Vec<TurnRef>,
+    older_cursor: Option<String>,
+}
+
+fn latest_reset(
+    latest_refs: Vec<TurnRef>,
+    thread_id: &str,
+    limit: usize,
+    active_turn_id: Option<&str>,
+) -> LatestReset {
+    let mut turns = latest_refs
+        .into_iter()
+        .filter(|turn| is_immutable_turn_ref(turn, active_turn_id))
+        .take(limit.saturating_add(1))
+        .collect::<Vec<_>>();
+    let has_older = turns.len() > limit;
+    turns.truncate(limit);
+    let older_cursor = if has_older {
+        turns.last().map(|turn| {
+            encode_cursor(&Cursor {
+                kind: "turns".into(),
+                thread_id: thread_id.to_owned(),
+                direction: "desc".into(),
+                offset: turns.len(),
+                source_offset: Some(turn.start_offset),
+            })
+        })
+    } else {
+        None
+    };
+    LatestReset {
+        turns,
+        older_cursor,
+    }
+}
+
+struct TailDelta {
+    turns: Vec<TurnRef>,
+    has_more: bool,
+}
+
+fn tail_delta(
+    latest_refs: &[TurnRef],
+    after_turn_id: Option<&str>,
+    limit: usize,
+    active_turn_id: Option<&str>,
+) -> Option<TailDelta> {
+    let after_turn_id = after_turn_id?;
+    let anchor_index = latest_refs
+        .iter()
+        .position(|turn| turn.id == after_turn_id)?;
+    if !is_immutable_turn_ref(&latest_refs[anchor_index], active_turn_id) {
+        return None;
+    }
+    let mut turns = latest_refs
+        .iter()
+        .take(anchor_index)
+        .filter(|turn| is_immutable_turn_ref(turn, active_turn_id))
+        .take(limit.saturating_add(1))
+        .cloned()
+        .collect::<Vec<_>>();
+    let has_more = turns.len() > limit;
+    turns.truncate(limit);
+    turns.reverse();
+    Some(TailDelta { turns, has_more })
+}
+
+fn is_immutable_turn_ref(turn: &TurnRef, active_turn_id: Option<&str>) -> bool {
+    turn.end_offset > turn.start_offset && active_turn_id != Some(turn.id.as_str())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_turn_refs(
+    store: &IndexStore,
+    summaries: &Mutex<SummaryCache>,
+    thread_id: &str,
+    path: &std::path::Path,
+    rollout: &File,
+    device: u64,
+    inode: u64,
+    turns: &[TurnRef],
+    indexed_exact: bool,
+) -> Result<Vec<Value>, HistoryServiceError> {
+    let mut projected = Vec::with_capacity(turns.len());
+    for turn in turns {
+        let key = SummaryKey {
+            thread_id: thread_id.to_owned(),
+            device,
+            inode,
+            start_offset: turn.start_offset,
+            end_offset: turn.end_offset,
+        };
+        let value = if let Some(value) = cached_summary(summaries, &key) {
+            value
+        } else {
+            let value = projected_turn(store, path, rollout, turn, indexed_exact)?;
+            remember_summary(summaries, key, &value);
+            value
+        };
+        projected.push(value);
+    }
+    Ok(projected)
+}
+
 fn projected_turn(
     store: &IndexStore,
     path: &std::path::Path,
@@ -994,8 +1255,8 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{HistoryService, HistoryServiceError, SummaryCache, turns_page};
-    use crate::{catalog::SessionCatalog, store::IndexStore};
+    use super::{HistoryService, HistoryServiceError, SummaryCache, sync_history, turns_page};
+    use crate::{catalog::SessionCatalog, rollout::rollout_file_id, store::IndexStore};
 
     const THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
 
@@ -1004,6 +1265,296 @@ mod tests {
             Arc::new(SessionCatalog::scan(root)),
             Arc::new(IndexStore::open(root.join("history-index.redb"))?),
         ))
+    }
+
+    fn write_completed_turns(path: &Path, count: usize) -> Result<(), Box<dyn std::error::Error>> {
+        let mut rollout = std::fs::File::create(path)?;
+        for index in 0..count {
+            for line in [
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\",\"turn_id\":\"turn-{index}\"}}}}"
+                ),
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"message\":\"answer-{index}\",\"phase\":\"final_answer\"}}}}"
+                ),
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_complete\",\"turn_id\":\"turn-{index}\",\"last_agent_message\":\"answer-{index}\"}}}}"
+                ),
+            ] {
+                writeln!(rollout, "{line}")?;
+            }
+        }
+        rollout.sync_all()?;
+        Ok(())
+    }
+
+    #[test]
+    fn sync_without_cursor_returns_a_bounded_reset() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        write_completed_turns(&path, 45)?;
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+
+        let result = sync_history(&catalog, &store, &summaries, THREAD_ID, None, 36, None)?;
+
+        assert_eq!(result["kind"], "reset");
+        assert_eq!(result["turns"].as_array().map(Vec::len), Some(36));
+        assert_eq!(result["turns"][0]["id"], "turn-9");
+        assert_eq!(result["turns"][35]["id"], "turn-44");
+        assert_eq!(result["headTurnId"], "turn-44");
+        assert_eq!(result["hasMore"], false);
+        assert!(result["olderCursor"].is_string());
+        Ok(())
+    }
+
+    #[test]
+    fn sync_from_stale_cursor_returns_only_newer_sealed_turns()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        write_completed_turns(&path, 8)?;
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+
+        let result = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("turn-3"),
+            2,
+            None,
+        )?;
+
+        assert_eq!(result["kind"], "delta");
+        assert_eq!(result["turns"][0]["id"], "turn-4");
+        assert_eq!(result["turns"][1]["id"], "turn-5");
+        assert_eq!(result["hasMore"], true);
+        assert_eq!(result["headTurnId"], "turn-7");
+        Ok(())
+    }
+
+    #[test]
+    fn sync_at_head_returns_current_and_unknown_cursor_resets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        write_completed_turns(&path, 3)?;
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+
+        let current = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("turn-2"),
+            36,
+            None,
+        )?;
+        let reset = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("missing"),
+            36,
+            None,
+        )?;
+
+        assert_eq!(current["kind"], "current");
+        assert_eq!(current["turns"], json!([]));
+        assert_eq!(reset["kind"], "reset");
+        assert_eq!(reset["turns"].as_array().map(Vec::len), Some(3));
+        Ok(())
+    }
+
+    #[test]
+    fn sync_treats_an_aborted_turn_as_immutable_history() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        write_completed_turns(&path, 1)?;
+        let mut rollout = std::fs::OpenOptions::new().append(true).open(&path)?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\",\"turn_id\":\"aborted-turn\"}}}}"
+        )?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"turn_aborted\",\"turn_id\":\"aborted-turn\"}}}}"
+        )?;
+        rollout.sync_all()?;
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+
+        let result = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("turn-0"),
+            36,
+            None,
+        )?;
+
+        assert_eq!(result["kind"], "delta");
+        assert_eq!(result["headTurnId"], "aborted-turn");
+        assert_eq!(result["turns"][0]["id"], "aborted-turn");
+        assert_eq!(result["turns"][0]["status"], "interrupted");
+        Ok(())
+    }
+
+    #[test]
+    fn sync_excludes_the_app_server_active_turn_from_every_history_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        write_completed_turns(&path, 1)?;
+        let mut rollout = std::fs::OpenOptions::new().append(true).open(&path)?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\",\"turn_id\":\"active-turn\"}}}}"
+        )?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"active question\"}}}}"
+        )?;
+        rollout.sync_all()?;
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+
+        let reset = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            None,
+            36,
+            Some("active-turn"),
+        )?;
+        assert_eq!(reset["kind"], "reset");
+        assert_eq!(reset["headTurnId"], "turn-0");
+        assert_eq!(reset["turns"].as_array().map(Vec::len), Some(1));
+        assert_eq!(reset["turns"][0]["id"], "turn-0");
+
+        let current = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("turn-0"),
+            36,
+            Some("active-turn"),
+        )?;
+        assert_eq!(current["kind"], "current");
+        assert_eq!(current["headTurnId"], "turn-0");
+        assert_eq!(current["turns"], json!([]));
+        Ok(())
+    }
+
+    #[test]
+    fn cold_large_sync_reads_the_requested_history_beyond_the_partial_index()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        let mut rollout = std::fs::File::create(&path)?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"compacted\",\"payload\":{{\"opaque\":\"{}\"}}}}",
+            "x".repeat(9 * 1024 * 1024)
+        )?;
+        for index in 0..20 {
+            for line in [
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\",\"turn_id\":\"turn-{index}\"}}}}"
+                ),
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"agent_message\",\"message\":\"answer-{index}\",\"phase\":\"final_answer\"}}}}"
+                ),
+                format!(
+                    "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_complete\",\"turn_id\":\"turn-{index}\",\"last_agent_message\":\"answer-{index}\"}}}}"
+                ),
+            ] {
+                writeln!(rollout, "{line}")?;
+            }
+        }
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\",\"turn_id\":\"active-turn\"}}}}"
+        )?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"active question\"}}}}"
+        )?;
+        rollout.sync_all()?;
+
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+        let result = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            None,
+            36,
+            Some("active-turn"),
+        )?;
+
+        assert_eq!(result["kind"], "reset");
+        assert_eq!(result["headTurnId"], "turn-19");
+        assert_eq!(result["turns"].as_array().map(Vec::len), Some(20));
+        assert_eq!(result["turns"][0]["id"], "turn-0");
+        assert_eq!(result["turns"][19]["id"], "turn-19");
+
+        let file_id = rollout_file_id(&path);
+        assert!(store.turn_by_id(&file_id, "turn-18")?.is_none());
+        let delta = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("turn-18"),
+            36,
+            Some("active-turn"),
+        )?;
+        assert_eq!(delta["kind"], "delta");
+        assert_eq!(delta["headTurnId"], "turn-19");
+        assert_eq!(delta["turns"].as_array().map(Vec::len), Some(1));
+        assert_eq!(delta["turns"][0]["id"], "turn-19");
+
+        let current = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("turn-19"),
+            36,
+            Some("active-turn"),
+        )?;
+        assert_eq!(current["kind"], "current");
+        assert_eq!(current["headTurnId"], "turn-19");
+        assert_eq!(current["turns"], json!([]));
+        Ok(())
     }
 
     #[test]

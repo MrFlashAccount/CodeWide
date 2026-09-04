@@ -171,8 +171,47 @@ describe("V2 resource transport boundary", () => {
     expect(transportMocks.release).toHaveBeenCalledTimes(1);
   });
 
+  it("registers a private file before exposing its authenticated stream", async () => {
+    transportMocks.request.mockReset();
+    transportMocks.release.mockClear();
+    transportMocks.acquireSharedConnectionLease.mockClear();
+    transportMocks.companionHttpOrigin.mockClear();
+    transportMocks.mintStoredSession.mockClear();
+    transportMocks.companionHttpOrigin.mockResolvedValue(loopbackOrigin);
+    transportMocks.mintStoredSession.mockResolvedValue({
+      expiresAt: 42,
+      sessionToken: "opaque-session",
+    });
+    transportMocks.acquireSharedConnectionLease.mockResolvedValue({
+      lease: { release: transportMocks.release, request: transportMocks.request },
+    });
+    transportMocks.request.mockResolvedValue({ bodyBase64: "", status: 204 });
+    const server = savedServerId("server-preview");
+
+    await expect(
+      createClosedPreviewTransport().stream(
+        server,
+        "/v2/files/preview?path=%2Fworkspace%2Fimage.png",
+        "image",
+      ),
+    ).resolves.toEqual({
+      headers: { Authorization: "Bearer opaque-session" },
+      uri: `${loopbackOrigin}/v2/files/preview?path=%2Fworkspace%2Fimage.png`,
+    });
+    expect(transportMocks.acquireSharedConnectionLease).toHaveBeenCalledExactlyOnceWith(server);
+    expect(transportMocks.request).toHaveBeenCalledExactlyOnceWith("files-v2", {
+      head: false,
+      operation: "file.preview",
+      path: "/workspace/image.png",
+    });
+    expect(transportMocks.release).toHaveBeenCalledTimes(1);
+  });
+
   it("mints an authenticated loopback stream for private remote images", async () => {
     transportMocks.request.mockReset();
+    transportMocks.acquireSharedConnectionLease.mockClear();
+    transportMocks.companionHttpOrigin.mockClear();
+    transportMocks.mintStoredSession.mockClear();
     transportMocks.companionHttpOrigin.mockResolvedValue(loopbackOrigin);
     transportMocks.mintStoredSession.mockResolvedValue({
       expiresAt: 42,

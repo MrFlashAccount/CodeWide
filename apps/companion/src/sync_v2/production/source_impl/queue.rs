@@ -336,7 +336,6 @@ mod tests {
         );
         let authorization = AuthorizationContext::Session {
             device_id: "device-a".into(),
-            scopes: vec!["turns.start".into()],
             expires_at: u64::MAX,
         };
         let context = AuthenticatedContextKey::derive(&authorization)

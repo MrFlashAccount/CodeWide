@@ -29,6 +29,7 @@ export function LiveTurnPlanPopover(props: LiveTurnPlanPopoverProps): React.JSX.
           accessibilityLabel={planAccessibilityLabel(plan)}
           accessibilityRole="button"
           accessibilityState={{ expanded: open }}
+          style={styles.triggerPressable}
           testID="live-plan-chip"
         >
           <LiveTurnPlanTrigger expanded={open} plan={plan} />
@@ -47,8 +48,11 @@ export function LiveTurnPlanPopover(props: LiveTurnPlanPopoverProps): React.JSX.
             width={contentWidth}
           >
             <ScrollView
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
               showsVerticalScrollIndicator={false}
               style={{ maxHeight: contentMaxHeight }}
+              testID="live-plan-popover"
             >
               <LiveTurnPlanContent plan={plan} />
             </ScrollView>
@@ -66,4 +70,5 @@ function planAccessibilityLabel(plan: LiveTurnPlanViewModel): string {
 
 const styles = StyleSheet.create({
   popover: { borderRadius: radii.large, overflow: "hidden", padding: 0 },
+  triggerPressable: { flexShrink: 1, maxWidth: "92%" },
 });

@@ -11,6 +11,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use futures_util::StreamExt;
+use opus_pure::OpusDecoder;
 use rand::TryRngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -21,12 +22,19 @@ use tokio::{
 };
 use tracing::{info, warn};
 
+mod metrics;
 pub(crate) mod v2;
+
+use metrics::{
+    MeasuredResponse, MetricsConnectorLayer, MetricsDnsResolver, RequestNetworkProbe,
+    next_request_id, request_metrics,
+};
 
 const DEFAULT_ENDPOINT: &str = "https://chatgpt.com/backend-api/transcribe";
 const MAX_AUDIO_BYTES: u64 = 192 * 1024 * 1024;
 const MAX_CHUNK_BYTES: usize = 1024 * 1024;
 const MAX_BATCH_CHUNKS: usize = 64;
+const MAX_OPUS_PACKET_BYTES: usize = 1_275;
 const SEGMENT_MS: u64 = 8 * 60 * 1_000;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 const AUTOMATIC_RETRIES: usize = 3;
@@ -80,6 +88,8 @@ struct Session {
     transcripts: Vec<String>,
     completed: Option<String>,
     accepted_batches: HashSet<String>,
+    opus_decoder: Option<OpusDecoder>,
+    upload_metrics: DictationUploadMetrics,
     last_activity_ms: u64,
 }
 
@@ -89,6 +99,52 @@ struct QualityFrame {
     byte_length: u64,
     duration_ms: f64,
     rms_ppm: f64,
+}
+
+struct DecodedAudioChunk {
+    bytes: Vec<u8>,
+    encoded_bytes: u64,
+    base64_bytes: u64,
+    opus: bool,
+    sample_rate: u32,
+    channels: u16,
+    samples_per_channel: u64,
+    rms_ppm: f64,
+}
+
+#[derive(Default)]
+struct DecodedBatchMetrics {
+    encoded_audio_bytes: u64,
+    base64_audio_bytes: u64,
+    opus_chunks: u64,
+    pcm_chunks: u64,
+}
+
+struct DictationFinishObservation {
+    finish_received_at_ms: u64,
+    finish_total_ms: u64,
+    session_acquire_ms: u64,
+    seal_persist_ms: u64,
+    transcription_ms: u64,
+    final_persist_ms: u64,
+    recording_ms: f64,
+    transcript_bytes: u64,
+    transcript_chars: u64,
+    completed: bool,
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DictationUploadMetrics {
+    created_at_unix_ms: u64,
+    first_chunk_at_unix_ms: Option<u64>,
+    last_chunk_at_unix_ms: Option<u64>,
+    encoded_audio_bytes: u64,
+    base64_audio_bytes: u64,
+    opus_chunks: u64,
+    pcm_chunks: u64,
+    append_processing_ms_total: u64,
+    append_processing_ms_max: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -108,6 +164,8 @@ struct StoredSession {
     transcripts: Vec<String>,
     completed: Option<String>,
     accepted_batches: HashSet<String>,
+    #[serde(default)]
+    upload_metrics: DictationUploadMetrics,
     last_activity_ms: u64,
 }
 
@@ -123,6 +181,8 @@ pub enum DictationError {
     ChunkTooLarge,
     #[error("Audio chunk size does not match PCM16 metadata")]
     InvalidChunkSize,
+    #[error("Opus audio packet is invalid")]
+    InvalidOpus,
     #[error("Audio format changed during dictation")]
     FormatChanged,
     #[error("Dictation recording is too large")]
@@ -236,6 +296,8 @@ impl DictationService {
             .pool_max_idle_per_host(2)
             .tcp_keepalive(Duration::from_mins(1))
             .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver2(MetricsDnsResolver)
+            .connector_layer(MetricsConnectorLayer)
             .build()
             .map_err(|_| DictationError::Transport)?;
         let sessions = Arc::new(Mutex::new(
@@ -378,6 +440,11 @@ impl DictationService {
             transcripts: Vec::new(),
             completed: None,
             accepted_batches: HashSet::new(),
+            opus_decoder: None,
+            upload_metrics: DictationUploadMetrics {
+                created_at_unix_ms: unix_time_ms(),
+                ..DictationUploadMetrics::default()
+            },
             last_activity_ms: unix_time_ms(),
         };
         persist_session(&session).await?;
@@ -394,6 +461,8 @@ impl DictationService {
         params: &Value,
         batch: bool,
     ) -> Result<Value, DictationError> {
+        let append_started = std::time::Instant::now();
+        let append_received_at_ms = unix_time_ms();
         let session = self.owned_session(client_id, params).await?;
         let mut session = session.lock().await;
         if session.sealed {
@@ -416,45 +485,39 @@ impl DictationService {
         } else {
             vec![params]
         };
-        let mut decoded = Vec::with_capacity(chunks.len());
+        let mut decoded_chunks = Vec::with_capacity(chunks.len());
         let mut appended_bytes = 0_u64;
         let mut sample_rate = session.sample_rate;
         let mut channels = session.channels;
         let mut frames = Vec::with_capacity(chunks.len());
+        let mut batch_metrics = DecodedBatchMetrics::default();
         for chunk in chunks {
-            let chunk_rate = bounded_u32(chunk, "sampleRate", 8_000, 96_000)?;
-            let chunk_channels = bounded_u16(chunk, "numChannels", 1, 2)?;
-            let samples = bounded_u64(chunk, "samplesPerChannel", 1, 10_000_000)?;
-            let bytes = decode_base64(chunk.get("data"))?;
-            if bytes.len() > self.options.max_chunk_bytes {
-                return Err(DictationError::ChunkTooLarge);
-            }
-            let expected = samples
-                .checked_mul(u64::from(chunk_channels))
-                .and_then(|value| value.checked_mul(2))
-                .ok_or(DictationError::InvalidChunkSize)?;
-            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != expected {
-                return Err(DictationError::InvalidChunkSize);
-            }
+            let decoded_chunk = decode_audio_chunk(
+                chunk,
+                self.options.max_chunk_bytes,
+                &mut session.opus_decoder,
+            )?;
             if sample_rate == 0 {
-                sample_rate = chunk_rate;
-                channels = chunk_channels;
-            } else if sample_rate != chunk_rate || channels != chunk_channels {
+                sample_rate = decoded_chunk.sample_rate;
+                channels = decoded_chunk.channels;
+            } else if sample_rate != decoded_chunk.sample_rate || channels != decoded_chunk.channels
+            {
                 return Err(DictationError::FormatChanged);
             }
-            let quality = quality(&bytes);
-            let samples_u32 = u32::try_from(samples)
+            let samples_u32 = u32::try_from(decoded_chunk.samples_per_channel)
                 .map_err(|_| DictationError::InvalidParams("samplesPerChannel"))?;
-            let quality_samples = u32::try_from(quality.samples.max(1))
+            let byte_length = u64::try_from(decoded_chunk.bytes.len())
                 .map_err(|_| DictationError::InvalidChunkSize)?;
             frames.push(QualityFrame {
                 byte_start: session.bytes.saturating_add(appended_bytes),
-                byte_length: expected,
-                duration_ms: f64::from(samples_u32) * 1_000.0 / f64::from(chunk_rate),
-                rms_ppm: ratio_ppm((quality.sum_squares / f64::from(quality_samples)).sqrt()),
+                byte_length,
+                duration_ms: f64::from(samples_u32) * 1_000.0
+                    / f64::from(decoded_chunk.sample_rate),
+                rms_ppm: decoded_chunk.rms_ppm,
             });
-            appended_bytes = appended_bytes.saturating_add(expected);
-            decoded.push(bytes);
+            appended_bytes = appended_bytes.saturating_add(byte_length);
+            batch_metrics.record(&decoded_chunk);
+            decoded_chunks.push(decoded_chunk.bytes);
         }
         if session.bytes.saturating_add(appended_bytes) > self.options.max_audio_bytes {
             return Err(DictationError::RecordingTooLarge);
@@ -464,7 +527,7 @@ impl DictationService {
             .open(&session.pcm_path)
             .await
             .map_err(|_| DictationError::Storage)?;
-        for bytes in decoded {
+        for bytes in decoded_chunks {
             file.write_all(&bytes)
                 .await
                 .map_err(|_| DictationError::Storage)?;
@@ -484,23 +547,33 @@ impl DictationService {
         if let Some(batch_id) = batch_id {
             session.accepted_batches.insert(batch_id.to_owned());
         }
+        session.upload_metrics.record_batch(
+            append_received_at_ms,
+            &batch_metrics,
+            elapsed_millis(append_started.elapsed()),
+        );
         persist_session(&session).await?;
         Ok(json!({"accepted": true}))
     }
 
     async fn finish(&self, client_id: &str, params: &Value) -> Result<Value, DictationError> {
+        let finish_started = std::time::Instant::now();
+        let finish_received_at_ms = unix_time_ms();
         let session = self.owned_session(client_id, params).await?;
         let mut session = session.lock().await;
+        let session_acquire_ms = elapsed_millis(finish_started.elapsed());
         if let Some(text) = &session.completed {
             return Ok(json!({"text": text}));
         }
         session.sealed = true;
         session.last_activity_ms = unix_time_ms();
+        let seal_persist_started = std::time::Instant::now();
         persist_session(&session).await?;
+        let seal_persist_ms = elapsed_millis(seal_persist_started.elapsed());
         if session.bytes == 0 || session.sample_rate == 0 || session.channels == 0 {
             return Err(DictationError::Empty);
         }
-        let started = std::time::Instant::now();
+        let transcription_started = std::time::Instant::now();
         let recording_ms = session
             .frames
             .iter()
@@ -508,44 +581,63 @@ impl DictationService {
             .sum::<f64>()
             .round();
         let outcome = self.transcribe_session(&mut session).await;
-        info!(
-            status = "dictation-finish",
-            duration_ms = started.elapsed().as_millis(),
-            recording_ms,
-            audio_bytes = session.bytes,
-            audio_chunks = session.audio_chunks,
-            append_batches = session.append_batches,
-            sample_rate = session.sample_rate,
-            channels = session.channels,
-            completed = matches!(&outcome, Ok(TranscriptionOutcome::Text(_)))
-        );
+        let transcription_ms = elapsed_millis(transcription_started.elapsed());
         session.last_activity_ms = unix_time_ms();
-        match outcome {
+        let (completed, transcript_bytes, transcript_chars, result) = match outcome {
             Ok(TranscriptionOutcome::Text(text)) => {
+                let transcript_bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
+                let transcript_chars = u64::try_from(text.chars().count()).unwrap_or(u64::MAX);
                 session.completed = Some(text.clone());
-                persist_session(&session).await?;
-                Ok(json!({"text": text}))
+                (
+                    true,
+                    transcript_bytes,
+                    transcript_chars,
+                    json!({"text": text}),
+                )
             }
             Ok(TranscriptionOutcome::Retryable {
                 retry_after,
                 message,
-            }) => {
-                persist_session(&session).await?;
-                Ok(json!({
+            }) => (
+                false,
+                0,
+                0,
+                json!({
                     "retryable": true,
                     "retryAfterMs": u64::try_from(retry_after.as_millis()).unwrap_or(u64::MAX),
                     "message": message
-                }))
-            }
-            Err(error) => {
-                persist_session(&session).await?;
-                Ok(json!({
+                }),
+            ),
+            Err(error) => (
+                false,
+                0,
+                0,
+                json!({
                     "retryable": true,
                     "retryAfterMs": 1_000,
                     "message": error.to_string()
-                }))
-            }
-        }
+                }),
+            ),
+        };
+        let final_persist_started = std::time::Instant::now();
+        persist_session(&session).await?;
+        let final_persist_ms = elapsed_millis(final_persist_started.elapsed());
+        log_dictation_metrics(
+            &session,
+            &DictationFinishObservation {
+                finish_received_at_ms,
+                finish_total_ms: elapsed_millis(finish_started.elapsed()),
+                session_acquire_ms,
+                seal_persist_ms,
+                transcription_ms,
+                final_persist_ms,
+                recording_ms,
+                transcript_bytes,
+                transcript_chars,
+                completed,
+            },
+        );
+        Ok(result)
     }
 
     async fn cancel(&self, client_id: &str, params: &Value) -> Result<Value, DictationError> {
@@ -602,7 +694,9 @@ impl DictationService {
         &self,
         session: &mut Session,
     ) -> Result<TranscriptionOutcome, DictationError> {
+        let bounds_started = std::time::Instant::now();
         let (start, end) = transcription_bounds(&session.frames, session.bytes);
+        let bounds_ms = elapsed_millis(bounds_started.elapsed());
         if session.next_offset == 0 {
             session.next_offset = start;
         }
@@ -613,7 +707,9 @@ impl DictationService {
             / 1_000)
             .max(bytes_per_frame);
         while session.next_offset < end {
+            let segment_started = std::time::Instant::now();
             let bytes = segment_bytes.min(end - session.next_offset);
+            let wav_started = std::time::Instant::now();
             let wav = Bytes::from(
                 wav_segment(
                     &session.pcm_path,
@@ -624,19 +720,55 @@ impl DictationService {
                 )
                 .await?,
             );
+            let wav_build_ms = elapsed_millis(wav_started.elapsed());
+            info!(
+                status = "dictation-transcription-segment-prepared",
+                bounds_ms,
+                wav_build_ms,
+                wav_bytes = wav.len(),
+                pcm_bytes = bytes,
+                segment_offset = session.next_offset,
+            );
+            let request_started = std::time::Instant::now();
             match self
                 .transcribe_segment(&wav, session.language.as_deref())
                 .await?
             {
                 TranscriptionOutcome::Text(text) => {
+                    let request_ms = elapsed_millis(request_started.elapsed());
                     if !text.trim().is_empty() {
                         session.transcripts.push(text.trim().to_owned());
                     }
                     session.next_offset = session.next_offset.saturating_add(bytes);
                     session.last_activity_ms = unix_time_ms();
+                    let persist_started = std::time::Instant::now();
                     persist_session(session).await?;
+                    let persist_ms = elapsed_millis(persist_started.elapsed());
+                    let segment_total_ms = elapsed_millis(segment_started.elapsed());
+                    info!(
+                        status = "dictation-transcription-segment-completed",
+                        segment_total_ms,
+                        wav_build_ms,
+                        request_ms,
+                        persist_ms,
+                        unattributed_ms = segment_total_ms.saturating_sub(
+                            wav_build_ms
+                                .saturating_add(request_ms)
+                                .saturating_add(persist_ms)
+                        ),
+                        pcm_bytes = bytes,
+                    );
                 }
-                retryable @ TranscriptionOutcome::Retryable { .. } => return Ok(retryable),
+                retryable @ TranscriptionOutcome::Retryable { .. } => {
+                    info!(
+                        status = "dictation-transcription-segment-deferred",
+                        segment_total_ms = segment_started.elapsed().as_millis(),
+                        wav_build_ms,
+                        request_ms = request_started.elapsed().as_millis(),
+                        pcm_bytes = bytes,
+                    );
+                    return Ok(retryable);
+                }
             }
         }
         Ok(TranscriptionOutcome::Text(session.transcripts.join(" ")))
@@ -649,30 +781,38 @@ impl DictationService {
     ) -> Result<TranscriptionOutcome, DictationError> {
         let mut reason = "initial";
         for attempt in 0..=self.options.automatic_retries {
+            let auth_started = std::time::Instant::now();
             let auth = read_oauth(self.auth_file.clone()).await?;
-            let started = std::time::Instant::now();
-            let mut response = self.request_transcription(wav, language, &auth).await;
+            let auth_read_ms = elapsed_millis(auth_started.elapsed());
+            let mut response = self
+                .request_transcription(wav, language, &auth, attempt, reason, auth_read_ms)
+                .await;
             if let Ok(candidate) = &response
-                && candidate.status() == reqwest::StatusCode::UNAUTHORIZED
+                && candidate.response.status() == reqwest::StatusCode::UNAUTHORIZED
             {
+                let refresh_auth_started = std::time::Instant::now();
                 let refreshed = read_oauth(self.auth_file.clone()).await?;
+                let refresh_auth_read_ms = elapsed_millis(refresh_auth_started.elapsed());
                 if refreshed.access_token != auth.access_token {
-                    response = self.request_transcription(wav, language, &refreshed).await;
                     reason = "oauth-refresh";
+                    response = self
+                        .request_transcription(
+                            wav,
+                            language,
+                            &refreshed,
+                            attempt,
+                            reason,
+                            refresh_auth_read_ms,
+                        )
+                        .await;
                 }
             }
             match response {
-                Ok(response) => {
+                Ok(measured) => {
+                    let response = &measured.response;
                     let status = response.status();
-                    info!(
-                        status = "dictation-openai-request",
-                        http_status = status.as_u16(),
-                        duration_ms = started.elapsed().as_millis(),
-                        attempt,
-                        reason
-                    );
                     if let Some((delay, message)) =
-                        retry_response(&response, attempt, self.options.base_retry_delay)
+                        retry_response(response, attempt, self.options.base_retry_delay)
                     {
                         if attempt == self.options.automatic_retries || delay > MAX_AUTOMATIC_DELAY
                         {
@@ -696,24 +836,18 @@ impl DictationService {
                     if !status.is_success() {
                         return Err(DictationError::Http(status.as_u16()));
                     }
-                    let body = bounded_response(response).await?;
-                    let parsed = serde_json::from_slice::<Value>(&body)
-                        .map_err(|_| DictationError::InvalidResponse)?;
-                    let text = parsed
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .ok_or(DictationError::MissingText)?;
-                    return Ok(TranscriptionOutcome::Text(text.to_owned()));
+                    return consume_transcription_response(measured, attempt, reason).await;
                 }
                 Err(error) => {
                     warn!(
-                        status = "dictation-openai-request-failed",
+                        status = "dictation-transcription-attempt-failed",
                         attempt,
                         reason,
                         is_connect = error.is_connect(),
                         is_timeout = error.is_timeout(),
                         is_request = error.is_request(),
-                        is_body = error.is_body()
+                        is_body = error.is_body(),
+                        err = ?error,
                     );
                     if attempt == self.options.automatic_retries {
                         return Err(if error.is_timeout() {
@@ -742,17 +876,29 @@ impl DictationService {
         wav: &Bytes,
         language: Option<&str>,
         auth: &OAuth,
-    ) -> Result<reqwest::Response, reqwest::Error> {
+        attempt: usize,
+        reason: &'static str,
+        auth_read_ms: u64,
+    ) -> Result<MeasuredResponse, reqwest::Error> {
+        let request_id = next_request_id();
+        let total_started = std::time::Instant::now();
         // `Bytes::clone` is reference-counted. Retries reuse the same immutable
         // recording instead of allocating and copying the whole WAV again.
-        let part = reqwest::multipart::Part::stream(reqwest::Body::from(wav.clone()))
-            .file_name("dictation.wav")
-            .mime_str("audio/wav")?;
+        let (audio_body, upload_probe) =
+            metrics::instrumented_audio_body(wav.clone(), total_started);
+        let request_build_started = std::time::Instant::now();
+        let part = reqwest::multipart::Part::stream_with_length(
+            audio_body,
+            u64::try_from(wav.len()).unwrap_or(u64::MAX),
+        )
+        .file_name("dictation.wav")
+        .mime_str("audio/wav")?;
         let mut form = reqwest::multipart::Form::new().part("file", part);
         if let Some(language) = language {
             form = form.text("language", language.to_owned());
         }
-        self.client
+        let request = self
+            .client
             .post(self.endpoint.as_ref())
             .header("authorization", format!("Bearer {}", auth.access_token))
             .header("chatgpt-account-id", &auth.account_id)
@@ -777,9 +923,80 @@ impl DictationService {
             .header("sec-fetch-mode", "cors")
             .header("sec-fetch-site", "same-origin")
             .multipart(form)
-            .send()
-            .await
+            .build()?;
+        let request_build_ms = elapsed_millis(request_build_started.elapsed());
+        let network_probe = RequestNetworkProbe::new(request_id);
+        let response =
+            request_metrics(Arc::clone(&network_probe), self.client.execute(request)).await;
+        let request_to_headers_ms = elapsed_millis(total_started.elapsed());
+        let observation = metrics::ResponseHeaderObservation {
+            request_id,
+            auth_read_ms,
+            request_build_ms,
+            request_to_headers_ms,
+            audio_bytes: u64::try_from(wav.len()).unwrap_or(u64::MAX),
+            attempt,
+            reason,
+        };
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                metrics::log_request_failure(&error, &upload_probe, &network_probe, &observation);
+                return Err(error);
+            }
+        };
+        metrics::log_response_headers(&response, &upload_probe, &network_probe, &observation);
+        Ok(MeasuredResponse {
+            response,
+            request_id,
+            total_started,
+        })
     }
+}
+
+async fn consume_transcription_response(
+    measured: MeasuredResponse,
+    attempt: usize,
+    reason: &'static str,
+) -> Result<TranscriptionOutcome, DictationError> {
+    let response_body_started = std::time::Instant::now();
+    let body = bounded_response(measured.response, measured.request_id).await?;
+    let response_body_ms = elapsed_millis(response_body_started.elapsed());
+    let parse_started = std::time::Instant::now();
+    let parsed = serde_json::from_slice::<Value>(&body).map_err(|error| {
+        warn!(
+            status = "dictation-openai-response-consume-failed",
+            request_id = measured.request_id,
+            stage = "json-parse",
+            response_body_ms,
+            response_body_bytes = body.len(),
+            err = ?error,
+        );
+        DictationError::InvalidResponse
+    })?;
+    let parse_ms = elapsed_millis(parse_started.elapsed());
+    let Some(text) = parsed.get("text").and_then(Value::as_str) else {
+        warn!(
+            status = "dictation-openai-response-consume-failed",
+            request_id = measured.request_id,
+            stage = "missing-text",
+            response_body_ms,
+            response_body_bytes = body.len(),
+            parse_ms,
+        );
+        return Err(DictationError::MissingText);
+    };
+    info!(
+        status = "dictation-openai-response-consumed",
+        request_id = measured.request_id,
+        response_body_ms,
+        response_body_bytes = body.len(),
+        parse_ms,
+        total_request_ms = measured.total_started.elapsed().as_millis(),
+        attempt,
+        reason,
+    );
+    Ok(TranscriptionOutcome::Text(text.to_owned()))
 }
 
 include!("dictation/support.rs");

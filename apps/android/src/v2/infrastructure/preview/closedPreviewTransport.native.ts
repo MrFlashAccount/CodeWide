@@ -75,7 +75,15 @@ async function resolveStream(
   if (localSource(sourceUrl)) return { headers: null, uri: sourceUrl };
   if (sourceUrl.startsWith("/v2/tunnels/")) return authorizedSource(savedServerId, sourceUrl);
   if (sourceUrl.startsWith("/v2/files/preview?")) {
-    resolveFilePreview(sourceUrl);
+    const connection = await acquireSharedConnectionLease(savedServerId);
+    try {
+      const response = await connection.lease.request("files-v2", resolveFilePreview(sourceUrl));
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error(`Preview returned ${response.status}`);
+      }
+    } finally {
+      await connection.lease.release();
+    }
     return authorizedSource(savedServerId, sourceUrl);
   }
   const connection = await acquireSharedConnectionLease(savedServerId);

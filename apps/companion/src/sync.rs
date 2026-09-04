@@ -27,7 +27,7 @@ use crate::{
         IndexStore, IndexedThreadMetadata, OutboxClaimOutcome, OutboxClaimResolution,
         OutboxClaimResolutionOutcome, OutboxCommand, OutboxPresentation, OutboxState, ReplayPage,
     },
-    thread_view::ThreadViewService,
+    thread_view::{ThreadActivity, ThreadViewService},
     upstream::{ConnectionStatus, UpstreamError, UpstreamHandle},
     workspaces::{WorkspacePhase, WorkspaceService},
 };
@@ -54,6 +54,7 @@ const ROLLOUT_UPSTREAM_SUPPRESSION: Duration = Duration::from_secs(2);
 const ROLLOUT_RECONCILIATION_POLL: Duration = Duration::from_millis(50);
 const MAX_RECENT_UPSTREAM_THREADS: usize = 4_096;
 const MAX_CONCURRENT_SESSION_RPCS: usize = 32;
+const SESSION_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 const USER_SERVER_REQUEST_METHODS: [&str; 5] = [
     "item/commandExecution/requestApproval",
     "item/fileChange/requestApproval",
@@ -464,6 +465,7 @@ impl SyncHub {
                 upstream.clone(),
                 store.clone(),
                 history.clone(),
+                thread_view.clone(),
                 outbox_wakeup.clone(),
                 local_events.clone(),
                 files.clone(),
@@ -789,6 +791,9 @@ impl SyncHub {
         let mut session_tasks = tokio::task::JoinSet::new();
         let mut replay_events = Some(events);
         let mut replay_task = None;
+        let mut keepalive = tokio::time::interval(SESSION_KEEPALIVE_INTERVAL);
+        keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        keepalive.tick().await;
         if session.ready {
             let Some(events) = replay_events.take() else {
                 close_with(&socket, 1011, "replay_receiver_missing").await;
@@ -804,6 +809,9 @@ impl SyncHub {
         }
         loop {
             tokio::select! {
+                _ = keepalive.tick() => {
+                    if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+                }
                 message = incoming.next() => {
                     let Some(Ok(message)) = message else { break; };
                     match message {
@@ -931,10 +939,6 @@ impl SyncHub {
                                     });
                                 }
                                 Some("serverResponse") => {
-                                    if !authorization_has_scope(&authorization, "approvals.respond") {
-                                        close_with(&socket, 1008, "scope_required").await;
-                                        break;
-                                    }
                                     let Ok(permit) = rpc_permits.clone().try_acquire_owned() else {
                                         close_with(&socket, 1013, "too_many_concurrent_requests").await;
                                         break;
@@ -1094,15 +1098,12 @@ impl SyncHub {
             return send_rpc_error(socket, id, -32600, "Sync RPC requests require an id").await;
         }
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-        let Some(required_scope) = required_scope_for_rpc(&method) else {
+        if !is_exposed_rpc(&method) {
             return send_rpc_error(socket, id, -32601, "Method is not exposed by CodeWide").await;
-        };
-        if !authorization_has_scope(authorization, required_scope) {
-            return send_rpc_error(socket, id, -32001, "Device scope is not granted").await;
         }
         if matches!(
             method.as_str(),
-            "thread/read" | "thread/resume" | "thread/turns/list" | "thread/items/list"
+            "thread/read" | "thread/turns/list" | "thread/items/list"
         ) && let Some(thread_id) = params.get("threadId").and_then(Value::as_str)
             && let Some(resources) = self.resources()
         {
@@ -1594,32 +1595,8 @@ impl SyncHub {
         {
             return Ok(true);
         }
-        if method == "companion/thread/observe" {
-            match self.thread_view.observe(params).await {
-                Ok(result) => {
-                    self.send_projected_rpc_result(socket, id, method, result)
-                        .await?;
-                }
-                Err(error) => {
-                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
-                }
-            }
-            return Ok(true);
-        }
-        if method == "companion/threadWindow/read" {
-            match self.thread_view.read_window(params).await {
-                Ok(result) => {
-                    self.send_projected_rpc_result(socket, id, method, result)
-                        .await?;
-                }
-                Err(error) => {
-                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
-                }
-            }
-            return Ok(true);
-        }
-        if method == "thread/resume" && params.get("initialTurnsPage").is_some() {
-            match self.thread_view.resume(params).await {
+        if method == "companion/thread/sync" {
+            match self.thread_view.sync(params).await {
                 Ok(result) => {
                     self.send_projected_rpc_result(socket, id, method, result)
                         .await?;
@@ -1652,12 +1629,7 @@ impl SyncHub {
         params: &Value,
     ) -> Result<bool, ()> {
         let target = match method {
-            "companion/thread/observe" | "companion/threadWindow/read" => {
-                Some(crate::sync_v2::E2ESurfaceFaultTarget::ThreadOpen)
-            }
-            "thread/resume" if params.get("initialTurnsPage").is_some() => {
-                Some(crate::sync_v2::E2ESurfaceFaultTarget::ThreadOpen)
-            }
+            "companion/thread/sync" => Some(crate::sync_v2::E2ESurfaceFaultTarget::ThreadOpen),
             "thread/turns/list" | "thread/items/list" => {
                 Some(crate::sync_v2::E2ESurfaceFaultTarget::HistoryPage)
             }
@@ -2832,6 +2804,7 @@ async fn run_outbox_pump(
     upstream: UpstreamHandle,
     store: Arc<IndexStore>,
     history: HistoryService,
+    thread_view: ThreadViewService,
     wakeup: Arc<tokio::sync::Notify>,
     local_events: tokio::sync::mpsc::Sender<Value>,
     files: Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
@@ -2883,6 +2856,7 @@ async fn run_outbox_pump(
                             &upstream,
                             &store,
                             &history,
+                            &thread_view,
                             &local_events,
                             &files,
                             &account_pool,
@@ -2915,6 +2889,7 @@ async fn reconcile_outbox_command(
     upstream: &UpstreamHandle,
     store: &Arc<IndexStore>,
     history: &HistoryService,
+    thread_view: &ThreadViewService,
     local_events: &tokio::sync::mpsc::Sender<Value>,
     files: &Arc<std::sync::RwLock<Option<Arc<FileService>>>>,
     account_pool: &Arc<std::sync::RwLock<Option<Arc<AccountPoolService>>>>,
@@ -3082,13 +3057,14 @@ async fn reconcile_outbox_command(
         return;
     }
     if command.presentation == OutboxPresentation::Queue {
-        match history.thread_active(&command.remote_thread_id).await {
-            Ok(true) => {
+        match thread_view.activity(&command.remote_thread_id).await {
+            Ok(ThreadActivity::Active | ThreadActivity::Unavailable) => {
                 // Explicit queue means "the next turn", never an implicit
                 // steer into the current one. App Server accepts turn/start
-                // while another client owns the active turn, so the durable
-                // Companion lane must hold the head until the indexed
-                // lifecycle becomes idle.
+                // while another client owns the active turn. A system-error
+                // lifecycle is not evidence that dispatch is safe, so the
+                // durable Companion lane must hold the head until App Server
+                // authoritatively reports idle.
                 wait_outbox(
                     store,
                     local_events,
@@ -3101,11 +3077,9 @@ async fn reconcile_outbox_command(
                 .await;
                 return;
             }
-            Ok(false) => {}
+            Ok(ThreadActivity::Idle) => {}
             Err(error) => {
-                // Unknown lifecycle cannot safely be interpreted as idle: a
-                // false negative would consume a queued prompt as a steer.
-                debug!(command_id = %command.command_id, %error, "queued turn is waiting for canonical lifecycle");
+                debug!(command_id = %command.command_id, %error, "queued turn is waiting for authoritative lifecycle");
                 wait_outbox(
                     store,
                     local_events,
@@ -3728,8 +3702,7 @@ fn is_read_only_method(method: &str) -> bool {
     matches!(
         method,
         "account/rateLimits/read"
-            | "companion/thread/observe"
-            | "companion/threadWindow/read"
+            | "companion/thread/sync"
             | "companion/threadSubagents/read"
             | "config/read"
             | "fs/readDirectory"
@@ -3762,86 +3735,46 @@ fn is_read_only_method(method: &str) -> bool {
     )
 }
 
-fn required_scope_for_rpc(method: &str) -> Option<&'static str> {
-    if matches!(
+fn is_exposed_rpc(method: &str) -> bool {
+    matches!(
         method,
-        "companion/workspace/inspect" | "companion/workspace/read"
-    ) {
-        return Some("threads.read");
-    }
-    if method == "companion/workspace/create" {
-        return Some("threads.write");
-    }
-    if method == "companion/project/list" {
-        return Some("threads.read");
-    }
-    if method == "companion/project/add" {
-        return Some("threads.write");
-    }
-    if matches!(
-        method,
-        "companion/accountPool/list" | "companion/accountPool/refresh"
-    ) {
-        return Some("threads.read");
-    }
-    if method.starts_with("companion/accountPool/") {
-        return Some("threads.write");
-    }
-    if matches!(
-        method,
-        "companion/threadWindow/read"
-            | "companion/threadSubagents/read"
-            | "companion/threadResources/read"
-            | "companion/threadChanges/read"
-            | "companion/threadAttachments/read"
-            | "companion/threadChange/read"
-    ) || is_read_only_method(method)
-    {
-        return Some("threads.read");
-    }
-    if method.starts_with("companion/queue/")
+        "companion/workspace/inspect"
+            | "companion/workspace/read"
+            | "companion/workspace/create"
+            | "companion/project/list"
+            | "companion/project/add"
+            | "companion/accountPool/list"
+            | "companion/accountPool/refresh"
+    ) || method.starts_with("companion/accountPool/")
+        || matches!(
+            method,
+            "companion/thread/sync"
+                | "companion/threadSubagents/read"
+                | "companion/threadResources/read"
+                | "companion/threadChanges/read"
+                | "companion/threadAttachments/read"
+                | "companion/threadChange/read"
+        )
+        || is_read_only_method(method)
+        || method.starts_with("companion/queue/")
         || method.starts_with("companion/dictation/")
         || method.starts_with("thread/realtime/")
         || matches!(method, "turn/start" | "turn/interrupt" | "review/start")
-    {
-        return Some("turns.start");
-    }
-    if is_thread_write_method(method) {
-        return Some("threads.write");
-    }
-    if method == "turn/steer" {
-        return Some("turns.steer");
-    }
-    if matches!(
-        method,
-        "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/terminate"
-    ) {
-        return Some("processes.manage");
-    }
-    if method == "mcpServer/tool/call" {
-        return Some("tools.call");
-    }
-    if method == "thread/shellCommand" || method.starts_with("command/exec") {
-        return Some("shell.explicit");
-    }
-    None
+        || is_thread_write_method(method)
+        || method == "turn/steer"
+        || matches!(
+            method,
+            "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/terminate"
+        )
+        || method == "mcpServer/tool/call"
+        || method == "thread/shellCommand"
+        || method.starts_with("command/exec")
 }
 
-/// Returns the V1 authorization scope used for one sync RPC. Raw bridge-only
-/// initialize notifications deliberately have no device scope.
+/// Returns whether a V1 RPC method is exposed through the authenticated bridge.
 #[must_use]
-pub fn contract_scope_for_rpc(method: &str) -> Option<&'static str> {
-    required_scope_for_rpc(method)
-}
-
-fn authorization_has_scope(authorization: &AuthorizationContext, scope: &str) -> bool {
-    match authorization {
-        AuthorizationContext::Admin => true,
-        AuthorizationContext::Session { scopes, .. } => {
-            scopes.iter().any(|candidate| candidate == scope)
-        }
-        AuthorizationContext::Device { .. } => false,
-    }
+pub fn contract_rpc_is_exposed(method: &str) -> bool {
+    is_exposed_rpc(method)
 }
 
 fn rpc_requires_ordered_lane(method: &str) -> bool {
@@ -3849,7 +3782,7 @@ fn rpc_requires_ordered_lane(method: &str) -> bool {
     // the read scope. It still has to precede a turn/start for the same thread:
     // otherwise the first live deltas can be emitted before Companion has
     // subscribed to that thread.
-    method == "companion/thread/observe"
+    method == "companion/thread/sync"
         || (!is_read_only_method(method)
             && !matches!(
                 method,
@@ -3861,7 +3794,6 @@ fn rpc_requires_ordered_lane(method: &str) -> bool {
                     | "companion/threadChanges/read"
                     | "companion/threadResources/read"
                     | "companion/threadSubagents/read"
-                    | "companion/threadWindow/read"
                     | "companion/workspace/inspect"
                     | "companion/workspace/read"
             ))
@@ -3889,7 +3821,6 @@ fn is_thread_write_method(method: &str) -> bool {
     matches!(
         method,
         "thread/start"
-            | "thread/resume"
             | "thread/fork"
             | "thread/archive"
             | "thread/delete"
@@ -3914,7 +3845,6 @@ fn is_mutating_method(method: &str) -> bool {
     matches!(
         method,
         "thread/start"
-            | "thread/resume"
             | "thread/fork"
             | "thread/archive"
             | "thread/delete"
@@ -4019,11 +3949,8 @@ mod tests {
         assert!(is_read_only_method("companion/threadSubagents/read"));
         assert!(is_read_only_method("fs/readDirectory"));
         assert!(is_read_only_method("config/read"));
-        assert_eq!(contract_scope_for_rpc("config/read"), Some("threads.read"));
-        assert_eq!(
-            contract_scope_for_rpc("companion/threadSubagents/read"),
-            Some("threads.read")
-        );
+        assert!(is_exposed_rpc("config/read"));
+        assert!(is_exposed_rpc("companion/threadSubagents/read"));
         assert!(!is_read_only_method("turn/start"));
         assert!(!is_read_only_method("thread/delete"));
     }
@@ -4074,7 +4001,7 @@ mod tests {
     fn mutations_are_ordered_only_within_their_thread() {
         assert_eq!(
             rpc_thread_mutation_id(&json!({
-                "method": "companion/thread/observe",
+                "method": "companion/thread/sync",
                 "params": {"threadId": "thread-a"}
             })),
             Some("thread-a")

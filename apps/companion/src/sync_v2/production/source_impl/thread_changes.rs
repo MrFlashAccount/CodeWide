@@ -13,7 +13,7 @@ impl UpstreamSemanticSource {
         cursor: Option<String>,
         limit_bytes: u32,
     ) -> Result<QueryResult, V2Error> {
-        require_scope(authorization, "threads.read")?;
+        require_authenticated_session(authorization)?;
         self.authorize_thread_access(authorization, context, &thread_id, generation)
             .await?;
         let resources = self

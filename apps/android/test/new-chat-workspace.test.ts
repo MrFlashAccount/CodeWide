@@ -29,7 +29,7 @@ describe("new chat workspace selector", () => {
 
   it("keeps the newly started shell resident until its first turn completes", () => {
     const applyEventsStart = detailDatabase.indexOf("async applyEvents(connectionId, events)");
-    const importThreadStart = detailDatabase.indexOf("async importThreadSnapshot(connectionId, thread, _reason, cleanThroughCursor");
+    const importThreadStart = detailDatabase.indexOf("async importThreadSnapshot(connectionId, thread, _reason, historyCursor)");
     const lifecycle = detailDatabase.slice(applyEventsStart, importThreadStart + 1_800);
 
     expect(lifecycle).toContain("startedThreadShells.has(threadScope(connectionId, threadId))");

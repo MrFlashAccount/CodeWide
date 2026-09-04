@@ -12,7 +12,8 @@ describe("companion transport trust boundary", () => {
     expect(workspace.match(/nativeCompanionHttpOrigin\(connection\.id, connection\.endpoint\)/gu)).toHaveLength(4);
 
     const privateTransfer = read("../src/data/private-transfer.ts");
-    expect(privateTransfer).toContain("new URL(access.baseUrl)");
+    expect(privateTransfer).toContain('from "./companion-http-url"');
+    expect(privateTransfer).toContain("companionHttpUrl(access.baseUrl, path)");
     expect(privateTransfer).not.toContain("wss://");
   });
 

@@ -158,7 +158,6 @@ fn invalid_cursor_queries(continuation: &str) -> [Query; 2] {
 fn authorization() -> AuthorizationContext {
     AuthorizationContext::Session {
         device_id: "catalog-search-device".into(),
-        scopes: vec!["threads.read".into()],
         expires_at: u64::MAX,
     }
 }

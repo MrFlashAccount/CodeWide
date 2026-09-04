@@ -1,7 +1,6 @@
 use codewide_companion::{
-    auth::{contract_default_device_scopes, contract_device_scopes},
     build_shelf::PUBLIC_BUILD_SHELF_PATHS,
-    sync::contract_scope_for_rpc,
+    sync::contract_rpc_is_exposed,
     thread_patch::{THREAD_PATCH_FIELD, compile_thread_patch},
     thread_view::READ_MODEL_VERSION,
 };
@@ -15,8 +14,6 @@ struct V1Contract {
     thread_read_model_version: u64,
     web_socket_paths: Vec<String>,
     http_routes: Vec<String>,
-    device_scopes: Vec<String>,
-    default_device_scopes: Vec<String>,
     rpc_methods: Vec<String>,
     public_build_shelf_paths: Vec<String>,
     thread_projection_patch: ThreadProjectionPatchContract,
@@ -76,56 +73,31 @@ fn companion_implements_the_frozen_v1_contract() -> Result<(), Box<dyn std::erro
             expected.archived
         );
     }
-    assert_eq!(
-        contract_scope_for_rpc("account/rateLimits/read"),
-        Some("threads.read")
-    );
-    assert_eq!(
-        contract_scope_for_rpc("fs/readDirectory"),
-        Some("threads.read")
-    );
-    assert_eq!(
-        contract_scope_for_rpc("companion/project/list"),
-        Some("threads.read")
-    );
-    assert_eq!(
-        contract_scope_for_rpc("companion/project/add"),
-        Some("threads.write")
-    );
-    assert_eq!(
-        contract_scope_for_rpc("companion/workspace/inspect"),
-        Some("threads.read")
-    );
-    assert_eq!(
-        contract_scope_for_rpc("companion/workspace/create"),
-        Some("threads.write")
-    );
-    assert_eq!(
-        contract_scope_for_rpc("companion/workspace/read"),
-        Some("threads.read")
-    );
     assert_eq!(contract.http_routes.len(), 20);
-    assert_eq!(
-        contract.device_scopes,
-        contract_device_scopes()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(
-        contract.default_device_scopes,
-        contract_default_device_scopes()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-    );
     for method in &contract.rpc_methods {
         if matches!(method.as_str(), "initialize" | "initialized") {
             continue;
         }
         assert!(
-            contract_scope_for_rpc(method).is_some(),
+            contract_rpc_is_exposed(method),
             "frozen V1 RPC is missing from companion policy: {method}"
+        );
+    }
+    for removed_method in [
+        "companion/thread/observe",
+        "companion/threadWindow/read",
+        "thread/resume",
+    ] {
+        assert!(
+            !contract
+                .rpc_methods
+                .iter()
+                .any(|method| method == removed_method),
+            "removed V1 RPC remains in the public contract: {removed_method}"
+        );
+        assert!(
+            !contract_rpc_is_exposed(removed_method),
+            "removed V1 RPC remains exposed: {removed_method}"
         );
     }
     Ok(())

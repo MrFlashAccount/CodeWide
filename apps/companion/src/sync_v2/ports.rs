@@ -18,7 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
     ports,
-    server::{AppState, Authorization, authorization_for_scope},
+    server::{AppState, Authorization, authenticated_session},
     session_authority::SessionAuthority,
     tunnels::TunnelError,
 };
@@ -303,7 +303,7 @@ async fn tunnel_proxy_inner(
     };
     let (mut parts, body) = request.into_parts();
     let bearer = if parts.headers.get("origin").is_none() {
-        authorization_for_scope(&state, &parts.headers, "localhost.forward").await
+        authenticated_session(&state, &parts.headers).await
     } else {
         None
     };
@@ -365,7 +365,7 @@ async fn authorization(
     if headers.get("origin").is_some() {
         return None;
     }
-    authorization_for_scope(state, headers, "localhost.forward").await
+    authenticated_session(state, headers).await
 }
 
 fn same_owner(tunnel_owner: Option<&str>, requester: Option<&str>) -> bool {

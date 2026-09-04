@@ -35,6 +35,7 @@ const ioniconNames: Record<PresentationIconName, keyof typeof Ionicons.glyphMap>
   create: "create-outline",
   filter: "filter-outline",
   fingerprint: "finger-print",
+  flag: "flag-outline",
   flash: "flash",
   folder: "folder-outline",
   forward: "chevron-forward",

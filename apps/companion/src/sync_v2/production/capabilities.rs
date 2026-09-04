@@ -1,61 +1,36 @@
-//! Scope authorization and capability projection for the production V2 source.
+//! Session authorization and capability projection for the production V2 source.
 
 use crate::{
     auth::AuthorizationContext,
     sync_v2::{
         domain::SnapshotLimits,
-        protocol::{
-            COMMAND_KINDS, Command, QUERY_KINDS, Query, QueryResult, V2Error,
-            command_required_scope, command_scope_for_kind, query_required_scope,
-            query_scope_for_kind,
-        },
+        protocol::{COMMAND_KINDS, Command, QUERY_KINDS, Query, QueryResult, V2Error},
     },
 };
 
-pub(super) fn require_scope(
+pub(super) fn require_authenticated_session(
     authorization: &AuthorizationContext,
-    scope: &str,
 ) -> Result<(), V2Error> {
     match authorization {
-        AuthorizationContext::Admin => Ok(()),
-        AuthorizationContext::Session { scopes, .. }
-            if scopes.iter().any(|candidate| candidate == scope) =>
-        {
-            Ok(())
-        }
-        AuthorizationContext::Session { .. } | AuthorizationContext::Device { .. } => {
-            Err(V2Error::forbidden(format!("{scope} scope is required")))
+        AuthorizationContext::Admin | AuthorizationContext::Session { .. } => Ok(()),
+        AuthorizationContext::Device { .. } => {
+            Err(V2Error::forbidden("authenticated device session required"))
         }
     }
 }
 
-pub(super) fn command_scope(command: &Command) -> &'static str {
-    command_required_scope(command)
-}
-
-#[cfg(test)]
-pub(super) fn query_scope(query: &Query) -> &'static str {
-    let Some(scope) = query_required_scope(query) else {
-        unreachable!("operation.get authority is resolved from its durable operation record")
-    };
-    scope
-}
-
 pub(super) fn authorize_query(
     authorization: &AuthorizationContext,
-    query: &Query,
+    _query: &Query,
 ) -> Result<(), V2Error> {
-    let Some(scope) = query_required_scope(query) else {
-        return Err(V2Error::invalid_query());
-    };
-    require_scope(authorization, scope)
+    require_authenticated_session(authorization)
 }
 
 pub(super) fn authorize_command(
     authorization: &AuthorizationContext,
-    command: &Command,
+    _command: &Command,
 ) -> Result<(), V2Error> {
-    require_scope(authorization, command_scope(command))
+    require_authenticated_session(authorization)
 }
 
 pub(super) fn capabilities(
@@ -66,7 +41,7 @@ pub(super) fn capabilities(
     let commands = COMMAND_KINDS
         .iter()
         .filter_map(|kind| {
-            if command_kind_is_authorized(authorization, kind)
+            if require_authenticated_session(authorization).is_ok()
                 && (accounts_available || !kind.starts_with("account."))
             {
                 Some((*kind).to_owned())
@@ -78,7 +53,7 @@ pub(super) fn capabilities(
     let queries = QUERY_KINDS
         .iter()
         .filter_map(|kind| {
-            if query_kind_is_authorized(authorization, kind)
+            if require_authenticated_session(authorization).is_ok()
                 && (accounts_available || *kind != "accounts.list")
             {
                 Some((*kind).to_owned())
@@ -94,23 +69,6 @@ pub(super) fn capabilities(
     }
 }
 
-fn command_kind_is_authorized(authorization: &AuthorizationContext, kind: &str) -> bool {
-    let base_scope_is_authorized = command_scope_for_kind(kind)
-        .is_some_and(|scope| require_scope(authorization, scope).is_ok());
-    base_scope_is_authorized
-        || (kind == "queue.mutate"
-            && (require_scope(authorization, "turns.start").is_ok()
-                || require_scope(authorization, "turns.steer").is_ok()))
-}
-
-fn query_kind_is_authorized(authorization: &AuthorizationContext, kind: &str) -> bool {
-    query_scope_for_kind(kind).is_some_and(|scope| require_scope(authorization, scope).is_ok())
-        || (kind == "operation.get"
-            && COMMAND_KINDS
-                .iter()
-                .any(|command_kind| command_kind_is_authorized(authorization, command_kind)))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -118,12 +76,9 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::auth::contract_device_scopes;
-
-    fn session(scopes: &[&str]) -> AuthorizationContext {
+    fn session() -> AuthorizationContext {
         AuthorizationContext::Session {
             device_id: "device".into(),
-            scopes: scopes.iter().map(ToString::to_string).collect(),
             expires_at: u64::MAX,
         }
     }
@@ -251,20 +206,7 @@ mod tests {
             );
         }
 
-        let profiles = vec![
-            ("full", session(contract_device_scopes())),
-            ("none", session(&[])),
-            ("thread reader", session(&["threads.read"])),
-            ("thread writer", session(&["threads.write"])),
-            ("file reader", session(&["files.download.workspace"])),
-            ("file writer", session(&["files.upload.workspace"])),
-            ("turn starter", session(&["turns.start"])),
-            ("turn steerer", session(&["turns.steer"])),
-            ("process manager", session(&["processes.manage"])),
-            ("approval responder", session(&["approvals.respond"])),
-            ("account reader", session(&["accounts.read"])),
-            ("account manager", session(&["accounts.manage"])),
-        ];
+        let profiles = [("paired session", session())];
 
         for (profile, authorization) in profiles {
             let QueryResult::CapabilitiesRead {
@@ -316,9 +258,9 @@ mod tests {
     }
 
     #[test]
-    fn account_service_availability_preserves_independent_scope_split() {
-        let reader = session(&["accounts.read"]);
-        let manager = session(&["accounts.manage"]);
+    fn account_service_availability_is_the_only_account_capability_gate() {
+        let reader = session();
+        let manager = session();
 
         let QueryResult::CapabilitiesRead {
             commands: reader_commands,
@@ -329,11 +271,7 @@ mod tests {
             panic!("expected capabilities result");
         };
         assert!(reader_queries.iter().any(|kind| kind == "accounts.list"));
-        assert!(
-            !reader_commands
-                .iter()
-                .any(|kind| kind.starts_with("account."))
-        );
+        assert!(reader_commands.iter().any(|kind| kind == "account.update"));
 
         let QueryResult::CapabilitiesRead {
             commands: manager_commands,
@@ -344,17 +282,13 @@ mod tests {
             panic!("expected capabilities result");
         };
         assert!(manager_commands.iter().any(|kind| kind == "account.update"));
-        assert!(!manager_queries.iter().any(|kind| kind == "accounts.list"));
+        assert!(manager_queries.iter().any(|kind| kind == "accounts.list"));
 
         let QueryResult::CapabilitiesRead {
             commands: unavailable_commands,
             queries: unavailable_queries,
             ..
-        } = capabilities(
-            SnapshotLimits::default(),
-            &session(&["accounts.read", "accounts.manage"]),
-            false,
-        )
+        } = capabilities(SnapshotLimits::default(), &session(), false)
         else {
             panic!("expected capabilities result");
         };

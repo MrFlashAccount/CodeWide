@@ -340,7 +340,7 @@ internal class NativeTerminalSessionManager(
           session.open = false
         }
         val message = when (response?.code) {
-          403 -> "Terminal access requires the shell.explicit device scope"
+          403 -> "Terminal authorization was rejected"
           400 -> "Terminal working directory or size was rejected"
           404 -> if (session.serverSessionCreated) {
             "Remote terminal session no longer exists"

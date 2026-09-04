@@ -22,56 +22,12 @@ const DEFAULT_SESSION_TTL_MS: u64 = 15 * 60 * 1_000;
 const CHALLENGE_TTL_MS: u64 = 60 * 1_000;
 const MAX_SESSIONS_PER_DEVICE: usize = 16;
 const MAX_CHALLENGES_PER_DEVICE: usize = 8;
-const REGISTRY_VERSION: u8 = 4;
-const DEVICE_SCOPES: [&str; 13] = [
-    "accounts.manage",
-    "accounts.read",
-    "approvals.respond",
-    "files.download.workspace",
-    "files.upload.workspace",
-    "localhost.forward",
-    "processes.manage",
-    "shell.explicit",
-    "threads.read",
-    "threads.write",
-    "tools.call",
-    "turns.start",
-    "turns.steer",
-];
-const DEFAULT_DEVICE_SCOPES: [&str; 9] = [
-    "approvals.respond",
-    "files.download.workspace",
-    "files.upload.workspace",
-    "localhost.forward",
-    "processes.manage",
-    "threads.read",
-    "threads.write",
-    "turns.start",
-    "turns.steer",
-];
-/// Returns the frozen V1 scope vocabulary accepted by the companion.
-#[must_use]
-pub const fn contract_device_scopes() -> &'static [&'static str] {
-    &DEVICE_SCOPES
-}
-
-/// Returns the frozen V1 default scope grant.
-#[must_use]
-pub const fn contract_default_device_scopes() -> &'static [&'static str] {
-    &DEFAULT_DEVICE_SCOPES
-}
-
+const REGISTRY_VERSION: u8 = 5;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AuthorizationContext {
     Admin,
-    Device {
-        device_id: String,
-    },
-    Session {
-        device_id: String,
-        scopes: Vec<String>,
-        expires_at: u64,
-    },
+    Device { device_id: String },
+    Session { device_id: String, expires_at: u64 },
 }
 
 impl AuthorizationContext {
@@ -87,7 +43,6 @@ impl AuthorizationContext {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuthorizationChangeReason {
     DeviceRevoked,
-    DeviceScopesChanged,
     DeviceRepaired,
 }
 
@@ -96,7 +51,6 @@ impl AuthorizationChangeReason {
     pub const fn close_reason(self) -> &'static str {
         match self {
             Self::DeviceRevoked => "device_revoked",
-            Self::DeviceScopesChanged => "device_scopes_changed",
             Self::DeviceRepaired => "device_repaired",
         }
     }
@@ -115,8 +69,6 @@ pub struct Device {
     pub name: String,
     #[serde(default)]
     pub public_key_spki: Option<String>,
-    #[serde(default = "default_scopes")]
-    pub scopes: Vec<String>,
     pub created_at: u64,
     pub last_seen_at: u64,
 }
@@ -129,8 +81,6 @@ struct StoredDevice {
     token_hash: String,
     #[serde(default)]
     public_key_spki: Option<String>,
-    #[serde(default = "default_scopes")]
-    scopes: Vec<String>,
     created_at: u64,
     last_seen_at: u64,
 }
@@ -153,7 +103,6 @@ struct RegistryFile {
 struct DeviceSession {
     token_hash: String,
     device_id: String,
-    scopes: Vec<String>,
     expires_at: u64,
 }
 
@@ -224,8 +173,6 @@ pub enum AuthError {
     DeviceKeyMismatch,
     #[error("device not found")]
     DeviceNotFound,
-    #[error("valid scopes with threads.read required")]
-    InvalidScopes,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -257,7 +204,6 @@ pub struct PairingClaim {
 pub struct PairingClaimResult {
     pub device_id: String,
     pub capability_token: String,
-    pub scopes: Vec<String>,
     #[serde(skip)]
     pub replaced_existing: bool,
 }
@@ -282,7 +228,6 @@ pub struct SessionProof {
 pub struct SessionResult {
     pub session_token: String,
     pub expires_at: u64,
-    pub scopes: Vec<String>,
 }
 
 impl DeviceRegistry {
@@ -291,20 +236,28 @@ impl DeviceRegistry {
     /// # Errors
     ///
     /// Returns an error when the registry is unreadable, malformed, or uses
-    /// unsupported credentials or scopes.
+    /// unsupported credentials.
     pub async fn open(
         admin_token: Arc<str>,
         path: PathBuf,
         session_ttl_ms: Option<u64>,
     ) -> Result<Self, AuthError> {
-        let mut invalidated_legacy_registry = false;
+        let mut registry_requires_persist = false;
         let registry = if tokio::fs::try_exists(&path).await? {
             let raw = tokio::fs::read(&path).await?;
             let parsed: RegistryFile = serde_json::from_slice(&raw)?;
             match parsed.version {
                 REGISTRY_VERSION => parsed,
+                4 => {
+                    registry_requires_persist = true;
+                    RegistryFile {
+                        version: REGISTRY_VERSION,
+                        devices: parsed.devices,
+                        pairings: parsed.pairings,
+                    }
+                }
                 1..=3 => {
-                    invalidated_legacy_registry = true;
+                    registry_requires_persist = true;
                     RegistryFile {
                         version: REGISTRY_VERSION,
                         devices: Vec::new(),
@@ -325,7 +278,6 @@ impl DeviceRegistry {
         for device in registry.devices {
             if !valid_id(&device.id)
                 || !valid_name(&device.name)
-                || !valid_scopes(&device.scopes)
                 || !device
                     .public_key_spki
                     .as_deref()
@@ -365,7 +317,7 @@ impl DeviceRegistry {
             trusted_client_spki,
             authorization_changes,
         };
-        if invalidated_legacy_registry {
+        if registry_requires_persist {
             let state = opened.state.lock().await;
             opened.persist_locked(&state).await?;
         }
@@ -412,19 +364,8 @@ impl DeviceRegistry {
             .find(|session| constant_time_eq(session.token_hash.as_bytes(), hash.as_bytes()))
             .map(|session| AuthorizationContext::Session {
                 device_id: session.device_id.clone(),
-                scopes: session.scopes.clone(),
                 expires_at: session.expires_at,
             })
-    }
-
-    pub async fn authorize_session(&self, authorization: Option<&str>, scope: &str) -> bool {
-        match self.authorization_context(authorization).await {
-            Some(AuthorizationContext::Admin) => true,
-            Some(AuthorizationContext::Session { scopes, .. }) => {
-                scopes.iter().any(|candidate| candidate == scope)
-            }
-            Some(AuthorizationContext::Device { .. }) | None => false,
-        }
     }
 
     pub async fn authorize_admin(&self, authorization: Option<&str>) -> bool {
@@ -491,9 +432,6 @@ impl DeviceRegistry {
         let device_id = device_id_for_public_key(&claim.public_key_spki)?;
         let capability_token = random_token(32)?;
         let existing = state.devices.get(&device_id).cloned();
-        let scopes = existing
-            .as_ref()
-            .map_or_else(default_scopes, |device| device.scopes.clone());
         let created_at = existing.as_ref().map_or(now, |device| device.created_at);
         state
             .sessions
@@ -508,7 +446,6 @@ impl DeviceRegistry {
                 name: claim.device_name.trim().to_owned(),
                 token_hash: token_hash(&capability_token),
                 public_key_spki: Some(claim.public_key_spki),
-                scopes: scopes.clone(),
                 created_at,
                 last_seen_at: now,
             },
@@ -524,7 +461,6 @@ impl DeviceRegistry {
         Ok(PairingClaimResult {
             device_id,
             capability_token,
-            scopes,
             replaced_existing: existing.is_some(),
         })
     }
@@ -570,7 +506,7 @@ impl DeviceRegistry {
         })
     }
 
-    /// Verifies a signed challenge and creates a scoped short-lived session.
+    /// Verifies a signed challenge and creates a short-lived session.
     ///
     /// # Errors
     ///
@@ -609,14 +545,12 @@ impl DeviceRegistry {
         let session = DeviceSession {
             token_hash: token_hash(&session_token),
             device_id,
-            scopes: device.scopes.clone(),
             expires_at,
         };
         state.sessions.insert(session.token_hash.clone(), session);
         Ok(SessionResult {
             session_token,
             expires_at,
-            scopes: device.scopes,
         })
     }
 
@@ -665,40 +599,6 @@ impl DeviceRegistry {
         );
     }
 
-    /// Replaces a device's scopes and revokes existing sessions.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for missing devices, invalid scopes, or persistence
-    /// failure.
-    pub async fn update_scopes(
-        &self,
-        device_id: &str,
-        scopes: Vec<String>,
-    ) -> Result<Device, AuthError> {
-        if !valid_scopes(&scopes) || !scopes.iter().any(|scope| scope == "threads.read") {
-            return Err(AuthError::InvalidScopes);
-        }
-        let mut state = self.state.lock().await;
-        let Some(device) = state.devices.get_mut(device_id) else {
-            return Err(AuthError::DeviceNotFound);
-        };
-        device.scopes = deduplicate_scopes(scopes);
-        let public: Device = device.clone().into();
-        state
-            .sessions
-            .retain(|_, session| session.device_id != device_id);
-        state
-            .challenges
-            .retain(|_, challenge| challenge.device_id != device_id);
-        self.persist_locked(&state).await?;
-        let _ = self.authorization_changes.send(AuthorizationChange {
-            device_id: device_id.to_owned(),
-            reason: AuthorizationChangeReason::DeviceScopesChanged,
-        });
-        Ok(public)
-    }
-
     async fn persist_locked(&self, state: &RegistryState) -> Result<(), AuthError> {
         let snapshot = RegistryFile {
             version: REGISTRY_VERSION,
@@ -719,7 +619,6 @@ impl From<StoredDevice> for Device {
             id: device.id,
             name: device.name,
             public_key_spki: device.public_key_spki,
-            scopes: device.scopes,
             created_at: device.created_at,
             last_seen_at: device.last_seen_at,
         }
@@ -799,29 +698,6 @@ fn valid_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
-}
-
-fn valid_scopes(scopes: &[String]) -> bool {
-    scopes
-        .iter()
-        .all(|scope| DEVICE_SCOPES.contains(&scope.as_str()))
-}
-
-fn default_scopes() -> Vec<String> {
-    DEFAULT_DEVICE_SCOPES
-        .iter()
-        .map(ToString::to_string)
-        .collect()
-}
-
-fn deduplicate_scopes(scopes: Vec<String>) -> Vec<String> {
-    let mut unique = Vec::with_capacity(scopes.len());
-    for scope in scopes {
-        if !unique.contains(&scope) {
-            unique.push(scope);
-        }
-    }
-    unique
 }
 
 fn valid_public_key(encoded: &str) -> bool {
@@ -928,31 +804,11 @@ mod tests {
     };
 
     #[test]
-    fn scope_and_metadata_validation_is_strict() {
+    fn device_metadata_validation_is_strict() {
         assert!(valid_id("device.one:2-test"));
         assert!(!valid_id("../device"));
         assert!(valid_name("Android Fold"));
         assert!(!valid_name("bad\nname"));
-        assert!(valid_scopes(&default_scopes()));
-        assert!(
-            !default_scopes()
-                .iter()
-                .any(|scope| scope == "accounts.read")
-        );
-        assert!(
-            !default_scopes()
-                .iter()
-                .any(|scope| scope == "accounts.manage")
-        );
-        assert!(valid_scopes(&[
-            "threads.read".into(),
-            "accounts.read".into()
-        ]));
-        assert!(valid_scopes(&[
-            "threads.read".into(),
-            "accounts.manage".into()
-        ]));
-        assert!(!valid_scopes(&["root".into()]));
     }
 
     #[test]
@@ -1029,22 +885,12 @@ mod tests {
                 },
             )
             .await?;
-        assert!(
+        assert!(matches!(
             registry
-                .authorize_session(
-                    Some(&format!("Bearer {}", session.session_token)),
-                    "threads.read"
-                )
-                .await
-        );
-        assert!(
-            registry
-                .authorize_session(
-                    Some(&format!("Bearer {}", session.session_token)),
-                    "threads.read"
-                )
-                .await
-        );
+                .authorization_context(Some(&format!("Bearer {}", session.session_token)))
+                .await,
+            Some(AuthorizationContext::Session { .. })
+        ));
 
         let repair = registry.create_pairing().await?;
         let repair_proof: Signature = signing.sign(&pairing_claim_message(
@@ -1071,6 +917,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_registry_scope_metadata_is_ignored_and_removed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("devices.json");
+        let capability = "current-capability-token-that-is-long-enough";
+        let signing = SigningKey::from_bytes((&[10_u8; 32]).into())?;
+        let public_key = signing.verifying_key().to_public_key_der()?;
+        let public_key_spki = general_purpose::STANDARD.encode(public_key.as_bytes());
+        let now = unix_time_ms();
+        let registry_file = serde_json::json!({
+            "version": 4,
+            "devices": [{
+                "id": device_id_for_public_key(&public_key_spki)?,
+                "name": "Existing Android",
+                "tokenHash": token_hash(capability),
+                "publicKeySpki": public_key_spki,
+                "scopes": ["threads.read"],
+                "createdAt": now,
+                "lastSeenAt": now,
+            }],
+            "pairings": [],
+        });
+        tokio::fs::write(&path, serde_json::to_vec(&registry_file)?).await?;
+
+        let registry = DeviceRegistry::open(
+            Arc::from("admin-token-that-is-long-enough-for-tests"),
+            path.clone(),
+            Some(60_000),
+        )
+        .await?;
+        let persisted: serde_json::Value = serde_json::from_slice(&tokio::fs::read(path).await?)?;
+        assert!(persisted["devices"][0].get("scopes").is_none());
+        assert!(matches!(
+            registry
+                .authorization_context(Some(&format!("Bearer {capability}")))
+                .await,
+            Some(AuthorizationContext::Device { .. })
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn legacy_registry_is_invalidated_before_accepting_connections()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
@@ -1088,7 +976,6 @@ mod tests {
                 name: "Legacy Android".into(),
                 token_hash: token_hash(capability),
                 public_key_spki: Some(public_key_spki),
-                scopes: default_scopes(),
                 created_at: now,
                 last_seen_at: now,
             }],

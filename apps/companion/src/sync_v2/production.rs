@@ -651,7 +651,7 @@ impl UpstreamSemanticSource {
         thread_id: &Id,
         generation: u64,
     ) -> Result<super::domain::ThreadSummary, V2Error> {
-        require_scope(authorization, "threads.read")?;
+        require_authenticated_session(authorization)?;
         ensure_generation(self, generation)?;
         let mut thread = self.read_thread(thread_id).await?;
         self.attach_read_state(context, &mut thread)?;
@@ -768,7 +768,7 @@ mod source_impl;
 #[cfg(test)]
 mod contract_tests;
 
-use capabilities::require_scope;
+use capabilities::require_authenticated_session;
 use helpers::{
     catalog_anchor_key, is_pending_method, pending_id, pending_request, pending_thread_id,
     revision, rollout_witness,

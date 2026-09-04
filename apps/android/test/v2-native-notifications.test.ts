@@ -113,8 +113,11 @@ describe("V2 native notification authority", () => {
       connectionService.indexOf("internal fun stopLegacyRuntimeResources()"),
       connectionService.indexOf("internal fun listPortForwards("),
     );
+    expect(legacyRoute).toContain("start: startLegacyNativeRuntimeResources");
     expect(legacyRoute).toContain("stop: stopLegacyNativeRuntimeResources");
+    expect(nativeTransport).toContain("startLegacyRuntimeResources?: () => Promise<void>");
     expect(nativeTransport).toContain("stopLegacyRuntimeResources?: () => Promise<void>");
+    expect(connectionService).toContain("internal fun activateLegacySync()");
     expect(stopLegacy).toContain("terminalSessionManager.deactivateGeneration()");
     expect(stopLegacy).not.toContain("authenticatedTransportLeases");
     expect(connectionService).toContain(

@@ -34,8 +34,6 @@ import com.facebook.react.uimanager.UIManagerHelper
 import dev.codewide.app.rendering.VoiceAuraRenderEffect
 import java.io.IOException
 import java.net.URI
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArraySet
@@ -935,6 +933,26 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   }
 
   @ReactMethod
+  fun startLegacyRuntimeResources(promise: Promise) {
+    try {
+      val service = CodexConnectionService.instance
+      if (service != null) {
+        service.activateLegacySync()
+      } else {
+        ContextCompat.startForegroundService(
+          context,
+          Intent(context, CodexConnectionService::class.java).apply {
+            action = CodexConnectionService.ACTION_ATTACH
+          },
+        )
+      }
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("LEGACY_RUNTIME_START_FAILED", error.message ?: "Could not start legacy native resources", error)
+    }
+  }
+
+  @ReactMethod
   fun stopLegacyRuntimeResources(promise: Promise) {
     try {
       CodexConnectionService.instance?.stopLegacyRuntimeResources()
@@ -1066,7 +1084,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
-  /** Records mono PCM16 frames. Transcription stays on the paired Codex host. */
+  /** Captures mono PCM16 and emits bandwidth-efficient Opus frames. Transcription stays on the paired Codex host. */
   @ReactMethod
   fun startPcmCapture(promise: Promise) {
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -1094,7 +1112,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           "bufferFrames=${recorder.bufferSizeInFrames} ns=${noiseSuppressor?.enabled ?: false} " +
           "agc=${automaticGainControl?.enabled ?: false}",
       )
-      audioCaptureThread = thread(name = "CodeWidePcmCapture", isDaemon = true) {
+      audioCaptureThread = thread(name = "CodeWideOpusCapture", isDaemon = true) {
         capturePcm(generation, recorder, sampleRate, noiseSuppressor, automaticGainControl)
       }
       promise.resolve(Arguments.createMap().apply {
@@ -1142,8 +1160,12 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     noiseSuppressor: NoiseSuppressor?,
     automaticGainControl: AutomaticGainControl?,
   ) {
-    val samples = ShortArray(maxOf(1, sampleRate / AUDIO_CHUNKS_PER_SECOND))
+    val samples = ShortArray(maxOf(1, sampleRate / OPUS_FRAMES_PER_SECOND))
+    val batcher = OpusTransportBatcher(maxOf(1, sampleRate / AUDIO_CHUNKS_PER_SECOND))
+    var encoder: OpusAudioEncoder? = null
     try {
+      val activeEncoder = OpusAudioEncoder(sampleRate, 1, OPUS_BITRATE)
+      encoder = activeEncoder
       emitPcm("started", null, sampleRate, 0, 0.0)
       while (audioCaptureRunning && generation == audioCaptureGeneration) {
         val count = recorder.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
@@ -1151,27 +1173,35 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           if (audioCaptureRunning) emitPcm("error", "read_$count", sampleRate, 0, 0.0)
           break
         }
-        val bytes = ByteBuffer.allocate(count * 2).order(ByteOrder.LITTLE_ENDIAN)
         var energy = 0.0
         for (index in 0 until count) {
           val sample = samples[index]
-          bytes.putShort(sample)
           val normalized = sample.toDouble() / Short.MAX_VALUE.toDouble()
           energy += normalized * normalized
         }
-        emitPcm(
-          "chunk",
-          Base64.encodeToString(bytes.array(), Base64.NO_WRAP),
-          sampleRate,
-          count,
-          sqrt(energy / count.toDouble()).coerceIn(0.0, 1.0),
-        )
+        val level = sqrt(energy / count.toDouble()).coerceIn(0.0, 1.0)
+        for (packet in activeEncoder.append(samples, count)) {
+          batcher.append(packet, level)?.let { emitOpus(it, sampleRate) }
+        }
       }
     } catch (error: Throwable) {
       if (audioCaptureRunning && generation == audioCaptureGeneration) {
         emitPcm("error", error.javaClass.simpleName, sampleRate, 0, 0.0)
       }
     } finally {
+      try {
+        encoder?.let { activeEncoder ->
+          for (packet in activeEncoder.finish()) {
+            batcher.append(packet, 0.0)?.let { emitOpus(it, sampleRate) }
+          }
+        }
+        batcher.flush()?.let { emitOpus(it, sampleRate) }
+      } catch (error: Throwable) {
+        encoder?.close()
+        if (audioCaptureRunning && generation == audioCaptureGeneration) {
+          emitPcm("error", error.javaClass.simpleName, sampleRate, 0, 0.0)
+        }
+      }
       synchronized(this) {
         if (generation == audioCaptureGeneration) {
           audioCaptureRunning = false
@@ -1272,6 +1302,24 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
+  private fun emitOpus(chunk: OpusTransportChunk, sampleRate: Int) {
+    val map = Arguments.createMap().apply {
+      putString("type", "chunk")
+      putString("encoding", "opus")
+      putString("data", Base64.encodeToString(chunk.data, Base64.NO_WRAP))
+      putInt("sampleRate", sampleRate)
+      putInt("numChannels", 1)
+      putInt("samplesPerChannel", chunk.samplesPerChannel)
+      putDouble("level", chunk.level)
+    }
+    context.runOnUiQueueThread {
+      if (context.hasActiveReactInstance()) {
+        context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+          .emit(AUDIO_EVENT, map)
+      }
+    }
+  }
+
   private fun openPcmCapture(): PcmCaptureSession {
     val failures = mutableListOf<String>()
     for (source in AUDIO_CAPTURE_SOURCES) {
@@ -1285,8 +1333,9 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
             AudioFormat.Builder()
               .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
               .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-              // Let Android select the native routed-input rate instead of
-              // resampling every microphone frame to a hard-coded rate.
+              // Opus has a fixed set of legal rates. 48 kHz is Android's
+              // standard full-band route and avoids a JavaScript resampler.
+              .setSampleRate(OPUS_SAMPLE_RATE)
               .build(),
           )
           .setBufferSizeInBytes(AUDIO_CAPTURE_BUFFER_BYTES)
@@ -1367,11 +1416,13 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     const val PORT_FORWARD_EVENT = "CodeWidePortForwardEvent"
     const val TERMINAL_EVENT = "CodeWideTerminalEvent"
     const val AUTHENTICATED_TRANSPORT_EVENT = "CodeWideAuthenticatedTransportEvent"
-    // Native capture frames are intentionally smaller than network batches.
-    // A 250 ms first frame makes a normal tap-to-stop recording observable
-    // without turning each callback into its own remote request; JavaScript
-    // still coalesces these into one-second appendBatch RPCs.
-    private const val AUDIO_CHUNKS_PER_SECOND = 4
+    // Native Opus chunks stay smaller than the existing one-second network
+    // batches so level feedback remains responsive while upload ordering and
+    // acknowledgement continue to belong to RealtimeAudioUploader.
+    private const val AUDIO_CHUNKS_PER_SECOND = 5
+    private const val OPUS_FRAMES_PER_SECOND = 50
+    private const val OPUS_SAMPLE_RATE = 48_000
+    private const val OPUS_BITRATE = 24_000
     // 200 ms of mono PCM16 at 96 kHz. AudioRecord may internally enlarge it;
     // this is intentionally above the usual 48 kHz route minimum so capture
     // remains smooth while the JS bridge handles the previous chunk.

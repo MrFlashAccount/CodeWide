@@ -1,5 +1,7 @@
 import { createContext, type ComponentType, type ReactNode, useContext } from "react";
 
+import { ResolvedImageResourceCacheProvider } from "./resolvedImageResourceCache";
+
 export interface RenderingImageSource {
   headers?: Record<string, string>;
   uri: string;
@@ -101,7 +103,7 @@ export function V2RenderingCapabilityProvider(
   const { capabilities, children } = props;
   return (
     <RenderingCapabilityContext.Provider value={capabilities}>
-      {children}
+      <ResolvedImageResourceCacheProvider>{children}</ResolvedImageResourceCacheProvider>
     </RenderingCapabilityContext.Provider>
   );
 }

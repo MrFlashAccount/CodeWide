@@ -1,6 +1,6 @@
 //! Owner-bound resource pagination and authorized file previews.
 
-use std::path::{Component, PathBuf};
+use std::path::PathBuf;
 
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
@@ -18,7 +18,7 @@ impl UpstreamSemanticSource {
         cursor: Option<String>,
         limit: u16,
     ) -> Result<QueryResult, V2Error> {
-        require_scope(authorization, "threads.read")?;
+        require_authenticated_session(authorization)?;
         self.authorize_thread_access(authorization, context, &thread_id, generation)
             .await?;
         let resources = self
@@ -124,7 +124,7 @@ impl UpstreamSemanticSource {
         thread_id: Id,
         path: String,
     ) -> Result<QueryResult, V2Error> {
-        require_scope(authorization, "threads.read")?;
+        require_authenticated_session(authorization)?;
         self.authorize_thread_access(authorization, context, &thread_id, generation)
             .await?;
         let resources = self
@@ -132,7 +132,7 @@ impl UpstreamSemanticSource {
             .resources
             .as_ref()
             .ok_or_else(|| V2Error::source_unavailable("resource service is unavailable"))?;
-        let requested = authorized_file_path(authorization, &path)?;
+        let requested = validated_file_path(&path)?;
         let (absolute, returned_path, size_bytes, media_type) = if requested.is_absolute() {
             let (size_bytes, media_type) = resources
                 .host_preview_metadata(requested.clone())
@@ -140,7 +140,6 @@ impl UpstreamSemanticSource {
                 .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
             (requested, path, size_bytes, media_type)
         } else {
-            let relative = normalized_workspace_relative_path(&path)?;
             let thread = self.read_thread(&thread_id).await?;
             let workspace = PathBuf::from(&thread.workspace);
             if !workspace.is_absolute() {
@@ -148,14 +147,14 @@ impl UpstreamSemanticSource {
                     "thread workspace is not an absolute path",
                 ));
             }
-            let absolute = workspace.join(&relative);
+            let absolute = workspace.join(&requested);
             let (size_bytes, media_type) = resources
                 .workspace_preview_metadata(workspace, absolute.clone())
                 .await
                 .map_err(|error| V2Error::source_unavailable(error.to_string()))?;
             (
                 absolute,
-                relative.to_string_lossy().into_owned(),
+                requested.to_string_lossy().into_owned(),
                 size_bytes,
                 media_type,
             )
@@ -196,17 +195,6 @@ fn validated_file_path(value: &str) -> Result<PathBuf, V2Error> {
     Ok(PathBuf::from(value))
 }
 
-fn authorized_file_path(
-    authorization: &AuthorizationContext,
-    value: &str,
-) -> Result<PathBuf, V2Error> {
-    let path = validated_file_path(value)?;
-    if path.is_absolute() {
-        require_scope(authorization, "shell.explicit")?;
-    }
-    Ok(path)
-}
-
 #[derive(Debug, Eq, PartialEq)]
 struct ResourcePage {
     attachment_end: usize,
@@ -238,73 +226,28 @@ fn resource_page(
     })
 }
 
-fn normalized_workspace_relative_path(value: &str) -> Result<PathBuf, V2Error> {
-    let path = validated_file_path(value)?;
-    if path.is_absolute() {
-        return Err(V2Error::invalid_request(
-            "workspace file path must be relative",
-        ));
-    }
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(segment) => normalized.push(segment),
-            Component::ParentDir if normalized.pop() => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(V2Error::invalid_request(
-                    "workspace file path escapes the thread workspace",
-                ));
-            }
-        }
-    }
-    if normalized.as_os_str().is_empty() {
-        return Err(V2Error::invalid_request("workspace file path is invalid"));
-    }
-    Ok(normalized)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn explicit_host_file_path_is_distinct_from_workspace_relative_validation() {
-        let file_reader = AuthorizationContext::Session {
-            device_id: "device".into(),
-            scopes: vec!["files.download.workspace".into(), "threads.read".into()],
-            expires_at: u64::MAX,
-        };
-        let terminal = AuthorizationContext::Session {
-            device_id: "device".into(),
-            scopes: vec![
-                "files.download.workspace".into(),
-                "shell.explicit".into(),
-                "threads.read".into(),
-            ],
-            expires_at: u64::MAX,
-        };
+    fn explicit_host_file_path_needs_no_additional_shell_scope() {
         assert_eq!(
-            authorized_file_path(&terminal, "/var/tmp/report.pdf")
+            validated_file_path("/var/tmp/report.pdf")
                 .unwrap_or_else(|error| panic!("valid absolute path failed: {error:?}")),
             PathBuf::from("/var/tmp/report.pdf")
         );
-        assert!(authorized_file_path(&file_reader, "/var/tmp/report.pdf").is_err());
-        assert!(normalized_workspace_relative_path("/var/tmp/report.pdf").is_err());
     }
 
     #[test]
-    fn workspace_path_is_cwd_relative_and_cannot_escape() {
+    fn relative_file_path_may_escape_the_thread_workspace() {
         assert_eq!(
-            normalized_workspace_relative_path("docs/../README.md")
+            validated_file_path("../../README.md")
                 .unwrap_or_else(|error| panic!("valid path failed: {error:?}")),
-            PathBuf::from("README.md")
+            PathBuf::from("../../README.md")
         );
-        for value in ["", "/etc/passwd", "../secret", "docs/../../secret", "\0bad"] {
-            assert!(
-                normalized_workspace_relative_path(value).is_err(),
-                "{value:?}"
-            );
+        for value in ["", "\0bad"] {
+            assert!(validated_file_path(value).is_err(), "{value:?}");
         }
     }
 

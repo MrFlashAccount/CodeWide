@@ -58,6 +58,8 @@ export function LiveTurnPlanPopover({ plan }: { plan: LiveTurnPlan }) {
           style={StyleSheet.flatten([styles.popover, { maxHeight: contentMaxHeight }])}
         >
           <ScrollView
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
             testID="live-plan-popover"
             style={{ maxHeight: contentMaxHeight }}
             contentContainerStyle={styles.content}
@@ -114,6 +116,7 @@ const styles = StyleSheet.create({
     minHeight: 34,
     maxWidth: "92%",
     flexDirection: "row",
+    flexShrink: 1,
     alignItems: "center",
     gap: 5,
     paddingHorizontal: 10,

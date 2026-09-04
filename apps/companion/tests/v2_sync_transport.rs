@@ -304,16 +304,12 @@ impl SemanticSource for FakeSource {
     async fn authorize_command(
         &self,
         command: &Command,
-        authorization: &AuthorizationContext,
+        _authorization: &AuthorizationContext,
         context: &AuthenticatedContextKey,
         _generation: u64,
     ) -> Result<(), V2Error> {
         if self.hang_authorize.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
-        }
-        let allowed = matches!(authorization, AuthorizationContext::Session { scopes, .. } if scopes.iter().any(|scope| scope == "threads.write"));
-        if !allowed {
-            return Err(V2Error::forbidden("threads.write scope required"));
         }
         if let Command::ThreadDelete { thread_id } = command
             && !self
@@ -434,7 +430,7 @@ async fn concurrent_first_opens_serialize_registration_and_thread_installation()
     )?;
     let (address, server_task) = start_server(directory.path(), runtime).await?;
     let url = format!("ws://{address}/v2/sync");
-    let mut first = connect_as(&url, "same-device", "threads.read").await?;
+    let mut first = connect_as(&url, "same-device").await?;
     send(
         &mut first,
         json!({
@@ -454,7 +450,7 @@ async fn concurrent_first_opens_serialize_registration_and_thread_installation()
     )
     .await?;
 
-    let mut second = connect_as(&url, "other-device", "threads.read").await?;
+    let mut second = connect_as(&url, "other-device").await?;
     send(
         &mut second,
         json!({
@@ -496,8 +492,7 @@ async fn concurrent_first_opens_serialize_registration_and_thread_installation()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn retained_command_receipt_precedes_source_authorization_but_new_command_does_not()
--> Result<(), Box<dyn Error>> {
+async fn paired_session_replays_receipts_and_accepts_new_commands() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let source = FakeSource::new();
     let runtime = SyncV2Runtime::new(
@@ -514,54 +509,52 @@ async fn retained_command_receipt_precedes_source_authorization_but_new_command_
         "command": {"kind": "thread.delete", "threadId": "deleted-thread"}
     });
 
-    let mut authorized = connect_as(&url, "retained-device", "threads.read,threads.write").await?;
+    let mut authorized = connect_as(&url, "retained-device").await?;
     open_and_commit(&mut authorized, "deleted-thread").await?;
     send(&mut authorized, command.clone()).await?;
     assert_eq!(receive(&mut authorized).await?["type"], "commandAccepted");
     assert_eq!(receive(&mut authorized).await?["type"], "commandCompleted");
     authorized.close(None).await?;
 
-    let mut reduced = connect_as(&url, "retained-device", "threads.read").await?;
-    open_and_commit(&mut reduced, "deleted-thread").await?;
+    let mut reconnected = connect_as(&url, "retained-device").await?;
+    open_and_commit(&mut reconnected, "deleted-thread").await?;
     let mut retry = command;
-    retry["requestId"] = json!("delete-retry-after-scope-loss");
-    send(&mut reduced, retry).await?;
-    assert_eq!(receive(&mut reduced).await?["type"], "commandAccepted");
-    assert_eq!(receive(&mut reduced).await?["type"], "commandCompleted");
+    retry["requestId"] = json!("delete-retry-after-reconnect");
+    send(&mut reconnected, retry).await?;
+    assert_eq!(receive(&mut reconnected).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut reconnected).await?["type"], "commandCompleted");
     assert_eq!(source.executions.load(Ordering::SeqCst), 1);
 
     send(
-        &mut reduced,
+        &mut reconnected,
         json!({
             "type": "query",
-            "requestId": "operation-without-scope",
+            "requestId": "operation-after-reconnect",
             "query": {"kind": "operation.get", "operationId": "delete-operation"}
         }),
     )
     .await?;
-    let denied_query = receive(&mut reduced).await?;
-    assert_eq!(denied_query["type"], "queryFailed");
-    assert_eq!(denied_query["error"]["code"], "forbidden");
+    assert_eq!(receive(&mut reconnected).await?["type"], "queryCompleted");
 
     let fresh = json!({
         "type": "command",
-        "requestId": "fresh-without-scope",
+        "requestId": "fresh-after-reconnect",
         "operationId": "fresh-operation",
         "command": {"kind": "thread.delete", "threadId": "deleted-thread"}
     });
-    send(&mut reduced, fresh.clone()).await?;
-    let rejected = receive(&mut reduced).await?;
-    assert_eq!(rejected["type"], "commandRejected");
-    assert_eq!(rejected["error"]["code"], "forbidden");
-    reduced.close(None).await?;
+    send(&mut reconnected, fresh.clone()).await?;
+    assert_eq!(receive(&mut reconnected).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut reconnected).await?["type"], "commandCompleted");
+    assert_eq!(source.executions.load(Ordering::SeqCst), 2);
+    reconnected.close(None).await?;
 
-    let mut restored = connect_as(&url, "retained-device", "threads.read,threads.write").await?;
+    let mut restored = connect_as(&url, "retained-device").await?;
     open_and_commit(&mut restored, "deleted-thread").await?;
     send(
         &mut restored,
         json!({
             "type": "query",
-            "requestId": "operation-with-original-scope",
+            "requestId": "operation-after-second-reconnect",
             "query": {"kind": "operation.get", "operationId": "delete-operation"}
         }),
     )
@@ -595,7 +588,7 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
     let (address, server_task) = start_server(directory.path(), runtime).await?;
     let url = format!("ws://{address}/v2/sync");
 
-    let mut missing_nullable = connect_as(&url, "invalid-device", "threads.read").await?;
+    let mut missing_nullable = connect_as(&url, "invalid-device").await?;
     send(
         &mut missing_nullable,
         json!({
@@ -610,14 +603,13 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
     .await?;
     expect_close_code(&mut missing_nullable, 1008).await?;
 
-    let mut first = connect_as(&url, "device-a", "threads.read,threads.write,turns.start").await?;
-    let mut second = connect_as(&url, "device-b", "threads.read,threads.write,turns.start").await?;
+    let mut first = connect_as(&url, "device-a").await?;
+    let mut second = connect_as(&url, "device-b").await?;
     open_and_commit(&mut first, "thread-a").await?;
     open_and_commit(&mut second, "thread-b").await?;
     let mut shared = connect(&url).await?;
     open_and_commit(&mut shared, "thread-a").await?;
-    let mut shared_other_device =
-        connect_as(&url, "device-c", "threads.read,threads.write").await?;
+    let mut shared_other_device = connect_as(&url, "device-c").await?;
     open_and_commit(&mut shared_other_device, "thread-a").await?;
 
     source
@@ -858,38 +850,44 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
     assert_eq!(mismatch["type"], "commandIndeterminate");
     assert_eq!(mismatch["error"]["code"], "operationIndeterminate");
 
-    let mut forbidden = connect_as(&url, "limited-device", "threads.read").await?;
-    open_and_commit(&mut forbidden, "thread-limited").await?;
+    let executions_before_full_grant = source.executions.load(Ordering::SeqCst);
+    let mut paired = connect_as(&url, "limited-device").await?;
+    open_and_commit(&mut paired, "thread-limited").await?;
     send(
-        &mut forbidden,
+        &mut paired,
         json!({
             "type": "command",
-            "requestId": "forbidden-before-admission",
-            "operationId": "forbidden-then-allowed",
+            "requestId": "paired-command",
+            "operationId": "full-grant-operation",
             "command": {"kind": "thread.delete", "threadId": "thread-limited"}
         }),
     )
     .await?;
-    assert_eq!(receive(&mut forbidden).await?["type"], "commandRejected");
-    forbidden.close(None).await?;
-    let executions_before_allowed = source.executions.load(Ordering::SeqCst);
-    let mut allowed = connect_as(&url, "limited-device", "threads.read,threads.write").await?;
-    open_and_commit(&mut allowed, "thread-limited").await?;
-    send(
-        &mut allowed,
-        json!({
-            "type": "command",
-            "requestId": "allowed-after-forbidden",
-            "operationId": "forbidden-then-allowed",
-            "command": {"kind": "thread.delete", "threadId": "thread-limited"}
-        }),
-    )
-    .await?;
-    assert_eq!(receive(&mut allowed).await?["type"], "commandAccepted");
-    assert_eq!(receive(&mut allowed).await?["type"], "commandCompleted");
+    assert_eq!(receive(&mut paired).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut paired).await?["type"], "commandCompleted");
     assert_eq!(
         source.executions.load(Ordering::SeqCst),
-        executions_before_allowed + 1
+        executions_before_full_grant + 1
+    );
+    paired.close(None).await?;
+    let executions_before_replay = source.executions.load(Ordering::SeqCst);
+    let mut reconnected = connect_as(&url, "limited-device").await?;
+    open_and_commit(&mut reconnected, "thread-limited").await?;
+    send(
+        &mut reconnected,
+        json!({
+            "type": "command",
+            "requestId": "full-grant-replay",
+            "operationId": "full-grant-operation",
+            "command": {"kind": "thread.delete", "threadId": "thread-limited"}
+        }),
+    )
+    .await?;
+    assert_eq!(receive(&mut reconnected).await?["type"], "commandAccepted");
+    assert_eq!(receive(&mut reconnected).await?["type"], "commandCompleted");
+    assert_eq!(
+        source.executions.load(Ordering::SeqCst),
+        executions_before_replay
     );
 
     let mut response_lost = connect(&url).await?;
@@ -977,7 +975,7 @@ async fn epochs_isolate_clients_reinitialize_and_recover_commands() -> Result<()
     invalid_commit.close(None).await?;
     mismatched_query.close(None).await?;
     overflowing.close(None).await?;
-    allowed.close(None).await?;
+    reconnected.close(None).await?;
     recovered.close(None).await?;
     other_authorized.close(None).await?;
     server_task.abort();

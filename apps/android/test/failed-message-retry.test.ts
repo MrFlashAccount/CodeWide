@@ -33,6 +33,13 @@ describe("failed message retry", () => {
     expect(screen).toContain("style={[styles.turnFooter, styles.turnFooterEnd]}");
   });
 
+  it("moves pending delivery feedback into the user text without collapsing the footer gap", () => {
+    expect(screen).toContain("pendingText={!failed}");
+    expect(screen).toContain('testID="pending-user-message-shimmer"');
+    expect(screen).toContain('testID="optimistic-turn-footer-spacer"');
+    expect(screen).toContain("minHeight: TURN_FOOTER_MIN_HEIGHT");
+  });
+
   it("does not describe transport acceptance as canonical delivery", () => {
     expect(screen).not.toContain('const delivered = item.status === "delivered";');
     expect(screen).not.toContain('? "Sent"');

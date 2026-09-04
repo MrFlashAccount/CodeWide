@@ -10,12 +10,11 @@ use super::super::{
     },
     normalize,
     protocol::{
-        Command, QuestionAnswer, QueueMutation, RequestResolution, ReviewDelivery, ReviewTarget,
-        ReviewTargetKind, ThreadUpdate,
+        Command, QuestionAnswer, RequestResolution, ReviewDelivery, ReviewTarget, ReviewTargetKind,
+        ThreadUpdate,
     },
     scalar::Id,
 };
-use super::capabilities::command_scope;
 use super::helpers::{
     approval_policy_source, effort_source, pending_request, resolution_result, review_capabilities,
     review_target_source, sandbox_policy_source, sandbox_source, thread_fork_params,
@@ -205,19 +204,6 @@ fn goal_update_uses_flat_app_server_parameters() {
         })
     );
     assert!(params.get("goal").is_none());
-}
-
-#[test]
-fn queued_steer_requires_the_steer_scope() {
-    let command = Command::QueueMutate {
-        mutation: QueueMutation::Steer {
-            item_id: id("queued"),
-            turn_id: id("turn"),
-            expected_revision: "revision".into(),
-        },
-    };
-
-    assert_eq!(command_scope(&command), "turns.steer");
 }
 
 #[test]

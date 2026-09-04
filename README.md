@@ -20,14 +20,14 @@ development machines.
   and voice dictation bridge.
 - Authenticated loopback companion bridging WebSocket frames to the managed
   App Server over its Unix WebSocket socket.
-- One-time device pairing/revocation, scoped file transfer, and bounded localhost
+- One-time device pairing/revocation, authenticated file transfer, and bounded localhost
   previews plus native phone-local TCP forwarding for HTTP, WebSocket and HMR.
 - Companion-owned durable prompt queue with reconnect reconciliation and delivery
   receipts, plus goals/progress, review, compact, steer and boundary-aware fork.
 - A full-width composer with a left control menu for model/effort, files,
   skills, permissions and delivery mode; no filter tabs below thread search.
-- Typed root-scoped file/image/audio inputs with persisted attachment drafts and
-  authenticated inline previews for scoped remote files. Arbitrary external
+- Typed file/image/audio inputs with persisted attachment drafts and
+  authenticated inline previews for remote files. Arbitrary external
   image URLs still require the authenticated media-proxy gate.
 - Bounded, schema-valid per-server outboxes with exactly-once reconciliation and
   explicit backpressure instead of invisible overflow.
@@ -219,14 +219,14 @@ codewide-companion pair
 ```
 
 The phone stores only its revocable per-device capability in Android
-Keystore-backed SecureStore; the host persists only its SHA-256 hash and method
-scopes plus the installation's public P-256 key. Before every socket reconnect,
+Keystore-backed SecureStore; the host persists only its SHA-256 hash and the
+installation's public P-256 key. Before every socket reconnect,
 the foreground service signs a one-use 60-second challenge with the
 non-exportable Android Keystore key, then receives a non-chainable 15-minute
 in-memory session token. A stolen bearer without that key cannot mint a session;
 a long-lived device capability cannot open `/v1/sync`; and a paired device can
-never open the raw `/v1/app-server` bridge. Raw shell execution and direct MCP
-tool invocation are not granted by default.
+never open the raw `/v1/app-server` bridge. Every successfully authenticated
+paired session receives the complete Companion data-plane grant.
 
 The companion exposes registration and session minting through the single
 public `/v1/auth` endpoint. Registration signs the one-time pairing token and
@@ -237,17 +237,12 @@ to mint a session without the private key. Pairing creation, device management,
 health checks and the raw App Server bridge exist only on the OS-local control
 endpoint and are not routed by the public server at all.
 
-Inspect, restrict and revoke devices:
+Inspect and revoke devices:
 
 ```sh
 codewide-companion devices
-codewide-companion scopes DEVICE_ID threads.read,turns.start
 codewide-companion revoke DEVICE_ID
 ```
-
-Changing scopes immediately closes that device's existing sync socket so the
-new least-privilege grant applies on reconnect. It also closes that device's
-active port-forward streams.
 
 ## Streaming telemetry
 
@@ -290,14 +285,8 @@ are deleted with their tabs and bounded to 128 MiB each. A connection shutdown,
 thread deletion, or companion shutdown also closes the associated terminals.
 The client and companion each permit at most eight concurrent sessions.
 
-Remote shell access is intentionally absent from the default device grant. An
-operator must add `shell.explicit` to the device's complete scope list through
-the local control CLI; `scopes` replaces the list rather than appending to it:
-
-```sh
-codewide-companion devices
-codewide-companion scopes DEVICE_ID approvals.respond,files.download.workspace,files.upload.workspace,localhost.forward,processes.manage,shell.explicit,threads.read,threads.write,turns.start,turns.steer
-```
+Remote shell access is part of the full grant issued to every authenticated
+paired session. Revoke the device to remove that access.
 
 The current `expo-libghostty` React Native seam carries base64 strings across
 the JS/native boundary. That encoding is confined to the renderer adapter; the
@@ -338,7 +327,7 @@ Each accepted phone TCP connection gets one authenticated binary WebSocket at
 `/v1/port-forwards/<remote-port>`. The companion opens only its own
 `127.0.0.1:<remote-port>` and forwards opaque bytes, so HTTP keep-alive,
 WebSocket upgrades and dev-server HMR work without protocol rewriting. The
-endpoint requires a short-lived session with `localhost.forward`, rejects
+endpoint requires a short-lived authenticated paired session, rejects
 browser-origin upgrades, expires streams with their session, and never accepts
 an arbitrary target host. The older bounded path-based preview endpoint remains
 available for compatibility.
@@ -365,7 +354,7 @@ mistake. A reverse proxy, SSH forward, overlay, or relay sees only opaque inner
 TLS records after the WebSocket tunnel is established.
 
 The installed companion binary is also the headless operator CLI: `create-token`,
-`pair`, `devices`, `scopes` and `revoke` call the running process through that
+`pair`, `devices` and `revoke` call the running process through that
 local endpoint.
 
 A durable deployment runs `codewide-companion.service` behind an operator-owned
@@ -381,16 +370,15 @@ Wireless development similarly requires an operator-owned HTTPS Metro endpoint
 through `CODEWIDE_METRO_URL`; the repository has no default public tunnel.
 
 The Android system picker uploads composer attachments into the companion-owned
-private `attachments` root. Additional operator-visible roots remain disabled
-until the host explicitly scopes them:
+private `attachments` root. Named roots provide stable bases for relative paths;
+authenticated paired sessions may also read or write explicit absolute host paths:
 
 ```sh
 set -lx CODEWIDE_FILE_ROOTS '{"project":"/absolute/path/to/project"}'
 systemctl --user restart codewide-companion.service
 ```
 
-Uploads require `X-Content-SHA256`, use bounded resumable chunks and cannot leave
-a configured root through `..` or symlinks. Downloads resume through byte ranges;
+Uploads require `X-Content-SHA256` and use bounded resumable chunks. Downloads resume through byte ranges;
 both directions verify the final SHA-256 before publishing the destination.
 
 Release builds never fall back to the debug signing key. The normal release path

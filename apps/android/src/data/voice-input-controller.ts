@@ -1,6 +1,6 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 
-import { cancelVoiceRecognition, startPcmCapture, startVoiceRecognition, type PcmAudioChunk } from "../native/native-transport";
+import { cancelVoiceRecognition, startPcmCapture, startVoiceRecognition, type CapturedAudioChunk } from "../native/native-transport";
 import { insertTranscriptAtSelection, type DraftSelection } from "./voice-draft";
 import { transcriptionLanguageHint } from "./transcription-language";
 import type { VoiceInputRow, WorkspaceResourceDatabase } from "./workspace-resource-database";
@@ -21,7 +21,7 @@ export type VoiceTranscriptionEvent =
   | { type: "closed"; reason: string | null };
 
 export type VoiceTranscriptionSession = {
-  appendAudio(chunk: PcmAudioChunk): void;
+  appendAudio(chunk: CapturedAudioChunk): void;
   finish(): Promise<void>;
   cancel(): Promise<void>;
 };
@@ -81,7 +81,7 @@ export class VoiceInputController {
   private binding: VoiceBinding | null = null;
   private activeBinding: VoiceBinding | null = null;
   private retryBinding: VoiceBinding | null = null;
-  private stopCapture: (() => void) | null = null;
+  private stopCapture: (() => void | Promise<void>) | null = null;
   private session: VoiceTranscriptionSession | null = null;
   private retrySession: VoiceTranscriptionSession | null = null;
   private sessionPromise: Promise<VoiceTranscriptionSession> | null = null;
@@ -135,7 +135,7 @@ export class VoiceInputController {
     if (processBinding !== null || processState.phase !== "idle" || this.stopCapture !== null) {
       if (processState.phase === "starting") {
         this.operation += 1;
-        this.stopCapture?.();
+        void this.stopCapture?.();
         this.stopCapture = null;
         if (processBinding !== null) this.resetUi(processBinding.scope);
         this.activeBinding = null;
@@ -173,7 +173,7 @@ export class VoiceInputController {
     let activeTranscript = "";
     let streamingSession: VoiceTranscriptionSession | null = null;
     let startSession: (() => Promise<VoiceTranscriptionSession>) | null = null;
-    const pendingAudio: PcmAudioChunk[] = [];
+    const pendingAudio: CapturedAudioChunk[] = [];
     const renderTranscript = () => renderVoiceTranscript([...completedSegments, activeTranscript].filter((part) => part.trim() !== "").join(" "));
     try {
       const capture = await startPcmCapture(
@@ -186,7 +186,7 @@ export class VoiceInputController {
         (message) => this.failOperation(binding.scope, `Microphone stopped · ${message.replaceAll("_", " ")}`),
       );
       if (operation !== this.operation) {
-        capture.stop();
+        void capture.stop();
         if (this.activeBinding === binding) this.activeBinding = null;
         return;
       }
@@ -224,7 +224,7 @@ export class VoiceInputController {
       if (operation !== this.operation) return;
       const sendAfter = this.sendAfterFinish;
       this.operation += 1;
-      this.stopCapture?.();
+      void this.stopCapture?.();
       this.stopCapture = null;
       this.sessionPromise = null;
       this.session = null;
@@ -313,7 +313,7 @@ export class VoiceInputController {
       .find((candidate) => candidate?.scope === scope) ?? null;
     const originalDraft = this.originalDraft;
     this.operation += 1;
-    this.stopCapture?.();
+    void this.stopCapture?.();
     this.stopCapture = null;
     cancelVoiceRecognition();
     const session = this.session;
@@ -350,7 +350,7 @@ export class VoiceInputController {
     const operation = this.operation;
     const stop = this.stopCapture;
     this.stopCapture = null;
-    stop?.();
+    await stop?.();
     this.patch(binding.scope, { phase: "finishing" });
     let session = this.session;
     if (session === null && this.sessionPromise !== null) {
@@ -423,7 +423,7 @@ export class VoiceInputController {
       const stop = await startVoiceRecognition((event) => {
         if ((event.type === "partial" || event.type === "final") && event.text !== undefined) renderTranscript(event.text);
         if (event.type === "final" || event.type === "error") {
-          this.stopCapture?.();
+          void this.stopCapture?.();
           this.stopCapture = null;
           this.resetUi(binding.scope, event.type === "error" ? { error: `Voice input stopped${event.text === undefined ? "" : ` · ${event.text.replaceAll("_", " ")}`}` } : {});
           if (event.type === "final") this.originalDraft = null;
@@ -445,7 +445,7 @@ export class VoiceInputController {
 
   private failOperation(scope: string, message: string): void {
     this.operation += 1;
-    this.stopCapture?.();
+    void this.stopCapture?.();
     this.stopCapture = null;
     const session = this.session;
     this.session = null;
@@ -506,7 +506,7 @@ async function startVoiceSessionWithRetry(
 
 function deferredVoiceSession(
   start: () => Promise<VoiceTranscriptionSession>,
-  capturedAudio: PcmAudioChunk[],
+  capturedAudio: CapturedAudioChunk[],
 ): VoiceTranscriptionSession {
   let session: VoiceTranscriptionSession | null = null;
   let starting: Promise<VoiceTranscriptionSession> | null = null;

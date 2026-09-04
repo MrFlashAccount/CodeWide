@@ -13,8 +13,8 @@
     #root[data-mode="inline"] #stage, #root[data-mode="inline"] #canvas { width: 100%; height: auto; }
     #root[data-mode="inline"] #canvas svg { display: block; width: 100%; max-width: none; height: auto; }
     #root[data-mode="fullscreen"] { touch-action: none; }
-    #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; overflow: hidden; touch-action: none; }
-    #root[data-mode="fullscreen"] #canvas { flex: 0 0 auto; touch-action: none; will-change: transform; transform-origin: 50% 50%; }
+    #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
+    #root[data-mode="fullscreen"] #canvas { position: absolute; inset: 0 auto auto 0; touch-action: none; will-change: transform; transform-origin: 50% 50%; }
     #root[data-mode="fullscreen"] #canvas svg { display: block; width: 100%; height: 100%; max-width: none; }
     #root[data-annotating="true"] #stage, #root[data-annotating="true"] #canvas { cursor: crosshair !important; }
   </style>
@@ -83,8 +83,7 @@
 
   window.diagramReset = function (requestId) {
     if (panzoom === null) return;
-    panzoom.zoom(fitScale, { animate: false, force: true });
-    panzoom.pan(0, 0, { animate: false, force: true });
+    panzoom.reset({ animate: false, force: true });
     scale = panzoom.getScale();
     reportSize(requestId, innerHeight);
   };
@@ -214,16 +213,21 @@
     canvas.style.width = naturalWidth + 'px';
     canvas.style.height = naturalHeight + 'px';
     fitScale = fullscreenFitScale();
+    const startX = (stage.clientWidth - naturalWidth) / (2 * fitScale);
+    const startY = (stage.clientHeight - naturalHeight) / (2 * fitScale);
     panzoom = Panzoom(canvas, {
       canvas: true,
       cursor: 'move',
       minScale: .15,
       maxScale: 8,
+      pinchAndPan: true,
+      startX,
+      startY,
       startScale: fitScale,
       step: .2,
       touchAction: 'none'
     });
-    panzoom.pan(0, 0, { force: true });
+    panzoom.pan(startX, startY, { force: true });
     scale = panzoom.getScale();
     reportSize(requestId, innerHeight);
   }

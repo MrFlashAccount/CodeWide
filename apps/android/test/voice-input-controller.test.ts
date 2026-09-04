@@ -1,18 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PcmAudioChunk } from "../src/native/native-transport";
+import type { CapturedAudioChunk } from "../src/native/native-transport";
 
 const capture = vi.hoisted(() => ({
-  onChunk: null as ((chunk: PcmAudioChunk) => void) | null,
+  onChunk: null as ((chunk: CapturedAudioChunk) => void) | null,
+  stop: vi.fn(async () => undefined),
 }));
 
 vi.mock("../src/native/native-transport", () => ({
   cancelVoiceRecognition: vi.fn(),
   startVoiceRecognition: vi.fn(),
-  startPcmCapture: vi.fn(async (onChunk: (chunk: PcmAudioChunk) => void) => {
+  startPcmCapture: vi.fn(async (onChunk: (chunk: CapturedAudioChunk) => void) => {
     capture.onChunk = onChunk;
     return {
-      stop: vi.fn(),
+      stop: capture.stop,
       info: {
         sampleRate: 24_000,
         source: "voice_communication" as const,
@@ -70,6 +71,8 @@ function emitAudio(): void {
 describe("VoiceInputController", () => {
   beforeEach(() => {
     capture.onChunk = null;
+    capture.stop.mockReset();
+    capture.stop.mockImplementation(async () => undefined);
   });
 
   it("keeps frame-rate microphone levels out of the reactive database", async () => {
@@ -122,6 +125,43 @@ describe("VoiceInputController", () => {
 
     expect(draft).toContain("second transcript");
     expect(sent).toEqual([draft]);
+  });
+
+  it("waits for native Opus tail packets before finishing the remote session", async () => {
+    const { database } = resources();
+    const controller = new VoiceInputController(database);
+    let session: VoiceTranscriptionSession | null = null;
+    capture.stop.mockImplementationOnce(async () => {
+      capture.onChunk?.({
+        encoding: "opus",
+        data: "framed-opus-tail",
+        sampleRate: 48_000,
+        numChannels: 1,
+        samplesPerChannel: 960,
+        level: 0.1,
+      });
+    });
+    controller.bind({
+      scope: "thread",
+      source: () => "",
+      selection: () => ({ start: 0, end: 0 }),
+      thread: null,
+      updateDraft: () => undefined,
+      send: () => undefined,
+      startRemote: async (listener) => {
+        session = remoteSession(listener, ["tail preserved"]);
+        return session;
+      },
+    });
+
+    await controller.toggle();
+    await controller.finish(false);
+
+    expect(session?.appendAudio).toHaveBeenCalledWith(expect.objectContaining({
+      encoding: "opus",
+      data: "framed-opus-tail",
+    }));
+    expect(session?.finish).toHaveBeenCalledOnce();
   });
 
   it("finishes transcription before using a custom delivery action", async () => {

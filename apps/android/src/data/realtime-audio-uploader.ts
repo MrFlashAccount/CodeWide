@@ -1,13 +1,30 @@
-export type RealtimeAudioChunk = {
+type RealtimePcmAudioChunk = {
+  encoding?: "pcm_s16le";
   data: string;
   sampleRate: number;
   numChannels: number;
   samplesPerChannel: number;
 };
 
+type RealtimeOpusAudioChunk = {
+  encoding: "opus";
+  data: string;
+  sampleRate: number;
+  numChannels: number;
+  samplesPerChannel: number;
+};
+
+export type RealtimeAudioChunk = RealtimePcmAudioChunk | RealtimeOpusAudioChunk;
+
 type QueuedBatch = {
   id: number;
   chunks: RealtimeAudioChunk[];
+};
+
+type RealtimeAudioFormat = {
+  encoding: "pcm_s16le" | "opus";
+  sampleRate: number;
+  numChannels: number;
 };
 
 export type RealtimeAudioUploaderOptions = {
@@ -19,7 +36,7 @@ export type RealtimeAudioUploaderOptions = {
 export const REALTIME_AUDIO_BATCH_DURATION_MS = 1_000;
 
 /**
- * Ordered bridge between native PCM callbacks and the remote host.
+ * Ordered bridge between native audio callbacks and the remote host.
  * Native callbacks are capture frames, not network packets: coalesce them into
  * one-second batches and keep exactly one RPC in flight so speech can never be
  * reordered by response timing. Network slowness is backpressure, not data
@@ -39,7 +56,7 @@ export class RealtimeAudioUploader {
   #accepting = true;
   #failed = false;
   #cancelled = false;
-  #format: Pick<RealtimeAudioChunk, "sampleRate" | "numChannels"> | null = null;
+  #format: RealtimeAudioFormat | null = null;
 
   constructor(options: RealtimeAudioUploaderOptions) {
     this.#send = options.send;
@@ -54,9 +71,14 @@ export class RealtimeAudioUploader {
       this.#fail("Invalid microphone audio chunk");
       return;
     }
+    const encoding = chunk.encoding ?? "pcm_s16le";
     if (this.#format === null) {
-      this.#format = { sampleRate: chunk.sampleRate, numChannels: chunk.numChannels };
-    } else if (this.#format.sampleRate !== chunk.sampleRate || this.#format.numChannels !== chunk.numChannels) {
+      this.#format = { encoding, sampleRate: chunk.sampleRate, numChannels: chunk.numChannels };
+    } else if (
+      this.#format.encoding !== encoding
+      || this.#format.sampleRate !== chunk.sampleRate
+      || this.#format.numChannels !== chunk.numChannels
+    ) {
       this.#fail("Microphone audio format changed during recording");
       return;
     }

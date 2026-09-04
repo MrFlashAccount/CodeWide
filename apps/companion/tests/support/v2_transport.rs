@@ -73,37 +73,26 @@ pub async fn start_server_with_authorization_changes(
 }
 
 pub async fn connect(url: &str) -> Result<Client, Box<dyn Error>> {
-    connect_as(url, "device-a", "threads.read,threads.write").await
+    connect_as(url, "device-a").await
 }
 
-pub async fn connect_as(
-    url: &str,
-    device_id: &str,
-    scopes: &str,
-) -> Result<Client, Box<dyn Error>> {
+pub async fn connect_as(url: &str, device_id: &str) -> Result<Client, Box<dyn Error>> {
     let mut request = url.into_client_request()?;
     request
         .headers_mut()
         .insert("x-test-device", HeaderValue::from_str(device_id)?);
-    request
-        .headers_mut()
-        .insert("x-test-scopes", HeaderValue::from_str(scopes)?);
     Ok(connect_async(request).await?.0)
 }
 
 pub async fn connect_as_expires(
     url: &str,
     device_id: &str,
-    scopes: &str,
     expires_at: u64,
 ) -> Result<Client, Box<dyn Error>> {
     let mut request = url.into_client_request()?;
     request
         .headers_mut()
         .insert("x-test-device", HeaderValue::from_str(device_id)?);
-    request
-        .headers_mut()
-        .insert("x-test-scopes", HeaderValue::from_str(scopes)?);
     request.headers_mut().insert(
         "x-test-expires-at",
         HeaderValue::from_str(&expires_at.to_string())?,
@@ -123,13 +112,6 @@ pub async fn test_upgrade(
     else {
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     };
-    let scopes = headers
-        .get("x-test-scopes")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("threads.read")
-        .split(',')
-        .map(ToOwned::to_owned)
-        .collect();
     let expires_at = headers
         .get("x-test-expires-at")
         .and_then(|value| value.to_str().ok())
@@ -140,7 +122,6 @@ pub async fn test_upgrade(
             socket,
             AuthorizationContext::Session {
                 device_id,
-                scopes,
                 expires_at,
             },
             None,
@@ -160,20 +141,12 @@ async fn test_upgrade_with_authorization_changes(
     else {
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     };
-    let scopes = headers
-        .get("x-test-scopes")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("threads.read")
-        .split(',')
-        .map(ToOwned::to_owned)
-        .collect();
     let changes = state.changes.subscribe();
     upgrade.on_upgrade(move |socket| {
         state.runtime.serve(
             socket,
             AuthorizationContext::Session {
                 device_id,
-                scopes,
                 expires_at: u64::MAX,
             },
             Some(changes),
@@ -187,7 +160,6 @@ pub fn current_thread_audience(
 ) -> Result<AudienceSelector, Box<dyn Error>> {
     let authorization = AuthorizationContext::Session {
         device_id: device_id.into(),
-        scopes: vec!["threads.read".into(), "threads.write".into()],
         expires_at: u64::MAX,
     };
     Ok(AudienceSelector::CurrentThread {

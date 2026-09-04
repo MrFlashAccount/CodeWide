@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react-native";
-import type { View } from "react-native";
+import { StyleSheet, type View } from "react-native";
 
 import { TimelineView } from "../src/v2/presentation/conversation/TimelineView";
 import { TimelineActivityContent } from "../src/v2/presentation/conversation/timelineActivityContent";
@@ -144,6 +144,43 @@ describe("V2 timeline interactions", () => {
     render(<TimelineView turns={[undated]} />);
 
     expect(screen.queryByText(/^Sent ·/u)).toBeNull();
+  });
+
+  it("renders one full-width date separator for each local calendar day", () => {
+    const first = turn("first-day-a");
+    first.createdAt = "2024-01-02T10:00:00Z";
+    const second = turn("first-day-b");
+    second.createdAt = "2024-01-02T12:00:00Z";
+    const third = turn("second-day");
+    third.createdAt = "2024-01-03T12:00:00Z";
+
+    render(<TimelineView turns={[first, second, third]} />);
+
+    const separators = screen.getAllByTestId("timeline-date-separator");
+    expect(separators).toHaveLength(2);
+    expect(StyleSheet.flatten(separators[0]?.props.style)).toMatchObject({ width: "100%" });
+  });
+
+  it("stretches a copyable code block across the agent bubble", () => {
+    render(<TimelineView turns={[turn("code", "completed", ["```ts\nconst value = 1;\n```"])]} />);
+
+    expect(StyleSheet.flatten(screen.getByTestId("codex-bubble").props.style)).toMatchObject({
+      flexShrink: 0,
+      width: "88%",
+    });
+  });
+
+  it("stretches a Markdown table across the agent bubble", () => {
+    render(
+      <TimelineView
+        turns={[turn("table", "completed", ["| First | Second |\n| --- | --- |\n| A | B |"])]}
+      />,
+    );
+
+    expect(StyleSheet.flatten(screen.getByTestId("codex-bubble").props.style)).toMatchObject({
+      flexShrink: 0,
+      width: "88%",
+    });
   });
 
   it("keeps historical image sources opaque to public Markdown loading", () => {

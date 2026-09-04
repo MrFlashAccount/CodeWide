@@ -120,6 +120,7 @@ export const typeScale = {
   bodyMedium: { fontSize: 14, lineHeight: 20, fontWeight: "400" as const },
   labelLarge: { fontSize: 14, lineHeight: 20, fontWeight: "500" as const },
   labelMedium: { fontSize: 12, lineHeight: 16, fontWeight: "500" as const },
+  caption: { fontSize: 10, lineHeight: 14, fontWeight: "500" as const },
 } as const;
 
 export const touchTarget = 48;

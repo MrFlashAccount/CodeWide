@@ -22,6 +22,7 @@ export function ShimmerText(props: ShimmerTextProps): React.JSX.Element {
   } = props;
   const resolved = StyleSheet.flatten(style) ?? {};
   const fontSize = typeof resolved.fontSize === "number" ? resolved.fontSize : 13;
+  const lineHeight = typeof resolved.lineHeight === "number" ? resolved.lineHeight : fontSize * 1.2;
   const color = resolved.color;
   const fontFamily = resolved.fontFamily ?? productFontFamily(resolved.fontWeight);
   const fontWeight = resolved.fontFamily === undefined ? "400" : resolved.fontWeight;
@@ -65,6 +66,8 @@ export function ShimmerText(props: ShimmerTextProps): React.JSX.Element {
         {...(color === undefined ? {} : { color })}
         fontFamily={fontFamily}
         fontSize={fontSize}
+        lineHeight={lineHeight}
+        numberOfLines={1}
         {...(fontWeight === undefined ? {} : { fontWeight: String(fontWeight) })}
         pointerEvents="none"
         style={StyleSheet.absoluteFill}

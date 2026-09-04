@@ -7,7 +7,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
     middleware::Next,
     response::{IntoResponse, Response},
-    routing::{any, get, patch, post},
+    routing::{any, delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -197,10 +197,7 @@ fn build_router(
         .route("/v1/sessions/challenge", post(session_challenge))
         .route("/v1/sessions", post(session_create))
         .route("/v1/devices", get(devices_list))
-        .route(
-            "/v1/devices/{device_id}",
-            patch(device_update).delete(device_revoke),
-        )
+        .route("/v1/devices/{device_id}", delete(device_revoke))
         .layer(DefaultBodyLimit::max(8 * 1024))
         .merge(crate::sync_v2::all_routes());
     let files = Router::new()
@@ -358,10 +355,7 @@ fn build_control_router(state: AppState) -> Router {
         .route("/v1/app-server", get(app_server_upgrade))
         .route("/v1/pairing/start", post(pairing_start))
         .route("/v1/devices", get(devices_list))
-        .route(
-            "/v1/devices/{device_id}",
-            patch(device_update).delete(device_revoke),
-        )
+        .route("/v1/devices/{device_id}", delete(device_revoke))
         .route("/v1/telemetry/events", get(telemetry_query))
         .route(
             "/v1/telemetry/settings",

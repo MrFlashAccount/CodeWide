@@ -43,6 +43,9 @@
       .review-empty-mark { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 3px; border: 1px solid var(--review-border-strong); border-radius: 14px; background: var(--review-panel-raised); color: var(--review-dim); font: 600 18px/1 system-ui, sans-serif; }
       .review-empty-title { color: var(--review-text); font: 650 15px/20px system-ui, sans-serif; }
       .review-empty-message { max-width: 340px; color: var(--review-muted); font: 13px/19px system-ui, sans-serif; }
+      .review-empty[data-loading="true"] .review-empty-title { color: transparent; background: linear-gradient(90deg, var(--review-muted) 20%, var(--review-text) 50%, var(--review-muted) 80%); background-size: 220% 100%; background-position: 220% 0; background-clip: text; -webkit-background-clip: text; animation: review-loading-shimmer 1.35s linear infinite; }
+      @keyframes review-loading-shimmer { to { background-position: -220% 0; } }
+      @media (prefers-reduced-motion: reduce) { .review-empty[data-loading="true"] .review-empty-title { color: var(--review-muted); background: none; animation: none; } }
       #preview::-webkit-scrollbar { width: 8px; height: 8px; }
       #preview::-webkit-scrollbar-track { background: transparent; }
       #preview::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: rgba(255,255,255,.18); background-clip: content-box; }

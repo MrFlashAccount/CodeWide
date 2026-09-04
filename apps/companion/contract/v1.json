@@ -1,6 +1,6 @@
 {
   "protocolVersion": 1,
-  "threadReadModelVersion": 1,
+  "threadReadModelVersion": 2,
   "threadProjectionPatch": {
     "field": "codewideThreadPatch",
     "version": 1,
@@ -65,32 +65,6 @@
     "/CodeWide.apk",
     "/download/*"
   ],
-  "deviceScopes": [
-    "accounts.manage",
-    "accounts.read",
-    "approvals.respond",
-    "files.download.workspace",
-    "files.upload.workspace",
-    "localhost.forward",
-    "processes.manage",
-    "shell.explicit",
-    "threads.read",
-    "threads.write",
-    "tools.call",
-    "turns.start",
-    "turns.steer"
-  ],
-  "defaultDeviceScopes": [
-    "approvals.respond",
-    "files.download.workspace",
-    "files.upload.workspace",
-    "localhost.forward",
-    "processes.manage",
-    "threads.read",
-    "threads.write",
-    "turns.start",
-    "turns.steer"
-  ],
   "rpcMethods": [
     "account/rateLimits/read",
     "app/installed",
@@ -103,6 +77,7 @@
     "command/exec/write",
     "companion/project/add",
     "companion/project/list",
+    "companion/thread/sync",
     "companion/workspace/create",
     "companion/workspace/inspect",
     "companion/workspace/read",
@@ -147,7 +122,6 @@
     "thread/realtime/appendAudio",
     "thread/realtime/start",
     "thread/realtime/stop",
-    "thread/resume",
     "thread/rollback",
     "thread/search",
     "thread/searchOccurrences",

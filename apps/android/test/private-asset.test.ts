@@ -66,6 +66,24 @@ describe("private asset transport", () => {
     });
   });
 
+  it("preserves the Android loopback capability on private file requests", async () => {
+    const request = vi.fn(async () => new Response("file", { status: 200 }));
+    vi.stubGlobal("fetch", request);
+    const capability = "a".repeat(43);
+
+    await fetchPrivateAsset(
+      { kind: "path", path: "/tmp/example.txt" },
+      async () => ({
+        baseUrl: `http://127.0.0.1:41234/${capability}`,
+        authorization: "Bearer token",
+      }),
+    );
+
+    expect(String(request.mock.calls[0]?.[0])).toBe(
+      `http://127.0.0.1:41234/${capability}/v1/files/preview?path=%2Ftmp%2Fexample.txt`,
+    );
+  });
+
   it("reads projected tool content through the same transport", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("tool output", {
       status: 200,
@@ -124,6 +142,22 @@ describe("private asset transport", () => {
     expect(getAccess.mock.calls).toEqual([[false], [true]]);
     expect(request).toHaveBeenCalledTimes(2);
     expect(String(request.mock.calls[1]?.[0])).toBe("https://companion.example/v1/files/upload?rootId=workspace&path=image.png");
+  });
+
+  it("passes absolute and parent-relative upload destinations to the host", async () => {
+    const request = vi.fn(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", request);
+    const getAccess = async () => ({
+      baseUrl: "https://companion.example",
+      authorization: "Bearer token",
+    });
+
+    await fetchScopedUpload("workspace", "/tmp/image.png", getAccess, { method: "HEAD" });
+    await fetchScopedUpload("workspace", "../image.png", getAccess, { method: "HEAD" });
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(String(request.mock.calls[0]?.[0])).toBe("https://companion.example/v1/files/upload?rootId=workspace&path=%2Ftmp%2Fimage.png");
+    expect(String(request.mock.calls[1]?.[0])).toBe("https://companion.example/v1/files/upload?rootId=workspace&path=..%2Fimage.png");
   });
 });
 

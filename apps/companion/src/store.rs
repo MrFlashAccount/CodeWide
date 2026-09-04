@@ -772,6 +772,34 @@ impl IndexStore {
         Ok(turns)
     }
 
+    /// Returns turns after an exclusive source offset in chronological order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the index cannot be read or contains a corrupt row.
+    pub fn turns_asc_after(
+        &self,
+        file_id: &[u8; 32],
+        after_offset: u64,
+        limit: usize,
+    ) -> Result<Vec<TurnRef>, StoreError> {
+        if limit == 0 || after_offset == u64::MAX {
+            return Ok(Vec::new());
+        }
+        let start = offset_key(file_id, after_offset.saturating_add(1));
+        let end = offset_key(file_id, u64::MAX);
+        let read = self.database.begin_read()?;
+        let table = read.open_table(TURNS)?;
+        table
+            .range(start.as_slice()..=end.as_slice())?
+            .take(limit)
+            .map(|entry| {
+                let (_key, value) = entry?;
+                TurnRef::decode(value.value())
+            })
+            .collect()
+    }
+
     /// Resolves one turn without scanning the thread history.
     ///
     /// # Errors

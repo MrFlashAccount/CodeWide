@@ -10,6 +10,11 @@ export const EMPTY_CHANGES_STATE: CodeReviewEmptyState = {
   message: "Nothing to show in this scope.",
 };
 
+export const LOADING_CHANGE_STATE: CodeReviewEmptyState = {
+  title: "Loading file…",
+  message: "Reading the selected file and its diff.",
+};
+
 export const EMPTY_CHANGES_TREE_STATE: CodeReviewEmptyState = {
   title: "Nothing to show",
   message: "No changed files in this scope.",

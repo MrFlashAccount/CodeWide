@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { Quickdraw, type QuickdrawRef } from "@quickdrawjs/react-native";
 import { useRef, useState, type ComponentProps } from "react";
 import { Pressable, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useEvent } from "../../../react/useEvent";
 import type { QuickdrawImageSnapshot } from "../../application/drawing/quickdrawImage";
@@ -33,7 +32,6 @@ interface DrawingWorkspaceViewProps {
 
 export function DrawingWorkspaceView(props: DrawingWorkspaceViewProps): React.JSX.Element {
   const { editing, initialSnapshot, mode, onClose, onCommit } = props;
-  const insets = useSafeAreaInsets();
   const boardRef = useRef<QuickdrawRef>(null);
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -63,7 +61,7 @@ export function DrawingWorkspaceView(props: DrawingWorkspaceViewProps): React.JS
 
   return (
     <View testID="v2-drawing-workspace" style={styles.root}>
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, spacing.sm) }]}>
+      <View style={styles.header} testID="v2-drawing-header">
         <Pressable
           accessibilityLabel="Close drawing"
           accessibilityRole="button"
@@ -111,7 +109,7 @@ export function DrawingWorkspaceView(props: DrawingWorkspaceViewProps): React.JS
           </ProductText>
         </View>
       )}
-      <View style={[styles.board, { paddingBottom: insets.bottom }]}>
+      <View style={styles.board} testID="v2-drawing-board">
         {ready ? null : (
           <View style={styles.loader} testID="v2-drawing-loading">
             <ShimmerText

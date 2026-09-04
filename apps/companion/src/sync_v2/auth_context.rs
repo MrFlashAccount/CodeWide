@@ -52,7 +52,6 @@ mod tests {
     fn session(device_id: &str) -> AuthorizationContext {
         AuthorizationContext::Session {
             device_id: device_id.into(),
-            scopes: vec!["threads.read".into()],
             expires_at: u64::MAX,
         }
     }

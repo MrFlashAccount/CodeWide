@@ -46,6 +46,18 @@ export const threadGoalSheetStyles = StyleSheet.create({
   },
   content: { gap: spacing.sm, paddingBottom: spacing.md },
   dangerButton: { backgroundColor: colors.errorContainer },
+  detailItem: {
+    backgroundColor: colors.surfaceContainer,
+    borderRadius: radii.medium,
+    flexBasis: "47%",
+    flexGrow: 1,
+    gap: spacing.optical,
+    minWidth: 112,
+    padding: spacing.sm,
+  },
+  detailLabel: { ...typeScale.caption },
+  detailValue: { ...typeScale.label },
+  details: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
   flex: { flex: 1 },
   header: { alignItems: "center", flexDirection: "row", minHeight: 64 },
   iconButton: {

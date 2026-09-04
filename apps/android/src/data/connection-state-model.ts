@@ -1,6 +1,8 @@
 import { observable, type Observable } from "@legendapp/state";
 import type { RemoteConnectionState } from "@codewide/sync-client";
 
+const MAX_CONNECTION_DIAGNOSTIC_CHARS = 8_000;
+
 export type ConnectionStateRow = {
   id: string;
   connectionId: string;
@@ -119,7 +121,7 @@ export function createConnectionStateModel(): ConnectionStateModel {
         ...current,
         state,
         rpcAvailable: rpcAvailable ?? current.rpcAvailable,
-        lastError: clearError ? null : diagnostic === undefined ? current.lastError : diagnostic.slice(0, 1_000),
+        lastError: clearError ? null : diagnostic === undefined ? current.lastError : diagnostic.slice(0, MAX_CONNECTION_DIAGNOSTIC_CHARS),
         lastErrorAt: clearError ? null : diagnostic === undefined ? current.lastErrorAt : Date.now(),
       });
     },

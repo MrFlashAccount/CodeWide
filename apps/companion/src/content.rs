@@ -304,9 +304,7 @@ impl ContentProjector {
     #[must_use]
     pub fn project_rpc_result(&self, method: &str, value: Value) -> Value {
         match method {
-            "companion/threadWindow/read" | "thread/resume" => {
-                self.project_thread_window_result(value)
-            }
+            "companion/thread/sync" => self.project_thread_sync_result(value),
             "thread/read" => project_nested(value, "thread", |thread| self.project_thread(thread)),
             "thread/turns/list" => project_data(value, |turn| self.project_turn(turn)),
             "thread/items/list" => project_data(value, |entry| {
@@ -316,37 +314,22 @@ impl ContentProjector {
         }
     }
 
-    fn project_thread_window_result(&self, mut value: Value) -> Value {
-        let projected_page_turns = value
-            .pointer_mut("/initialTurnsPage/data")
-            .and_then(Value::as_array_mut)
-            .map(|turns| {
-                for turn in turns.iter_mut() {
-                    *turn = self.project_turn(turn.take());
-                }
-                turns.clone()
-            });
-        let Some(mut page_turns) = projected_page_turns else {
-            return project_nested(value, "thread", |thread| self.project_thread(thread));
-        };
-        page_turns.reverse();
-
-        // `thread.turns` and `initialTurnsPage.data` are two views of one
-        // protocol value. Projecting them independently can leave a
-        // multi-megabyte mutable head in one view while bounding its twin in
-        // the other, duplicating the largest payload and giving persistence
-        // two different representations of the same turn. Project every turn
-        // once and install the exact same bounded values into both views.
+    fn project_thread_sync_result(&self, mut value: Value) -> Value {
         if let Some(thread) = value.get_mut("thread") {
-            let mut projected_shell = thread.take();
-            if let Some(object) = projected_shell.as_object_mut() {
-                object.insert("turns".into(), Value::Array(Vec::new()));
+            *thread = self.project_thread(thread.take());
+        }
+        if let Some(turns) = value
+            .pointer_mut("/history/turns")
+            .and_then(Value::as_array_mut)
+        {
+            for turn in turns {
+                *turn = self.project_turn(turn.take());
             }
-            projected_shell = self.project_thread(projected_shell);
-            if let Some(object) = projected_shell.as_object_mut() {
-                object.insert("turns".into(), Value::Array(page_turns));
-            }
-            *thread = projected_shell;
+        }
+        if let Some(active_turn) = value.get_mut("activeTurn")
+            && !active_turn.is_null()
+        {
+            *active_turn = self.project_turn(active_turn.take());
         }
         value
     }
@@ -1363,7 +1346,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn projects_thread_window_page_and_thread_as_one_value() {
+    async fn bounds_history_and_active_turn_in_thread_sync() {
         let directory = tempfile::tempdir().expect("temp content directory");
         let projector =
             ContentProjector::new(PrivateContentService::open(directory.path().join("cas")));
@@ -1385,29 +1368,21 @@ mod tests {
             "items": []
         });
         let projected = projector.project_rpc_result(
-            "companion/threadWindow/read",
+            "companion/thread/sync",
             json!({
-                "thread": {"id": "thread", "turns": [older.clone(), large_head.clone()]},
-                "initialTurnsPage": {
-                    "data": [large_head, older],
-                    "nextCursor": "older-page"
-                },
-                "codewideReadModelVersion": 1
+                "readModelVersion": 2,
+                "thread": {"id": "thread", "turns": []},
+                "history": {"turns": [older]},
+                "activeTurn": large_head
             }),
         );
 
-        let thread_turns = projected["thread"]["turns"]
+        let history_turns = projected["history"]["turns"]
             .as_array()
-            .expect("projected thread turns");
-        let page_turns = projected["initialTurnsPage"]["data"]
-            .as_array()
-            .expect("projected page turns");
-        assert_eq!(thread_turns.len(), 2);
-        assert_eq!(page_turns.len(), 2);
-        assert_eq!(thread_turns[0], page_turns[1]);
-        assert_eq!(thread_turns[1], page_turns[0]);
+            .expect("projected history turns");
+        assert_eq!(history_turns.len(), 1);
+        assert_eq!(projected["activeTurn"]["id"], "head");
         assert!(projected.to_string().len() < 512 * 1024);
-        assert_eq!(projected["initialTurnsPage"]["nextCursor"], "older-page");
     }
 
     #[test]
