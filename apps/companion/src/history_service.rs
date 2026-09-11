@@ -14,19 +14,20 @@ use serde_json::{Value, json};
 
 use crate::{
     catalog::{CatalogError, SessionCatalog},
-    history::{
-        HistoryError, SummaryProjectionState, project_summary_turn_from_file,
-        summary_projection_state_from_file,
-    },
+    history::{HistoryError, SummaryProjectionState, summary_projection_state_from_file},
     rollout::{
-        IndexError, backfill_rollout_prefix, current_indexed_turns_from_file, index_rollout,
-        rollout_file_id, scan_tail_turns_from_file,
+        IndexError, RolloutWitness, backfill_rollout_prefix, current_indexed_anchor_from_file,
+        current_indexed_coverage_from_file, current_indexed_turns_from_file, index_rollout,
+        index_rollout_through_anchor, rollout_file_id, rollout_witness_from_file,
+        rollout_witness_matches, scan_tail_turns_from_file, scan_turns_after_from_file,
+        scan_turns_before_from_file,
     },
     rollout_monitor::{self, RolloutChange},
     store::{IndexStore, TurnRef},
 };
 
 const CURSOR_PREFIX: &str = "codewide-history-v1:";
+const SOURCE_WITNESS_PREFIX: &str = "codewide-history-source-v1:";
 const DEFAULT_PAGE_SIZE: usize = 20;
 const MAX_PAGE_SIZE: usize = 100;
 const MAX_SUMMARY_CACHE_BYTES: usize = 64 * 1024 * 1024;
@@ -36,6 +37,7 @@ const MAX_THREAD_PREVIEW_CACHE_ENTRIES: usize = 4_096;
 
 #[derive(Clone)]
 pub struct HistoryService {
+    search: Option<crate::message_search::MessageSearch>,
     catalog: Arc<SessionCatalog>,
     store: Arc<IndexStore>,
     summaries: Arc<Mutex<SummaryCache>>,
@@ -53,8 +55,7 @@ struct IndexJobs {
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct SummaryKey {
     thread_id: String,
-    device: u64,
-    inode: u64,
+    source: RolloutWitness,
     start_offset: u64,
     end_offset: u64,
 }
@@ -77,6 +78,7 @@ struct FileRevision {
     device: u64,
     inode: u64,
     bytes: u64,
+    modified_nanos: u128,
 }
 
 struct CachedPreview {
@@ -114,8 +116,12 @@ pub enum HistoryServiceError {
     History(#[from] HistoryError),
     #[error("History cursor is invalid or expired")]
     InvalidCursor,
+    #[error("History source changed; reload the canonical history tail")]
+    HistorySourceChanged,
     #[error("threadId is required")]
     MissingThreadId,
+    #[error("thread history after request is invalid")]
+    InvalidAfterRequest,
     #[error("history worker failed: {0}")]
     Worker(String),
     #[error(
@@ -145,12 +151,15 @@ struct Cursor {
     offset: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_offset: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<RolloutWitness>,
 }
 
 impl HistoryService {
     #[must_use]
     pub fn new(catalog: Arc<SessionCatalog>, store: Arc<IndexStore>) -> Self {
         Self {
+            search: None,
             catalog,
             store,
             summaries: Arc::new(Mutex::new(SummaryCache::default())),
@@ -158,6 +167,63 @@ impl HistoryService {
             invalidation_previews: Arc::new(Mutex::new(HashMap::new())),
             index_jobs: Arc::new(Mutex::new(IndexJobs::default())),
         }
+    }
+
+    /// Attaches the independent full-text index without changing history reads.
+    #[must_use]
+    pub fn with_search(mut self, search: crate::message_search::MessageSearch) -> Self {
+        self.search = Some(search);
+        self
+    }
+
+    /// Reads neighboring indexed messages without materializing the live thread.
+    ///
+    /// # Errors
+    /// Returns an error for expired search positions or unavailable search.
+    pub async fn search_context(
+        &self,
+        params: &Value,
+    ) -> Result<Value, crate::message_search::SearchError> {
+        let search = self
+            .search
+            .as_ref()
+            .ok_or(crate::message_search::SearchError::Worker)?;
+        Ok(serde_json::to_value(
+            search
+                .context(serde_json::from_value(params.clone())?)
+                .await?,
+        )?)
+    }
+
+    /// Reads canonical turns around a full-text search position.
+    ///
+    /// # Errors
+    /// Returns stale-position, source and index failures to the caller.
+    pub async fn search_window(
+        &self,
+        params: &Value,
+    ) -> Result<Value, crate::message_search::SearchError> {
+        self.search
+            .as_ref()
+            .ok_or(crate::message_search::SearchError::Worker)?
+            .window(serde_json::from_value(params.clone())?)
+            .await
+    }
+
+    /// Searches only persisted documents, independently of App Server resume.
+    ///
+    /// # Errors
+    /// Returns an error when search is unavailable or the query is invalid.
+    pub async fn search_messages(
+        &self,
+        params: &Value,
+    ) -> Result<Value, crate::message_search::SearchError> {
+        let search = self
+            .search
+            .as_ref()
+            .ok_or(crate::message_search::SearchError::Worker)?;
+        let query = serde_json::from_value(params.clone())?;
+        Ok(serde_json::to_value(search.search(query).await?)?)
     }
 
     /// Reads only the indexed mutable-head lifecycle. This is the queue
@@ -342,6 +408,11 @@ impl HistoryService {
             } else {
                 "companion/thread/invalidated"
             };
+            let operation_kind = if state.active {
+                "threadProgress"
+            } else {
+                "threadInvalidated"
+            };
             json!({
                 "method": method,
                 "params": {
@@ -354,7 +425,7 @@ impl HistoryService {
                     "version": 1,
                     "threadId": thread_id,
                     "operation": {
-                        "kind": "threadInvalidated",
+                        "kind": operation_kind,
                         "archived": archived,
                         "summary": summary
                     }
@@ -455,6 +526,24 @@ impl HistoryService {
         limit: usize,
         active_turn_id: Option<&str>,
     ) -> Result<Value, HistoryServiceError> {
+        self.sync_thread_history_with_source(thread_id, after_turn_id, limit, active_turn_id, None)
+            .await
+    }
+
+    /// Synchronizes against an optional prior source witness. Incompatible
+    /// sources return a canonical reset instead of extending stale history.
+    ///
+    /// # Errors
+    /// Returns a source, projection, or malformed witness error.
+    pub async fn sync_thread_history_with_source(
+        &self,
+        thread_id: &str,
+        after_turn_id: Option<&str>,
+        limit: usize,
+        active_turn_id: Option<&str>,
+        source_witness: Option<&str>,
+    ) -> Result<Value, HistoryServiceError> {
+        let source = source_witness.map(decode_source_witness_text).transpose()?;
         let catalog = self.catalog.clone();
         let store = self.store.clone();
         let summaries = self.summaries.clone();
@@ -462,15 +551,57 @@ impl HistoryService {
         let after_turn_id = after_turn_id.map(str::to_owned);
         let active_turn_id = active_turn_id.map(str::to_owned);
         tokio::task::spawn_blocking(move || {
-            sync_history(
+            sync_history_with_source(
                 &catalog,
                 &store,
                 &summaries,
-                &thread_id,
-                after_turn_id.as_deref(),
-                limit,
-                active_turn_id.as_deref(),
+                HistorySyncRequest {
+                    thread_id: &thread_id,
+                    after_turn_id: after_turn_id.as_deref(),
+                    limit,
+                    active_turn_id: active_turn_id.as_deref(),
+                    source: source.as_ref(),
+                },
             )
+        })
+        .await
+        .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
+    }
+
+    /// Reads one ascending immutable history page after a stable turn id.
+    ///
+    /// Unlike thread synchronization this does not resume the thread, attach
+    /// an observer, or read the mutable App Server head.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid parameters, an expired anchor, or an
+    /// unavailable canonical rollout.
+    pub async fn turns_after(&self, params: &Value) -> Result<Value, HistoryServiceError> {
+        self.semantic_page(params, HistoryDirection::After).await
+    }
+
+    /// Reads the nearest immutable turns strictly before a semantic anchor.
+    /// Results are chronological; `hasMore` describes additional older turns.
+    ///
+    /// # Errors
+    /// Returns an error for invalid parameters, an expired anchor or source,
+    /// or an unavailable canonical rollout.
+    pub async fn turns_before(&self, params: &Value) -> Result<Value, HistoryServiceError> {
+        self.semantic_page(params, HistoryDirection::Before).await
+    }
+
+    async fn semantic_page(
+        &self,
+        params: &Value,
+        direction: HistoryDirection,
+    ) -> Result<Value, HistoryServiceError> {
+        let request = parse_semantic_request(params, direction)?;
+        let catalog = self.catalog.clone();
+        let store = self.store.clone();
+        let summaries = self.summaries.clone();
+        tokio::task::spawn_blocking(move || {
+            semantic_history_page(&catalog, &store, &summaries, &request, direction)
         })
         .await
         .map_err(|error| HistoryServiceError::Worker(error.to_string()))?
@@ -511,6 +642,54 @@ impl HistoryService {
     }
 }
 
+#[derive(Clone, Copy)]
+enum HistoryDirection {
+    After,
+    Before,
+}
+
+struct SemanticHistoryRequest {
+    thread_id: String,
+    anchor_turn_id: String,
+    limit: usize,
+    source: Option<RolloutWitness>,
+}
+
+fn parse_semantic_request(
+    params: &Value,
+    direction: HistoryDirection,
+) -> Result<SemanticHistoryRequest, HistoryServiceError> {
+    let params = params
+        .as_object()
+        .ok_or(HistoryServiceError::InvalidAfterRequest)?;
+    let thread_id = params
+        .get("threadId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or(HistoryServiceError::InvalidAfterRequest)?;
+    let anchor_key = match direction {
+        HistoryDirection::After => "afterTurnId",
+        HistoryDirection::Before => "beforeTurnId",
+    };
+    let anchor_turn_id = params
+        .get(anchor_key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or(HistoryServiceError::InvalidAfterRequest)?;
+    let limit = params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=MAX_PAGE_SIZE).contains(value))
+        .ok_or(HistoryServiceError::InvalidAfterRequest)?;
+    Ok(SemanticHistoryRequest {
+        thread_id: thread_id.to_owned(),
+        anchor_turn_id: anchor_turn_id.to_owned(),
+        limit,
+        source: decode_source_witness(params.get("sourceWitness"))?,
+    })
+}
+
 fn enrich_thread_list_result(
     catalog: &SessionCatalog,
     store: &IndexStore,
@@ -518,6 +697,14 @@ fn enrich_thread_list_result(
     previews: &Mutex<PreviewCache>,
     mut result: Value,
 ) -> Value {
+    // A list page carries catalog-wide metadata; single-thread enrichment does not.
+    if result.get("nextCursor").is_some() {
+        let summary = catalog
+            .summary()
+            .ok()
+            .and_then(|value| serde_json::to_value(value).ok());
+        result["codewideCatalogSummary"] = summary.unwrap_or(Value::Null);
+    }
     let Some(threads) = result.get_mut("data").and_then(Value::as_array_mut) else {
         return result;
     };
@@ -561,59 +748,24 @@ fn latest_thread_state(
     // only the newly durable JSONL records and makes the following read
     // independent of the total rollout size.
     index_rollout(store, &path)?;
-    let path_metadata = std::fs::metadata(&path).map_err(IndexError::from)?;
-    let path_revision = file_revision(&path_metadata);
-    if let PreviewCacheLookup::Hit(preview) = cached_preview(previews, thread_id, path_revision) {
-        return Ok(preview);
-    }
-    let rollout = File::open(&path).map_err(IndexError::from)?;
-    let metadata = rollout.metadata().map_err(IndexError::from)?;
+    let lane = store.rollout_index_lock(rollout_file_id(&path));
+    let _guard = lane
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let reader = HistoryReader::open(store, summaries, thread_id, &path)?;
+    let metadata = reader.file.metadata().map_err(IndexError::from)?;
     let revision = file_revision(&metadata);
-    if revision != path_revision
-        && let PreviewCacheLookup::Hit(preview) = cached_preview(previews, thread_id, revision)
-    {
+    if let PreviewCacheLookup::Hit(preview) = cached_preview(previews, thread_id, revision) {
         return Ok(preview);
     }
-    let file_bytes = metadata.len();
-    let (device, inode) = file_identity(&metadata);
-    let (turn, indexed_exact) = if let Some(indexed) =
-        current_indexed_turns_from_file(store, &path, &rollout, file_bytes, None, 1)?
-    {
-        (indexed.turns.into_iter().next(), true)
-    } else {
-        (
-            scan_tail_turns_from_file(&rollout, file_bytes, None, 1)?
-                .turns
-                .into_iter()
-                .next()
-                .map(|turn| TurnRef {
-                    id: turn.id,
-                    start_offset: turn.start_offset,
-                    end_offset: turn.end_offset,
-                    completed: turn.completed,
-                }),
-            false,
-        )
-    };
-    let Some(turn) = turn else {
+    let (turns, indexed_exact) = reader.latest(None, 1)?;
+    let Some(projected) = reader.project(&turns, indexed_exact)?.pop() else {
+        reader.finish()?;
         let state = LatestThreadState::default();
         remember_preview(previews, thread_id, revision, state.clone());
         return Ok(state);
     };
-    let key = SummaryKey {
-        thread_id: thread_id.to_owned(),
-        device,
-        inode,
-        start_offset: turn.start_offset,
-        end_offset: turn.end_offset,
-    };
-    let projected = if let Some(projected) = cached_summary(summaries, &key) {
-        projected
-    } else {
-        let projected = projected_turn(store, &path, &rollout, &turn, indexed_exact)?;
-        remember_summary(summaries, key, &projected);
-        projected
-    };
+    reader.finish()?;
     let preview = summary_preview(&projected);
     let active = projected.get("status").and_then(Value::as_str) == Some("inProgress");
     let state = LatestThreadState { preview, active };
@@ -711,6 +863,207 @@ fn normalize_preview(value: &str) -> String {
         .collect()
 }
 
+/// Qualifies index rows and projections against one open canonical source. The
+/// caller holds the rollout index lane for this reader's complete lifetime.
+struct HistoryReader<'a> {
+    store: &'a IndexStore,
+    summaries: &'a Mutex<SummaryCache>,
+    thread_id: &'a str,
+    path: &'a std::path::Path,
+    file: File,
+    source: RolloutWitness,
+}
+
+impl<'a> HistoryReader<'a> {
+    fn open(
+        store: &'a IndexStore,
+        summaries: &'a Mutex<SummaryCache>,
+        thread_id: &'a str,
+        path: &'a std::path::Path,
+    ) -> Result<Self, HistoryServiceError> {
+        let file = File::open(path).map_err(IndexError::from)?;
+        let file_bytes = file.metadata().map_err(IndexError::from)?.len();
+        let source = rollout_witness_from_file(&file, file_bytes)?;
+        Ok(Self {
+            store,
+            summaries,
+            thread_id,
+            path,
+            file,
+            source,
+        })
+    }
+
+    fn validate_source(&self, source: &RolloutWitness) -> Result<(), HistoryServiceError> {
+        if rollout_witness_matches(&self.file, self.source.durable_bytes, source)? {
+            Ok(())
+        } else {
+            Err(HistoryServiceError::HistorySourceChanged)
+        }
+    }
+
+    fn finish(&self) -> Result<String, HistoryServiceError> {
+        let bytes = self.file.metadata().map_err(IndexError::from)?.len();
+        if !rollout_witness_matches(&self.file, bytes, &self.source)? {
+            return Err(HistoryServiceError::HistorySourceChanged);
+        }
+        encode_source_witness(&self.source)
+    }
+
+    fn latest(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+    ) -> Result<(Vec<TurnRef>, bool), HistoryServiceError> {
+        if let Some(indexed) = current_indexed_turns_from_file(
+            self.store,
+            self.path,
+            &self.file,
+            self.source.durable_bytes,
+            before,
+            limit,
+        )? && !indexed.has_more
+        {
+            return Ok((indexed.turns, true));
+        }
+        let turns =
+            scan_tail_turns_from_file(&self.file, self.source.durable_bytes, before, limit)?
+                .turns
+                .into_iter()
+                .map(|turn| TurnRef {
+                    id: turn.id,
+                    start_offset: turn.start_offset,
+                    end_offset: turn.end_offset,
+                    completed: turn.completed,
+                })
+                .collect();
+        Ok((turns, false))
+    }
+
+    fn anchored(
+        &self,
+        anchor_id: &str,
+        direction: HistoryDirection,
+        limit: usize,
+    ) -> Result<Option<(Vec<TurnRef>, bool)>, HistoryServiceError> {
+        if let Some(anchor) = current_indexed_anchor_from_file(
+            self.store,
+            self.path,
+            &self.file,
+            self.source.durable_bytes,
+            anchor_id,
+        )? {
+            if anchor.end_offset == 0 {
+                return Ok(None);
+            }
+            return match direction {
+                HistoryDirection::After => Ok(Some((
+                    self.store.turns_asc_after(
+                        &rollout_file_id(self.path),
+                        anchor.start_offset,
+                        limit,
+                    )?,
+                    true,
+                ))),
+                HistoryDirection::Before => self.latest(Some(anchor.start_offset), limit).map(Some),
+            };
+        }
+        if current_indexed_coverage_from_file(
+            self.store,
+            self.path,
+            &self.file,
+            self.source.durable_bytes,
+        )?
+        .is_some_and(crate::store::FileState::is_complete)
+        {
+            return Ok(None);
+        }
+        let turns = match direction {
+            HistoryDirection::After => {
+                scan_turns_after_from_file(&self.file, self.source.durable_bytes, anchor_id, limit)?
+            }
+            HistoryDirection::Before => scan_turns_before_from_file(
+                &self.file,
+                self.source.durable_bytes,
+                anchor_id,
+                limit,
+            )?,
+        };
+        Ok(turns.map(|turns| (turns, false)))
+    }
+
+    fn project(&self, turns: &[TurnRef], indexed: bool) -> Result<Vec<Value>, HistoryServiceError> {
+        let mut projected = Vec::with_capacity(turns.len());
+        for turn in turns {
+            let key = SummaryKey {
+                thread_id: self.thread_id.to_owned(),
+                source: self.source.clone(),
+                start_offset: turn.start_offset,
+                end_offset: turn.end_offset,
+            };
+            let value = if let Some(value) = cached_summary(self.summaries, &key) {
+                value
+            } else {
+                let value = projected_turn(
+                    self.store,
+                    self.path,
+                    &self.file,
+                    turn,
+                    indexed,
+                    self.source.durable_bytes,
+                )?;
+                remember_summary(self.summaries, key, &value);
+                value
+            };
+            projected.push(value);
+        }
+        Ok(projected)
+    }
+}
+
+fn semantic_history_page(
+    catalog: &SessionCatalog,
+    store: &IndexStore,
+    summaries: &Mutex<SummaryCache>,
+    request: &SemanticHistoryRequest,
+    direction: HistoryDirection,
+) -> Result<Value, HistoryServiceError> {
+    let path = catalog.resolve(&request.thread_id)?;
+    let older_limit = match direction {
+        HistoryDirection::After => 0,
+        HistoryDirection::Before => request.limit.saturating_add(1),
+    };
+    index_rollout_through_anchor(store, &path, &request.anchor_turn_id, older_limit)?;
+    let lane = store.rollout_index_lock(rollout_file_id(&path));
+    let _guard = lane
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let reader = HistoryReader::open(store, summaries, &request.thread_id, &path)?;
+    if let Some(source) = &request.source {
+        reader.validate_source(source)?;
+    }
+    let Some((refs, indexed)) = reader.anchored(
+        &request.anchor_turn_id,
+        direction,
+        request.limit.saturating_add(2),
+    )?
+    else {
+        return Err(HistoryServiceError::InvalidCursor);
+    };
+    let mut sealed = refs
+        .into_iter()
+        .filter(|turn| is_immutable_turn_ref(turn, None))
+        .take(request.limit.saturating_add(1))
+        .collect::<Vec<_>>();
+    let has_more = sealed.len() > request.limit;
+    sealed.truncate(request.limit);
+    if matches!(direction, HistoryDirection::Before) {
+        sealed.reverse();
+    }
+    let turns = reader.project(&sealed, indexed)?;
+    Ok(json!({"data":turns, "hasMore":has_more, "sourceWitness":reader.finish()?}))
+}
+
 fn turns_page(
     catalog: &SessionCatalog,
     store: &IndexStore,
@@ -738,35 +1091,38 @@ fn turns_page(
     };
     let path = catalog.resolve(thread_id)?;
     index_rollout(store, &path)?;
-    let rollout = File::open(&path).map_err(IndexError::from)?;
-    let metadata = rollout.metadata().map_err(IndexError::from)?;
-    let file_bytes = metadata.len();
-    let (device, inode) = file_identity(&metadata);
+    let lane = store.rollout_index_lock(rollout_file_id(&path));
+    let _guard = lane
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let reader = HistoryReader::open(store, summaries, thread_id, &path)?;
+    if let Some(cursor) = &cursor {
+        let source = cursor
+            .source
+            .as_ref()
+            .ok_or(HistoryServiceError::InvalidCursor)?;
+        reader
+            .validate_source(source)
+            .map_err(|error| match error {
+                HistoryServiceError::HistorySourceChanged => HistoryServiceError::InvalidCursor,
+                other => other,
+            })?;
+    }
+    // The initial descending surface may publish a short indexed tail while
+    // prefix coverage warms. Semantic pages instead require a proven sentinel.
     let (discovered, indexed_exact, indexed_has_more) = if let Some(indexed) =
         current_indexed_turns_from_file(
             store,
             &path,
-            &rollout,
-            file_bytes,
+            &reader.file,
+            reader.source.durable_bytes,
             source_offset,
             scan_limit,
         )? {
         (indexed.turns, true, indexed.has_more)
     } else {
-        (
-            scan_tail_turns_from_file(&rollout, file_bytes, source_offset, scan_limit)?
-                .turns
-                .into_iter()
-                .map(|turn| TurnRef {
-                    id: turn.id,
-                    start_offset: turn.start_offset,
-                    end_offset: turn.end_offset,
-                    completed: turn.completed,
-                })
-                .collect(),
-            false,
-            false,
-        )
+        let (turns, indexed) = reader.latest(source_offset, scan_limit)?;
+        (turns, indexed, false)
     };
     let page_refs: Vec<_> = if source_offset.is_some() {
         discovered
@@ -775,28 +1131,13 @@ fn turns_page(
     };
     let has_more = indexed_has_more || page_refs.len() > limit;
     let selected = page_refs.into_iter().take(limit).collect::<Vec<_>>();
-    let mut data = Vec::with_capacity(selected.len());
-    for turn in &selected {
-        let key = SummaryKey {
-            thread_id: thread_id.to_owned(),
-            device,
-            inode,
-            start_offset: turn.start_offset,
-            end_offset: turn.end_offset,
-        };
-        let mut projected = if let Some(projected) = cached_summary(summaries, &key) {
-            projected
-        } else {
-            let projected = projected_turn(store, &path, &rollout, turn, indexed_exact)?;
-            remember_summary(summaries, key, &projected);
-            projected
-        };
+    let mut data = reader.project(&selected, indexed_exact)?;
+    for projected in &mut data {
         if not_loaded && let Some(object) = projected.as_object_mut() {
             object.insert("items".into(), json!([]));
             object.insert("itemsView".into(), Value::String("notLoaded".into()));
             object.remove("codewide");
         }
-        data.push(projected);
     }
     validate_expected_recency(params, cursor.as_ref(), thread_id, &data)?;
     validate_expected_lifecycle(params, cursor.as_ref(), thread_id, &data)?;
@@ -808,6 +1149,7 @@ fn turns_page(
                 direction: "desc".into(),
                 offset: logical_offset.saturating_add(selected.len()),
                 source_offset: Some(turn.start_offset),
+                source: Some(reader.source.clone()),
             })
         })
     } else {
@@ -816,10 +1158,12 @@ fn turns_page(
     Ok(json!({
         "data": data,
         "nextCursor": next_cursor,
-        "backwardsCursor": Value::Null
+        "backwardsCursor": Value::Null,
+        "sourceWitness": reader.finish()?,
     }))
 }
 
+#[cfg(test)]
 fn sync_history(
     catalog: &SessionCatalog,
     store: &IndexStore,
@@ -829,74 +1173,74 @@ fn sync_history(
     limit: usize,
     active_turn_id: Option<&str>,
 ) -> Result<Value, HistoryServiceError> {
+    sync_history_with_source(
+        catalog,
+        store,
+        summaries,
+        HistorySyncRequest {
+            thread_id,
+            after_turn_id,
+            limit,
+            active_turn_id,
+            source: None,
+        },
+    )
+}
+
+#[derive(Clone, Copy)]
+struct HistorySyncRequest<'a> {
+    thread_id: &'a str,
+    after_turn_id: Option<&'a str>,
+    limit: usize,
+    active_turn_id: Option<&'a str>,
+    source: Option<&'a RolloutWitness>,
+}
+
+fn sync_history_with_source(
+    catalog: &SessionCatalog,
+    store: &IndexStore,
+    summaries: &Mutex<SummaryCache>,
+    request: HistorySyncRequest<'_>,
+) -> Result<Value, HistoryServiceError> {
+    let HistorySyncRequest {
+        thread_id,
+        after_turn_id,
+        limit,
+        active_turn_id,
+        source,
+    } = request;
     let limit = limit.clamp(1, MAX_PAGE_SIZE);
     let path = catalog.resolve(thread_id)?;
-    index_rollout(store, &path)?;
-    let rollout = File::open(&path).map_err(IndexError::from)?;
-    let metadata = rollout.metadata().map_err(IndexError::from)?;
-    let file_bytes = metadata.len();
-    let (device, inode) = file_identity(&metadata);
-    let file_id = rollout_file_id(&path);
-    let scan_limit = limit.saturating_add(2);
-    let (latest_refs, latest_refs_are_indexed) = match current_indexed_turns_from_file(
-        store, &path, &rollout, file_bytes, None, scan_limit,
-    )? {
-        Some(indexed) if !indexed.has_more => (indexed.turns, true),
-        _ => (
-            scan_tail_turns_from_file(&rollout, file_bytes, None, scan_limit)?
-                .turns
-                .into_iter()
-                .map(|turn| TurnRef {
-                    id: turn.id,
-                    start_offset: turn.start_offset,
-                    end_offset: turn.end_offset,
-                    completed: turn.completed,
-                })
-                .collect(),
-            false,
-        ),
+    if let Some(anchor) = after_turn_id.filter(|id| Some(*id) != active_turn_id) {
+        index_rollout_through_anchor(store, &path, anchor, 0)?;
+    } else {
+        index_rollout(store, &path)?;
+    }
+    let lane = store.rollout_index_lock(rollout_file_id(&path));
+    let _guard = lane
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let reader = HistoryReader::open(store, summaries, thread_id, &path)?;
+    let after_turn_id = if let Some(source) = source {
+        match reader.validate_source(source) {
+            Ok(()) => after_turn_id,
+            Err(HistoryServiceError::HistorySourceChanged) => None,
+            Err(error) => return Err(error),
+        }
+    } else {
+        after_turn_id
     };
+    let scan_limit = limit.saturating_add(2);
+    let (latest_refs, latest_refs_are_indexed) = reader.latest(None, scan_limit)?;
     let head_turn_id = latest_refs
         .iter()
         .find(|turn| is_immutable_turn_ref(turn, active_turn_id))
         .map(|turn| turn.id.clone());
 
-    // The reverse index is filled from the tail in small background slices.
-    // A semantic cursor inside the bounded tail is still valid even when its
-    // lookup row has not been persisted yet; treating that cache miss as an
-    // unknown cursor would replace the client's whole resident page.
-    let indexed_anchor = after_turn_id
-        .map(|turn_id| store.turn_by_id(&file_id, turn_id))
-        .transpose()?
-        .flatten();
-    if indexed_anchor.is_none()
-        && let Some(delta) = tail_delta(&latest_refs, after_turn_id, limit, active_turn_id)
+    if let Some(anchor) = after_turn_id.filter(|id| Some(*id) != active_turn_id)
+        && let Some((discovered, indexed)) =
+            reader.anchored(anchor, HistoryDirection::After, scan_limit)?
     {
-        let turns = project_turn_refs(
-            store,
-            summaries,
-            thread_id,
-            &path,
-            &rollout,
-            device,
-            inode,
-            &delta.turns,
-            latest_refs_are_indexed,
-        )?;
-        return Ok(json!({
-            "kind": if turns.is_empty() { "current" } else { "delta" },
-            "headTurnId": head_turn_id,
-            "turns": turns,
-            "hasMore": delta.has_more,
-            "olderCursor": Value::Null,
-        }));
-    }
-
-    if let Some(anchor) = indexed_anchor
-        && is_immutable_turn_ref(&anchor, active_turn_id)
-    {
-        let discovered =
-            store.turns_asc_after(&file_id, anchor.start_offset, limit.saturating_add(2))?;
         let mut sealed = discovered
             .into_iter()
             .filter(|turn| is_immutable_turn_ref(turn, active_turn_id))
@@ -904,30 +1248,25 @@ fn sync_history(
             .collect::<Vec<_>>();
         let has_more = sealed.len() > limit;
         sealed.truncate(limit);
-        let turns = project_turn_refs(
-            store, summaries, thread_id, &path, &rollout, device, inode, &sealed, true,
-        )?;
+        let turns = reader.project(&sealed, indexed)?;
         return Ok(json!({
             "kind": if turns.is_empty() { "current" } else { "delta" },
             "headTurnId": head_turn_id,
             "turns": turns,
             "hasMore": has_more,
             "olderCursor": Value::Null,
+            "sourceWitness": reader.finish()?,
         }));
     }
 
-    let reset = latest_reset(latest_refs, thread_id, limit, active_turn_id);
-    let mut turns = project_turn_refs(
-        store,
-        summaries,
+    let reset = latest_reset(
+        latest_refs,
         thread_id,
-        &path,
-        &rollout,
-        device,
-        inode,
-        &reset.turns,
-        latest_refs_are_indexed,
-    )?;
+        limit,
+        active_turn_id,
+        &reader.source,
+    );
+    let mut turns = reader.project(&reset.turns, latest_refs_are_indexed)?;
     turns.reverse();
     Ok(json!({
         "kind": "reset",
@@ -935,6 +1274,7 @@ fn sync_history(
         "turns": turns,
         "hasMore": false,
         "olderCursor": reset.older_cursor,
+        "sourceWitness": reader.finish()?,
     }))
 }
 
@@ -948,6 +1288,7 @@ fn latest_reset(
     thread_id: &str,
     limit: usize,
     active_turn_id: Option<&str>,
+    source: &RolloutWitness,
 ) -> LatestReset {
     let mut turns = latest_refs
         .into_iter()
@@ -964,6 +1305,7 @@ fn latest_reset(
                 direction: "desc".into(),
                 offset: turns.len(),
                 source_offset: Some(turn.start_offset),
+                source: Some(source.clone()),
             })
         })
     } else {
@@ -975,72 +1317,8 @@ fn latest_reset(
     }
 }
 
-struct TailDelta {
-    turns: Vec<TurnRef>,
-    has_more: bool,
-}
-
-fn tail_delta(
-    latest_refs: &[TurnRef],
-    after_turn_id: Option<&str>,
-    limit: usize,
-    active_turn_id: Option<&str>,
-) -> Option<TailDelta> {
-    let after_turn_id = after_turn_id?;
-    let anchor_index = latest_refs
-        .iter()
-        .position(|turn| turn.id == after_turn_id)?;
-    if !is_immutable_turn_ref(&latest_refs[anchor_index], active_turn_id) {
-        return None;
-    }
-    let mut turns = latest_refs
-        .iter()
-        .take(anchor_index)
-        .filter(|turn| is_immutable_turn_ref(turn, active_turn_id))
-        .take(limit.saturating_add(1))
-        .cloned()
-        .collect::<Vec<_>>();
-    let has_more = turns.len() > limit;
-    turns.truncate(limit);
-    turns.reverse();
-    Some(TailDelta { turns, has_more })
-}
-
 fn is_immutable_turn_ref(turn: &TurnRef, active_turn_id: Option<&str>) -> bool {
     turn.end_offset > turn.start_offset && active_turn_id != Some(turn.id.as_str())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn project_turn_refs(
-    store: &IndexStore,
-    summaries: &Mutex<SummaryCache>,
-    thread_id: &str,
-    path: &std::path::Path,
-    rollout: &File,
-    device: u64,
-    inode: u64,
-    turns: &[TurnRef],
-    indexed_exact: bool,
-) -> Result<Vec<Value>, HistoryServiceError> {
-    let mut projected = Vec::with_capacity(turns.len());
-    for turn in turns {
-        let key = SummaryKey {
-            thread_id: thread_id.to_owned(),
-            device,
-            inode,
-            start_offset: turn.start_offset,
-            end_offset: turn.end_offset,
-        };
-        let value = if let Some(value) = cached_summary(summaries, &key) {
-            value
-        } else {
-            let value = projected_turn(store, path, rollout, turn, indexed_exact)?;
-            remember_summary(summaries, key, &value);
-            value
-        };
-        projected.push(value);
-    }
-    Ok(projected)
 }
 
 fn projected_turn(
@@ -1049,21 +1327,38 @@ fn projected_turn(
     rollout: &File,
     turn: &TurnRef,
     indexed_exact: bool,
+    durable_bytes: u64,
 ) -> Result<Value, HistoryServiceError> {
-    if !indexed_exact {
-        return project_summary_turn_from_file(rollout, turn).map_err(HistoryServiceError::from);
-    }
     let file_id = rollout_file_id(path);
-    if let Some(summary) = store
-        .turn_summary_state::<SummaryProjectionState>(&file_id, turn.start_offset)?
-        .filter(SummaryProjectionState::is_current)
-    {
-        return Ok(summary.project());
+    let cached = if indexed_exact {
+        store
+            .turn_summary_state::<SummaryProjectionState>(&file_id, turn.start_offset)?
+            .filter(SummaryProjectionState::is_current)
+    } else {
+        None
+    };
+    let mut summary = if let Some(summary) = cached {
+        summary
+    } else {
+        let summary = if turn.end_offset == 0 {
+            let snapshot = TurnRef {
+                id: turn.id.clone(),
+                start_offset: turn.start_offset,
+                end_offset: durable_bytes,
+                completed: false,
+            };
+            summary_projection_state_from_file(rollout, &snapshot)?
+        } else {
+            summary_projection_state_from_file(rollout, turn)?
+        };
+        if indexed_exact {
+            store.put_turn_summary_state(&file_id, turn.start_offset, &summary)?;
+        }
+        summary
+    };
+    if turn.end_offset != 0 {
+        summary.seal_interrupted();
     }
-    // Schema v6 offset indexes predate materialized summaries. Enrich only the
-    // requested turn once; never rebuild or rescan the complete session.
-    let summary = summary_projection_state_from_file(rollout, turn)?;
-    store.put_turn_summary_state(&file_id, turn.start_offset, &summary)?;
     Ok(summary.project())
 }
 
@@ -1210,6 +1505,11 @@ fn file_revision(metadata: &std::fs::Metadata) -> FileRevision {
         device,
         inode,
         bytes: metadata.len(),
+        modified_nanos: metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |duration| duration.as_nanos()),
     }
 }
 
@@ -1223,6 +1523,40 @@ fn encode_cursor(cursor: &Cursor) -> String {
     format!("{CURSOR_PREFIX}{}", URL_SAFE_NO_PAD.encode(raw))
 }
 
+fn encode_source_witness(source: &RolloutWitness) -> Result<String, HistoryServiceError> {
+    let raw = serde_json::to_vec(source).map_err(crate::store::StoreError::from)?;
+    Ok(format!(
+        "{SOURCE_WITNESS_PREFIX}{}",
+        URL_SAFE_NO_PAD.encode(raw)
+    ))
+}
+
+fn decode_source_witness_text(value: &str) -> Result<RolloutWitness, HistoryServiceError> {
+    let raw = value
+        .strip_prefix(SOURCE_WITNESS_PREFIX)
+        .filter(|value| value.len() <= 4_096)
+        .ok_or(HistoryServiceError::InvalidAfterRequest)?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(raw)
+        .map_err(|_| HistoryServiceError::InvalidAfterRequest)?;
+    serde_json::from_slice(&decoded).map_err(|_| HistoryServiceError::InvalidAfterRequest)
+}
+
+fn decode_source_witness(
+    value: Option<&Value>,
+) -> Result<Option<RolloutWitness>, HistoryServiceError> {
+    value
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            decode_source_witness_text(
+                value
+                    .as_str()
+                    .ok_or(HistoryServiceError::InvalidAfterRequest)?,
+            )
+        })
+        .transpose()
+}
+
 fn decode_cursor(
     value: Option<&Value>,
     thread_id: &str,
@@ -1233,13 +1567,19 @@ fn decode_cursor(
     let raw = value
         .as_str()
         .and_then(|value| value.strip_prefix(CURSOR_PREFIX))
+        .filter(|value| value.len() <= 4_096)
         .ok_or(HistoryServiceError::InvalidCursor)?;
     let decoded = URL_SAFE_NO_PAD
         .decode(raw)
         .map_err(|_| HistoryServiceError::InvalidCursor)?;
     let cursor: Cursor =
         serde_json::from_slice(&decoded).map_err(|_| HistoryServiceError::InvalidCursor)?;
-    if cursor.kind != "turns" || cursor.thread_id != thread_id || cursor.direction != "desc" {
+    if cursor.kind != "turns"
+        || cursor.thread_id != thread_id
+        || cursor.direction != "desc"
+        || cursor.source_offset.is_none()
+        || cursor.source.is_none()
+    {
         return Err(HistoryServiceError::InvalidCursor);
     }
     Ok(Some(cursor))
@@ -1265,6 +1605,35 @@ mod tests {
             Arc::new(SessionCatalog::scan(root)),
             Arc::new(IndexStore::open(root.join("history-index.redb"))?),
         ))
+    }
+
+    #[tokio::test]
+    async fn list_page_reports_archive_total_without_loading_archived_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let db = rusqlite::Connection::open(directory.path().join("state_5.sqlite"))?;
+        db.execute_batch("CREATE TABLE threads (source TEXT NOT NULL, archived INTEGER NOT NULL); INSERT INTO threads VALUES ('cli', 1), ('vscode', 1), ('cli', 0)")?;
+        let service = history_service(directory.path())?;
+        let page = service
+            .enrich_thread_list(json!({"data": [], "nextCursor": null}))
+            .await;
+        assert_eq!(page["data"], json!([]));
+        assert_eq!(page["codewideCatalogSummary"]["archivedCount"], 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unavailable_archive_summary_does_not_fail_the_list_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let service = history_service(directory.path())?;
+        let page = service
+            .enrich_thread_list(json!({"data": [], "nextCursor": "continuation"}))
+            .await;
+        assert_eq!(page["data"], json!([]));
+        assert_eq!(page["nextCursor"], "continuation");
+        assert_eq!(page["codewideCatalogSummary"], json!(null));
+        Ok(())
     }
 
     fn write_completed_turns(path: &Path, count: usize) -> Result<(), Box<dyn std::error::Error>> {
@@ -1308,6 +1677,52 @@ mod tests {
         assert_eq!(result["headTurnId"], "turn-44");
         assert_eq!(result["hasMore"], false);
         assert!(result["olderCursor"].is_string());
+        Ok(())
+    }
+
+    #[test]
+    fn sync_follows_rollout_authority_after_index_was_warmed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let old_path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        write_completed_turns(&old_path, 2)?;
+        let catalog = SessionCatalog::scan(directory.path());
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        let summaries = Mutex::new(SummaryCache::default());
+        let first = sync_history(&catalog, &store, &summaries, THREAD_ID, None, 36, None)?;
+        assert_eq!(first["headTurnId"], "turn-1");
+
+        let new_path = sessions.join(format!(
+            "rollout-2026-08-17T00-01-00-{THREAD_ID}_writer.jsonl"
+        ));
+        write_completed_turns(&new_path, 5)?;
+        let db = rusqlite::Connection::open(directory.path().join("state_5.sqlite"))?;
+        db.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)")?;
+        db.execute(
+            "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
+            rusqlite::params![THREAD_ID, new_path.to_string_lossy()],
+        )?;
+
+        let updated = sync_history(
+            &catalog,
+            &store,
+            &summaries,
+            THREAD_ID,
+            Some("turn-1"),
+            36,
+            None,
+        )?;
+        assert_eq!(updated["kind"], "delta");
+        assert_eq!(updated["headTurnId"], "turn-4");
+        let ids: Vec<_> = updated["turns"]
+            .as_array()
+            .ok_or("missing turns")?
+            .iter()
+            .map(|turn| turn["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec![Some("turn-2"), Some("turn-3"), Some("turn-4")]);
         Ok(())
     }
 
@@ -1557,6 +1972,349 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn turns_after_pages_forward_without_exposing_the_mutable_head()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let sessions = directory.path().join("sessions/2026/08/17");
+        std::fs::create_dir_all(&sessions)?;
+        let path = sessions.join(format!("rollout-2026-08-17T00-00-00-{THREAD_ID}.jsonl"));
+        write_completed_turns(&path, 6)?;
+        let mut rollout = std::fs::OpenOptions::new().append(true).open(&path)?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\",\"turn_id\":\"active-turn\"}}}}"
+        )?;
+        writeln!(
+            rollout,
+            "{{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"active question\"}}}}"
+        )?;
+        rollout.sync_all()?;
+        let service = history_service(directory.path())?;
+
+        let first = service
+            .turns_after(&json!({
+                "threadId": THREAD_ID,
+                "afterTurnId": "turn-1",
+                "limit": 3
+            }))
+            .await?;
+        assert_eq!(
+            first["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|turn| turn.get("id").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>(),
+            ["turn-2", "turn-3", "turn-4"]
+        );
+        assert_eq!(first["hasMore"], true);
+
+        let second = service
+            .turns_after(&json!({
+                "threadId": THREAD_ID,
+                "afterTurnId": "turn-4",
+                "limit": 3
+            }))
+            .await?;
+        assert_eq!(
+            second["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|turn| turn.get("id").and_then(serde_json::Value::as_str))
+                .collect::<Vec<_>>(),
+            ["turn-5"]
+        );
+        assert_eq!(second["hasMore"], false);
+
+        assert!(matches!(
+            service
+                .turns_after(&json!({
+                    "threadId": THREAD_ID,
+                    "afterTurnId": "missing",
+                    "limit": 3
+                }))
+                .await,
+            Err(HistoryServiceError::InvalidCursor)
+        ));
+        Ok(())
+    }
+
+    fn page_ids(page: &serde_json::Value) -> Vec<&str> {
+        page["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|turn| turn["id"].as_str())
+            .collect()
+    }
+
+    fn fixture_path(root: &Path) -> std::io::Result<std::path::PathBuf> {
+        let sessions = root.join("sessions");
+        std::fs::create_dir_all(&sessions)?;
+        Ok(sessions.join(format!("rollout-2026-09-09T00-00-00-{THREAD_ID}.jsonl")))
+    }
+
+    fn append_events(path: &Path, events: &[serde_json::Value]) -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+        for payload in events {
+            writeln!(file, "{}", json!({"type":"event_msg", "payload":payload}))?;
+        }
+        file.sync_all()
+    }
+
+    #[tokio::test]
+    async fn implicit_interruption_does_not_hide_later_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 1)?;
+        append_events(
+            &path,
+            &[
+                json!({"type":"task_started", "turn_id":"interrupted"}),
+                json!({"type":"user_message", "message":"unfinished"}),
+                json!({"type":"task_started", "turn_id":"later"}),
+                json!({"type":"task_complete", "turn_id":"later"}),
+            ],
+        )?;
+        let service = history_service(directory.path())?;
+        let page = service
+            .turns_after(&json!({
+                "threadId": THREAD_ID, "afterTurnId":"turn-0", "limit":2
+            }))
+            .await?;
+        assert_eq!(page_ids(&page), ["interrupted", "later"]);
+        assert_eq!(page["data"][0]["status"], "interrupted");
+        assert_eq!(page["data"][1]["status"], "completed");
+        assert_eq!(page["hasMore"], false);
+        drop(service);
+        let reopened = history_service(directory.path())?;
+        assert_eq!(
+            reopened
+                .turns_after(&json!({
+                    "threadId": THREAD_ID, "afterTurnId":"turn-0", "limit":2
+                }))
+                .await?,
+            page
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rollback_removes_turns_and_expires_their_semantic_anchors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 2)?;
+        let service = history_service(directory.path())?;
+        service
+            .sync_thread_history(THREAD_ID, None, 10, None)
+            .await?;
+        append_events(
+            &path,
+            &[
+                json!({"type":"thread_rolled_back", "num_turns":1}),
+                json!({"type":"task_started", "turn_id":"replacement"}),
+                json!({"type":"task_complete", "turn_id":"replacement"}),
+            ],
+        )?;
+        let page = service
+            .turns_after(&json!({
+                "threadId": THREAD_ID, "afterTurnId":"turn-0", "limit":10
+            }))
+            .await?;
+        assert_eq!(page_ids(&page), ["replacement"]);
+        assert_eq!(page["hasMore"], false);
+        assert!(matches!(
+            service
+                .turns_after(&json!({
+                    "threadId": THREAD_ID, "afterTurnId":"turn-1", "limit":10
+                }))
+                .await,
+            Err(HistoryServiceError::InvalidCursor)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn semantic_before_returns_nearest_older_sealed_turns()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 7)?;
+        let service = history_service(directory.path())?;
+        let first = service
+            .turns_before(&json!({
+                "threadId": THREAD_ID, "beforeTurnId":"turn-5", "limit":3
+            }))
+            .await?;
+        assert_eq!(page_ids(&first), ["turn-2", "turn-3", "turn-4"]);
+        assert_eq!(first["hasMore"], true);
+        let last = service
+            .turns_before(&json!({
+                "threadId": THREAD_ID, "beforeTurnId":"turn-2", "limit":3
+            }))
+            .await?;
+        assert_eq!(page_ids(&last), ["turn-0", "turn-1"]);
+        assert_eq!(last["hasMore"], false);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn same_span_rewrite_invalidates_summary_and_byte_cursor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 3)?;
+        let service = history_service(directory.path())?;
+        let params = json!({"threadId": THREAD_ID, "limit":1});
+        let first = service
+            .try_turns_page("thread/turns/list", &params)
+            .await
+            .ok_or("missing history handler")??;
+        let original = std::fs::read_to_string(&path)?;
+        // Same inode, IDs, and byte spans: only the canonical message changes.
+        std::fs::write(&path, original.replace("answer-", "edited-"))?;
+        let updated = service
+            .try_turns_page("thread/turns/list", &params)
+            .await
+            .ok_or("missing history handler")??;
+        assert_eq!(updated["data"][0]["items"][0]["text"], "edited-2");
+        assert!(matches!(
+            service
+                .try_turns_page(
+                    "thread/turns/list",
+                    &json!({
+                        "threadId":THREAD_ID, "limit":1, "cursor":first["nextCursor"]
+                    })
+                )
+                .await
+                .ok_or("missing history handler")?,
+            Err(HistoryServiceError::InvalidCursor)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cold_semantic_pages_recover_old_anchors_and_count_only_sealed_sentinels()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 150)?;
+        let turns = std::fs::read(&path)?;
+        let mut file = std::fs::File::create(&path)?;
+        writeln!(
+            file,
+            "{}",
+            json!({"type":"compacted", "payload":{"opaque":"x".repeat(9 * 1024 * 1024)}})
+        )?;
+        file.write_all(&turns)?;
+        file.sync_all()?;
+        append_events(&path, &[json!({"type":"task_started", "turn_id":"active"})])?;
+        let service = history_service(directory.path())?;
+        let forward = service
+            .turns_after(&json!({
+                "threadId":THREAD_ID, "afterTurnId":"turn-20", "limit":3
+            }))
+            .await?;
+        assert_eq!(page_ids(&forward), ["turn-21", "turn-22", "turn-23"]);
+        assert_eq!(forward["hasMore"], true);
+        let backward = service
+            .turns_before(&json!({
+                "threadId":THREAD_ID, "beforeTurnId":"turn-8", "limit":3
+            }))
+            .await?;
+        assert_eq!(page_ids(&backward), ["turn-5", "turn-6", "turn-7"]);
+        assert_eq!(backward["hasMore"], true);
+        let end = service
+            .turns_after(&json!({
+                "threadId":THREAD_ID, "afterTurnId":"turn-146", "limit":3
+            }))
+            .await?;
+        assert_eq!(page_ids(&end), ["turn-147", "turn-148", "turn-149"]);
+        assert_eq!(end["hasMore"], false);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_witness_accepts_append_but_rollback_requires_reset()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 2)?;
+        let service = history_service(directory.path())?;
+        let first = service
+            .sync_thread_history(THREAD_ID, None, 3, None)
+            .await?;
+        let witness = first["sourceWitness"]
+            .as_str()
+            .ok_or("missing source witness")?;
+        append_events(
+            &path,
+            &[
+                json!({"type":"task_started", "turn_id":"appended"}),
+                json!({"type":"task_complete", "turn_id":"appended"}),
+            ],
+        )?;
+        let page = service
+            .turns_after(&json!({
+                "threadId":THREAD_ID, "afterTurnId":"turn-1", "limit":3, "sourceWitness":witness
+            }))
+            .await?;
+        assert_eq!(page_ids(&page), ["appended"]);
+        append_events(
+            &path,
+            &[json!({"type":"thread_rolled_back", "num_turns":1})],
+        )?;
+        assert!(matches!(
+            service
+                .turns_after(&json!({
+                    "threadId":THREAD_ID, "afterTurnId":"turn-1", "limit":3, "sourceWitness":witness
+                }))
+                .await,
+            Err(HistoryServiceError::HistorySourceChanged)
+        ));
+        let reset = service
+            .sync_thread_history_with_source(THREAD_ID, Some("turn-1"), 3, None, Some(witness))
+            .await?;
+        assert_eq!(reset["kind"], "reset");
+        assert_eq!(reset["headTurnId"], "turn-1");
+        assert_eq!(reset["turns"].as_array().map(Vec::len), Some(2));
+        Ok(())
+    }
+
+    #[test]
+    fn append_between_index_advance_and_source_open_never_uses_stale_forward_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = fixture_path(directory.path())?;
+        write_completed_turns(&path, 1)?;
+        let store = IndexStore::open(directory.path().join("history-index.redb"))?;
+        crate::rollout::index_rollout(&store, &path)?;
+        append_events(
+            &path,
+            &[
+                json!({"type":"task_started", "turn_id":"appended"}),
+                json!({"type":"task_complete", "turn_id":"appended", "last_agent_message":"new answer"}),
+            ],
+        )?;
+        let summaries = Mutex::new(SummaryCache::default());
+        let lane = store.rollout_index_lock(rollout_file_id(&path));
+        let _guard = lane.lock().map_err(|_| "index lane poisoned")?;
+        let reader = super::HistoryReader::open(&store, &summaries, THREAD_ID, &path)?;
+        let (turns, indexed) = reader
+            .anchored("turn-0", super::HistoryDirection::After, 2)?
+            .ok_or("surviving anchor was lost")?;
+        let projected = reader.project(&turns, indexed)?;
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0]["id"], "appended");
+        assert_eq!(projected[0]["items"][0]["text"], "new answer");
+        reader.finish()?;
+        Ok(())
+    }
+
     #[test]
     fn cold_large_page_returns_the_indexed_tail_with_an_older_cursor()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1743,6 +2501,10 @@ mod tests {
         assert_eq!(event["params"]["threadId"], THREAD_ID);
         assert_eq!(event["params"]["turnActive"], true);
         assert_eq!(
+            event["codewideThreadPatch"]["operation"]["kind"],
+            "threadProgress"
+        );
+        assert_eq!(
             event["codewideThreadPatch"]["operation"]["summary"]["previewText"],
             "External answer"
         );
@@ -1766,6 +2528,10 @@ mod tests {
         assert!(!service.thread_active(THREAD_ID).await?);
         assert_eq!(completed["method"], "companion/thread/invalidated");
         assert_eq!(completed["params"]["turnActive"], false);
+        assert_eq!(
+            completed["codewideThreadPatch"]["operation"]["kind"],
+            "threadInvalidated"
+        );
         Ok(())
     }
 

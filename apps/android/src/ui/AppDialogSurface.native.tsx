@@ -1,8 +1,10 @@
+import { spacing, controlSize } from "../theme";
 import { Button } from "heroui-native/button";
 import { Dialog } from "heroui-native/dialog";
 import { StyleSheet, View } from "react-native";
 
 import type { AppDialogSurfaceProps } from "./AppDialog.types";
+import { CopyErrorButton } from "./CopyErrorButton";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
 export function AppDialogSurface({ isOpen, request, onDismiss, onAction }: AppDialogSurfaceProps) {
@@ -22,6 +24,7 @@ export function AppDialogSurface({ isOpen, request, onDismiss, onAction }: AppDi
               )}
             </View>
             <View style={styles.actions}>
+              {request.diagnostic !== undefined && <CopyErrorButton key={request.diagnostic} report={request.diagnostic} />}
               {request.actions.map((action, index) => (
                 <Button
                   key={`${action.text}-${index}`}
@@ -52,24 +55,24 @@ const styles = StyleSheet.create({
     inset: 0,
     alignItems: "center",
     justifyContent: "center",
-    padding: 16,
+    padding: spacing.md,
   },
   content: {
     alignSelf: "center",
-    gap: 22,
+    gap: spacing.lg,
     maxWidth: 420,
     width: "92%",
   },
   copy: {
-    gap: 7,
-    paddingRight: 4,
+    gap: spacing.xs,
+    paddingRight: spacing.xxs,
   },
   actions: {
     flexDirection: "row",
     justifyContent: "flex-end",
-    gap: 10,
+    gap: spacing.inputInset,
   },
-  button: {
-    minWidth: 88,
+  button: { minHeight: controlSize.regular,
+    minWidth: controlSize.regular,
   },
 });

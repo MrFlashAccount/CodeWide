@@ -73,7 +73,7 @@ async fn dictation_stays_local_retries_and_replays_completed_result()
         Arc::new(SessionCatalog::scan(directory.path())),
         store.clone(),
     );
-    let sync = SyncHub::new(
+    let sync = SyncHub::with_mutations(
         UpstreamHandle::spawn(directory.path().join("missing.sock")),
         store.clone(),
         history,

@@ -1,9 +1,11 @@
 module.exports = {
   preset: "@react-native/jest-preset",
+  // WHY: Worklets supplies a Node resolver for its non-native runtime; HeroUI imports it through animation helpers.
+  resolver: "react-native-worklets/jest/resolver.js",
   rootDir: ".",
   setupFiles: ["react-native-gesture-handler/jestSetup.js"],
   setupFilesAfterEnv: ["<rootDir>/test/setup-v2-render-console.cjs"],
-  testMatch: ["<rootDir>/test/**/*.render.test.tsx"],
+  testMatch: ["<rootDir>/test/**/*.render.test.tsx", "<rootDir>/test/compose-named-icon.native.test.tsx", "<rootDir>/test/app-dialog-window.native.test.tsx", "<rootDir>/test/settings-sheet.native.test.tsx", "<rootDir>/test/app-list-row.native.test.tsx", "<rootDir>/test/app-popover.native.test.tsx", "<rootDir>/test/codewide-menu.native.test.tsx", "<rootDir>/test/image-preview.native.test.tsx", "<rootDir>/test/content-review-keyboard-dock.native.test.tsx", "<rootDir>/test/composer-send-gesture.native.test.tsx", "<rootDir>/test/composer-mention-input.native.test.tsx", "<rootDir>/test/ui-generation-control.native.test.tsx", "<rootDir>/test/project-directory.native.test.tsx", "<rootDir>/test/wave-text.native.test.tsx", "<rootDir>/test/skills-picker.native.test.tsx", "<rootDir>/test/skill-picker-row.native.test.tsx"],
   moduleNameMapper: {
     "^@expo/vector-icons$": "<rootDir>/test/mocks/ExpoVectorIcons.tsx",
     "^@expo/vector-icons/.*$": "<rootDir>/test/mocks/ExpoVectorIcons.tsx",
@@ -23,17 +25,20 @@ module.exports = {
     "^.*/V2Application$": "<rootDir>/test/mocks/V2Application.ts",
     "^.*/rendering/RichMarkdown$": "<rootDir>/test/mocks/RichMarkdown.tsx",
     "^.*/surfaces/PresentationSheetView$": "<rootDir>/test/mocks/PresentationSheetView.tsx",
-    "^.*/ui/ActionMenu$": "<rootDir>/test/mocks/ActionMenu.tsx",
+    "^(?:.*/ui/|\\./)ActionMenu$": "<rootDir>/test/mocks/ActionMenu.tsx",
     "^.*/ui/AppDialog$": "<rootDir>/test/mocks/AppDialog.ts",
     "^.*/ui/MessageActionMenu$": "<rootDir>/test/mocks/MessageActionMenu.tsx",
     "^.*/ui/RecoverableRenderBoundary$": "<rootDir>/test/mocks/RecoverableRenderBoundary.tsx",
     "^.*/data/native-port-forwarding-store$": "<rootDir>/test/mocks/nativePortForwardingStore.ts",
   },
   transform: {
+    // WHY: Compose Icon consumes XML drawables as Metro assets, not executable modules.
+    "^.+\\.xml$": "@react-native/jest-preset/jest/assetFileTransformer.js",
     "^.+\\.(js|ts|tsx)$": [
       "babel-jest",
       { babelrc: false, configFile: false, presets: ["module:@react-native/babel-preset"] },
     ],
   },
-  transformIgnorePatterns: ["node_modules/(?!.*(?:react-native|@react-native|expo|@expo))"],
+  // WHY: Private icon resources use the real ESM-only hash implementation in native adapter tests.
+  transformIgnorePatterns: ["node_modules/(?!.*(?:react-native|@react-native|expo|@expo|heroui-native|uniwind|@noble[+/]hashes))"],
 };

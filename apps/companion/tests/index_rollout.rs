@@ -7,7 +7,7 @@ use codewide_companion::{
     },
     store::IndexStore,
 };
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTableMetadata, TableDefinition};
 use serde_json::Value;
 
 #[test]
@@ -75,6 +75,11 @@ fn indexes_turn_boundaries_and_supports_descending_pages() -> Result<(), Box<dyn
     assert!(latest[1].completed);
     let older = store.turns_desc(&file_id, Some(latest[1].start_offset), 2)?;
     assert_eq!(older[0].id, "turn-1");
+    assert!(
+        store
+            .turns_desc(&file_id, Some(older[0].start_offset), 2)?
+            .is_empty()
+    );
     assert_eq!(
         store.turn_by_id(&file_id, "turn-2")?,
         Some(latest[1].clone())
@@ -321,6 +326,55 @@ fn aborted_turn_is_closed_at_its_terminal_record() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn logic_upgrade_does_not_materialize_row_deletion_copies() -> Result<(), Box<dyn std::error::Error>>
+{
+    const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
+    const RECORDS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_records");
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("state.redb");
+    let queued_command = {
+        let store = IndexStore::open(&path)?;
+        store.append_replay_batch(&[br#"{"method":"kept"}"#.to_vec()], 8, 1024)?;
+        store.outbox_put_turn_start(
+            "command-1",
+            "thread-1",
+            serde_json::json!({
+                "threadId": "thread-1", "clientUserMessageId": "command-1",
+                "input": [{"type": "text", "text": "queued"}]
+            }),
+            None,
+        )?
+    };
+    {
+        let database = Database::create(&path)?;
+        let write = database.begin_write()?;
+        write.open_table(META)?.remove("rollout_logic_version")?;
+        {
+            let mut records = write.open_table(RECORDS)?;
+            let payload = [7_u8; 128];
+            for ordinal in 0_u64..20_000 {
+                records.insert(ordinal.to_be_bytes().as_slice(), payload.as_slice())?;
+            }
+        }
+        write.commit()?;
+    }
+    let before = fs::metadata(&path)?.len();
+    {
+        let migrated = IndexStore::open(&path)?;
+        assert_eq!(migrated.replay_after(Some(0))?.entries.len(), 1);
+        assert_eq!(migrated.outbox_get("command-1")?, Some(queued_command));
+    }
+    // Migration resource contract: clearing a derived index must not require
+    // space proportional to per-row B-tree deletion copies. Allow database
+    // allocation slack, but not unbounded amplification of the existing file.
+    assert!(fs::metadata(&path)?.len() <= before * 2);
+    let database = Database::create(&path)?;
+    let read = database.begin_read()?;
+    assert!(read.open_table(RECORDS)?.is_empty()?);
+    Ok(())
+}
+
+#[test]
 fn schema_upgrade_rebuilds_only_derived_rollout_tables() -> Result<(), Box<dyn std::error::Error>> {
     const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 
@@ -347,6 +401,175 @@ fn schema_upgrade_rebuilds_only_derived_rollout_tables() -> Result<(), Box<dyn s
     assert_eq!(migrated.schema_version(), 7);
     assert_eq!(migrated.turn_count()?, 0);
     assert_eq!(migrated.replay_after(Some(0))?.entries.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn cold_and_warm_history_exclude_rolled_back_turns_after_reopen_and_backfill()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("rollout.jsonl");
+    let state_path = directory.path().join("index.redb");
+    let mut writer = fs::File::create(&path)?;
+    write_turn(&mut writer, "survivor", true)?;
+    writeln!(
+        writer,
+        "{{\"type\":\"compacted\",\"payload\":{{\"padding\":\"{}\"}}}}",
+        "x".repeat(9 * 1024 * 1024)
+    )?;
+    write_turn(&mut writer, "removed-old", true)?;
+    write_turn(&mut writer, "removed-new", true)?;
+    writer.sync_all()?;
+    let file_id = rollout_file_id(&path);
+    {
+        let store = IndexStore::open(&state_path)?;
+        assert!(!index_rollout(&store, &path)?.complete);
+        writeln!(
+            writer,
+            r#"{{"type":"event_msg","payload":{{"type":"thread_rolled_back","num_turns":2}}}}"#
+        )?;
+        write_turn(&mut writer, "replacement", true)?;
+        writer.sync_all()?;
+        index_rollout(&store, &path)?;
+        assert!(store.turn_by_id(&file_id, "removed-new")?.is_none());
+    }
+    let cold = scan_tail_turns(&path, None, 10)?;
+    assert_eq!(
+        cold.turns
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>(),
+        ["replacement", "survivor"]
+    );
+    let older = scan_tail_turns(&path, Some(cold.turns[0].start_offset), 10)?;
+    assert_eq!(
+        older
+            .turns
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>(),
+        ["survivor"]
+    );
+    let store = IndexStore::open(&state_path)?;
+    index_rollout_fully(&store, &path)?;
+    assert_eq!(
+        store
+            .turns_desc(&file_id, None, 10)?
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>(),
+        ["replacement", "survivor"]
+    );
+    assert!(store.turn_by_id(&file_id, "removed-old")?.is_none());
+    assert!(store.turn_by_id(&file_id, "removed-new")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn cold_and_indexed_turn_lifecycles_agree() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("rollout.jsonl");
+    let mut writer = fs::File::create(&path)?;
+    write_turn(&mut writer, "completed", true)?;
+    let completed_end = writer.metadata()?.len();
+    write_turn(&mut writer, "implicit-interruption", false)?;
+    write_turn(&mut writer, "aborted", false)?;
+    writeln!(
+        writer,
+        r#"{{"type":"event_msg","payload":{{"type":"turn_aborted","turn_id":"aborted"}}}}"#
+    )?;
+    let aborted_end = writer.metadata()?.len();
+    write_turn(&mut writer, "open", false)?;
+    writer.sync_all()?;
+    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    index_rollout(&store, &path)?;
+    let warm = store.turns_desc(&rollout_file_id(&path), None, 10)?;
+    let cold = scan_tail_turns(&path, None, 10)?;
+    assert_eq!(warm.len(), cold.turns.len());
+    for (indexed, scanned) in warm.iter().zip(&cold.turns) {
+        assert_eq!(indexed.id, scanned.id);
+        assert_eq!(indexed.end_offset, scanned.end_offset);
+        assert_eq!(indexed.completed, scanned.completed);
+    }
+    assert_eq!(warm[0].end_offset, 0);
+    assert_eq!(warm[1].end_offset, aborted_end);
+    assert!(!warm[1].completed);
+    assert_eq!(warm[2].end_offset, warm[1].start_offset);
+    assert_eq!(warm[3].end_offset, completed_end);
+    assert!(warm[3].completed);
+    Ok(())
+}
+
+#[test]
+fn nested_rollbacks_count_only_surviving_turns() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("rollout.jsonl");
+    let mut writer = fs::File::create(&path)?;
+    write_turn(&mut writer, "keep", true)?;
+    write_turn(&mut writer, "remove-first", true)?;
+    writeln!(
+        writer,
+        r#"{{"type":"event_msg","payload":{{"type":"thread_rolled_back","num_turns":1}}}}"#
+    )?;
+    write_turn(&mut writer, "remove-second", true)?;
+    writeln!(
+        writer,
+        r#"{{"type":"event_msg","payload":{{"type":"thread_rolled_back","num_turns":1}}}}"#
+    )?;
+    write_turn(&mut writer, "new", true)?;
+    writer.sync_all()?;
+    let cold = scan_tail_turns(&path, None, 10)?;
+    assert_eq!(
+        cold.turns
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>(),
+        ["new", "keep"]
+    );
+    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    index_rollout_fully(&store, &path)?;
+    assert_eq!(
+        store
+            .turns_desc(&rollout_file_id(&path), None, 10)?
+            .iter()
+            .map(|turn| turn.id.as_str())
+            .collect::<Vec<_>>(),
+        ["new", "keep"]
+    );
+    Ok(())
+}
+
+#[test]
+fn equal_length_rewrite_outside_checkpoint_tail_rebuilds_the_index()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::io::{Seek, SeekFrom};
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("rollout.jsonl");
+    let mut writer = fs::File::create(&path)?;
+    write_turn(&mut writer, "old", true)?;
+    writeln!(
+        writer,
+        "{{\"type\":\"compacted\",\"payload\":{{\"padding\":\"{}\"}}}}",
+        "x".repeat(8192)
+    )?;
+    write_turn(&mut writer, "tail", true)?;
+    writer.sync_all()?;
+    let previous_time = writer.metadata()?.modified()?;
+    let store = IndexStore::open(directory.path().join("index.redb"))?;
+    index_rollout(&store, &path)?;
+    let length = writer.metadata()?.len();
+    writer.seek(SeekFrom::Start(0))?;
+    write_turn(&mut writer, "new", true)?;
+    writer.set_times(
+        fs::FileTimes::new().set_modified(previous_time + std::time::Duration::from_secs(1)),
+    )?;
+    writer.sync_all()?;
+    assert_eq!(writer.metadata()?.len(), length);
+    index_rollout(&store, &path)?;
+    let file_id = rollout_file_id(&path);
+    assert!(store.turn_by_id(&file_id, "old")?.is_none());
+    assert!(store.turn_by_id(&file_id, "new")?.is_some());
+    assert!(store.turn_by_id(&file_id, "tail")?.is_some());
     Ok(())
 }
 

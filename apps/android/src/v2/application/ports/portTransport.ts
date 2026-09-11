@@ -6,6 +6,7 @@ export type PortForwardingPreference = "automatic" | "included" | "excluded";
 
 export type PortForwardingStatus = "stopped" | "connecting" | "live" | "unavailable" | "error";
 
+/** A current native forward, not durable port inventory. Only its user policy persists. */
 export interface PortForwardingProfile {
   enabled: boolean;
   error: string | null;
@@ -43,8 +44,10 @@ export interface PortTransport {
   ): Promise<V2TunnelCreateResponse>;
   createProfileId(): string;
   deleteTunnel(savedServerId: SavedServerId, tunnelId: string): Promise<void>;
+  /** Reconciles native listeners with a successful scan before returning its inventory. */
   discover(savedServerId: SavedServerId): Promise<V2PortsResponse>;
   list(savedServerId: SavedServerId): Promise<PortForwardingProfile[]>;
+  /** Excludes a currently discovered service; inventory eviction is native-owned. */
   remove(savedServerId: SavedServerId, profileId: string): Promise<void>;
   start(savedServerId: SavedServerId, profileId: string): Promise<PortForwardingProfile>;
   stop(savedServerId: SavedServerId, profileId: string): Promise<PortForwardingProfile>;

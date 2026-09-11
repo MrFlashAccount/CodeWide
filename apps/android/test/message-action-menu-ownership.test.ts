@@ -1,11 +1,24 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+import { compactSource } from "./source-contract";
+
+const screen = compactSource(
+  readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"),
+);
 const bubble = readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8");
-const nativeMenu = readFileSync(new URL("../src/ui/MessageActionMenu.native.tsx", import.meta.url), "utf8");
-const codeWideMenu = readFileSync(new URL("../src/ui/CodeWideMenu.native.tsx", import.meta.url), "utf8");
-const webMenu = readFileSync(new URL("../src/ui/MessageActionMenu.web.tsx", import.meta.url), "utf8");
+const nativeMenu = readFileSync(
+  new URL("../src/ui/MessageActionMenu.native.tsx", import.meta.url),
+  "utf8",
+);
+const codeWideMenu = readFileSync(
+  new URL("../src/ui/CodeWideMenu.native.tsx", import.meta.url),
+  "utf8",
+);
+const webMenu = readFileSync(
+  new URL("../src/ui/MessageActionMenu.web.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("conversation-owned message actions", () => {
   it("mounts one shared native menu host instead of one menu per bubble", () => {
@@ -22,13 +35,16 @@ describe("conversation-owned message actions", () => {
     expect(codeWideMenu).toContain('from "@expo/ui/jetpack-compose"');
     expect(codeWideMenu).toContain("<DropdownMenu");
     expect(codeWideMenu).toContain("<DropdownMenu.Items>");
-    expect(codeWideMenu).toContain('<MenuIcon icon="checkmark" size={18} color={colors.text} />');
     expect(codeWideMenu).not.toContain(">✓</Text>");
     expect(nativeMenu).not.toContain("requestAnimationFrame");
     expect(nativeMenu).not.toContain("Menu.Portal");
-    expect(codeWideMenu).toContain("<Host colorScheme=\"dark\" matchContents");
+    expect(codeWideMenu).toContain('<Host colorScheme="dark" matchContents');
     expect(codeWideMenu).toContain("<RNHostView matchContents>{children}</RNHostView>");
-    expect(codeWideMenu).not.toContain("<Box");
+    // The trigger bounds must come from the RN host, not a synthetic Compose anchor.
+    const trigger = codeWideMenu.match(
+      /<DropdownMenu.Trigger>[\s\S]*?<\/DropdownMenu.Trigger>/u,
+    )?.[0];
+    expect(trigger).not.toContain("<Box");
   });
 
   it("keeps menu state inside the imperative host", () => {
@@ -46,7 +62,7 @@ describe("conversation-owned message actions", () => {
     expect(bubble).not.toContain("<Pressable");
     expect(screen).toContain('accessibilityLabel="Message actions"');
     expect(screen).toContain("styles.messageActionButton");
-    expect(screen).toContain("<MessageActionRail completedAt={rawTurn.completedAt} showActions={showMessageActions} request={{");
+    expect(screen).toContain("<MessageActionRail request={{");
     expect(screen).not.toContain("onLongPress={(event) => openMessageActions");
   });
 
@@ -55,15 +71,24 @@ describe("conversation-owned message actions", () => {
     expect(nativeMenu).toContain('icon: "git-branch-outline"');
     expect(nativeMenu).toContain('icon: "chatbubble-ellipses-outline"');
     expect(nativeMenu).not.toContain("assets/menu-icons");
-    expect(webMenu).toContain('<Text style={styles.label}>Review response</Text>');
-    expect(screen).toContain('beginContentReview({ kind: "response", target: agentReviewTarget })');
+    expect(webMenu).toContain("<Text style={styles.label}>Review response</Text>");
+    expect(screen).toContain(
+      'await beginContentReview({ kind: "response", target: agentReviewTarget, });',
+    );
   });
 
   it("keeps message actions tap-only so the rail cannot steal vertical scrolling", () => {
     expect(screen).not.toContain("const reviewGesture = Gesture.Pan()");
     expect(screen).not.toContain("translationX <= -28 || velocityX <= -500");
     expect(screen).toContain("<View style={styles.messageActionRail}>");
-    expect(screen).toContain("<Text style={styles.messageRailTime}>{formatClockTime(completedAt)}</Text>");
+    const rail = screen.slice(
+      screen.indexOf("function MessageActionRail("),
+      screen.indexOf("interface OptimisticTurnProps"),
+    );
+    expect(rail).not.toContain("formatClockTime");
+    expect(screen).toContain(
+      "<MessageFooterRow time={completedAt === null ? null : formatClockTime(completedAt)}",
+    );
     expect(screen).toContain('name="ellipsis-vertical"');
     expect(screen).toContain("actionButtonRef.current?.measureInWindow");
     expect(screen).not.toContain("event.nativeEvent.pageX");

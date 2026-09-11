@@ -24,7 +24,15 @@ export type QuickdrawDraftState = {
  */
 export type StoredDraftAttachment = RemoteFileAttachment & {
   editor?: QuickdrawDraftState;
+  preview?: AttachmentPreview;
 };
+
+export interface AttachmentPreview {
+  readonly uri: string | null;
+  readonly text: string | null;
+  readonly bytes: number;
+  readonly mimeType: string;
+}
 
 export type ThreadUiStateRow = {
   id: string;

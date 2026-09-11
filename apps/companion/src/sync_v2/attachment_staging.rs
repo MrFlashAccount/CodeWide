@@ -227,7 +227,7 @@ impl AttachmentStageStore {
         std::fs::create_dir_all(root.as_ref()).map_err(storage)?;
         set_private_directory(root.as_ref()).map_err(storage)?;
         let canonical_root = std::fs::canonicalize(root.as_ref()).map_err(storage)?;
-        let database = Database::create(database_path).map_err(storage)?;
+        let database = crate::database::open(database_path, "attachments").map_err(storage)?;
         set_private_file(database_path).map_err(storage)?;
         let mut retained_blobs = HashSet::new();
         let mut cancellation_ids = HashSet::new();
@@ -285,7 +285,7 @@ impl AttachmentStageStore {
         }
         remove_orphan_stage_files(&canonical_root, &retained_blobs, &HashSet::new())?;
         Ok(Self {
-            database: Arc::new(database),
+            database,
             root: Arc::new(canonical_root),
             limits,
             filesystem_guard: Arc::new(RwLock::new(())),

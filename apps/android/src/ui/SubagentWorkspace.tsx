@@ -3,18 +3,32 @@ import { LegendList } from "@legendapp/list/react-native";
 import { type ReactNode, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
+import { formatDeviceTime } from "../data/device-time";
 import {
   subagentDisplayName,
   subagentIsActive,
 } from "../data/subagent-projection";
+import { plainThreadPreview } from "../data/thread-cache";
 import type { StoredThreadSummary } from "../data/thread-summary-types";
-import { colors, radii, spacing, typeScale } from "../theme";
+import {
+  colors,
+  iconSize,
+  layoutSize,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+} from "../theme";
+import { threadListLayout } from "./thread-list-layout";
 import { AppText as Text } from "./Typography";
 import { WaveText } from "./WaveText";
 
 const MASTER_DETAIL_BREAKPOINT = 720;
 const MASTER_MIN_WIDTH = 280;
 const MASTER_MAX_WIDTH = 360;
+const SUBAGENT_ROW_HEIGHT =
+  threadListLayout.rowContentHeight + threadListLayout.rowVerticalMargin * 2;
 
 export function SubagentWorkspace({
   subagents,
@@ -54,18 +68,22 @@ export function SubagentWorkspace({
         <View testID="subagent-master-pane" style={[styles.master, { width: masterWidth }]}>
           <View style={styles.masterHeader}>
             <Pressable accessibilityLabel="Back to conversation" onPress={onClose} style={styles.iconButton}>
-              <Ionicons name="arrow-back" size={22} color={colors.text} />
+              <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
             </Pressable>
-            <View style={styles.headerIdentity}>
-              <Text numberOfLines={1} style={styles.headerTitle}>Subagents</Text>
-              <Text numberOfLines={1} style={styles.headerSubtitle}>{subagents.length} · newest activity first</Text>
-            </View>
+            <Text numberOfLines={1} style={[styles.headerTitle, styles.masterTitle]}>Subagents</Text>
+            <Text
+              accessibilityLabel={`${subagents.length} ${subagents.length === 1 ? "subagent" : "subagents"}`}
+              style={styles.headerCount}
+            >
+              {subagents.length}
+            </Text>
           </View>
           <LegendList
             data={subagents}
             extraData={selected?.remoteThreadId ?? null}
             recycleItems
-            estimatedItemSize={66}
+            estimatedItemSize={SUBAGENT_ROW_HEIGHT}
+            getFixedItemSize={() => SUBAGENT_ROW_HEIGHT}
             drawDistance={360}
             keyExtractor={(summary) => summary.remoteThreadId}
             itemsAreEqual={subagentRowsEqual}
@@ -82,7 +100,10 @@ export function SubagentWorkspace({
         </View>
       )}
       {showDetail && (
-        <View testID="subagent-detail-pane" style={styles.detail}>
+        <View
+          testID="subagent-detail-pane"
+          style={[styles.detail, !compact && styles.detailRaised]}
+        >
           {selected === null
             ? <EmptySelection />
             : renderDetail(compact)}
@@ -103,18 +124,32 @@ function SubagentRow({ summary, selected, onPress }: { summary: StoredThreadSumm
       onPress={onPress}
       style={({ pressed }) => [styles.row, selected && styles.rowSelected, pressed && styles.pressed]}
     >
-      <View style={styles.avatar}>
-        <Ionicons name="people-outline" size={19} color={active ? colors.green : colors.textMuted} />
-      </View>
       <View style={styles.rowText}>
         <View style={styles.rowTitleLine}>
           {active
             ? <WaveText testID={`subagent-active-${summary.remoteThreadId}`} text={title} style={styles.rowTitle} containerStyle={styles.rowTitleWave} />
             : <Text numberOfLines={1} style={styles.rowTitle}>{title}</Text>}
-          <Text style={styles.time}>{formatTime(summary.recencyAt ?? summary.updatedAt)}</Text>
+          {summary.status.type === "systemError" && (
+            <View accessibilityLabel="Subagent failed" style={styles.statusIcon}>
+              <Ionicons name="alert-circle" size={iconSize.inline} color={colors.red} />
+            </View>
+          )}
+          <View style={styles.rowMeta}>
+            {summary.unread > 0 && (
+              <View style={styles.unreadSlot}>
+                <View
+                  accessibilityLabel={`${summary.unread} unread ${summary.unread === 1 ? "message" : "messages"}`}
+                  style={styles.unreadDot}
+                />
+              </View>
+            )}
+            <Text numberOfLines={1} style={styles.time}>
+              {formatDeviceTime(summary.recencyAt ?? summary.updatedAt)}
+            </Text>
+          </View>
         </View>
         <Text numberOfLines={1} ellipsizeMode="tail" style={styles.preview}>
-          {subagentSubtitle(summary)}
+          {subagentPreview(summary)}
         </Text>
       </View>
     </Pressable>
@@ -141,7 +176,7 @@ export function SubagentPendingDetail({
       <View style={styles.detailHeader}>
         {compact && (
           <Pressable accessibilityLabel="Back to subagents" onPress={onBack} style={styles.iconButton}>
-            <Ionicons name="arrow-back" size={22} color={colors.text} />
+            <Ionicons name="arrow-back" size={iconSize.navigation} color={colors.text} />
           </Pressable>
         )}
         <View style={styles.headerIdentity}>
@@ -150,7 +185,7 @@ export function SubagentPendingDetail({
         </View>
         {!compact && (
           <Pressable accessibilityLabel="Close subagents" onPress={onClose} style={styles.iconButton}>
-            <Ionicons name="close" size={22} color={colors.text} />
+            <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
           </Pressable>
         )}
       </View>
@@ -166,7 +201,7 @@ export function SubagentPendingDetail({
 function EmptySelection() {
   return (
     <View style={styles.center}>
-      <Ionicons name="chatbubbles-outline" size={30} color={colors.textDim} />
+      <Ionicons name="chatbubbles-outline" size={iconSize.illustration} color={colors.textDim} />
       <Text style={styles.muted}>Select a subagent</Text>
     </View>
   );
@@ -175,7 +210,7 @@ function EmptySelection() {
 function EmptySubagents() {
   return (
     <View style={styles.empty}>
-      <Ionicons name="people-outline" size={28} color={colors.textDim} />
+      <Ionicons name="people-outline" size={iconSize.illustration} color={colors.textDim} />
       <Text style={styles.muted}>No subagents in this thread</Text>
     </View>
   );
@@ -191,8 +226,9 @@ function subagentSubtitle(summary: StoredThreadSummary): string {
   return summary.agentRole ? `${summary.agentRole} · ${state}` : state;
 }
 
-function formatTime(timestamp: number): string {
-  return new Date(timestamp * 1_000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function subagentPreview(summary: StoredThreadSummary): string {
+  const preview = plainThreadPreview(summary.preview);
+  return preview === "" ? subagentSubtitle(summary) : preview;
 }
 
 function subagentRowsEqual(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
@@ -201,36 +237,60 @@ function subagentRowsEqual(left: StoredThreadSummary, right: StoredThreadSummary
     && left.name === right.name
     && left.agentNickname === right.agentNickname
     && left.agentRole === right.agentRole
+    && left.preview === right.preview
     && left.status.type === right.status.type
     && left.updatedAt === right.updatedAt
     && left.recencyAt === right.recencyAt
+    && left.unread === right.unread
   );
 }
 
 const styles = StyleSheet.create({
-  workspace: { flex: 1, minWidth: 0, minHeight: 0, flexDirection: "row", backgroundColor: colors.background },
-  master: { minWidth: 0, minHeight: 0, backgroundColor: colors.surface },
-  detail: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
-  masterHeader: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm },
-  detailHeader: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs },
+  workspace: { flex: 1, minWidth: 0, minHeight: 0, flexDirection: "row", backgroundColor: colors.threadListSurface },
+  master: { minWidth: 0, minHeight: 0, backgroundColor: colors.threadListSurface },
+  detail: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.conversationSurface },
+  detailRaised: { borderTopLeftRadius: radii.composer, borderBottomLeftRadius: radii.composer, overflow: "hidden" },
+  masterHeader: {
+    minHeight: layoutSize.header,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+    paddingLeft: threadListLayout.edgeInset,
+    paddingRight: spacing.md,
+  },
+  detailHeader: { minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs },
   headerIdentity: { flex: 1, minWidth: 0 },
-  headerTitle: { color: colors.text, ...typeScale.titleMedium },
-  headerSubtitle: { color: colors.textMuted, ...typeScale.labelMedium },
-  iconButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
-  listContent: { paddingHorizontal: spacing.xs, paddingBottom: spacing.md },
-  row: { minHeight: 66, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, borderRadius: radii.selected },
-  rowSelected: { backgroundColor: colors.surfaceContainerHighest },
-  pressed: { backgroundColor: colors.surfaceHover },
-  avatar: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainer },
-  rowText: { flex: 1, minWidth: 0, gap: 2 },
-  rowTitleLine: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  rowTitle: { minWidth: 0, flexShrink: 1, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: "700" },
+  headerTitle: { color: colors.text, ...typeScale.title },
+  masterTitle: { flex: 1, minWidth: 0 },
+  headerCount: { flexShrink: 0, color: colors.textMuted, ...typeScale.label },
+  headerSubtitle: { color: colors.textMuted, ...typeScale.label },
+  iconButton: { width: touchTarget, height: touchTarget, borderRadius: radii.large, alignItems: "center", justifyContent: "center" },
+  listContent: { paddingBottom: spacing.md },
+  row: {
+    height: threadListLayout.rowContentHeight,
+    marginHorizontal: threadListLayout.edgeInset,
+    marginVertical: threadListLayout.rowVerticalMargin,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.compact,
+    borderRadius: radii.selected,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  rowSelected: { backgroundColor: colors.secondaryContainer },
+  pressed: { opacity: 0.68 },
+  rowText: { flex: 1, minWidth: 0, gap: spacing.optical },
+  rowTitleLine: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  rowTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
   rowTitleWave: { flex: 1 },
-  time: { flexShrink: 0, color: colors.textDim, fontSize: 10, lineHeight: 14, fontVariant: ["tabular-nums"] },
-  preview: { color: colors.textMuted, fontSize: 12, lineHeight: 16 },
+  statusIcon: { width: 18, height: 18, flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  rowMeta: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  unreadSlot: { width: 7, height: 18, flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  unreadDot: { width: 7, height: 7, borderRadius: radii.pill, backgroundColor: colors.primary },
+  time: { flexShrink: 0, color: colors.textMuted, ...typeScale.caption, textAlign: "right", fontVariant: ["tabular-nums"] },
+  preview: { minWidth: 0, maxWidth: "100%", flexShrink: 1, color: colors.textMuted, ...typeScale.label },
   pendingPane: { flex: 1, minHeight: 0 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   empty: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: spacing.sm },
-  muted: { color: colors.textMuted, ...typeScale.bodyMedium },
-  error: { color: colors.red, padding: spacing.sm, ...typeScale.bodyMedium },
+  muted: { color: colors.textMuted, ...typeScale.body },
+  error: { color: colors.red, padding: spacing.sm, ...typeScale.body },
 });

@@ -1,5 +1,6 @@
 import "react-native-gesture-handler";
 
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useFonts } from "expo-font";
 import { Stack, type ErrorBoundaryProps } from "expo-router";
 import { useSyncExternalStore } from "react";
@@ -87,6 +88,8 @@ export default function RootLayout() {
 
 function RootApplication() {
   const [fontsLoaded, fontError] = useFonts({
+    ...Ionicons.font,
+    ...MaterialIcons.font,
     "RobotoFlex-Regular": require("../assets/fonts/RobotoFlex-Regular.ttf"),
     "RobotoFlex-Medium": require("../assets/fonts/RobotoFlex-Medium.ttf"),
     "RobotoFlex-SemiBold": require("../assets/fonts/RobotoFlex-SemiBold.ttf"),

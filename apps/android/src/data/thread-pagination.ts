@@ -13,9 +13,14 @@ export type ThreadHistoryState = {
   error: string | null;
 };
 
+/** Cached exhaustion alone cannot label a trimmed resident window as the beginning. */
+export function threadHistoryContainsBeginning(atEarliestKnownTurn: boolean, olderCursor: string | null | undefined): boolean {
+  return atEarliestKnownTurn && olderCursor === null;
+}
+
 /** Small authoritative refresh used once a complete local window is available. */
 export const THREAD_AUTHORITATIVE_TAIL_PAGE_SIZE = 6;
-export const THREAD_HISTORY_PAGE_SIZE = 12;
+export const THREAD_HISTORY_PAGE_SIZE = 5;
 // Keep the visible page plus one page of runway on either side. Edge pulls may
 // temporarily exceed this limit during a gesture; the far edge is trimmed only
 // after drag/momentum ends so MVCP never has to absorb an eviction under the

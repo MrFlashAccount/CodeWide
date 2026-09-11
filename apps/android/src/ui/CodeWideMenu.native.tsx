@@ -19,7 +19,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import { colors, radii, spacing, typeScale } from "../theme";
+import { colors, radii, spacing, typeScale, iconSize, typeWeight } from "../theme";
 import type { ActionMenuIconName } from "./ActionMenu.types";
 
 export type CodeWideMenuAction = {
@@ -48,7 +48,7 @@ function MenuIcon({
 
   return (
     <RNHostView matchContents>
-      <View pointerEvents="none" style={[styles.iconSlot, { width: size, height: size }]}>
+      <View pointerEvents="none" style={{ width: size, height: size }}>
         <Ionicons color={color} name={icon} size={size} />
       </View>
     </RNHostView>
@@ -85,7 +85,7 @@ export function CodeWideMenu({
     <Host colorScheme="dark" matchContents pointerEvents="box-none" style={style}>
       <DropdownMenu
         color={colors.surfaceContainer}
-        cornerRadius={radii.menu}
+        cornerRadius={radii.selected}
         expanded={expanded}
         onDismissRequest={onDismiss}
       >
@@ -94,8 +94,8 @@ export function CodeWideMenu({
         </DropdownMenu.Trigger>
         <DropdownMenu.Items>
           {actions.map((action, index) => {
-            const startsSection = action.section !== undefined
-              && action.section !== actions[index - 1]?.section;
+            const startsSection =
+              action.section !== undefined && action.section !== actions[index - 1]?.section;
             return (
               <Fragment key={action.id}>
                 {startsSection && index > 0 && (
@@ -107,7 +107,10 @@ export function CodeWideMenu({
                 {startsSection && (
                   <Text
                     color={colors.textDim}
-                    modifiers={[width(menuWidth), padding(spacing.sm, spacing.xs, spacing.sm, spacing.xxs)]}
+                    modifiers={[
+                      width(menuWidth),
+                      padding(spacing.sm, spacing.xs, spacing.sm, spacing.xxs),
+                    ]}
                     style={styles.sectionText}
                   >
                     {action.section}
@@ -130,7 +133,7 @@ export function CodeWideMenu({
                     <DropdownMenuItem.LeadingIcon>
                       <MenuIcon
                         icon={action.icon}
-                        size={19}
+                        size={iconSize.action}
                         color={action.destructive ? colors.red : colors.textMuted}
                       />
                     </DropdownMenuItem.LeadingIcon>
@@ -145,19 +148,25 @@ export function CodeWideMenu({
                         {action.label}
                       </Text>
                       {action.description !== undefined && (
-                        <Text
-                          color={colors.textMuted}
-                          maxLines={2}
-                          style={styles.itemDescription}
-                        >
+                        <Text color={colors.textMuted} maxLines={2} style={styles.itemDescription}>
                           {action.description}
                         </Text>
                       )}
                     </Column>
                   </DropdownMenuItem.Text>
-                  {action.selected === true && (
+                  {/* Compose resolves slots when composing the item. Keep the
+                      slot and its bounds mounted while selection moves between
+                      rows in an open popup. Remove the unselected glyph itself;
+                      transparent text can still paint inside the native popup. */}
+                  {action.selected !== undefined && (
                     <DropdownMenuItem.TrailingIcon>
-                      <MenuIcon icon="checkmark" size={18} color={colors.text} />
+                      <RNHostView matchContents>
+                        <View pointerEvents="none" style={styles.selectionSlot}>
+                          {action.selected === true && (
+                            <Ionicons color={colors.text} name="checkmark" size={iconSize.action} />
+                          )}
+                        </View>
+                      </RNHostView>
                     </DropdownMenuItem.TrailingIcon>
                   )}
                 </DropdownMenuItem>
@@ -171,26 +180,21 @@ export function CodeWideMenu({
 }
 
 const styles = StyleSheet.create({
-  iconSlot: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  selectionSlot: { width: iconSize.action, height: iconSize.action },
   sectionText: {
     fontFamily: "RobotoFlex-Medium",
-    fontSize: typeScale.labelMedium.fontSize,
-    fontWeight: typeScale.labelMedium.fontWeight,
-    lineHeight: typeScale.labelMedium.lineHeight,
+    fontSize: typeScale.label.fontSize,
+    fontWeight: typeScale.label.fontWeight,
+    lineHeight: typeScale.label.lineHeight,
   },
   itemTitle: {
     fontFamily: "RobotoFlex-Medium",
-    fontSize: 15,
-    fontWeight: "500",
-    lineHeight: 20,
+    ...typeScale.body,
+    fontWeight: typeWeight.medium,
   },
   itemDescription: {
     fontFamily: "RobotoFlex-Regular",
-    fontSize: 12,
-    fontWeight: "400",
-    lineHeight: 16,
+    ...typeScale.label,
+    fontWeight: typeWeight.regular,
   },
 });

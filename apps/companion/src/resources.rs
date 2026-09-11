@@ -71,7 +71,7 @@ enum ResourceSelection {
 }
 
 struct ResourceStore {
-    database: Database,
+    database: Arc<Database>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1184,7 +1184,7 @@ fn corrupt_backup_path(path: &Path) -> PathBuf {
 
 impl ResourceStore {
     fn open(path: impl AsRef<Path>) -> Result<Self, ResourceError> {
-        let database = Database::create(path)?;
+        let database = crate::database::open(path, "resources")?;
         let write = database.begin_write()?;
         write.open_table(PROJECTIONS)?;
         write.commit()?;

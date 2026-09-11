@@ -1,3 +1,4 @@
+import { typeScale, spacing } from "../../theme";
 import type { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
@@ -32,10 +33,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.72)",
     bottom: 0,
     color: "#ffffff",
-    fontSize: 14,
+    ...typeScale.body,
     left: 0,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.inputInset,
     position: "absolute",
     right: 0,
   },

@@ -1,6 +1,8 @@
+import type { CatalogSkill } from "./skill-catalog-types";
+
 export type TurnControlsValue = {
   models: Array<{ id: string; label: string; defaultEffort: string; efforts: string[]; supportsPersonality: boolean; isDefault: boolean }>;
-  skills: Array<{ name: string; path: string; description: string; enabled: boolean }>;
+  skills: CatalogSkill[];
   permissions: Array<{ id: string; description: string | null; allowed: boolean }>;
   defaults: {
     model: string | null;

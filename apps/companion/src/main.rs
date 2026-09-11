@@ -88,6 +88,7 @@ enum Command {
         /// private application traffic is protected by the inner TLS listener.
         #[arg(long, default_value_t = false, hide = true)]
         insecure_http: bool,
+        /// Execute authenticated RPC and durable commands; otherwise only observe/replay events.
         #[arg(long, default_value_t = false)]
         enable_mutations: bool,
         #[arg(long, value_enum, default_value_t = SyncV2Mode::Canary)]
@@ -967,7 +968,18 @@ async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Error>> 
             ),
         }
     });
+    let search = codewide_companion::message_search::MessageSearch::start(
+        &state_directory.join("message-search.sqlite"),
+        catalog.clone(),
+    );
     let history = HistoryService::new(catalog.clone(), store.clone());
+    let history = match search {
+        Ok(search) => history.with_search(search),
+        Err(error) => {
+            tracing::error!(err = ?error, "message search unavailable; chat service remains available");
+            history
+        }
+    };
     let sync = if options.enable_mutations {
         SyncHub::with_mutations(upstream.clone(), store.clone(), history.clone())
     } else {

@@ -9,11 +9,12 @@
     "typecheck": "pnpm typecheck:scripts && pnpm -r typecheck",
     "typecheck:scripts": "tsc --project scripts/tsconfig.json",
     "test": "vitest run",
-    "test:companion": "CARGO_INCREMENTAL=0 cargo test --workspace",
+    "test:companion": "sh scripts/cargo-target-budget.sh && CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 cargo test --workspace",
+    "test:cargo-target-budget": "sh scripts/cargo-target-budget.test.sh",
     "build:companion": "sh scripts/build-companion.sh",
     "test:e2e": "playwright test",
     "bench:fixtures": "tsx scripts/benchmark-deterministic-fixtures.ts",
-    "bench:large-content": "CARGO_INCREMENTAL=0 cargo test -p codewide-companion --test content_transport deterministic_large_content_projection_is_bounded -- --nocapture",
+    "bench:large-content": "sh scripts/cargo-target-budget.sh && CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 cargo test -p codewide-companion --test content_transport deterministic_large_content_projection_is_bounded -- --nocapture",
     "bench:markdown-parser": "tsx packages/rendering-core/scripts/benchmark-markdown-parser.mjs",
     "brand:generate": "node scripts/generate-codewide-assets.mjs",
     "soak:sync": "tsx scripts/soak-sync.ts",
@@ -21,7 +22,7 @@
     "test:android:e2e": "./scripts/test-android-e2e",
     "android:gradle": "sh scripts/android-gradle.sh",
     "validate:sync:v2": "sh ./scripts/validate-sync-v2.sh",
-    "validate:sync:v2:managed-live": "CODEWIDE_LIVE_E2E=1 CARGO_INCREMENTAL=0 cargo test -p codewide-companion --test live_v2_backend_contract -- --ignored --test-threads=1",
+    "validate:sync:v2:managed-live": "sh scripts/cargo-target-budget.sh && CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CODEWIDE_LIVE_E2E=1 CARGO_INCREMENTAL=0 cargo test -p codewide-companion --test live_v2_backend_contract -- --ignored --test-threads=1",
     "validate:android:v2": "pnpm validate:sync:v2 && pnpm exec vitest run apps/android/test/android-e2e-source-fingerprint.test.ts apps/android/test/android-release-automation.test.ts apps/android/test/authenticated-transport-lease.test.ts apps/android/test/companion-transport-security.test.ts apps/android/test/native-app-config.test.ts apps/android/test/native-voice-e2e-fault.test.ts apps/android/test/release-dry-run-execution.test.ts apps/android/test/sync-v2*.test.ts apps/android/test/v2*.test.ts && pnpm --filter @codewide/android test:v2:render && pnpm --filter @codewide/android validate:v2 && pnpm --filter @codewide/android compile:v2:android && sh ./scripts/android-gradle.sh :app:compileDebugKotlin :app:testDebugUnitTest",
     "validate:android:device-evidence": "tsx scripts/validate-android-e2e-evidence.ts",
     "dev:android": "sh scripts/android-fast-refresh.sh",
@@ -32,7 +33,7 @@
     "test:ota": "python3 scripts/test-ota-server.py",
     "security:scan-artifacts": "tsx scripts/scan-release-artifacts.ts",
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",
-    "release:gate": "export CARGO_INCREMENTAL=0; pnpm validate:sync:v2 && pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
+    "release:gate": "sh scripts/cargo-target-budget.sh && export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 && pnpm validate:sync:v2 && pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
     "test:watch": "vitest",
     "protocol:generate": "codex app-server generate-ts --experimental --out packages/codex-protocol/src/generated/0.147.0 && codex app-server generate-json-schema --experimental --out packages/codex-protocol/schema/0.147.0"
   },
@@ -68,7 +69,9 @@
       "expo-libghostty@0.8.1": "patches/expo-libghostty@0.8.1.patch",
       "expo-file-system@57.0.2": "patches/expo-file-system@57.0.2.patch",
       "@expo/ui@57.0.9": "patches/@expo__ui@57.0.9.patch",
-      "@quickdrawjs/react-native@0.2.0": "patches/@quickdrawjs__react-native@0.2.0.patch"
+      "@quickdrawjs/react-native@0.2.0": "patches/@quickdrawjs__react-native@0.2.0.patch",
+      "@legendapp/list@3.3.5": "patches/@legendapp__list@3.3.5.patch",
+      "react-native-enriched-markdown@1.0.2": "patches/react-native-enriched-markdown@1.0.2.patch"
     }
   }
 }

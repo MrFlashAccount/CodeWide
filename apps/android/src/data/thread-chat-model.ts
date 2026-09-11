@@ -46,7 +46,7 @@ export type ThreadChatModel = {
   beginPresentation(connectionId: string, threadId: string): void;
   finishPresentation(connectionId: string, threadId: string): void;
   startWindow(request: ThreadChatWindowRequest): number;
-  setBackendRefreshing(request: ThreadChatWindowRequest, generation: number, refreshing: boolean): void;
+  beginBackendRefresh(connectionId: string, threadId: string): () => void;
   commitWindow(request: ThreadChatWindowRequest, generation: number, loaded: LoadedThreadChatWindow): boolean;
   commitRange(
     connectionId: string,
@@ -71,6 +71,10 @@ export type ThreadChatModelOptions = {
   onResidentRowCountChange?(rowCount: number): void;
 };
 
+// Keep data, not mounted screens, for the three most recently visited inactive
+// chats. Mounted consumers and the current navigation resource are protected.
+const INACTIVE_WINDOW_LIMIT = 3;
+
 export function createThreadChatModel(options: ThreadChatModelOptions = {}): ThreadChatModel {
   const rowNodes = new Map<string, Observable<ThreadDetailRow | null>>();
   const windowNodes = new Map<string, Observable<ThreadChatWindowSnapshot>>();
@@ -78,6 +82,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const activeRequests = new Map<string, ThreadChatWindowRequest>();
   const retainCounts = new Map<string, number>();
   const generations = new Map<string, number>();
+  const backendRefreshCounts = new Map<string, number>();
   const windowLayoutSignatures = new Map<string, string>();
   const changedRowIdsByScope = new Map<string, Set<string>>();
   const presentations = new Map<string, {
@@ -87,9 +92,10 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   }>();
   const resources = new Map<string, {
     ready$: Observable<boolean>;
-    requestKey: string;
+    requestKey: string | null;
     loadingKey: string | null;
     token: number;
+    committedToken: number;
     hasReadySnapshot: boolean;
     retryAttempt: number;
     retryTimer: ReturnType<typeof setTimeout> | null;
@@ -97,6 +103,11 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   let closed = false;
   let reportedResidentRowCount = -1;
   let presentationSequence = 0;
+  // The last requested resource owns its window independently of React's
+  // passive effects. A responsive remount can release every component owner
+  // for multiple commits without meaning that navigation left this resource.
+  // Older windows remain in the bounded LRU; SQLite owns evicted windows.
+  let residentResourceScope: string | null = null;
 
   const reportResidentRowCount = (): void => {
     if (options.onResidentRowCountChange === undefined) return;
@@ -115,6 +126,15 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     }
     return node;
   };
+
+  // Empty/meta-only windows never mount the timeline and cannot acknowledge
+  // its first draw. Only an actual timeline row can hold later publications.
+  const hasTimelineRows = (snapshot: ThreadChatWindowSnapshot): boolean => (
+    snapshot.turnRowIds.length > 0 || snapshot.liveRowIds.some((id) => {
+      const kind = rowNodes.get(id)?.peek()?.kind;
+      return kind === "turn" || kind === "pending";
+    })
+  );
 
   const window$ = (connectionId: string, threadId: string): Observable<ThreadChatWindowSnapshot> => {
     const scope = threadChatScope(connectionId, threadId);
@@ -156,9 +176,17 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   };
 
   const evictUnretainedWindows = (protectedScope: string | null): void => {
-    for (const scope of [...windowNodes.keys()]) {
-      if (scope === protectedScope || (retainCounts.get(scope) ?? 0) > 0) continue;
+    let inactiveCount = 0;
+    for (const scope of windowNodes.keys()) {
+      if (scope !== protectedScope && scope !== residentResourceScope && (retainCounts.get(scope) ?? 0) === 0) inactiveCount += 1;
+    }
+    // Map insertion order is navigation recency; live updates never promote a
+    // background conversation ahead of one the user actually selected.
+    for (const scope of windowNodes.keys()) {
+      if (inactiveCount <= INACTIVE_WINDOW_LIMIT) break;
+      if (scope === protectedScope || scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) continue;
       evictWindow(scope);
+      inactiveCount -= 1;
     }
     pruneUnreferencedRows();
   };
@@ -218,6 +246,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     const resource = resources.get(scope);
     if (resource !== undefined && resource.requestKey === threadChatRequestKey(request)) {
       resource.hasReadySnapshot = true;
+      resource.committedToken = resource.token;
     }
     return true;
   };
@@ -281,15 +310,22 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     }
     return Promise.resolve().then(loader).then(() => {
       const current = resources.get(scope);
-      if (closed || current === undefined || current.token !== token || current.requestKey !== requestKey) return false;
+      if (closed || current === undefined || current !== record || current.token !== token || current.requestKey !== requestKey) return false;
       current.loadingKey = null;
-      current.hasReadySnapshot = true;
+      // A superseded press can finish without installing its SQLite window.
+      // Live rows (or a previous opening) do not prove this load completed.
+      // Invalidate only its request so the next consumer retries normally.
+      if (current.committedToken !== token) {
+        current.requestKey = null;
+        return false;
+      }
       current.retryAttempt = 0;
       return true;
     }).catch((cause: unknown) => {
       const current = resources.get(scope);
       const ownsLoad = !closed
         && current !== undefined
+        && current === record
         && current.token === token
         && current.requestKey === requestKey;
       if (!ownsLoad) return false;
@@ -310,6 +346,14 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     resource(request, loader) {
       if (closed) throw new Error("Thread chat model is closed");
       const scope = threadChatScope(request.connectionId, request.threadId);
+      if (residentResourceScope !== scope) {
+        const resident = windowNodes.get(scope);
+        if (resident !== undefined) {
+          windowNodes.delete(scope);
+          windowNodes.set(scope, resident);
+        }
+      }
+      residentResourceScope = scope;
       const requestKey = threadChatRequestKey(request) as string;
       let record = resources.get(scope);
       if (record === undefined) {
@@ -318,6 +362,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           requestKey,
           loadingKey: requestKey,
           token: 0,
+          committedToken: 0,
           hasReadySnapshot: false,
           retryAttempt: 0,
           retryTimer: null,
@@ -354,9 +399,8 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
         // that cleanup has already removed from the model.
         if (next <= 0) {
           queueMicrotask(() => {
-            if ((retainCounts.get(scope) ?? 0) > 0) return;
-            evictWindow(scope);
-            pruneUnreferencedRows();
+            if (scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) return;
+            evictUnretainedWindows(residentResourceScope);
           });
         }
       };
@@ -374,7 +418,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       if (presentations.has(scope)) return;
       const snapshot = windowNodes.get(scope)?.peek();
       presentations.set(scope, {
-        hasCommittedWindow: snapshot !== undefined && threadLoadHasResidentSnapshot(snapshot.status),
+        hasCommittedWindow: snapshot !== undefined && threadLoadHasResidentSnapshot(snapshot.status) && hasTimelineRows(snapshot),
         pendingWindow: null,
         pendingRows: null,
       });
@@ -401,8 +445,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       generations.set(scope, generation);
       activeRequests.set(scope, request);
       const node = window$(request.connectionId, request.threadId);
-      // SQLite owns every inactive conversation. Keep only windows with a
-      // mounted consumer; protect this scope while its load starts.
+      // Protect the destination before applying the inactive-window budget.
       evictUnretainedWindows(scope);
       const previous = node.peek();
       const requestKey = threadChatRequestKey(request);
@@ -411,7 +454,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...previous,
         requestKey,
-        backendRefreshing: false,
+        backendRefreshing: (backendRefreshCounts.get(scope) ?? 0) > 0,
         status: hasResidentSnapshot
           ? previous.requestKey === requestKey ? "background-updating" : "loading-history"
           : "initial-loading",
@@ -421,15 +464,27 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       if (next !== previous) node.set(next);
       return generation;
     },
-    setBackendRefreshing(request, generation, refreshing) {
-      const scope = threadChatScope(request.connectionId, request.threadId);
-      if (closed
-        || generations.get(scope) !== generation
-        || threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)) return;
-      const node = window$(request.connectionId, request.threadId);
+    beginBackendRefresh(connectionId, threadId) {
+      const scope = threadChatScope(connectionId, threadId);
+      if (closed) return () => undefined;
+      backendRefreshCounts.set(scope, (backendRefreshCounts.get(scope) ?? 0) + 1);
+      const node = window$(connectionId, threadId);
       const previous = node.peek();
-      if (previous.backendRefreshing === refreshing) return;
-      node.set({ ...previous, backendRefreshing: refreshing });
+      if (!previous.backendRefreshing) node.set({ ...previous, backendRefreshing: true });
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        const remaining = (backendRefreshCounts.get(scope) ?? 1) - 1;
+        if (remaining > 0) {
+          backendRefreshCounts.set(scope, remaining);
+          return;
+        }
+        backendRefreshCounts.delete(scope);
+        if (closed) return;
+        const current = node.peek();
+        if (current.backendRefreshing) node.set({ ...current, backendRefreshing: false });
+      };
     },
     commitWindow(request, generation, loaded) {
       const scope = threadChatScope(request.connectionId, request.threadId);
@@ -437,10 +492,14 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const presentation = presentations.get(scope);
       if (presentation?.hasCommittedWindow) {
         presentation.pendingWindow = { sequence: ++presentationSequence, request, generation, loaded };
+        const resource = resources.get(scope);
+        if (resource?.requestKey === threadChatRequestKey(request)) resource.committedToken = resource.token;
         return true;
       }
       const committed = commitWindowNow(request, generation, loaded);
-      if (committed && presentation !== undefined) presentation.hasCommittedWindow = true;
+      if (committed && presentation !== undefined) {
+        presentation.hasCommittedWindow = hasTimelineRows(window$(request.connectionId, request.threadId).peek());
+      }
       return committed;
     },
     commitRange(connectionId, threadId, expected, loaded) {
@@ -521,11 +580,13 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       return count;
     },
     close() {
+      residentResourceScope = null;
       closed = true;
       for (const resource of resources.values()) if (resource.retryTimer !== null) clearTimeout(resource.retryTimer);
       activeRequests.clear();
       retainCounts.clear();
       generations.clear();
+      backendRefreshCounts.clear();
       presentations.clear();
       resources.clear();
       windowNodes.clear();
@@ -629,12 +690,15 @@ function projectResidentRows(
   const completedResidentLiveTurn = allSealedTurns.some((row) => previousLiveIds.has(row.id));
   const rangeIncludesLatest = window.latestSealedOrdinal === null
     || (residentMaximum !== null && residentMaximum >= window.latestSealedOrdinal)
-    || completedResidentLiveTurn;
+    || (residentMaximum === null && completedResidentLiveTurn);
   // A live completion advances a range only when that range already contains
   // the previous newest turn. Position still belongs exclusively to LegendList.
-  const visibleTurns = epochChanged || rangeIncludesLatest
+  const visibleTurns = epochChanged || (residentMaximum === null && window.latestSealedOrdinal === null)
     ? allSealedTurns.slice(0, turnLimit)
-    : currentTurns;
+    : rangeIncludesLatest
+      ? advanceResidentTail(allSealedTurns, currentTurnIds, currentTurns.length,
+          previousLiveIds, residentMaximum, turnLimit)
+      : currentTurns;
   const minOrdinal = visibleTurns.length === 0 ? null : Math.min(...visibleTurns.map(({ ordinal }) => ordinal));
   const maxOrdinal = visibleTurns.length === 0 ? null : Math.max(...visibleTurns.map(({ ordinal }) => ordinal));
   return {
@@ -653,6 +717,35 @@ function projectResidentRows(
       ? allSealedTurns.at(-1)?.ordinal ?? null
       : minimumNullable(window.earliestSealedOrdinal, allSealedTurns.at(-1)?.ordinal ?? null),
   };
+}
+
+/** Metadata commits preserve an explicitly expanded range. Contiguous live
+ * advancement may roll that same capacity forward, but cannot import a cache
+ * island or grow residency indefinitely between gestures. */
+function advanceResidentTail(
+  sealedTurns: readonly ThreadDetailRow[],
+  residentIds: ReadonlySet<string>,
+  residentCount: number,
+  previousLiveIds: ReadonlySet<string>,
+  residentMaximum: number | null,
+  turnLimit: number,
+): ThreadDetailRow[] {
+  let maximum = residentMaximum;
+  for (let index = sealedTurns.length - 1; index >= 0; index -= 1) {
+    const turn = sealedTurns[index]!;
+    if (maximum === null && previousLiveIds.has(turn.id)) maximum = turn.ordinal;
+    else if (maximum !== null && turn.ordinal === maximum + 1) maximum = turn.ordinal;
+  }
+  const capacity = Math.max(turnLimit, residentCount);
+  const result: ThreadDetailRow[] = [];
+  for (const turn of sealedTurns) {
+    if (result.length === capacity) break;
+    if (residentIds.has(turn.id) || (maximum !== null && turn.ordinal <= maximum
+      && (residentMaximum === null ? previousLiveIds.has(turn.id) : turn.ordinal > residentMaximum))) {
+      result.push(turn);
+    }
+  }
+  return result;
 }
 
 function maximumNullable(left: number | null, right: number | null): number | null {

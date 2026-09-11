@@ -1,6 +1,7 @@
 import { StyleSheet, TextInput, View } from "react-native";
 
-import { colors, spacing } from "../../theme";
+import { colors, spacing, iconSize, typeScale } from "../../theme";
+import { searchFieldLayout } from "../input/searchLayout";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { ProductText } from "../text/ProductText";
 import { TopBarActionView } from "../actions/TopBarActionView";
@@ -15,8 +16,8 @@ interface ConversationSearchViewProps {
 export function ConversationSearchView(props: ConversationSearchViewProps): React.JSX.Element {
   const { matchCount, onChangeText, onClose, query } = props;
   return (
-    <View style={styles.root}>
-      <PresentationIcon color={colors.textMuted} name="search" size={18} />
+    <View testID="conversation-search-field" style={styles.root}>
+      <PresentationIcon color={colors.textMuted} name="search" size={iconSize.action} />
       <TextInput
         accessibilityLabel="Search current thread"
         onChangeText={onChangeText}
@@ -28,29 +29,24 @@ export function ConversationSearchView(props: ConversationSearchViewProps): Reac
       <ProductText style={styles.count} tone="muted">
         {matchCount}
       </ProductText>
-      <TopBarActionView icon="close" label="Close thread search" onPress={onClose} />
+      <TopBarActionView compact icon="close" label="Close thread search" onPress={onClose} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  count: { fontSize: 11, minWidth: 34, textAlign: "right" },
+  count: { ...typeScale.label, minWidth: 34, textAlign: "right" },
   input: {
     color: colors.text,
     flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
+    ...typeScale.body,
+
     minWidth: 0,
     paddingVertical: 0,
   },
   root: {
-    alignItems: "center",
-    backgroundColor: colors.surface,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    flexDirection: "row",
-    gap: spacing.xs,
-    minHeight: 50,
-    paddingLeft: spacing.sm,
+    ...searchFieldLayout,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.xxs,
   },
 });

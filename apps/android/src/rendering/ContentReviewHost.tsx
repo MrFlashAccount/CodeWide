@@ -10,7 +10,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { KeyboardStickyView } from "react-native-keyboard-controller";
+import { ContentReviewKeyboardDock } from "./ContentReviewKeyboardDock";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useEvent } from "../react/useEvent";
@@ -19,10 +19,12 @@ import type {
   VoiceTranscriptionOptions,
   VoiceTranscriptionSession,
 } from "../data/use-remote-workspace";
-import type { VoiceInputRow } from "../data/workspace-resource-database";
+import type { WorkspaceResourceDatabase } from "../data/workspace-resource-database";
 import type { VoiceInputController } from "../data/voice-input-controller";
-import { colors, radii, spacing } from "../theme";
+import { colors, radii, spacing, typeScale, typeWeight, iconSize, controlSize } from "../theme";
 import { useAppDialog } from "../ui/AppDialog";
+import { useMicrophoneAccess } from "../ui/use-microphone-access";
+import { useScopedVoiceInputResource } from "../ui/VoiceInputRuntime";
 import { AppText as Text, AppTextInput as TextInput } from "../ui/Typography";
 import {
   contentReviewTextHighlights,
@@ -41,7 +43,7 @@ export type ContentReviewRuntime = {
   attachmentId: string | null;
   thread: Thread | null;
   voiceScope: string;
-  voiceResource: VoiceInputRow | null;
+  resources: WorkspaceResourceDatabase | null;
   voiceController: VoiceInputController | null;
   startVoice?: VoiceStarter;
 };
@@ -243,8 +245,7 @@ export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
   const controller = useContext(ContentReviewContext);
   const registerRuntime = controller?.registerRuntime;
   const attach = useEvent(runtime.attach);
-  const startVoice = useEvent(runtime.startVoice ?? (async () => { throw new Error("Voice input is unavailable"); }));
-  const { attachmentId, thread, voiceScope, voiceResource, voiceController, startVoice: startVoiceInput } = runtime;
+  const { attachmentId, thread, voiceScope, resources, voiceController, startVoice: startVoiceInput } = runtime;
   useEffect(() => {
     if (registerRuntime === undefined) return;
     return registerRuntime({
@@ -252,11 +253,30 @@ export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
       attachmentId,
       thread,
       voiceScope,
-      voiceResource,
+      resources,
       voiceController,
-      ...(startVoiceInput === undefined ? {} : { startVoice: (listener, options) => startVoice(listener, options) }),
+      // A recording retains its originating server/thread while native capture
+      // starts. A latest-render callback could connect it to another chat.
+      ...(startVoiceInput === undefined ? {} : { startVoice: startVoiceInput }),
     });
-  }, [attach, attachmentId, registerRuntime, startVoice, startVoiceInput, thread, voiceController, voiceResource, voiceScope]);
+  }, [attach, attachmentId, registerRuntime, startVoiceInput, thread, voiceController, resources, voiceScope]);
+}
+
+export function useImageReviewPoints(targetId: string): readonly ContentReviewPoint[] {
+  const controller = useContext(ContentReviewContext);
+  if (controller === null) return [];
+  const points: ContentReviewPoint[] = [];
+  for (const comment of controller.comments) {
+    const anchor = comment.anchor;
+    if (anchor.kind === "image" && anchor.target.id === targetId) {
+      points.push({ id: comment.id, x: anchor.x, y: anchor.y, pending: false });
+    }
+  }
+  const active = controller.active;
+  if (active?.anchor.kind === "image" && active.anchor.target.id === targetId) {
+    points.push({ id: active.id, x: active.anchor.x, y: active.anchor.y, pending: true });
+  }
+  return points;
 }
 
 export function ContentReviewComposer({
@@ -311,11 +331,11 @@ export function ContentReviewComments({
           onPress={() => setExpanded((current) => !current)}
           style={({ pressed }) => [styles.commentsSummary, pressed && styles.pressed]}
         >
-          <Ionicons name="chatbubble-ellipses-outline" size={17} color={REVIEW_PURPLE} />
+          <Ionicons name="chatbubble-ellipses-outline" size={iconSize.inline} color={REVIEW_PURPLE} />
           <Text numberOfLines={1} style={styles.commentsSummaryText}>
             {comments.length} {comments.length === 1 ? "comment" : "comments"}{latest === undefined ? "" : ` · ${latest.body}`}
           </Text>
-          <Ionicons name={expanded ? "chevron-down" : "chevron-up"} size={17} color={colors.textMuted} />
+          <Ionicons name={expanded ? "chevron-down" : "chevron-up"} size={iconSize.inline} color={colors.textMuted} />
         </Pressable>
         {expanded && (
           <ScrollView nestedScrollEnabled style={styles.commentsList}>
@@ -349,16 +369,19 @@ function InlineContentReviewComposer({
   const [saving, setSaving] = useState(false);
   const draftRef = useRef("");
   const selectionRef = useRef({ start: 0, end: 0 });
-  const { cancel, runtimeStore } = controller;
+  const { cancel } = controller;
+  const voiceScope = `${active.scope}\u0000content-review\u0000${active.id}`;
+  const voiceController = runtime?.voiceController ?? null;
+  const voiceResource = useScopedVoiceInputResource(runtime?.resources ?? null, voiceScope);
   useEffect(() => () => {
-    const current = runtimeStore.getSnapshot();
-    if (current?.voiceResource?.phase !== "idle") void current?.voiceController?.finish(false);
-    current?.voiceController?.unbind(current.voiceScope);
+    void voiceController?.finish(voiceScope, false);
+    voiceController?.unbind(voiceScope);
     cancel(active.id);
-  }, [active.id, cancel, runtimeStore]);
+  }, [active.id, cancel, voiceController, voiceScope]);
 
-  const voicePhase = runtime?.voiceResource?.phase ?? "idle";
-  const voiceRetryAvailable = runtime?.voiceResource?.retryAvailable ?? false;
+  const voicePhase = voiceResource?.phase ?? "idle";
+  const microphoneAccess = useMicrophoneAccess();
+  const voiceRetryAvailable = voiceResource?.retryAvailable ?? false;
   const updateDraft = (value: string) => {
     draftRef.current = value;
     setDraft(value);
@@ -366,7 +389,7 @@ function InlineContentReviewComposer({
   const bindVoice = () => {
     if (runtime?.voiceController === null || runtime?.voiceController === undefined) return;
     runtime.voiceController.bind({
-      scope: runtime.voiceScope,
+      scope: voiceScope,
       source: () => draftRef.current,
       selection: () => selectionRef.current,
       thread: runtime.thread,
@@ -378,10 +401,11 @@ function InlineContentReviewComposer({
   const pressVoice = async () => {
     const voice = runtime?.voiceController;
     if (voice === null || voice === undefined) return;
+    if (voicePhase === "idle" && !voiceRetryAvailable && !microphoneAccess.allowCapture()) return;
     bindVoice();
-    if (voiceRetryAvailable) await voice.retry();
-    else if (voicePhase === "idle") await voice.toggle();
-    else if (voicePhase !== "finishing") await voice.finish(false);
+    if (voiceRetryAvailable) await voice.retry(voiceScope);
+    else if (voicePhase === "idle") await voice.toggle(voiceScope);
+    else if (voicePhase !== "finishing") await voice.finish(voiceScope, false);
   };
   const save = async () => {
     if (saving || draft.trim() === "" || voicePhase !== "idle") return;
@@ -401,14 +425,13 @@ function InlineContentReviewComposer({
   const canSave = draft.trim() !== "" && voicePhase === "idle" && !saving;
 
   return (
-    <View pointerEvents="box-none" style={styles.inlineLayer}>
-      <KeyboardStickyView offset={{ closed: 0, opened: 0 }} style={styles.inlineSticky}>
+    <ContentReviewKeyboardDock>
         <View style={[styles.inlineCard, { paddingBottom: Math.max(spacing.sm, insets.bottom) }]}>
           <View style={styles.anchorRow}>
             <View style={styles.anchorMarker} />
             <AnchorSummary anchor={active.anchor} />
             <Pressable accessibilityRole="button" accessibilityLabel="Cancel content review" hitSlop={8} onPress={() => controller.cancel(active.id)} style={styles.closeButton}>
-              <Ionicons name="close" size={20} color={colors.textMuted} />
+              <Ionicons name="close" size={iconSize.action} color={colors.textMuted} />
             </Pressable>
           </View>
           <View style={styles.composerRow}>
@@ -425,25 +448,24 @@ function InlineContentReviewComposer({
             />
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={voiceRetryAvailable ? "Retry review voice input" : voicePhase === "idle" ? "Review voice input" : "Stop review voice input"}
+              accessibilityLabel={voiceRetryAvailable ? "Retry review voice input" : voicePhase === "idle" ? microphoneAccess.granted ? "Review voice input" : "Allow microphone access" : "Stop review voice input"}
               disabled={voicePhase === "finishing" && !voiceRetryAvailable}
               onPress={() => void pressVoice()}
-              style={[styles.circleButton, voicePhase === "finishing" && !voiceRetryAvailable && styles.disabled]}
+              style={[styles.circleButton, ((voicePhase === "idle" && !microphoneAccess.granted && !voiceRetryAvailable) || (voicePhase === "finishing" && !voiceRetryAvailable)) && styles.disabled]}
             >
               {voicePhase === "starting" || voicePhase === "finishing" && !voiceRetryAvailable
                 ? <ActivityIndicator size="small" color={colors.textMuted} />
-                : <Ionicons name={voiceRetryAvailable ? "refresh" : voicePhase === "idle" ? "mic-outline" : "stop"} size={20} color={voicePhase === "recording" ? colors.red : colors.text} />}
+                : <Ionicons name={voiceRetryAvailable ? "refresh" : voicePhase === "idle" ? "mic-outline" : "stop"} size={iconSize.action} color={voicePhase === "recording" ? colors.red : colors.text} />}
             </Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel="Save review comment" disabled={!canSave} onPress={() => void save()} style={[styles.saveButton, !canSave && styles.disabled]}>
-              {saving ? <ActivityIndicator size="small" color={colors.onPrimary} /> : <Ionicons name="checkmark" size={21} color={colors.onPrimary} />}
+              {saving ? <ActivityIndicator size="small" color={colors.onPrimary} /> : <Ionicons name="checkmark" size={iconSize.action} color={colors.onPrimary} />}
             </Pressable>
           </View>
-          {runtime?.voiceResource?.error !== null && runtime?.voiceResource?.error !== undefined && (
-            <Text style={styles.error}>{runtime.voiceResource.error}</Text>
+          {voiceResource?.error !== null && voiceResource?.error !== undefined && (
+            <Text style={styles.error}>{voiceResource.error}</Text>
           )}
         </View>
-      </KeyboardStickyView>
-    </View>
+    </ContentReviewKeyboardDock>
   );
 }
 
@@ -456,8 +478,8 @@ function AnchorSummary({ anchor }: { anchor: ContentReviewAnchor }) {
   }
   return (
     <View style={styles.pointRow}>
-      <Ionicons name="pin" size={16} color={REVIEW_PURPLE} />
-      <Text style={styles.pointText}>Mermaid · {(anchor.x * 100).toFixed(1)}%, {(anchor.y * 100).toFixed(1)}%</Text>
+      <Ionicons name="pin" size={iconSize.inline} color={REVIEW_PURPLE} />
+      <Text style={styles.pointText}>{commentAnchorLabel(anchor)}</Text>
     </View>
   );
 }
@@ -465,39 +487,37 @@ function AnchorSummary({ anchor }: { anchor: ContentReviewAnchor }) {
 function commentAnchorLabel(anchor: ContentReviewAnchor): string {
   if (anchor.kind === "text") return `“${anchor.quote.trim()}”`;
   if (anchor.kind === "response") return "Entire agent response";
-  return `Mermaid · ${(anchor.x * 100).toFixed(1)}%, ${(anchor.y * 100).toFixed(1)}%`;
+  return `${anchor.kind === "image" ? "Image" : "Mermaid"} · ${(anchor.x * 100).toFixed(1)}%, ${(anchor.y * 100).toFixed(1)}%`;
 }
 
 const REVIEW_PURPLE = "#B794F6";
 
 const styles = StyleSheet.create({
   host: { flex: 1, minWidth: 0, minHeight: 0 },
-  inlineLayer: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 100, justifyContent: "flex-end" },
-  inlineSticky: { width: "100%", flexShrink: 0 },
   inlineCard: { width: "100%", maxWidth: 760, alignSelf: "center", gap: spacing.sm, padding: spacing.sm, borderTopWidth: 1, borderColor: "rgba(183, 148, 246, 0.55)", backgroundColor: colors.surfaceRaised },
   anchorRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  anchorMarker: { width: 3, alignSelf: "stretch", borderRadius: 2, backgroundColor: REVIEW_PURPLE },
-  quoteText: { flex: 1, minWidth: 0, color: colors.textMuted, fontSize: 13, lineHeight: 18 },
-  pointRow: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 },
-  pointText: { flex: 1, minWidth: 0, color: colors.textMuted, fontSize: 13, lineHeight: 18 },
-  closeButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
+  anchorMarker: { width: 3, alignSelf: "stretch", borderRadius: radii.compact, backgroundColor: REVIEW_PURPLE },
+  quoteText: { flex: 1, minWidth: 0, color: colors.textMuted, ...typeScale.body, },
+  pointRow: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.compact },
+  pointText: { flex: 1, minWidth: 0, color: colors.textMuted, ...typeScale.body, },
+  closeButton: { width: controlSize.compact, height: controlSize.compact, alignItems: "center", justifyContent: "center" },
   composerRow: { minWidth: 0, flexDirection: "row", alignItems: "flex-end", gap: spacing.xs },
-  input: { flex: 1, minWidth: 0, minHeight: 48, maxHeight: 160, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerHigh, color: colors.text, paddingHorizontal: 13, paddingVertical: 10, fontSize: 14, lineHeight: 20 },
-  circleButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh },
-  saveButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
+  input: { flex: 1, minWidth: 0, minHeight: controlSize.touch, maxHeight: 160, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerHigh, color: colors.text, paddingHorizontal: spacing.sm, paddingVertical: spacing.inputInset, ...typeScale.body, },
+  circleButton: { width: controlSize.touch, height: controlSize.touch, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh },
+  saveButton: { width: controlSize.touch, height: controlSize.touch, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
   error: { color: colors.red, paddingHorizontal: spacing.xs, textAlign: "center" },
   disabled: { opacity: 0.4 },
   pressed: { opacity: 0.68 },
   commentsInline: { width: "100%", minWidth: 0, marginTop: spacing.sm },
   commentsOverlay: { position: "absolute", left: spacing.sm, right: spacing.sm, zIndex: 90, alignItems: "center" },
   commentsCard: { width: "100%", maxWidth: 760, borderRadius: radii.large, borderWidth: 1, borderColor: "rgba(183, 148, 246, 0.38)", backgroundColor: "rgba(28, 28, 28, 0.97)", overflow: "hidden" },
-  commentsSummary: { minHeight: 46, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm },
-  commentsSummaryText: { minWidth: 0, flex: 1, color: colors.text, fontSize: 13, lineHeight: 18 },
+  commentsSummary: { minHeight: controlSize.touch, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm },
+  commentsSummaryText: { minWidth: 0, flex: 1, color: colors.text, ...typeScale.body, },
   commentsList: { maxHeight: 280, borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   commentRow: { minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: spacing.xs, paddingVertical: spacing.xs },
-  commentOrdinal: { width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
-  commentOrdinalText: { color: "#0b0b0b", fontSize: 11, fontWeight: "800" },
-  commentBody: { minWidth: 0, flex: 1, gap: 2 },
-  commentAnchor: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-  commentText: { color: colors.text, fontSize: 13, lineHeight: 18 },
+  commentOrdinal: { width: 22, height: 22, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
+  commentOrdinalText: { color: "#0b0b0b", ...typeScale.label, fontWeight: typeWeight.semibold },
+  commentBody: { minWidth: 0, flex: 1, gap: spacing.optical },
+  commentAnchor: { color: colors.textMuted, ...typeScale.label, },
+  commentText: { color: colors.text, ...typeScale.body, },
 });

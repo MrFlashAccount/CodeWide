@@ -39,7 +39,10 @@ describe("Android release automation", () => {
 
   it("increments the patch, native runtime, and version code atomically", () => {
     const current = readAndroidReleaseVersion({ appConfig, gradle, manifest });
-    const updated = updateAndroidReleaseVersion({ appConfig, gradle, manifest });
+    const updated = updateAndroidReleaseVersion(
+      { appConfig, gradle, manifest },
+      { requestedVersion: undefined, published: undefined },
+    );
 
     expect(updated.next).toEqual({
       versionName: nextPatchVersion(current.versionName),
@@ -48,8 +51,31 @@ describe("Android release automation", () => {
     });
     expect(readAndroidReleaseVersion(updated)).toEqual(updated.next);
     expect(() =>
-      updateAndroidReleaseVersion({ appConfig, gradle, manifest }, current.versionName),
+      updateAndroidReleaseVersion(
+        { appConfig, gradle, manifest },
+        { requestedVersion: current.versionName, published: undefined },
+      ),
     ).toThrow(/must increase/u);
+  });
+
+  it("advances from the published APK when the checkout release version is stale", () => {
+    const current = readAndroidReleaseVersion({ appConfig, gradle, manifest });
+    const published = {
+      versionName: nextPatchVersion(current.versionName),
+      versionCode: current.versionCode + 4,
+    };
+    const updated = updateAndroidReleaseVersion(
+      { appConfig, gradle, manifest },
+      { requestedVersion: undefined, published },
+    );
+
+    expect(updated.previous).toEqual(current);
+    expect(updated.next).toEqual({
+      versionName: nextPatchVersion(published.versionName),
+      versionCode: published.versionCode + 1,
+      runtimeVersion: `${nextPatchVersion(published.versionName)}-native-${published.versionCode + 1}`,
+    });
+    expect(readAndroidReleaseVersion(updated)).toEqual(updated.next);
   });
 
   it("exposes one-shot OTA and APK commands", () => {

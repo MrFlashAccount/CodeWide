@@ -85,16 +85,22 @@ export class PortsResource extends ObservableResource<PortsProjection> {
   };
 
   async create(input: CreatePortProfileInput): Promise<PortProfile> {
+    await this.refresh();
+    const currentPort = this.snapshot().value.ports.find((port) => port.port === input.port);
+    if (currentPort === undefined) throw new Error("Port is not present in the current inventory");
+    if (input.forwardingKey !== null && input.forwardingKey !== currentPort.forwardingKey) {
+      throw new Error("Port service has changed");
+    }
     const existing = this.snapshot().value.profiles.find(
       (profile) =>
         (input.profileId !== null && profile.id === input.profileId) ||
-        (input.forwardingKey !== null && profile.forwardingKey === input.forwardingKey),
+        profile.forwardingKey === currentPort.forwardingKey,
     );
     const profile = await this.#upsert({
-      forwardingKey: input.forwardingKey,
+      forwardingKey: currentPort.forwardingKey,
       label: input.label,
       port: input.port,
-      preference: includedPreference(existing),
+      preference: input.start ? includedPreference(existing) : "excluded",
       preferredLocalPort: input.preferredLocalPort,
       profileId: existing?.id ?? input.profileId ?? this.#transport.createProfileId(),
     });
@@ -133,13 +139,23 @@ export class PortsResource extends ObservableResource<PortsProjection> {
   async reconnect(profileId: string): Promise<PortProfile> {
     const profile = this.#requireProfile(profileId);
     if (profile.enabled) await this.#stopProfile(profile);
-    return this.#startProfile(this.#requireProfile(profileId));
+    // Stop is an explicit exclusion at the native boundary. Reconnecting must
+    // restore the previous policy, including automatic forwarding.
+    const restored = await this.#upsert({
+      forwardingKey: profile.forwardingKey,
+      label: profile.label,
+      port: profile.port,
+      preference: includedPreference(profile),
+      preferredLocalPort: profile.preferredLocalPort,
+      profileId: profile.id,
+    });
+    return this.#startProfile(restored);
   }
 
   async remove(profileId: string): Promise<void> {
     this.#requireProfile(profileId);
     await this.#transport.remove(this.#savedServerId, profileId);
-    this.#removeProfile(profileId);
+    await this.refresh();
   }
 
   async start(profileId: string): Promise<PortProfile> {
@@ -206,10 +222,20 @@ export class PortsResource extends ObservableResource<PortsProjection> {
       this.#mergeLoadedProfiles(profiles);
     } catch (cause) {
       if (this.#stopped) return;
-      profileError = errorMessage(cause, "Could not read saved port forwarding profiles");
+      profileError = errorMessage(cause, "Could not read current port forwards");
     }
     try {
       const discovered = await this.#transport.discover(this.#savedServerId);
+      if (this.#stopped) return;
+      // The native inventory owner creates/removes forwards during discovery.
+      // Reload after it commits; JavaScript must not run a second reconciler.
+      try {
+        const profiles = await this.#transport.list(this.#savedServerId);
+        if (this.#stopped) return;
+        this.#mergeLoadedProfiles(profiles);
+      } catch (cause) {
+        profileError = errorMessage(cause, "Could not read current port forwards");
+      }
       if (this.#stopped) return;
       const value = this.snapshot().value;
       this.publish({
@@ -223,7 +249,6 @@ export class PortsResource extends ObservableResource<PortsProjection> {
           scannedAt: discovered.scannedAt,
         },
       });
-      await this.#reconcileDiscovered(discovered.ports);
     } catch (cause) {
       if (this.#stopped) return;
       const value = this.snapshot().value;
@@ -236,40 +261,6 @@ export class PortsResource extends ObservableResource<PortsProjection> {
           profileError,
         },
       });
-    }
-  }
-
-  async #reconcileDiscovered(ports: V2PortDescriptor[]): Promise<void> {
-    for (const port of ports) {
-      let profile = this.#profileForPort(port);
-      if (profile === undefined) {
-        if (!port.defaultForwardingEnabled) continue;
-        profile = await this.#upsert({
-          forwardingKey: port.forwardingKey,
-          label: displayName(port),
-          port: port.port,
-          preference: "automatic",
-          preferredLocalPort: null,
-          profileId: this.#transport.createProfileId(),
-        });
-        await this.#startProfile(profile);
-        continue;
-      }
-      if (profile.preference === "excluded") continue;
-      const nextLabel = profile.preference === "automatic" ? displayName(port) : profile.label;
-      if (profile.port !== port.port || profile.label !== nextLabel) {
-        profile = await this.#upsert({
-          forwardingKey: port.forwardingKey,
-          label: nextLabel,
-          port: port.port,
-          preference: profile.preference,
-          preferredLocalPort: profile.preferredLocalPort,
-          profileId: profile.id,
-        });
-      }
-      if (profile.preference === "automatic" && !profile.enabled) {
-        await this.#startProfile(profile);
-      }
     }
   }
 
@@ -300,7 +291,9 @@ export class PortsResource extends ObservableResource<PortsProjection> {
 
   #profileForPort(port: V2PortDescriptor): PortProfile | undefined {
     return this.snapshot().value.profiles.find(
-      (profile) => profile.forwardingKey === port.forwardingKey || profile.port === port.port,
+      (profile) =>
+        profile.forwardingKey === port.forwardingKey ||
+        (profile.forwardingKey === null && profile.port === port.port),
     );
   }
 

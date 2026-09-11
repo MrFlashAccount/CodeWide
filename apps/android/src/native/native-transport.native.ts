@@ -32,6 +32,8 @@ type NativeAudioEvent = CapturedAudioChunk & {
 };
 
 type NativeBridge = {
+  microphonePermissionGranted?: boolean;
+  refreshMicrophonePermission?(): void;
   claimPairing(savedServerId: string, endpoint: string, pairingToken: string, deviceName: string, tlsPinSha256: string): Promise<{ deviceId: string; capabilityToken: string }>;
   saveConnectionCredentials(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean): Promise<void>;
   saveConnectionCredentialsV2?(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean, deviceId: string): Promise<void>;
@@ -76,6 +78,8 @@ type NativeBridge = {
   stopVoiceInput(): void;
   setVoiceAuraState?(active: boolean, level: number, reducedMotion: boolean): void;
   setVoiceAuraTarget?(reactTag: number | null): void;
+  configureFullscreenWindow?(reactTag: number): void;
+  setVoiceAuraOrigin?(reactTag: number | null): void;
   // Native-22 and older resolve void/null. Native-23 adds capture diagnostics;
   // audio chunks themselves remain the source of truth for the PCM format.
   startPcmCapture(): Promise<PcmCaptureInfo | null>;
@@ -184,6 +188,38 @@ export type NativeCommandDelivery = {
 
 const bridge = NativeModules.CodeWideNative as NativeBridge | undefined;
 const emitter = bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodeWideNative);
+
+export type MicrophonePermission = "granted" | "denied" | "blocked";
+let microphonePermission: MicrophonePermission = bridge?.microphonePermissionGranted === true ? "granted" : "denied";
+const microphonePermissionListeners = new Set<() => void>();
+
+function publishMicrophonePermission(next: MicrophonePermission): void {
+  if (microphonePermission === next) return;
+  microphonePermission = next;
+  for (const notify of microphonePermissionListeners) notify();
+}
+
+emitter?.addListener("CodeWideMicrophonePermission", (granted: unknown) => {
+  if (typeof granted !== "boolean") return;
+  publishMicrophonePermission(granted ? "granted" : microphonePermission === "blocked" ? "blocked" : "denied");
+});
+
+export function getMicrophonePermission(): MicrophonePermission { return microphonePermission; }
+
+export function subscribeMicrophonePermission(notify: () => void): () => void {
+  microphonePermissionListeners.add(notify);
+  return () => { microphonePermissionListeners.delete(notify); };
+}
+
+/** Only an explicit permission-dialog action may open Android's permission prompt. */
+export async function requestMicrophonePermission(): Promise<MicrophonePermission> {
+  const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+  const permission = result === PermissionsAndroid.RESULTS.GRANTED ? "granted"
+    : result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN ? "blocked" : "denied";
+  publishMicrophonePermission(permission);
+  bridge?.refreshMicrophonePermission?.();
+  return permission;
+}
 
 export async function claimNativePairing(input: {
   savedServerId: string;
@@ -491,7 +527,8 @@ export function parseNativePortForwardProfile(value: unknown): NativePortForward
     || !(row.localPort === null || isPort(row.localPort))
     || typeof row.enabled !== "boolean"
     || !["stopped", "connecting", "live", "unavailable", "error"].includes(row.status ?? "")
-    || !(row.previewUrl === null || (typeof row.previewUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}\/$/u.test(row.previewUrl)))
+    // Native-136 uses raw loopback URLs; older shells retain the capability path.
+    || !(row.previewUrl === null || (typeof row.previewUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+\/(?:[A-Za-z0-9_-]{43}\/)?$/u.test(row.previewUrl)))
     || !(row.error === null || typeof row.error === "string")
     || typeof row.updatedAt !== "number"
   ) throw new Error("Native port-forward projection is invalid");
@@ -606,8 +643,7 @@ export async function startVoiceRecognition(
   localeTag: string | null = null,
 ): Promise<() => void> {
   if (bridge === undefined || emitter === null || Platform.OS !== "android") throw new Error("Native voice input is unavailable");
-  const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-  if (permission !== PermissionsAndroid.RESULTS.GRANTED) throw new Error("Microphone permission was denied");
+  if (getMicrophonePermission() !== "granted") throw new Error("Microphone permission is required");
   let armed = false;
   let stopped = false;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -653,9 +689,19 @@ export function setNativeVoiceAuraState(active: boolean, level: number, reducedM
   bridge.setVoiceAuraState(active, Math.max(0, Math.min(1, level)), reducedMotion);
 }
 
+/** Capture the pressed microphone's native center before focus/keyboard changes. */
+export function setNativeVoiceAuraOrigin(reactTag: number | null): void {
+  if (bridge === undefined || Platform.OS !== "android") return;
+  bridge.setVoiceAuraOrigin?.(reactTag);
+}
+
 export function setNativeVoiceAuraTarget(reactTag: number | null): void {
   if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraTarget === undefined) return;
   bridge.setVoiceAuraTarget(reactTag);
+}
+
+export function configureNativeFullscreenWindow(reactTag: number): void {
+  bridge?.configureFullscreenWindow?.(reactTag);
 }
 
 export async function startPcmCapture(
@@ -663,8 +709,7 @@ export async function startPcmCapture(
   onError: (message: string) => void,
 ): Promise<{ stop(): Promise<void>; info: PcmCaptureInfo | null }> {
   if (bridge === undefined || emitter === null || Platform.OS !== "android") throw new Error("Native audio capture is unavailable");
-  const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-  if (permission !== PermissionsAndroid.RESULTS.GRANTED) throw new Error("Microphone permission was denied");
+  if (getMicrophonePermission() !== "granted") throw new Error("Microphone permission is required");
   let stopped = false;
   let stopPromise: Promise<void> | null = null;
   let resolveStopped: (() => void) | null = null;

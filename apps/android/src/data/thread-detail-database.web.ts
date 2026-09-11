@@ -22,7 +22,15 @@ export type ThreadRemoteLoader = {
     reason: ThreadWindowCoverage["reason"] | "activation";
   }): Promise<void>;
   loadOlder(input: { connectionId: string; threadId: string; cursor: string; historyEpoch: number }): Promise<void>;
+  loadNewer(input: { connectionId: string; threadId: string; afterTurnId: string; historyEpoch: number }): Promise<ThreadRemoteNewerResult>;
+  loadBefore?(input: { connectionId: string; threadId: string; beforeTurnId: string; historyEpoch: number }): Promise<ThreadRemoteOlderResult>;
 };
+export type ThreadRemoteNewerResult =
+  | { status: "persisted"; lastTurnId: string; hasMore: boolean }
+  | { status: "superseded" };
+export type ThreadRemoteOlderResult =
+  | { status: "persisted"; oldestTurnId: string; hasMore: boolean }
+  | { status: "superseded" };
 export type ThreadHistoryPrependResult = { accepted: boolean; historyEpoch: number; extendedMinimum: boolean };
 export type ThreadHistoryAppendResult = { accepted: boolean; historyEpoch: number };
 export type ThreadSnapshotImportReason = "initial" | "fork" | "recovery";
@@ -31,8 +39,11 @@ export type ThreadSynchronization = {
   readonly connectionId: string;
   readonly thread: Thread;
   readonly mode: ThreadSnapshotSyncMode;
-  readonly historyCursor: string | null;
+  readonly historyCursor: string | null | undefined;
+  readonly throughCursor: number;
   readonly expectedLiveRevision: number;
+  readonly sourceWitness?: string;
+  readonly isCurrent?: () => boolean;
 };
 export type ThreadDetailDatabase = {
   readonly sessionId: string;
@@ -55,15 +66,21 @@ export type ThreadDetailDatabase = {
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
   liveRevision(connectionId: string, threadId: string): number;
   historyCursor(connectionId: string, threadId: string): string | null | undefined;
+  historySourceWitness(connectionId: string, threadId: string): string | undefined;
   latestSealedTurnId(connectionId: string, threadId: string): Promise<string | null>;
+  beginProjectionSnapshot(connectionId: string, threadId: string): () => void;
   synchronizeThread(input: ThreadSynchronization): Promise<void>;
   importThreadSnapshot(connectionId: string, thread: Thread, reason: ThreadSnapshotImportReason, historyCursor?: string | null): Promise<void>;
   replaceThreadSnapshot(connectionId: string, thread: Thread, reason: ThreadSnapshotImportReason, historyCursor: string | null): Promise<void>;
+  mergeTailTurns(connectionId: string, threadId: string, turns: Turn[], historyCursor: string | null, isCurrent?: () => boolean): Promise<void>;
   appendTurns(connectionId: string, threadId: string, turns: Turn[], historyCursor?: string | null): Promise<ThreadHistoryAppendResult>;
+  appendTurnsAfter(connectionId: string, threadId: string, expectedHistoryEpoch: number, afterTurnId: string, turns: Turn[], sourceWitness: string, isCurrent: () => boolean, requestedSourceWitness: string | undefined): Promise<ThreadHistoryAppendResult>;
+  prependTurnsBefore(connectionId: string, threadId: string, expectedHistoryEpoch: number, beforeTurnId: string, turns: Turn[], hasMore: boolean, sourceWitness: string, isCurrent: () => boolean, requestedSourceWitness: string | undefined): Promise<ThreadHistoryAppendResult>;
+  invalidateHistoryExhaustion(connectionId: string, threadId?: string): void;
   replaceActiveThread(connectionId: string, thread: Thread): Promise<void>;
-  prependTurns(connectionId: string, threadId: string, expectedHistoryEpoch: number, turns: Turn[], nextCursor: string | null): Promise<ThreadHistoryPrependResult>;
+  prependTurns(connectionId: string, threadId: string, expectedHistoryEpoch: number, turns: Turn[], nextCursor: string | null, isCurrent?: () => boolean): Promise<ThreadHistoryPrependResult>;
   replaceTurnItems(connectionId: string, threadId: string, turnId: string, items: Turn["items"]): Promise<void>;
-  createPending(input: Omit<PendingTimelineEntry, "order"> & { order?: number; connectionId: string; threadId: string }): ThreadDetailRow;
+  createPending(input: Omit<PendingTimelineEntry, "order" | "confirmation"> & { order?: number; connectionId: string; threadId: string }): ThreadDetailRow;
   stagePendingMutation(mutation: PendingTimelineMutation): { rollback(): void; complete(): void };
   commitPending(row: ThreadDetailRow, options?: { durable?: boolean }): Promise<boolean>;
   commitPendingMutation(mutation: PendingTimelineMutation, options?: { durable?: boolean }): Promise<boolean>;

@@ -6,6 +6,7 @@ import {
 } from "@expo/ui/community/bottom-sheet";
 import type { ReactNode } from "react";
 import {
+  Pressable,
   StyleSheet,
   View,
   type ScrollViewProps,
@@ -14,7 +15,7 @@ import {
 } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, radii, spacing } from "../../theme";
+import { colors, radii, spacing, layoutSize } from "../../theme";
 
 const SHEET_MAX_WIDTH = 580;
 const SHEET_FRAME_MAX_WIDTH = SHEET_MAX_WIDTH + spacing.md * 2;
@@ -27,6 +28,8 @@ export type PresentationSheetContentProps = Omit<
   bottomInset?: number;
   className?: string;
   contentContainerClassName?: string;
+  /** Accessible name of the dismissible drag handle. */
+  dismissLabel?: string;
   detached?: boolean;
   index?: number;
   maxDynamicContentSize?: number;
@@ -70,13 +73,18 @@ export function PresentationSheetView(props: PresentationSheetViewProps): React.
               contentProps.style,
             ]}
           >
-            <View
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={contentProps.dismissLabel ?? "Dismiss sheet"}
+              disabled={contentProps.enablePanDownToClose === false}
+              onPress={close}
+              onAccessibilityEscape={
+                contentProps.enablePanDownToClose === false ? undefined : close
+              }
               style={styles.handleArea}
             >
               <View style={styles.handle} />
-            </View>
+            </Pressable>
             {children}
           </View>
         </View>
@@ -91,28 +99,27 @@ export function PresentationSheetScrollView(scrollViewProps: ScrollViewProps): R
 }
 
 const styles = StyleSheet.create({
-  detachedSurface: { borderRadius: 32 },
+  detachedSurface: { borderRadius: radii.large },
   expandedFrame: { flex: 1, minHeight: 0 },
   expandedInset: { flex: 1, minHeight: 0 },
-  expandedSurface: { flex: 1, minHeight: 0 },
+  expandedSurface: { flex: 1, minHeight: 0, paddingBottom: 0 },
   frame: { minWidth: 0, width: "100%" },
   handle: {
     backgroundColor: colors.textDim,
-    borderRadius: 2,
+    borderRadius: radii.compact,
     height: 4,
     width: 36,
   },
   handleArea: {
     alignItems: "center",
     flexShrink: 0,
-    height: 24,
+    height: layoutSize.metadataRow,
     justifyContent: "center",
   },
   inset: {
     alignSelf: "center",
     maxWidth: SHEET_FRAME_MAX_WIDTH,
     minWidth: 0,
-    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
     width: "100%",
   },

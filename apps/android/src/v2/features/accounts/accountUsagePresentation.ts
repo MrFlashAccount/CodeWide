@@ -21,11 +21,10 @@ export function accountUsagePresentation(
       profile.weeklyLimit !== null,
       stale,
     );
+    const exhausted = profile.exhaustedUntil !== null || profile.exhaustedIndefinitely;
     return {
-      active: profile.id === result.activeProfileId,
-      detail: `${profile.plan ?? "Plan unavailable"}${profile.id === result.activeProfileId ? " · active" : ""}`,
+      detail: formatPlan(profile.plan),
       enabled: profile.enabled,
-      exhausted: profile.exhaustedUntil !== null || profile.exhaustedIndefinitely,
       id: profile.id,
       label: profile.email ?? "Account",
       limitState,
@@ -37,8 +36,19 @@ export function accountUsagePresentation(
         limitState === "ready" && resetTimestamp !== null
           ? relativeReset(resetTimestamp, now)
           : null,
+      state: exhausted
+        ? "exhausted"
+        : profile.id === result.activeProfileId
+          ? "active"
+          : "inactive",
     };
   });
+}
+
+function formatPlan(plan: string | null): string {
+  const normalized = plan?.trim();
+  if (normalized === undefined || normalized.length === 0) return "Plan unavailable";
+  return `${normalized.charAt(0).toLocaleUpperCase()}${normalized.slice(1)}`;
 }
 
 function accountLimitState(

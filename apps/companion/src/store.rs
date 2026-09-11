@@ -19,6 +19,7 @@ const FILES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_files
 const RECORDS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_records");
 const TURNS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("rollout_turns");
 const TURNS_BY_ID: TableDefinition<&[u8], u64> = TableDefinition::new("rollout_turns_by_id");
+const REMOVED_TURNS: TableDefinition<&[u8], u8> = TableDefinition::new("rollout_removed_turns");
 const TURN_SUMMARIES: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("rollout_turn_summaries");
 const REPLAY: TableDefinition<u64, &[u8]> = TableDefinition::new("sync_replay");
@@ -240,6 +241,8 @@ pub struct FileState {
     pub indexed_bytes: u64,
     pub records: u64,
     pub tail_hash: [u8; 32],
+    /// Detects same-length source rewrites outside the sampled checkpoint tail.
+    pub modified_nanos: u128,
 }
 
 impl FileState {
@@ -252,6 +255,7 @@ impl FileState {
             indexed_bytes: 0,
             records: 0,
             tail_hash: [0; 32],
+            modified_nanos: 0,
         }
     }
 
@@ -264,6 +268,7 @@ impl FileState {
             indexed_bytes: indexed_from,
             records: 0,
             tail_hash: [0; 32],
+            modified_nanos: 0,
         }
     }
 
@@ -273,7 +278,7 @@ impl FileState {
     }
 
     fn encode(self) -> Vec<u8> {
-        if self.is_complete() {
+        if self.is_complete() && self.modified_nanos == 0 {
             // Keep complete checkpoints byte-compatible with the previous
             // companion so a binary rollback can still consume mature indexes.
             let mut encoded = vec![0_u8; FILE_STATE_V1_BYTES];
@@ -285,14 +290,28 @@ impl FileState {
             encoded[33..65].copy_from_slice(&self.tail_hash);
             return encoded;
         }
-        let mut encoded = vec![0_u8; FILE_STATE_BYTES];
-        encoded[0] = FILE_STATE_VERSION;
+        let mut encoded = vec![
+            0_u8;
+            if self.modified_nanos == 0 {
+                FILE_STATE_BYTES
+            } else {
+                FILE_STATE_BYTES + 16
+            }
+        ];
+        encoded[0] = if self.modified_nanos == 0 {
+            FILE_STATE_VERSION
+        } else {
+            3
+        };
         encoded[1..9].copy_from_slice(&self.device.to_be_bytes());
         encoded[9..17].copy_from_slice(&self.inode.to_be_bytes());
         encoded[17..25].copy_from_slice(&self.indexed_from.to_be_bytes());
         encoded[25..33].copy_from_slice(&self.indexed_bytes.to_be_bytes());
         encoded[33..41].copy_from_slice(&self.records.to_be_bytes());
         encoded[41..73].copy_from_slice(&self.tail_hash);
+        if self.modified_nanos != 0 {
+            encoded[73..89].copy_from_slice(&self.modified_nanos.to_be_bytes());
+        }
         encoded
     }
 
@@ -307,9 +326,11 @@ impl FileState {
                 tail_hash: encoded[33..65]
                     .try_into()
                     .map_err(|_| StoreError::CorruptedIndex("invalid tail hash".into()))?,
+                modified_nanos: 0,
             });
         }
-        if encoded.len() != FILE_STATE_BYTES || encoded[0] != FILE_STATE_VERSION {
+        let current = encoded.len() == FILE_STATE_BYTES + 16 && encoded[0] == 3;
+        if !current && (encoded.len() != FILE_STATE_BYTES || encoded[0] != FILE_STATE_VERSION) {
             return Err(StoreError::CorruptedIndex(
                 "invalid rollout file state".into(),
             ));
@@ -323,6 +344,13 @@ impl FileState {
             tail_hash: encoded[41..73]
                 .try_into()
                 .map_err(|_| StoreError::CorruptedIndex("invalid tail hash".into()))?,
+            modified_nanos: if current {
+                u128::from_be_bytes(encoded[73..89].try_into().map_err(|_| {
+                    StoreError::CorruptedIndex("invalid source modification time".into())
+                })?)
+            } else {
+                0
+            },
         })
     }
 }
@@ -352,7 +380,7 @@ pub enum StoreError {
 }
 
 pub struct IndexStore {
-    database: Database,
+    database: Arc<Database>,
     rollout_index_locks: Mutex<HashMap<[u8; 32], Arc<Mutex<()>>>>,
     outbox_changes: tokio::sync::broadcast::Sender<OutboxChange>,
 }
@@ -375,9 +403,9 @@ impl IndexStore {
     /// Returns an error if the database is unavailable, corrupt, or uses an
     /// unsupported schema version.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let database = Database::create(path)?;
+        let database = crate::database::open(path, "index")?;
         let write = database.begin_write()?;
-        let rebuild_rollout_index = {
+        let mut rebuild_rollout_index = {
             let mut meta = write.open_table(META)?;
             let stored = meta.get("schema_version")?.map(|value| value.value());
             match stored {
@@ -398,10 +426,35 @@ impl IndexStore {
             }
         };
         {
+            let mut meta = write.open_table(META)?;
+            if meta
+                .get("rollout_logic_version")?
+                .map(|entry| entry.value())
+                != Some(1)
+            {
+                rebuild_rollout_index = true;
+                meta.insert("rollout_logic_version", 1)?;
+            }
+        }
+        if rebuild_rollout_index {
+            // These tables are derived from rollouts. Delete their trees in
+            // bulk: redb retain(false) copies the B-tree per removed row and
+            // defers reclaiming those copies until the entire scan finishes.
+            // On a large index that can exhaust disk during startup. Metadata,
+            // outbox and replay stay in this same atomic migration unchanged.
+            write.delete_table(REMOVED_TURNS)?;
+            write.delete_table(FILES)?;
+            write.delete_table(RECORDS)?;
+            write.delete_table(TURNS)?;
+            write.delete_table(TURNS_BY_ID)?;
+            write.delete_table(TURN_SUMMARIES)?;
+        }
+        {
             write.open_table(FILES)?;
             write.open_table(RECORDS)?;
             write.open_table(TURNS)?;
             write.open_table(TURNS_BY_ID)?;
+            write.open_table(REMOVED_TURNS)?;
             write.open_table(TURN_SUMMARIES)?;
             write.open_table(REPLAY)?;
             write.open_table(OUTBOX)?;
@@ -409,17 +462,6 @@ impl IndexStore {
             write.open_table(THREAD_METADATA)?;
             write.open_table(THREADS_BY_PARENT)?;
             read_receipts::open_tables(&write)?;
-        }
-        if rebuild_rollout_index {
-            write.open_table(FILES)?.retain(|_key, _value| false)?;
-            write.open_table(RECORDS)?.retain(|_key, _value| false)?;
-            write.open_table(TURNS)?.retain(|_key, _value| false)?;
-            write
-                .open_table(TURNS_BY_ID)?
-                .retain(|_key, _value| false)?;
-            write
-                .open_table(TURN_SUMMARIES)?
-                .retain(|_key, _value| false)?;
         }
         write.commit()?;
         let (outbox_changes, _) = tokio::sync::broadcast::channel(OUTBOX_CHANGE_CHANNEL_CAPACITY);
@@ -651,6 +693,20 @@ impl IndexStore {
         turn_summaries: &[(u64, Vec<u8>)],
         file_state: FileState,
     ) -> Result<(), StoreError> {
+        self.commit_rollout_batch(file_id, records, turns, turn_summaries, &[], file_state)
+    }
+
+    /// Atomically publishes source progress and logical rollback tombstones.
+    /// Tombstones prevent later prefix backfill from resurrecting removed turns.
+    pub(crate) fn commit_rollout_batch(
+        &self,
+        file_id: &[u8; 32],
+        records: &[(Vec<u8>, Vec<u8>)],
+        turns: &[TurnRef],
+        turn_summaries: &[(u64, Vec<u8>)],
+        removed_turns: &[u64],
+        file_state: FileState,
+    ) -> Result<(), StoreError> {
         let write = self.database.begin_write()?;
         {
             let mut table = write.open_table(RECORDS)?;
@@ -661,8 +717,22 @@ impl IndexStore {
         {
             let mut table = write.open_table(TURNS)?;
             let mut by_id = write.open_table(TURNS_BY_ID)?;
+            let mut removed = write.open_table(REMOVED_TURNS)?;
+            let mut summaries = write.open_table(TURN_SUMMARIES)?;
+            for offset in removed_turns {
+                let key = offset_key(file_id, *offset);
+                if let Some(value) = table.remove(key.as_slice())? {
+                    let turn = TurnRef::decode(value.value())?;
+                    by_id.remove(turn_id_key(file_id, &turn.id).as_slice())?;
+                }
+                summaries.remove(key.as_slice())?;
+                removed.insert(key.as_slice(), 1)?;
+            }
             for turn in turns {
                 let key = offset_key(file_id, turn.start_offset);
+                if removed.get(key.as_slice())?.is_some() {
+                    continue;
+                }
                 let value = turn.encode()?;
                 table.insert(key.as_slice(), value.as_slice())?;
                 let id_key = turn_id_key(file_id, &turn.id);
@@ -671,8 +741,12 @@ impl IndexStore {
         }
         {
             let mut table = write.open_table(TURN_SUMMARIES)?;
+            let removed = write.open_table(REMOVED_TURNS)?;
             for (start_offset, summary) in turn_summaries {
                 let key = offset_key(file_id, *start_offset);
+                if removed.get(key.as_slice())?.is_some() {
+                    continue;
+                }
                 table.insert(key.as_slice(), summary.as_slice())?;
             }
         }
@@ -704,6 +778,10 @@ impl IndexStore {
         id_end.push(u8::MAX);
 
         let write = self.database.begin_write()?;
+        {
+            let mut removed = write.open_table(REMOVED_TURNS)?;
+            removed.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
+        }
         {
             let mut records = write.open_table(RECORDS)?;
             records.retain_in(start.as_slice()..=end.as_slice(), |_key, _value| false)?;
@@ -752,7 +830,7 @@ impl IndexStore {
         before_offset: Option<u64>,
         limit: usize,
     ) -> Result<Vec<TurnRef>, StoreError> {
-        if limit == 0 {
+        if limit == 0 || before_offset == Some(0) {
             return Ok(Vec::new());
         }
         let start = offset_key(file_id, 0);

@@ -19,6 +19,9 @@ class NativeRevealManager : ViewGroupManager<NativeRevealView>() {
   @ReactProp(name = "revealKey")
   fun setRevealKey(view: NativeRevealView, value: String?) = view.setPendingRevealKey(value)
 
+  @ReactProp(name = "delayMs", defaultInt = 0)
+  fun setDelayMs(view: NativeRevealView, value: Int) = view.setDelayMs(value)
+
   override fun onAfterUpdateTransaction(view: NativeRevealView) {
     super.onAfterUpdateTransaction(view)
     view.commitProps()

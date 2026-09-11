@@ -95,7 +95,8 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
       ),
     );
   });
-  const close = useEvent(() => {
+  const changeOpen = useEvent((open: boolean) => {
+    if (open) return;
     setMode("projects");
     setQuery("");
     setActionError(null);
@@ -113,13 +114,15 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
   return (
     <PresentationSheetView
       contentProps={{
+        dismissLabel: "Close project picker",
+        performanceSurface: "projects",
         enableDynamicSizing: false,
         enableOverDrag: false,
         index: 0,
         snapPoints: ["62%", "92%"],
       }}
       isOpen={isOpen}
-      onOpenChange={onOpenChange}
+      onOpenChange={changeOpen}
     >
       <View style={styles.header}>
         {mode === "add" ? (
@@ -156,14 +159,6 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
             <PresentationIcon color={colors.text} name="add" size={22} />
           </Pressable>
         ) : null}
-        <Pressable
-          accessibilityLabel="Close project picker"
-          accessibilityRole="button"
-          onPress={close}
-          style={closeStyle}
-        >
-          <PresentationIcon color={colors.text} name="close" size={21} />
-        </Pressable>
       </View>
       {mode === "add" ? (
         <ProjectPickerAddView error={actionError} onAdd={add} pending={pending} />

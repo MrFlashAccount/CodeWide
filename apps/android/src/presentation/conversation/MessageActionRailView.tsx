@@ -2,7 +2,15 @@ import { useRef } from "react";
 import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors } from "../../theme";
+import {
+  colors,
+  controlSize,
+  controlHitSlop,
+  iconSize,
+  radii,
+  spacing,
+  typeScale,
+} from "../../theme";
 import { useMessageActionMenu } from "../../ui/MessageActionMenu";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { ProductText } from "../text/ProductText";
@@ -30,17 +38,15 @@ export function MessageActionRailView(props: MessageActionRailViewProps): React.
           accessibilityLabel="Message actions"
           accessibilityRole="button"
           collapsable={false}
-          hitSlop={6}
+          hitSlop={controlHitSlop.compact}
           onPress={openActions}
           style={messageActionStyle}
         >
-          <View style={styles.actionIcon}>
-            <PresentationIcon color={colors.textDim} name="more" size={18} />
-          </View>
+          <PresentationIcon color={colors.textDim} name="more" size={iconSize.action} />
         </Pressable>
       )}
       {completedAt === null ? null : (
-        <ProductText style={styles.time} tone="dim">
+        <ProductText numberOfLines={1} style={styles.time} tone="dim">
           {completedAt}
         </ProductText>
       )}
@@ -56,29 +62,24 @@ function messageActionStyle(state: PressableStateCallbackType) {
 const styles = StyleSheet.create({
   action: {
     alignItems: "center",
-    borderRadius: 16,
+    borderRadius: radii.pill,
     flexShrink: 0,
-    height: 32,
+    height: controlSize.compact,
     justifyContent: "center",
-    marginLeft: -3,
-    width: 32,
+    width: controlSize.compact,
   },
-  actionIcon: { transform: [{ translateX: 2 }] },
   pressed: { opacity: 0.68 },
   rail: {
-    alignItems: "flex-start",
+    alignItems: "center",
     alignSelf: "stretch",
     flexShrink: 0,
     justifyContent: "space-between",
-    marginLeft: -12,
-    minHeight: 32,
-    paddingBottom: 4,
-    width: 40,
+    minHeight: controlSize.compact,
+    paddingBottom: spacing.xxs,
+    minWidth: controlSize.regular,
   },
   time: {
-    fontSize: 10,
+    ...typeScale.caption,
     fontVariant: ["tabular-nums"],
-    lineHeight: 13,
-    marginLeft: 12,
   },
 });

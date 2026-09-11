@@ -2,9 +2,11 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { compactSource } from "./source-contract";
+
 const readSource = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const screen = readSource("../src/CodeWideScreen.tsx");
+const screen = compactSource(readSource("../src/CodeWideScreen.tsx"));
 const workspace = readSource("../src/data/use-remote-workspace.ts");
 const nativeTransport = readSource("../src/native/native-transport.native.ts");
 const nativeModule = readSource("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
@@ -33,11 +35,11 @@ describe("failed message retry", () => {
     expect(screen).toContain("style={[styles.turnFooter, styles.turnFooterEnd]}");
   });
 
-  it("moves pending delivery feedback into the user text without collapsing the footer gap", () => {
+  it("keeps pending delivery feedback in the user text without reserving an absent footer", () => {
     expect(screen).toContain("pendingText={!failed}");
     expect(screen).toContain('testID="pending-user-message-shimmer"');
-    expect(screen).toContain('testID="optimistic-turn-footer-spacer"');
-    expect(screen).toContain("minHeight: TURN_FOOTER_MIN_HEIGHT");
+    expect(screen).not.toContain('testID="optimistic-turn-footer-spacer"');
+    expect(screen).toContain('accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`} style={styles.userMessageRow}');
   });
 
   it("does not describe transport acceptance as canonical delivery", () => {
@@ -69,16 +71,17 @@ describe("failed message retry", () => {
     const turnEnd = screen.indexOf('type LiveContentMode = "markdown" | "code";');
     const turnSource = screen.slice(turnStart, turnEnd);
     const userStart = turnSource.indexOf("{userBlocks.length > 0 && (");
-    const agentStart = turnSource.indexOf("{showAgentBubble && (");
+    const agentStart = turnSource.indexOf('<RecoverableRenderBoundary scope="bubble" label="Agent message"');
     const userSource = turnSource.slice(userStart, agentStart);
 
     expect(turnStart).toBeGreaterThanOrEqual(0);
     expect(turnEnd).toBeGreaterThan(turnStart);
+    expect(agentStart).toBeGreaterThan(userStart);
     expect(userSource).not.toContain("<TurnFooter");
     expect(turnSource.indexOf("<TurnFooter")).toBeGreaterThan(agentStart);
     expect(screen).toContain('testID="optimistic-turn-footer"');
     expect(screen).toContain('style={[styles.turnFooter, styles.turnFooterEnd]}');
-    expect(screen).toContain('style={styles.turnFooter}');
+    expect(screen).toContain('<MessageFooterRow time={completedAt === null ? null : formatClockTime(completedAt)}');
   });
 
   it("renders timestamps outside the narrower message bubbles", () => {

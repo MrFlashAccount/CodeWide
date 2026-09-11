@@ -1155,6 +1155,57 @@ fn account_weekly_limit_survives_v2_normalization() {
 }
 
 #[test]
+fn account_weekly_limit_prefers_canonical_codex_bucket() {
+    let result = json!({
+        "activeProfileId": "profile-1",
+        "allExhausted": true,
+        "profiles": [{
+            "id": "profile-1",
+            "email": null,
+            "planType": "pro",
+            "enabled": true,
+            "priority": 0,
+            "active": true,
+            "exhaustedUntil": 1_789_003_556,
+            "exhaustedIndefinitely": false,
+            "rateLimits": {
+                "rateLimits": {
+                    "limitId": "codex",
+                    "primary": {"usedPercent": 100, "windowDurationMins": 10_080, "resetsAt": 1_789_003_556},
+                    "secondary": null
+                },
+                "rateLimitsByLimitId": {
+                    "base_model_inference": {
+                        "limitId": "base_model_inference",
+                        "primary": {"usedPercent": 0, "windowDurationMins": 10_080, "resetsAt": 1_789_408_857},
+                        "secondary": null
+                    },
+                    "codex": {
+                        "limitId": "codex",
+                        "primary": {"usedPercent": 100, "windowDurationMins": 10_080, "resetsAt": 1_789_003_556},
+                        "secondary": null
+                    }
+                }
+            },
+            "rateLimitsUpdatedAt": 1_788_803_726,
+            "rateLimitsError": null
+        }]
+    });
+    let (_, profiles, exhausted) =
+        accounts(&result).unwrap_or_else(|error| panic!("accounts should normalize: {error:?}"));
+    assert!(exhausted);
+    let weekly = profiles
+        .first()
+        .and_then(|profile| profile.weekly_limit.as_ref())
+        .unwrap_or_else(|| panic!("weekly limit should normalize"));
+    assert!((weekly.remaining_percent - 0.0).abs() < f64::EPSILON);
+    assert_eq!(
+        weekly.resets_at.as_ref().map(Timestamp::as_str),
+        Some("2026-09-10T01:25:56Z")
+    );
+}
+
+#[test]
 fn source_error_preserves_bounded_safe_code_and_message() {
     let Err(error) = rpc_result(&json!({
         "error": {

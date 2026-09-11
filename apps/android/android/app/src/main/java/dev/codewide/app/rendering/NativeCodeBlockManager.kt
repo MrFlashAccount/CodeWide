@@ -13,6 +13,13 @@ class NativeCodeBlockManager : SimpleViewManager<NativeCodeBlockView>() {
   @ReactProp(name = "code")
   fun setCode(view: NativeCodeBlockView, value: String?) = view.setCode(value)
 
+  @ReactProp(name = "embeddedInParentScroll", defaultBoolean = true)
+  fun setEmbeddedInParentScroll(view: NativeCodeBlockView, value: Boolean) =
+    view.setEmbeddedInParentScroll(value)
+
+  @ReactProp(name = "searchQuery")
+  fun setSearchQuery(view: NativeCodeBlockView, value: String?) = view.setSearchQuery(value)
+
   @ReactProp(name = "language")
   fun setLanguage(view: NativeCodeBlockView, value: String?) = view.setLanguage(value)
 

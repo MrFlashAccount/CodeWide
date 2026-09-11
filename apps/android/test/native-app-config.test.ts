@@ -23,127 +23,512 @@ type AppConfig = {
   };
 };
 
-const appConfig = JSON.parse(readFileSync(new URL("../app.json", import.meta.url), "utf8")) as AppConfig;
-const appPackage = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+const appConfig = JSON.parse(
+  readFileSync(new URL("../app.json", import.meta.url), "utf8"),
+) as AppConfig;
+const appPackage = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as {
   main: string;
   dependencies: Record<string, string>;
 };
-const rootPackage = JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as {
+const rootPackage = JSON.parse(
+  readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+) as {
   pnpm?: { onlyBuiltDependencies?: string[]; patchedDependencies?: Record<string, string> };
 };
-const quickdrawPatch = readFileSync(new URL("../../../patches/@quickdrawjs__react-native@0.2.0.patch", import.meta.url), "utf8");
+const quickdrawPatch = readFileSync(
+  new URL("../../../patches/@quickdrawjs__react-native@0.2.0.patch", import.meta.url),
+  "utf8",
+);
 const appEntry = readFileSync(new URL("../index.js", import.meta.url), "utf8");
 const globalCss = readFileSync(new URL("../global.css", import.meta.url), "utf8");
 const rootLayout = readFileSync(new URL("../app/_layout.tsx", import.meta.url), "utf8");
-const appErrorBoundary = readFileSync(new URL("../src/ui/AppErrorBoundary.tsx", import.meta.url), "utf8");
-const globalErrorStore = readFileSync(new URL("../src/ui/global-error-store.ts", import.meta.url), "utf8");
-const secureCryptoPolyfill = readFileSync(new URL("../src/polyfills/secure-crypto.ts", import.meta.url), "utf8");
-const manifest = readFileSync(new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
-const mainActivity = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/MainActivity.kt", import.meta.url), "utf8");
-const nativeStyles = readFileSync(new URL("../android/app/src/main/res/values/styles.xml", import.meta.url), "utf8");
-const nativeColors = readFileSync(new URL("../android/app/src/main/res/values/colors.xml", import.meta.url), "utf8");
-const splashMark = readFileSync(new URL("../android/app/src/main/res/drawable/codewide_splash_mark.xml", import.meta.url), "utf8");
+const appErrorBoundary = readFileSync(
+  new URL("../src/ui/AppErrorBoundary.tsx", import.meta.url),
+  "utf8",
+);
+const globalErrorStore = readFileSync(
+  new URL("../src/ui/global-error-store.ts", import.meta.url),
+  "utf8",
+);
+const secureCryptoPolyfill = readFileSync(
+  new URL("../src/polyfills/secure-crypto.ts", import.meta.url),
+  "utf8",
+);
+const manifest = readFileSync(
+  new URL("../android/app/src/main/AndroidManifest.xml", import.meta.url),
+  "utf8",
+);
+const mainActivity = readFileSync(
+  new URL("../android/app/src/main/java/dev/codewide/app/MainActivity.kt", import.meta.url),
+  "utf8",
+);
+const mainApplication = readFileSync(
+  new URL("../android/app/src/main/java/dev/codewide/app/MainApplication.kt", import.meta.url),
+  "utf8",
+);
+const nativeStyles = readFileSync(
+  new URL("../android/app/src/main/res/values/styles.xml", import.meta.url),
+  "utf8",
+);
+const nativeColors = readFileSync(
+  new URL("../android/app/src/main/res/values/colors.xml", import.meta.url),
+  "utf8",
+);
+const splashMark = readFileSync(
+  new URL("../android/app/src/main/res/drawable/codewide_splash_mark.xml", import.meta.url),
+  "utf8",
+);
+const splashExitAnimation = readFileSync(
+  new URL("../android/app/src/main/java/dev/codewide/app/SplashExitAnimation.kt", import.meta.url),
+  "utf8",
+);
 const gradle = readFileSync(new URL("../android/app/build.gradle", import.meta.url), "utf8");
-const gradleProperties = readFileSync(new URL("../android/gradle.properties", import.meta.url), "utf8");
-const strings = readFileSync(new URL("../android/app/src/main/res/values/strings.xml", import.meta.url), "utf8");
-const connectionService = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodexConnectionService.kt", import.meta.url), "utf8");
-const nativeFrameStore = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/NativeFrameStore.kt", import.meta.url), "utf8");
-const nativeCommandStore = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/NativeCommandStore.kt", import.meta.url), "utf8");
-const nativeCommandPolicy = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/NativeCommandPolicy.kt", import.meta.url), "utf8");
-const nativeCredentialsStore = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt", import.meta.url), "utf8");
-const nativeProtocolEngine = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/NativeProtocolEngine.kt", import.meta.url), "utf8");
-const projectionBatchPolicy = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/ProjectionBatchPolicy.kt", import.meta.url), "utf8");
-const sessionCredentialClient = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/SessionCredentialClient.kt", import.meta.url), "utf8");
-const deviceKeyStore = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/DeviceKeyStore.kt", import.meta.url), "utf8");
-const innerTlsTransport = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt", import.meta.url), "utf8");
-const nativeModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt", import.meta.url), "utf8");
-const opusAudioEncoder = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/OpusAudioEncoder.kt", import.meta.url), "utf8");
-const nativePackage = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWidePackage.kt", import.meta.url), "utf8");
-const nativeCodeManager = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockManager.kt", import.meta.url), "utf8");
-const nativeCodeView = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockView.kt", import.meta.url), "utf8");
-const nativeCodeHighlighter = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeHighlighter.kt", import.meta.url), "utf8");
-const nativeShimmerView = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeShimmerTextView.kt", import.meta.url), "utf8");
-const performanceModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt", import.meta.url), "utf8");
-const nativeCodeBlock = readFileSync(new URL("../src/rendering/NativeCodeBlock.tsx", import.meta.url), "utf8");
-const nativeCodeBlockHost = readFileSync(new URL("../src/presentation/nativeCodeBlockHost.tsx", import.meta.url), "utf8");
-const nativeTransport = readFileSync(new URL("../src/native/native-transport.native.ts", import.meta.url), "utf8");
-const nativeTransportWeb = readFileSync(new URL("../src/native/native-transport.web.ts", import.meta.url), "utf8");
-const nativeEngine = readFileSync(new URL("../src/native/native-engine.native.ts", import.meta.url), "utf8");
-const legacyRemoteStore = readFileSync(new URL("../src/data/legacy-remote-store.native.ts", import.meta.url), "utf8");
+const gradleProperties = readFileSync(
+  new URL("../android/gradle.properties", import.meta.url),
+  "utf8",
+);
+const strings = readFileSync(
+  new URL("../android/app/src/main/res/values/strings.xml", import.meta.url),
+  "utf8",
+);
+const connectionService = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/CodexConnectionService.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeFrameStore = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeFrameStore.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeCommandStore = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeCommandStore.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeCommandPolicy = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeCommandPolicy.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeCredentialsStore = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeSessionCredentialsStore.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeProtocolEngine = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeProtocolEngine.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const projectionBatchPolicy = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/ProjectionBatchPolicy.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const sessionCredentialClient = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/SessionCredentialClient.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const deviceKeyStore = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/DeviceKeyStore.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const innerTlsTransport = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/InnerTlsTransport.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeTelemetry = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/NativeTelemetry.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeModule = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const preparedMicrophone = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/PreparedMicrophone.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const opusAudioEncoder = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/OpusAudioEncoder.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativePackage = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/remote/CodeWidePackage.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeCodeManager = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockManager.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeCodeView = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockView.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeCodeHighlighter = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeHighlighter.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeShimmerView = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/rendering/NativeShimmerTextView.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const performanceModule = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const nativeCodeBlock = readFileSync(
+  new URL("../src/rendering/NativeCodeBlock.tsx", import.meta.url),
+  "utf8",
+);
+const nativeCodeBlockHost = readFileSync(
+  new URL("../src/presentation/nativeCodeBlockHost.tsx", import.meta.url),
+  "utf8",
+);
+const nativeTransport = readFileSync(
+  new URL("../src/native/native-transport.native.ts", import.meta.url),
+  "utf8",
+);
+const nativeTransportWeb = readFileSync(
+  new URL("../src/native/native-transport.web.ts", import.meta.url),
+  "utf8",
+);
+const nativeEngine = readFileSync(
+  new URL("../src/native/native-engine.native.ts", import.meta.url),
+  "utf8",
+);
+const legacyRemoteStore = readFileSync(
+  new URL("../src/data/legacy-remote-store.native.ts", import.meta.url),
+  "utf8",
+);
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
-const threadChatProjection = readFileSync(new URL("../src/data/thread-chat-projection.ts", import.meta.url), "utf8");
-const projectPicker = readFileSync(new URL("../src/ui/ProjectPickerSheet.tsx", import.meta.url), "utf8");
-const heroUIRoot = readFileSync(new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url), "utf8");
-const accountPoolEditor = screen.slice(screen.indexOf("function AccountPoolEditor("), screen.indexOf("function protocolIcon("));
+const conversationPanelUnderlay = readFileSync(
+  new URL("../src/ui/ConversationPanelUnderlay.tsx", import.meta.url),
+  "utf8",
+);
+const conversationChromeLayout = readFileSync(
+  new URL("../src/ui/conversation-chrome-layout.ts", import.meta.url),
+  "utf8",
+);
+const composerMarkdownInput = readFileSync(
+  new URL("../src/ui/ComposerMarkdownInput.native.tsx", import.meta.url),
+  "utf8",
+);
+const threadChatProjection = readFileSync(
+  new URL("../src/data/thread-chat-projection.ts", import.meta.url),
+  "utf8",
+);
+const projectPicker = readFileSync(
+  new URL("../src/ui/ProjectPickerSheet.tsx", import.meta.url),
+  "utf8",
+);
+const heroUIRoot = readFileSync(
+  new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url),
+  "utf8",
+);
+const accountPoolEditor = screen.slice(
+  screen.indexOf("function AccountPoolEditor("),
+  screen.indexOf("function protocolIcon("),
+);
 const waveText = readFileSync(new URL("../src/ui/WaveText.tsx", import.meta.url), "utf8");
-const nativeShimmerTextHost = readFileSync(new URL("../src/presentation/text/nativeShimmerText.tsx", import.meta.url), "utf8");
-const richMarkdown = readFileSync(new URL("../src/rendering/RichMarkdown.tsx", import.meta.url), "utf8");
+const nativeShimmerTextHost = readFileSync(
+  new URL("../src/presentation/text/nativeShimmerText.tsx", import.meta.url),
+  "utf8",
+);
+const richMarkdown = readFileSync(
+  new URL("../src/rendering/RichMarkdown.tsx", import.meta.url),
+  "utf8",
+);
 const bubble = readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8");
-const documentPreviewHost = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
-const documentPreview = readFileSync(new URL("../src/rendering/document-preview.ts", import.meta.url), "utf8");
-const mermaidNative = readFileSync(new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url), "utf8");
-const mermaidWeb = readFileSync(new URL("../src/rendering/MermaidDiagram.web.tsx", import.meta.url), "utf8");
-const mermaidDocument = readFileSync(new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url), "utf8");
-const mermaidRuntime = readFileSync(new URL("../android/app/src/main/assets/mermaid.min.js", import.meta.url), "utf8");
-const asciiDiagramDocument = readFileSync(new URL("../android/app/src/main/assets/ascii-diagram-renderer.html", import.meta.url), "utf8");
-const asciiDiagramRuntime = readFileSync(new URL("../android/app/src/main/assets/svgbob-wasm.js", import.meta.url), "utf8");
-const imagePreviewHost = readFileSync(new URL("../src/rendering/ImagePreviewHost.tsx", import.meta.url), "utf8");
-const drawingWorkspace = readFileSync(new URL("../src/ui/DrawingWorkspace.tsx", import.meta.url), "utf8");
-const reducedMotionStore = readFileSync(new URL("../src/rendering/reduced-motion-store.ts", import.meta.url), "utf8");
-const privateImageCache = readFileSync(new URL("../src/rendering/private-image-cache.native.ts", import.meta.url), "utf8");
-const privateImageUri = readFileSync(new URL("../src/rendering/use-private-image-uri.ts", import.meta.url), "utf8");
-const privateAsset = readFileSync(new URL("../src/data/private-transfer.ts", import.meta.url), "utf8");
-const timelineList = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
-const voiceWorkspace = readFileSync(new URL("../src/data/use-remote-workspace.ts", import.meta.url), "utf8");
-const voiceController = readFileSync(new URL("../src/data/voice-input-controller.ts", import.meta.url), "utf8");
-const fileTransferController = readFileSync(new URL("../src/data/file-transfer-controller.ts", import.meta.url), "utf8");
-const fileTransferNative = readFileSync(new URL("../src/native/file-transfer.native.ts", import.meta.url), "utf8");
-const threadSummaryDatabase = readFileSync(new URL("../src/data/thread-summary-database.native.ts", import.meta.url), "utf8");
-const threadSummarySqlite = readFileSync(new URL("../src/data/thread-summary-sqlite.native.ts", import.meta.url), "utf8");
-const threadDetailDatabase = readFileSync(new URL("../src/data/thread-detail-database.native.ts", import.meta.url), "utf8");
-const threadDetailProjection = readFileSync(new URL("../src/data/thread-detail-projection.ts", import.meta.url), "utf8");
-const threadProjectionStore = readFileSync(new URL("../src/data/thread-projection-store.ts", import.meta.url), "utf8");
-const uiCachePersistence = readFileSync(new URL("../src/data/ui-cache-persistence.native.ts", import.meta.url), "utf8");
-const connectionProfileDatabase = readFileSync(new URL("../src/data/connection-profile-database.native.ts", import.meta.url), "utf8");
-const connectionStateModel = readFileSync(new URL("../src/data/connection-state-model.ts", import.meta.url), "utf8");
-const threadUiStateDatabase = readFileSync(new URL("../src/data/thread-ui-state-database.native.ts", import.meta.url), "utf8");
-const pendingRequestDatabase = readFileSync(new URL("../src/data/pending-request-database.native.ts", import.meta.url), "utf8");
+const documentPreviewHost = readFileSync(
+  new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
+  "utf8",
+);
+const documentPreview = readFileSync(
+  new URL("../src/rendering/document-preview.ts", import.meta.url),
+  "utf8",
+);
+const mermaidNative = readFileSync(
+  new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url),
+  "utf8",
+);
+const mermaidWeb = readFileSync(
+  new URL("../src/rendering/MermaidDiagram.web.tsx", import.meta.url),
+  "utf8",
+);
+const mermaidDocument = readFileSync(
+  new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url),
+  "utf8",
+);
+const mermaidRuntime = readFileSync(
+  new URL("../android/app/src/main/assets/mermaid.min.js", import.meta.url),
+  "utf8",
+);
+const asciiDiagramDocument = readFileSync(
+  new URL("../android/app/src/main/assets/ascii-diagram-renderer.html", import.meta.url),
+  "utf8",
+);
+const asciiDiagramRuntime = readFileSync(
+  new URL("../android/app/src/main/assets/svgbob-wasm.js", import.meta.url),
+  "utf8",
+);
+const imagePreviewHost = readFileSync(
+  new URL("../src/rendering/ImagePreviewHost.tsx", import.meta.url),
+  "utf8",
+);
+const drawingWorkspace = readFileSync(
+  new URL("../src/ui/DrawingWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const reducedMotionStore = readFileSync(
+  new URL("../src/rendering/reduced-motion-store.ts", import.meta.url),
+  "utf8",
+);
+const privateImageCache = readFileSync(
+  new URL("../src/rendering/private-image-cache.native.ts", import.meta.url),
+  "utf8",
+);
+const privateImageUri = readFileSync(
+  new URL("../src/rendering/use-private-image-uri.ts", import.meta.url),
+  "utf8",
+);
+const privateAsset = readFileSync(
+  new URL("../src/data/private-transfer.ts", import.meta.url),
+  "utf8",
+);
+const timelineList = readFileSync(
+  new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),
+  "utf8",
+);
+const voiceWorkspace = readFileSync(
+  new URL("../src/data/use-remote-workspace.ts", import.meta.url),
+  "utf8",
+);
+const voiceController = readFileSync(
+  new URL("../src/data/voice-input-controller.ts", import.meta.url),
+  "utf8",
+);
+const fileTransferController = readFileSync(
+  new URL("../src/data/file-transfer-controller.ts", import.meta.url),
+  "utf8",
+);
+const fileTransferNative = readFileSync(
+  new URL("../src/native/file-transfer.native.ts", import.meta.url),
+  "utf8",
+);
+const threadSummaryDatabase = readFileSync(
+  new URL("../src/data/thread-summary-database.native.ts", import.meta.url),
+  "utf8",
+);
+const threadSummarySqlite = readFileSync(
+  new URL("../src/data/thread-summary-sqlite.native.ts", import.meta.url),
+  "utf8",
+);
+const threadDetailDatabase = readFileSync(
+  new URL("../src/data/thread-detail-database.native.ts", import.meta.url),
+  "utf8",
+);
+const threadDetailProjection = readFileSync(
+  new URL("../src/data/thread-detail-projection.ts", import.meta.url),
+  "utf8",
+);
+const threadProjectionStore = readFileSync(
+  new URL("../src/data/thread-projection-store.ts", import.meta.url),
+  "utf8",
+);
+const uiCachePersistence = readFileSync(
+  new URL("../src/data/ui-cache-persistence.native.ts", import.meta.url),
+  "utf8",
+);
+const connectionProfileDatabase = readFileSync(
+  new URL("../src/data/connection-profile-database.native.ts", import.meta.url),
+  "utf8",
+);
+const connectionStateModel = readFileSync(
+  new URL("../src/data/connection-state-model.ts", import.meta.url),
+  "utf8",
+);
+const threadUiStateDatabase = readFileSync(
+  new URL("../src/data/thread-ui-state-database.native.ts", import.meta.url),
+  "utf8",
+);
+const pendingRequestDatabase = readFileSync(
+  new URL("../src/data/pending-request-database.native.ts", import.meta.url),
+  "utf8",
+);
 const appSheet = readFileSync(new URL("../src/ui/AppSheet.android.tsx", import.meta.url), "utf8");
-const appFullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url), "utf8");
-const turnControlMenus = readFileSync(new URL("../src/ui/TurnControlMenus.native.tsx", import.meta.url), "utf8");
-const actionMenu = readFileSync(new URL("../src/ui/ActionMenu.native.tsx", import.meta.url), "utf8");
-const swipeDiscardAction = readFileSync(new URL("../src/ui/SwipeDiscardAction.tsx", import.meta.url), "utf8");
-const messageActionMenu = readFileSync(new URL("../src/ui/MessageActionMenu.native.tsx", import.meta.url), "utf8");
-const heroUiRoot = readFileSync(new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url), "utf8");
+const appFullscreenModal = readFileSync(
+  new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url),
+  "utf8",
+);
+const turnControlMenus = readFileSync(
+  new URL("../src/ui/TurnControlMenus.native.tsx", import.meta.url),
+  "utf8",
+);
+const actionMenu = readFileSync(
+  new URL("../src/ui/ActionMenu.native.tsx", import.meta.url),
+  "utf8",
+);
+const swipeDiscardAction = readFileSync(
+  new URL("../src/ui/SwipeDiscardAction.tsx", import.meta.url),
+  "utf8",
+);
+const messageActionMenu = readFileSync(
+  new URL("../src/ui/MessageActionMenu.native.tsx", import.meta.url),
+  "utf8",
+);
+const settingsSheet = readFileSync(new URL("../src/ui/SettingsSheet.tsx", import.meta.url), "utf8");
+const heroUiRoot = readFileSync(
+  new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url),
+  "utf8",
+);
 const appDialog = readFileSync(new URL("../src/ui/AppDialog.tsx", import.meta.url), "utf8");
-const appDialogSurface = readFileSync(new URL("../src/ui/AppDialogSurface.native.tsx", import.meta.url), "utf8");
+const appDialogSurface = readFileSync(
+  new URL("../src/ui/AppDialogSurface.native.tsx", import.meta.url),
+  "utf8",
+);
 const voiceAura = readFileSync(new URL("../src/ui/VoiceAura.native.tsx", import.meta.url), "utf8");
-const codeReviewWorkspace = readFileSync(new URL("../src/rendering/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
-const changeMenu = readFileSync(new URL("../src/rendering/change-menu.ts", import.meta.url), "utf8");
-const codeReviewEditor = readFileSync(new URL("../src/rendering/CodeReviewEditor.native.tsx", import.meta.url), "utf8");
-const codeReviewRuntime = readFileSync(new URL("../code-review-editor/entry.ts", import.meta.url), "utf8");
-const codeReviewAsset = readFileSync(new URL("../android/app/src/main/assets/code-review-editor.html", import.meta.url), "utf8");
+const codeReviewWorkspace = readFileSync(
+  new URL("../src/rendering/CodeReviewWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const changeMenu = readFileSync(
+  new URL("../src/rendering/change-menu.ts", import.meta.url),
+  "utf8",
+);
+const codeReviewEditor = readFileSync(
+  new URL("../src/rendering/CodeReviewEditor.native.tsx", import.meta.url),
+  "utf8",
+);
+const codeReviewRuntime = readFileSync(
+  new URL("../code-review-editor/entry.ts", import.meta.url),
+  "utf8",
+);
+const codeReviewAsset = readFileSync(
+  new URL("../android/app/src/main/assets/code-review-editor.html", import.meta.url),
+  "utf8",
+);
 const pairRoute = readFileSync(new URL("../app/pair.tsx", import.meta.url), "utf8");
 const threadRoute = readFileSync(new URL("../app/thread.tsx", import.meta.url), "utf8");
-const networkSecurity = readFileSync(new URL("../android/app/src/main/res/xml/network_security_config.xml", import.meta.url), "utf8");
-const androidSettings = readFileSync(new URL("../android/settings.gradle", import.meta.url), "utf8");
+const networkSecurity = readFileSync(
+  new URL("../android/app/src/main/res/xml/network_security_config.xml", import.meta.url),
+  "utf8",
+);
+const androidSettings = readFileSync(
+  new URL("../android/settings.gradle", import.meta.url),
+  "utf8",
+);
 const rootGradle = readFileSync(new URL("../android/build.gradle", import.meta.url), "utf8");
-const baselineGradle = readFileSync(new URL("../android/baselineprofile/build.gradle", import.meta.url), "utf8");
-const baselineManifest = readFileSync(new URL("../android/baselineprofile/src/main/AndroidManifest.xml", import.meta.url), "utf8");
-const baselineGenerator = readFileSync(new URL("../android/baselineprofile/src/main/java/dev/codewide/baselineprofile/BaselineProfileGenerator.kt", import.meta.url), "utf8");
-const startupBenchmark = readFileSync(new URL("../android/baselineprofile/src/main/java/dev/codewide/baselineprofile/StartupBenchmark.kt", import.meta.url), "utf8");
-const baselineProfile = readFileSync(new URL("../android/app/src/release/generated/baselineProfiles/baseline-prof.txt", import.meta.url), "utf8");
-const otaPrefetch = readFileSync(new URL("../src/data/use-ota-prefetch.ts", import.meta.url), "utf8");
-const wirelessDev = readFileSync(new URL("../../../scripts/android-fast-refresh.sh", import.meta.url), "utf8");
-const androidGradleScript = readFileSync(new URL("../../../scripts/android-gradle.sh", import.meta.url), "utf8");
-const expoAssetPatch = readFileSync(new URL("../../../patches/expo-asset@57.0.9.patch", import.meta.url), "utf8");
+const baselineGradle = readFileSync(
+  new URL("../android/baselineprofile/build.gradle", import.meta.url),
+  "utf8",
+);
+const baselineManifest = readFileSync(
+  new URL("../android/baselineprofile/src/main/AndroidManifest.xml", import.meta.url),
+  "utf8",
+);
+const baselineGenerator = readFileSync(
+  new URL(
+    "../android/baselineprofile/src/main/java/dev/codewide/baselineprofile/BaselineProfileGenerator.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const startupBenchmark = readFileSync(
+  new URL(
+    "../android/baselineprofile/src/main/java/dev/codewide/baselineprofile/StartupBenchmark.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const baselineProfile = readFileSync(
+  new URL(
+    "../android/app/src/release/generated/baselineProfiles/baseline-prof.txt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const otaPrefetch = readFileSync(
+  new URL("../src/data/use-ota-prefetch.ts", import.meta.url),
+  "utf8",
+);
+const wirelessDev = readFileSync(
+  new URL("../../../scripts/android-fast-refresh.sh", import.meta.url),
+  "utf8",
+);
+const androidGradleScript = readFileSync(
+  new URL("../../../scripts/android-gradle.sh", import.meta.url),
+  "utf8",
+);
+const expoAssetPatch = readFileSync(
+  new URL("../../../patches/expo-asset@57.0.9.patch", import.meta.url),
+  "utf8",
+);
 
 describe("checked-in Android project mirrors app config", () => {
   it("copies the real session id from both thread action menus", () => {
-    expect(screen).toContain('threadId={thread.id}');
-    expect(screen).toContain('{ id: "copy-session-id", label: "Copy session ID", icon: "copy-outline" }');
-    expect(screen).toContain('copySessionId(thread.id)');
-    expect(screen).toContain('copySessionId(threadId)');
+    expect(screen).toContain("threadId={thread.id}");
+    expect(screen).toContain(
+      '{ id: "copy-session-id", label: "Copy session ID", icon: "copy-outline" }',
+    );
+    expect(screen).toContain("copySessionId(thread.id)");
+    expect(screen).toContain("copySessionId(threadId)");
     expect(screen).toContain('ToastAndroid.show("Session ID copied", ToastAndroid.SHORT)');
   });
 
@@ -153,10 +538,18 @@ describe("checked-in Android project mirrors app config", () => {
     expect(manifest).toContain('android:name="dev.codewide.app.MainApplication"');
     expect(manifest).toContain('android:name="dev.codewide.app.MainActivity"');
     expect(manifest).toContain('android:name="dev.codewide.app.remote.CodexConnectionService"');
-    expect(gradle).toContain(`project.findProperty("codewideVersionCode") ?: "${appConfig.expo.android.versionCode}"`);
-    expect(gradle).toContain(`project.findProperty("codewideVersionName") ?: "${appConfig.expo.version}"`);
-    expect(appConfig.expo.runtimeVersion).toBe(`${appConfig.expo.version}-native-${appConfig.expo.android.versionCode}`);
-    const schemes = Array.isArray(appConfig.expo.scheme) ? appConfig.expo.scheme : [appConfig.expo.scheme];
+    expect(gradle).toContain(
+      `project.findProperty("codewideVersionCode") ?: "${appConfig.expo.android.versionCode}"`,
+    );
+    expect(gradle).toContain(
+      `project.findProperty("codewideVersionName") ?: "${appConfig.expo.version}"`,
+    );
+    expect(appConfig.expo.runtimeVersion).toBe(
+      `${appConfig.expo.version}-native-${appConfig.expo.android.versionCode}`,
+    );
+    const schemes = Array.isArray(appConfig.expo.scheme)
+      ? appConfig.expo.scheme
+      : [appConfig.expo.scheme];
     for (const scheme of schemes) expect(manifest).toContain(`<data android:scheme="${scheme}"/>`);
     expect(manifest).toContain('android:screenOrientation="unspecified"');
     expect(appConfig.expo.orientation).toBe("default");
@@ -169,8 +562,8 @@ describe("checked-in Android project mirrors app config", () => {
     expect(heroUIRoot).toContain("<ImagePreviewHost>");
     expect(heroUIRoot).toContain("<DocumentPreviewHost>");
     expect(heroUIRoot).toContain("<AppFullscreenOverlayHost />");
-    expect(screen).toContain("<DocumentAttachmentChip");
-    expect(documentPreviewHost).toContain('readPrivateAssetText(');
+    expect(screen).toContain("<MessageAttachmentCard");
+    expect(documentPreviewHost).toContain("readPrivateAssetText(");
     expect(documentPreviewHost).toContain('{ kind: "path", path: request.path }');
     expect(documentPreviewHost).toContain("projectCompleteMarkdown(loaded.source)");
     expect(screen).toContain("<MarkdownLocalLinkProvider onOpen={openThreadDocumentLink}>");
@@ -181,32 +574,48 @@ describe("checked-in Android project mirrors app config", () => {
     expect(documentPreviewHost).toContain('isOpen={previewSurface === "sheet"}');
     expect(documentPreviewHost).toContain('snapPoints: ["60%", "90%"]');
     expect(documentPreviewHost).toContain('if (surface === "fullscreen")');
-    expect(documentPreviewHost).toContain("presentFullscreenDocument(fullscreen, request, downloadFile)");
+    expect(documentPreviewHost).toContain(
+      "presentFullscreenDocument(fullscreen, request, downloadFile)",
+    );
     expect(documentPreviewHost).not.toContain('<Modal visible={previewSurface === "browser"}');
     expect(documentPreviewHost).toContain('surface === "image-viewer"');
     expect(documentPreviewHost).toContain('surface === "download"');
-    expect(documentPreviewHost).toContain("startPreviewDownload(request.getTransferAccess, directory, source.path");
-    expect(documentPreviewHost).toContain("startDownload(request.getTransferAccess, directory, source.rootId, source.path");
+    expect(documentPreviewHost).toContain(
+      "startPreviewDownload(request.getTransferAccess, directory, source.path",
+    );
+    expect(documentPreviewHost).toContain(
+      "startDownload(request.getTransferAccess, directory, source.rootId, source.path",
+    );
     expect(documentPreviewHost).toContain("startDocumentDownload(request, directory)");
     expect(documentPreviewHost).toContain("void materializePrivateAsset(");
     expect(documentPreviewHost).toContain("source: { uri }");
-    expect(documentPreviewHost).toContain('openImagePreview({');
+    expect(documentPreviewHost).toContain("openImagePreview({");
     expect(documentPreviewHost).toContain("onDownload");
     expect(imagePreviewHost).toContain('{ id: "download", label: "Download"');
     expect(imagePreviewHost).toContain('accessibilityLabel="Image actions"');
-    expect(documentPreviewHost).toContain('if (isSafeLink(url)) void Linking.openURL(url);');
-    expect(documentPreviewHost).toContain('testID="html-document-preview"');
-    expect(documentPreviewHost).toContain("javaScriptEnabled={false}");
-    expect(documentPreview).toContain("connect-src 'none'");
+    expect(documentPreviewHost).toContain('props.testID ?? "html-document-preview"');
+    expect(documentPreviewHost).toContain("javaScriptEnabled\n");
+    expect(documentPreviewHost).toContain("javaScriptCanOpenWindowsAutomatically\n");
+    expect(documentPreviewHost).toContain('originWhitelist={["*"]}');
+    expect(documentPreviewHost).toContain("allowFileAccess\n");
+    expect(documentPreviewHost).toContain("allowFileAccessFromFileURLs\n");
+    expect(documentPreviewHost).toContain("allowUniversalAccessFromFileURLs\n");
+    expect(documentPreviewHost).toContain("domStorageEnabled\n");
+    expect(documentPreviewHost).toContain('mixedContentMode="always"');
+    expect(documentPreviewHost).toContain("setSupportMultipleWindows\n");
+    expect(documentPreviewHost).not.toContain("onShouldStartLoadWithRequest");
+    expect(documentPreview).not.toContain("Content-Security-Policy");
     expect(screen).toContain("const selected = await pickUploadFile()");
     expect(screen).toContain("rootId: ATTACHMENT_ROOT_ID");
-    expect(screen).toContain("const remotePath = attachmentUploadPath(draftThreadId, selected.name)");
+    expect(screen).toContain(
+      "const remotePath = attachmentUploadPath(draftThreadId, selected.name)",
+    );
     expect(screen).not.toContain("function FileTransferSheet");
     expect(screen).not.toContain('values={["Upload", "Download"]}');
     expect(screen).not.toContain('label="Server root id"');
     expect(screen).toContain('accessibilityLabel="Back to attachments"');
-    expect(screen).toContain('if (!open) (document === null ? closeSheet : navigateBack)();');
-    expect(screen).toContain("useEphemeralAsyncResource<Extract<DocumentPreviewResult");
+    expect(screen).toContain("if (!open) (document === null ? closeSheet : navigateBack)();");
+    expect(screen).toMatch(/useEphemeralAsyncResource<\s*Extract<DocumentPreviewResult/u);
     expect(screen).toContain("await loadDocumentPreview(document.request, signal)");
     expect(screen).not.toContain("openAfterClose");
   });
@@ -214,35 +623,48 @@ describe("checked-in Android project mirrors app config", () => {
   it("keeps code review readonly, offline and attached as one structured artifact", () => {
     expect(screen).toContain("<CodeReviewWorkspace");
     expect(screen).toContain("serializeCodeReviewAttachment(comments)");
-    expect(screen).toContain('`codex-review-${new Date().toISOString()');
-    expect(screen).toContain("function presentThreadChanges(resource: ThreadResourcesValue | null, refreshOnOpen = false)");
+    expect(screen).toContain("`codex-review-${new Date().toISOString()");
+    expect(screen).toContain(
+      "function presentThreadChanges(resource: ThreadResourcesValue | null, refreshOnOpen = false)",
+    );
     expect(screen).toContain("presentThreadChanges(resource, true)");
-    expect(screen).not.toContain('void onLoadThreadResources(changesPreferences.scope ?? undefined, "changes").then(');
-    expect(screen).toContain('onInitialLoad: () => onLoadThreadResources(changesPreferences.scope ?? undefined, "changes")');
+    expect(screen).not.toContain(
+      'void onLoadThreadResources(changesPreferences.scope ?? undefined, "changes").then(',
+    );
+    expect(screen).toMatch(
+      /onInitialLoad:\s*\(\)\s*=>\s*onLoadThreadResources\(\s*changesPreferences\.scope \?\? undefined,\s*"changes",?\s*\)/u,
+    );
     expect(codeReviewWorkspace).toContain("useAsyncResource<ThreadResourcesValue>(");
     expect(codeReviewWorkspace).toContain("async () => shouldLoadInitialScope");
     expect(codeReviewWorkspace).toContain("? await onInitialLoad!()");
     expect(codeReviewWorkspace).not.toContain("void onInitialLoad().then(");
     expect(screen).toContain("fullscreenOverlay.present(({ close }) => (");
-    expect(codeReviewWorkspace).toContain('files={reviewFiles}');
-    expect(codeReviewWorkspace).toContain('document={document}');
-    expect(codeReviewWorkspace).toContain('loading={loading}');
-    expect(codeReviewWorkspace).not.toContain('{!loading && document !== null && <CodeReviewEditor');
-    expect(codeReviewWorkspace).toContain('await voiceController.toggle()');
+    expect(codeReviewWorkspace).toContain("files={reviewFiles}");
+    expect(codeReviewWorkspace).toContain("document={document}");
+    expect(codeReviewWorkspace).toContain("loading={loading}");
+    expect(codeReviewWorkspace).not.toContain(
+      "{!loading && document !== null && <CodeReviewEditor",
+    );
+    expect(codeReviewWorkspace).toContain("voiceController.toggle(voiceScope)");
     expect(codeReviewWorkspace).toContain("useVoiceInputResource(voiceRuntime, voiceScope)");
-    expect(codeReviewWorkspace).toContain('onAttach(comments)');
-    expect(codeReviewEditor).toContain('file:///android_asset/code-review-editor.html');
-    expect(codeReviewEditor).toContain('allowUniversalAccessFromFileURLs={false}');
-    expect(codeReviewEditor).toContain('document: CodeReviewDocument | null;');
-    expect(codeReviewEditor).not.toContain('showInitialLoading');
-    expect(codeReviewEditor).not.toContain('<ActivityIndicator');
-    expect(codeReviewRuntime).toContain('setEmptyState(previewEmptyHost, LOADING_CHANGE_STATE, true)');
-    expect(screen).toContain('initialLine: request.line');
-    expect(screen).toContain('initialColumn: request.column');
-    expect(codeReviewWorkspace).toContain('revealReference={selectedReference === null ? revealReference : null}');
+    expect(codeReviewWorkspace).toContain("onAttach(comments)");
+    expect(codeReviewEditor).toContain("file:///android_asset/code-review-editor.html");
+    expect(codeReviewEditor).toContain("allowUniversalAccessFromFileURLs={false}");
+    expect(codeReviewEditor).toContain("document: CodeReviewDocument | null;");
+    expect(codeReviewEditor).not.toContain("showInitialLoading");
+    expect(codeReviewRuntime).toContain(
+      "setEmptyState(previewEmptyHost, LOADING_CHANGE_STATE, true)",
+    );
+    expect(screen).toContain("initialLine: request.line");
+    expect(screen).toContain("initialColumn: request.column");
+    expect(codeReviewWorkspace).toContain(
+      "revealReference={selectedReference === null ? revealReference : null}",
+    );
     expect(codeReviewWorkspace).toContain('accessibilityLabel="Changes options"');
     expect(codeReviewWorkspace).toContain('name="ellipsis-vertical"');
-    expect(codeReviewWorkspace).toContain('{ id: "download", section: "File", label: "Download", icon: "download-outline" as const }');
+    expect(codeReviewWorkspace).toContain(
+      '{ id: "download", section: "File", label: "Download", icon: "download-outline" as const }',
+    );
     expect(codeReviewWorkspace).toContain('if (id === "download") onDownload?.();');
     expect(codeReviewWorkspace).not.toContain('accessibilityLabel="Download file"');
     expect(changeMenu).toContain('section: "Changes"');
@@ -251,13 +673,13 @@ describe("checked-in Android project mirrors app config", () => {
     expect(changeMenu).toContain('label: "Wrap lines"');
     expect(changeMenu).not.toContain('label: "Default"');
     expect(screen).toContain('trigger="long-press"');
-    expect(screen).toContain('actions={changeScopeMenuActions(changeScopes, changeScope)}');
+    expect(screen).toContain("actions={changeScopeMenuActions(changeScopes, changeScope)}");
     expect(screen).toContain('accessibilityLabel="Choose changes scope"');
     expect(codeReviewEditor).toContain('send({ command: "reveal", payload: revealReference })');
     expect(codeReviewRuntime).toContain('side: reveal.side === "old" ? "deletions" : "additions"');
     expect(codeReviewRuntime).toContain('scrollIntoView({ block: "center", inline: "nearest" })');
-    expect(codeReviewRuntime).toContain('new PierreFile<AnnotationMetadata>');
-    expect(codeReviewRuntime).toContain('new FileDiff<AnnotationMetadata>');
+    expect(codeReviewRuntime).toContain("new PierreFile<AnnotationMetadata>");
+    expect(codeReviewRuntime).toContain("new FileDiff<AnnotationMetadata>");
     expect(codeReviewRuntime).toContain('icons: "complete"');
     expect(codeReviewRuntime).toContain('density: "compact"');
     expect(codeReviewRuntime).not.toContain('"list.hoverBackground"');
@@ -266,35 +688,53 @@ describe("checked-in Android project mirrors app config", () => {
     expect(codeReviewRuntime).toContain("themeToTreeStyles(treeTheme)");
     expect(codeReviewRuntime).toContain("treeContainer.style.setProperty(property, String(value))");
     expect(codeReviewRuntime).not.toContain("Object.assign(treeContainer.style, treeThemeStyles)");
-    expect(codeReviewRuntime).toContain('new Map(payload.files.map((file) => [file.treePath, file]))');
-    expect(codeReviewRuntime).toContain('if (nextTreePath === selectedTreePath && !scroll) return;');
-    expect(codeReviewRuntime).toContain('if (currentWorkspace.files.length === 0)');
-    expect(codeReviewRuntime).toContain('else if (currentWorkspace.selectedPath !== null)');
-    expect(codeReviewRuntime).toContain('codeReviewDocumentEmptyState(currentDocument, currentMode)');
-    expect(codeReviewRuntime).toContain('renderCurrentDocument(true)');
-    expect(codeReviewRuntime).toContain('forceRender,');
+    expect(codeReviewRuntime).toContain(
+      "new Map(payload.files.map((file) => [file.treePath, file]))",
+    );
+    expect(codeReviewRuntime).toContain(
+      "if (nextTreePath === selectedTreePath && !scroll) return;",
+    );
+    expect(codeReviewRuntime).toContain("if (currentWorkspace.files.length === 0)");
+    expect(codeReviewRuntime).toContain("else if (currentWorkspace.selectedPath !== null)");
+    expect(codeReviewRuntime).toContain(
+      "codeReviewDocumentEmptyState(currentDocument, currentMode)",
+    );
+    expect(codeReviewRuntime).toContain("renderCurrentDocument(true)");
+    expect(codeReviewRuntime).toContain("forceRender,");
     expect(codeReviewRuntime).toContain("unsafeCSS: TOUCH_FILE_TREE_CSS");
     expect(codeReviewRuntime).toContain("@media (hover: none), (pointer: coarse)");
-    expect(codeReviewRuntime).toContain('[data-type="item"]:hover:not([data-item-selected="true"])');
-    expect(codeReviewRuntime).not.toContain('class ReviewLineMarker extends GutterMarker');
-    expect(codeReviewRuntime).toContain('openComposer(referenceForFileLine(currentDocument.path, event.lineNumber))');
+    expect(codeReviewRuntime).toContain(
+      '[data-type="item"]:hover:not([data-item-selected="true"])',
+    );
+    expect(codeReviewRuntime).not.toContain("class ReviewLineMarker extends GutterMarker");
+    expect(codeReviewRuntime).toContain(
+      "openComposer(referenceForFileLine(currentDocument.path, event.lineNumber))",
+    );
     expect(codeReviewAsset).toMatch(/code-review-editor\.js\?v=[a-f0-9]{16}/);
-    expect(codeReviewAsset).not.toContain('--trees-bg-override');
-    expect(codeReviewAsset).not.toContain('--trees-level-gap-override');
+    expect(codeReviewAsset).not.toContain("--trees-bg-override");
+    expect(codeReviewAsset).not.toContain("--trees-level-gap-override");
     expect(codeReviewAsset).toContain("padding-top: 10px;");
-    expect(codeReviewAsset).toContain('#workspace[data-sidebar-open="false"] #preview-panel { border-radius: 16px; }');
+    expect(codeReviewAsset).toContain(
+      '#workspace[data-sidebar-open="false"] #preview-panel { border-radius: 16px; }',
+    );
     expect(codeReviewAsset).toContain('id="tree-empty"');
     expect(codeReviewAsset).toContain('id="preview-empty"');
   });
 
   it("keeps async data ownership in resources and event-driven preview controllers", () => {
-    expect(screen).toContain('remote.native ? "mobile-thread-search" : null');
+    expect(screen).toContain(
+      'remote.native && sidebarProject === null ? "mobile-thread-search" : null',
+    );
     expect(screen).not.toContain("active-thread-hydration");
     expect(voiceWorkspace).toContain("details.setRemoteLoader({");
     expect(threadDetailDatabase).toContain("await loader.hydrateWindow({");
     expect(screen).toContain("const selectThread = useEvent((value: string) => {");
-    expect(screen).toContain("void remote.observeThread(selectedTarget.connectionId, selectedTarget.threadId)");
-    expect(screen).toContain('item.kind === "optimistic" && pendingDeliveryMayOwnTurn(item.status)');
+    expect(screen).toMatch(
+      /void remote\s*\.observeThread\(\s*selectedTarget\.connectionId,\s*selectedTarget\.threadId,?\s*\)/u,
+    );
+    expect(screen).toContain(
+      'item.kind === "optimistic" && pendingDeliveryMayOwnTurn(item.status)',
+    );
     expect(voiceWorkspace).toContain("threadObserverDesired.set(connectionId, threadId)");
     expect(threadDetailDatabase).toContain("remoteLoader?.observe?.({ connectionId, threadId })");
     expect(voiceWorkspace).toContain("Could not attach retained thread observer");
@@ -303,54 +743,69 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeEngine).toContain("async reattachRuntime(): Promise<void>");
     expect(nativeEngine).toContain("await session.reattachRuntime()");
     expect(voiceWorkspace).toContain("await supervisor.reattachRuntime(connectionId)");
-    expect(voiceWorkspace).toContain("workspaceActions.readThread(row.connectionId, desiredThreadId, undefined, true)");
-    expect(voiceWorkspace).toContain('AppState.addEventListener("change", repairForegroundRuntime)');
+    expect(voiceWorkspace).toContain(
+      "workspaceActions.readThread(row.connectionId, desiredThreadId, undefined, true)",
+    );
+    expect(voiceWorkspace).toContain(
+      'AppState.addEventListener("change", repairForegroundRuntime)',
+    );
     expect(screen).not.toContain("refreshIfSelected");
     expect(screen).toContain("reloadSelected = false");
     expect(screen).toContain("setActiveThreadId(value, navigationId, true, undefined, true);");
     expect(screen).toContain("threadNavigation.select(value, reloadSelected)");
     expect(screen).toContain("if (nextServerId !== undefined) setActiveServerId(nextServerId);");
-    expect(screen).not.toContain("setActiveServerId(parsed.connectionId);\n      setActiveThreadId(");
+    expect(screen).not.toContain(
+      "setActiveServerId(parsed.connectionId);\n      setActiveThreadId(",
+    );
     expect(screen).toContain("setNewChatDraft(null);");
     expect(screen).not.toContain("active-thread-lifecycle-repair");
-    expect(screen).toContain('`composer-seed:${composerScope}`');
+    expect(screen).toContain("`composer-seed:${composerScope}`");
     expect(screen).not.toContain("setMobileRemoteSearch");
-    expect(documentPreviewHost).toContain("presentFullscreenDocument(fullscreen, request, downloadFile)");
-    expect(documentPreviewHost).toContain("useEphemeralAsyncResource<Extract<DocumentPreviewResult");
+    expect(documentPreviewHost).toContain(
+      "presentFullscreenDocument(fullscreen, request, downloadFile)",
+    );
+    expect(documentPreviewHost).toContain(
+      "useEphemeralAsyncResource<Extract<DocumentPreviewResult",
+    );
     expect(documentPreviewHost).toContain("await loadDocumentPreview(preview, signal)");
     expect(mermaidWeb).not.toContain("useEffect(");
     expect(mermaidWeb).toContain("useAsyncResource");
     expect(imagePreviewHost).toContain("const handleAnnotation = useEvent(handler)");
-    expect(imagePreviewHost).toContain("registerAnnotationHandler((item, onAttached) => handleAnnotation(item, onAttached))");
+    expect(imagePreviewHost).toContain(
+      "registerAnnotationHandler((item, onAttached) => handleAnnotation(item, onAttached))",
+    );
   });
 
   it("opens image annotations in QuickDraw and keeps the source image immutable", () => {
     expect(appPackage.dependencies["@quickdrawjs/react-native"]).toBe("0.2.0");
-    expect(rootPackage.pnpm?.patchedDependencies?.["@quickdrawjs/react-native@0.2.0"])
-      .toBe("patches/@quickdrawjs__react-native@0.2.0.patch");
+    expect(rootPackage.pnpm?.patchedDependencies?.["@quickdrawjs/react-native@0.2.0"]).toBe(
+      "patches/@quickdrawjs__react-native@0.2.0.patch",
+    );
     expect(quickdrawPatch).toContain("installLockedShapeSupport");
     expect(quickdrawPatch).toContain("record.props?.locked === true");
     expect(drawingWorkspace).toContain('boardRef.current?.setTool("draw")');
-    expect(drawingWorkspace).toContain('{ background: false, scale: 1, margin: 0 }');
+    expect(drawingWorkspace).toContain("{ background: false, scale: 1, margin: 0 }");
     expect(drawingWorkspace).not.toContain("useSafeAreaInsets");
     expect(drawingWorkspace).toContain("<View style={styles.header}>");
     expect(drawingWorkspace).toContain("<View style={styles.board}>");
     expect(screen).toContain("loadQuickdrawImageSnapshot(item.source)");
-    expect(screen).toContain('mode: "image-annotation"');
+    expect(screen).toContain('mode: editor?.mode ?? "image-annotation"');
     const drawingCommit = screen.slice(
       screen.indexOf("const commitDrawing = async"),
       screen.indexOf("const presentDrawing ="),
     );
-    expect(drawingCommit).toContain("await persistAttachments([");
-    expect(drawingCommit).toContain("await persistAttachments(current.map(");
+    expect(drawingCommit).toContain("return stageAttachment(selected, replacement");
+    expect(drawingCommit).not.toContain("await uploadSelectedAttachment");
   });
 
   it("keeps a server-scoped new chat local until the first send", () => {
     expect(screen).toContain("resolveNewThreadRoute({");
     expect(screen).toContain("openNewChat(route.serverId, defaultProjectCwd(route.serverId))");
     expect(screen).toContain('title: "New Chat"');
-    expect(screen).toContain("const conversationActions = newChatDraft !== null");
-    expect(screen).toContain("await remote.startThreadInWorkspace(draftChat.serverId, draftChat.cwd, draftChat.id)");
+    expect(screen).toMatch(/const conversationActions\s*=\s*newChatDraft !== null/u);
+    expect(screen).toMatch(
+      /await remote\.startThreadInWorkspace\(\s*draftChat\.serverId,\s*draftChat\.cwd,\s*draftChat\.id,?\s*\)/u,
+    );
     expect(voiceWorkspace).toContain("startThread: (cwd) => startThread(connectionId, cwd)");
     expect(screen).toContain("const commandId = await remote.sendText(");
     expect(screen).toContain("{ ...options, workspaceRequestId: draftChat.id }");
@@ -359,9 +814,11 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('testID="new-chat-empty-state"');
     expect(screen).toContain("What would you like to work on?");
     expect(screen).toContain("<ProjectPickerSheet");
-    expect(projectPicker).toContain('SectionLabel title="Pinned"');
-    expect(projectPicker).toContain('<Accordion.Item value="recent">');
-    expect(projectPicker).toContain('<Accordion.Item value="other">');
+    expect(projectPicker).toContain("<LegendList");
+    expect(projectPicker).toContain("recycleItems");
+    expect(projectPicker).toContain('id: "section:recent"');
+    expect(projectPicker).toContain('id: "section:other"');
+    expect(projectPicker).not.toContain("<Accordion");
     expect(projectPicker).toContain('accessibilityLabel="Add project"');
     expect(voiceWorkspace).toContain("const started = seedThreadExecutionSettings(response.thread");
     expect(voiceWorkspace).toContain("model: response.model");
@@ -369,7 +826,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(voiceWorkspace).toContain("void loadTurnControls(connectionId, started.cwd)");
     expect(voiceWorkspace).toContain('"config/read", { cwd, includeLayers: false }');
     expect(voiceWorkspace).toContain("isDefault: model.isDefault");
-    expect(screen).toContain("controls.defaults.model ?? catalogDefaultModel?.id");
+    expect(screen).toMatch(/composerModelSettings\(\s*newChat,\s*serverExecution,/u);
     expect(threadDetailDatabase).toContain("const chat = createThreadChatModel({");
     expect(nativeTransport).toContain('typeof bridge.listPortForwards !== "function"');
   });
@@ -384,21 +841,32 @@ describe("checked-in Android project mirrors app config", () => {
 
   it("never consumes a one-time pairing token before local profiles are ready", () => {
     const addConnectionStart = voiceWorkspace.indexOf("const addConnection = async");
-    const addConnectionEnd = voiceWorkspace.indexOf("const deleteConnection = async", addConnectionStart);
+    const addConnectionEnd = voiceWorkspace.indexOf(
+      "const deleteConnection = async",
+      addConnectionStart,
+    );
     const addConnection = voiceWorkspace.slice(addConnectionStart, addConnectionEnd);
     expect(addConnectionStart).toBeGreaterThanOrEqual(0);
-    expect(addConnection.indexOf("requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles)")).toBeLessThan(addConnection.indexOf("claimNativePairing"));
-    expect(addConnection.indexOf("const connectionId = `saved-server-${randomUUID()}`")).toBeLessThan(addConnection.indexOf("claimNativePairing"));
+    expect(
+      addConnection.indexOf(
+        "requireConnectionProfileDatabase(workspaceRuntime.snapshot.connectionProfiles)",
+      ),
+    ).toBeLessThan(addConnection.indexOf("claimNativePairing"));
+    expect(
+      addConnection.indexOf("const connectionId = `saved-server-${randomUUID()}`"),
+    ).toBeLessThan(addConnection.indexOf("claimNativePairing"));
     expect(addConnection).toContain("savedServerId: connectionId");
     expect(addConnection).not.toContain("deleteNativeConnection(connectionId)");
     expect(addConnection).toContain("profiles.reconcileRuntimeConfigs(nativeConfigs)");
     expect(screen).toContain("localReady={remote.ready && remote.error === null}");
-    expect(screen).toContain('disabled={saving || !localReady}');
+    expect(screen).toContain("disabled={saving || !localReady}");
   });
 
   it("installs secure UUID primitives before Expo Router loads TanStack DB", () => {
     expect(appPackage.main).toBe("index.js");
-    expect(appEntry.indexOf('import "./src/polyfills/secure-crypto"')).toBeLessThan(appEntry.indexOf('import "expo-router/entry"'));
+    expect(appEntry.indexOf('import "./src/polyfills/secure-crypto"')).toBeLessThan(
+      appEntry.indexOf('import "expo-router/entry"'),
+    );
     expect(secureCryptoPolyfill).toContain('from "expo-crypto"');
     expect(secureCryptoPolyfill).toContain('Object.defineProperty(globalThis, "crypto"');
     expect(secureCryptoPolyfill).toContain("assertSecureCryptoRuntime");
@@ -419,6 +887,18 @@ describe("checked-in Android project mirrors app config", () => {
     expect(appPackage.dependencies["expo-splash-screen"]).toMatch(/^~57/);
     expect(manifest).toContain('android:theme="@style/Theme.App.SplashScreen"');
     expect(mainActivity).toContain("SplashScreenManager.registerOnActivity(this)");
+    expect(mainActivity.indexOf("SplashExitAnimation.install(this)")).toBeGreaterThan(
+      mainActivity.indexOf("SplashScreenManager.registerOnActivity(this)"),
+    );
+    // The app owns a 100 ms exit, but Expo retains its content-readiness gate.
+    expect(splashExitAnimation).toContain("DURATION_MS = 100L");
+    expect(splashExitAnimation).toContain(".setDuration(DURATION_MS)");
+    expect(splashExitAnimation).toContain("NativeStartupTrace.markSplashAnimationStarted()");
+    expect(
+      splashExitAnimation.indexOf("NativeStartupTrace.markSplashRemoved(cancelled)"),
+    ).toBeGreaterThan(splashExitAnimation.indexOf("view.remove()"));
+    expect(splashExitAnimation).not.toContain("SplashScreenManager.hide()");
+    expect(connectionService).toContain('"app.splash_removed"');
     expect(mainActivity).not.toContain("setTheme(R.style.AppTheme)");
     expect(nativeStyles).toContain('parent="Theme.SplashScreen"');
     expect(nativeStyles).toContain("@drawable/codewide_splash_mark");
@@ -438,6 +918,8 @@ describe("checked-in Android project mirrors app config", () => {
     expect(rootLayout).toContain("export function ErrorBoundary");
     expect(rootLayout).toContain("<RootFailure");
     expect(rootLayout).toContain('testID="root-boot-state"');
+    expect(rootLayout).toContain("...Ionicons.font");
+    expect(rootLayout).toContain("...MaterialIcons.font");
     expect(rootLayout).not.toContain("if (!fontsLoaded && fontError === null) return null");
     expect(appErrorBoundary).toContain("getDerivedStateFromError");
     expect(appErrorBoundary).toContain("componentDidCatch");
@@ -451,22 +933,47 @@ describe("checked-in Android project mirrors app config", () => {
     expect(appErrorBoundary).not.toContain('import * as Updates from "expo-updates"');
     expect(appErrorBoundary).not.toContain("op-sqlite");
     expect(appErrorBoundary).not.toContain("tanstack");
-    expect(appEntry.indexOf('import "./src/ui/install-global-error-handler"')).toBeLessThan(appEntry.indexOf('import "expo-router/entry"'));
+    expect(appEntry.indexOf('import "./src/ui/install-global-error-handler"')).toBeLessThan(
+      appEntry.indexOf('import "expo-router/entry"'),
+    );
     expect(globalErrorStore).toContain("setGlobalHandler");
     expect(globalErrorStore).toContain('reportGlobalError(error, "global-handler", true)');
+  });
+
+  it("packages icon fonts as permanent Android assets under the library's exact family names", () => {
+    // ExpoFontLoader enumerates assets/fonts; ReactFontManager resolves these
+    // filenames directly. The names are an integration contract, not UI copy.
+    expect(gradle).toContain("sourceSets.main.assets.srcDir(iconFontAssetsDir)");
+    expect(gradle).toContain('dependsOn("prepareIconFontAssets")');
+    expect(gradle).toContain('include "Ionicons.ttf", "MaterialIcons.ttf"');
+    expect(gradle).toContain('into "fonts"');
+    expect(gradle).toContain('name == "Ionicons.ttf" ? "ionicons.ttf" : "material.ttf"');
+    expect(gradle).toContain(
+      'throw new GradleException("Required UI icon font is missing: $name")',
+    );
   });
 
   it("keeps signed self-hosted updates enabled and applies them without a process restart", () => {
     expect(appConfig.expo.updates.enabled).toBe(true);
     expect(appConfig.expo.updates.url).toBe("https://updates.example.invalid/api/updates");
-    expect(manifest).toContain('android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="${expoUpdatesUrl}"');
+    expect(manifest).toContain(
+      'android:name="expo.modules.updates.EXPO_UPDATE_URL" android:value="${expoUpdatesUrl}"',
+    );
     expect(gradle).toContain('System.getenv("CODEWIDE_UPDATE_URL")');
     expect(gradle).toContain("manifestPlaceholders = [expoUpdatesUrl: codeWideUpdateUrl]");
-    expect(appConfig.expo.updates.checkAutomatically).toBe("ON_LOAD");
+    expect(appConfig.expo.updates.checkAutomatically).toBe("NEVER");
+    expect(appConfig.expo.updates.fallbackToCacheTimeout).toBe(0);
     expect(appConfig.expo.updates.codeSigningCertificate).toBe("./certs/certificate.pem");
     expect(manifest).toContain('android:name="expo.modules.updates.ENABLED" android:value="true"');
-    expect(manifest).toContain('android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"');
-    expect(manifest).toContain(`android:name="expo.modules.updates.EXPO_RUNTIME_VERSION" android:value="${appConfig.expo.runtimeVersion}"`);
+    expect(manifest).toContain(
+      'android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="NEVER"',
+    );
+    expect(manifest).toContain(
+      'android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"',
+    );
+    expect(manifest).toContain(
+      `android:name="expo.modules.updates.EXPO_RUNTIME_VERSION" android:value="${appConfig.expo.runtimeVersion}"`,
+    );
     expect(manifest).toContain('android:name="expo.modules.updates.CODE_SIGNING_CERTIFICATE"');
     expect(otaPrefetch).toContain("Updates.checkForUpdateAsync()");
     expect(otaPrefetch).toContain("Updates.fetchUpdateAsync()");
@@ -477,6 +984,33 @@ describe("checked-in Android project mirrors app config", () => {
     expect(otaPrefetch).toContain('if (state === "active") void prefetch(true)');
     expect(otaPrefetch).toContain("let nextCheckAt = Date.now() + RETRY_INTERVAL_MS");
     expect(otaPrefetch).not.toMatch(/^\s*void prefetch\(true\);/mu);
+  });
+
+  it("dispatches foreground attach off the UI thread without restoring every server", () => {
+    // This source contract protects the Android lifecycle thread boundary;
+    // NativeRecoveryWorkerTest separately exercises execution and ordering.
+    const dispatch = connectionService.slice(
+      connectionService.indexOf("override fun onStartCommand"),
+      connectionService.indexOf("override fun onDestroy"),
+    );
+    expect(dispatch).toContain('recoverInBackground(id, "attach")');
+    expect(dispatch).not.toContain("activateLegacySync()");
+    expect(dispatch).toContain("selectLegacySync()");
+    const selection = connectionService.slice(
+      connectionService.indexOf("private fun selectLegacySync()"),
+      connectionService.indexOf("private fun restoreSelectedSyncGeneration()"),
+    );
+    expect(selection).not.toContain("restoreLegacySync()");
+    const wake = connectionService.slice(
+      connectionService.indexOf("fun wake(connectionId:"),
+      connectionService.indexOf("private fun wakeRecovered("),
+    );
+    expect(wake).toContain('recoverInBackground(connectionId, "wake")');
+    expect(wake).not.toContain("credentialsStore.get");
+    // Transport ownership remains with the existing session and OkHttp watchdog.
+    expect(connectionService).toContain("if (socket != null) return");
+    expect(connectionService).toContain('"connection.runtime_attach"');
+    expect(connectionService).toContain('"lockWaitMs"');
   });
 
   it("keeps background connection and privacy-safe activity notifications wired", () => {
@@ -497,12 +1031,18 @@ describe("checked-in Android project mirrors app config", () => {
     expect(connectionService).toContain("minOf(reconnectAttempt, 1)");
     expect(connectionService).toContain("scheduleConnectWatchdog(generation)");
     expect(connectionService).toContain('resetTransport("connect_watchdog")');
-    expect(connectionService).toContain('emitTransportStatus("degraded", "Connection attempt timed out")');
-    expect(connectionService).toContain('emitTransportStatus("degraded", transportDiagnostic(error, "Could not reach the server"))');
+    expect(connectionService).toContain(
+      'emitTransportStatus("degraded", "Connection attempt timed out")',
+    );
+    expect(connectionService).toContain(
+      'emitTransportStatus("degraded", transportDiagnostic(error, "Could not establish secure transport"))',
+    );
     expect(connectionService).toContain('resetTransport("stale_connect_wake")');
     expect(connectionService).toContain("if (socket != null) return");
     expect(connectionService).not.toContain("latestTransportStatus");
-    expect(nativeProtocolEngine).toContain("private fun handleStatus(envelope: JSONObject)");
+    expect(nativeProtocolEngine).toContain(
+      "private fun handleStatus(envelope: JSONObject, frameBytes: Int)",
+    );
     expect(connectionService).toContain("protocolEngine.onTransportState(status, diagnostic)");
     expect(connectionService).toContain('reason == "user_reconnect"');
     expect(nativeModule).toContain("fun wakeSocket(connectionId: String)");
@@ -511,20 +1051,25 @@ describe("checked-in Android project mirrors app config", () => {
     expect(connectionService).not.toContain("existing.resetTransport()");
     expect(connectionService).toContain("NativeProtocolEngine(");
     expect(connectionService).toContain("NotificationCompat.VISIBILITY_PRIVATE");
-    expect(connectionService).toContain("NotificationCompat.Builder(this, channelId).setColor(Color.WHITE)");
+    expect(connectionService).toContain(
+      "NotificationCompat.Builder(this, channelId).setColor(Color.WHITE)",
+    );
     expect(connectionService).toContain("notifyApproval(id, threadId, requestKey)");
     expect(connectionService).toContain('optJSONArray("pendingRequests")');
     expect(connectionService).toContain("pendingApprovals.clear()");
     expect(connectionService).toContain(".setOnlyAlertOnce(true)");
-    expect(connectionService).toContain("notifyTurnFinished(id, threadId, status == \"failed\")");
-    expect(connectionService).toContain(".scheme(\"codewide\")");
-    expect(connectionService).not.toContain("params?.optString(\"command\")");
-    expect(connectionService).toContain("SessionCredentialClient.mint(credentialHttpClient, currentSaved(), callback)");
-    expect(connectionService).not.toContain("SessionCredentialClient.mint(credentialHttpClient, endpoint, token");
-    expect(connectionService).toContain("scheduleCredentialRefresh(expiresAt)");
-    expect(connectionService).toContain("replacementSocket");
-    expect(connectionService).toContain("RETIRING_SOCKET_GRACE_MS");
-    expect(connectionService).toContain('previous.close(1000, "credential_rotated")');
+    expect(connectionService).toContain('notifyTurnFinished(id, threadId, status == "failed")');
+    expect(connectionService).toContain('.scheme("codewide")');
+    expect(connectionService).not.toContain('params?.optString("command")');
+    expect(connectionService).toContain('contextualTelemetry(generation, "socket")');
+    expect(connectionService).not.toContain(
+      "SessionCredentialClient.mint(credentialHttpClient, endpoint, token",
+    );
+    expect(connectionService).not.toContain("SessionCredentialClient.mint(");
+    expect(connectionService).not.toContain("scheduleCredentialRefresh(");
+    expect(connectionService).not.toContain("replacementSocket");
+    expect(connectionService).toContain('.header("Authorization", "Bearer $token")');
+    expect(connectionService).toContain("httpClient.dispatcher.executorService.execute");
     expect(nativeProtocolEngine).toContain('.put("protocolVersion", 1)');
     expect(nativeProtocolEngine).toContain("SYNC_KEEPALIVE_INTERVAL_MS = 5_000L");
     expect(nativeProtocolEngine).toContain('.put("type", "ping")');
@@ -538,36 +1083,61 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeProtocolEngine).toContain("ProjectionBatchPolicy.flushDelayMs(method)");
     expect(nativeProtocolEngine).toContain('.put("modelProviders", JSONArray())');
     expect(nativeProtocolEngine).toContain('.put("useStateDbOnly", true)');
+    expect(connectionService).toContain('"connection.attempt_started"');
+    expect(connectionService).toContain('"connection.transport_opened"');
+    expect(sessionCredentialClient).toContain('"connection.auth_challenge"');
+    expect(sessionCredentialClient).toContain('"connection.auth_proof"');
+    expect(innerTlsTransport).toContain('"connection.outer_carrier"');
+    expect(innerTlsTransport).toContain('"connection.inner_tls"');
+    expect(nativeProtocolEngine).toContain('"sync.hello_received"');
+    expect(nativeProtocolEngine).toContain('"sync.ingress_window"');
+    expect(nativeProtocolEngine).toContain('"sync.rpc_response"');
+    expect(nativeProtocolEngine).toContain('"sync.snapshot_completed"');
+    expect(connectionService).toContain('"app.splash_hide_requested"');
+    expect(nativeTelemetry).toContain("ReactMarkerConstants.CONTENT_APPEARED");
+    expect(mainApplication).toContain("NativeStartupTrace.markApplicationStarted()");
+    expect(mainApplication).toContain("NativeStartupTrace.markApplicationReady()");
+    expect(mainActivity).toContain("NativeStartupTrace.registerContentMarker()");
     expect(nativeFrameStore).toContain("PROJECTION_SCHEMA_VERSION = 5");
     expect(threadSummarySqlite).not.toContain("DROP TABLE IF EXISTS");
     expect(projectionBatchPolicy).toContain("TEXT_FLUSH_DELAY_MS = 12L");
     expect(projectionBatchPolicy).toContain('"item/reasoning/textDelta"');
     expect(projectionBatchPolicy).toContain("NORMAL_FLUSH_DELAY_MS = 16L");
     expect(nativeFrameStore).toContain("native_journal_totals");
-    expect(nativeFrameStore).toContain("journal_frames = native_sync_state.journal_frames + excluded.journal_frames");
+    expect(nativeFrameStore).toContain(
+      "journal_frames = native_sync_state.journal_frames + excluded.journal_frames",
+    );
     expect(nativeFrameStore).not.toContain("journalLimitExceeded");
     expect(nativeFrameStore).not.toContain("totalJournalLimitExceeded");
     expect(connectionService).toContain('HandlerThread("CodeWideJournal")');
-    expect(nativeModule).toContain("fun readCommittedFrames(connectionId: String, afterCursor: Double?, promise: Promise)");
+    expect(nativeModule).toContain(
+      "fun readCommittedFrames(connectionId: String, afterCursor: Double?, promise: Promise)",
+    );
     expect(nativeModule).toContain("NATIVE_BRIDGE_CONTRACT_VERSION = 2");
     expect(nativeEngine).toContain("bridge.readCommittedFrames(this.connectionId");
     expect(nativeEngine).toContain('event.type === "journalAdvanced"');
-    expect(nativeFrameStore).toContain("fun acknowledgeThrough(connectionId: String, projectionCursor: Long)");
+    expect(nativeFrameStore).toContain(
+      "fun acknowledgeThrough(connectionId: String, projectionCursor: Long)",
+    );
     expect(nativeFrameStore).toContain("projected_cursor = ?");
     expect(nativeFrameStore).toContain("event_cursor <= ?");
     expect(legacyRemoteStore).toContain("PRAGMA busy_timeout = 5000");
-    expect(nativeFrameStore).toContain('PRAGMA busy_timeout = 5000');
+    expect(nativeFrameStore).toContain("PRAGMA busy_timeout = 5000");
     expect(nativeFrameStore).toContain('"codex-remote/transport/codex-remote-frames.db"');
     expect(nativeCommandStore).toContain('"codex-remote-native-commands.db"');
     expect(nativeCredentialsStore).toContain('PREFERENCES = "codex_remote_native_sessions"');
-    expect(nativeCredentialsStore).toContain('KEY_ALIAS = "codex_remote_native_session_credentials_v1"');
+    expect(nativeCredentialsStore).toContain(
+      'KEY_ALIAS = "codex_remote_native_session_credentials_v1"',
+    );
     expect(deviceKeyStore).toContain('KEY_ALIAS = "codex_remote_device_identity_v1"');
     expect(connectionService).toContain('ACTION_ATTACH = "dev.codexremote.app.ATTACH"');
     expect(nativeCommandStore).toContain("UPDATE native_commands SET state = 'uncertain'");
     expect(nativeCommandStore).toContain("MAX_BYTES_PER_CONNECTION = 16L * 1024L * 1024L");
     expect(connectionService).toContain("fun enqueueCommand(");
     expect(connectionService).toContain("fun drainOutbox()");
-    expect(nativeCommandPolicy).toContain('"turn/start" to NativeCommandReconciliation.IDEMPOTENT_RETRY');
+    expect(nativeCommandPolicy).toContain(
+      '"turn/start" to NativeCommandReconciliation.IDEMPOTENT_RETRY',
+    );
     expect(connectionService).toContain("reconcileTurnCommand(command, params)");
     expect(connectionService).toContain('protocolEngine.rpc(\n        "thread/turns/list"');
     expect(connectionService).toContain("turnsContainClientMessage(response, command.commandId)");
@@ -578,40 +1148,56 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeTransport).toContain("export async function enqueueNativeCommand");
     expect(nativeTransport).toContain("export async function listNativeCommands");
     expect(nativeTransport).toContain("export async function acknowledgeNativeCommandReceipt");
-    expect(nativeCommandStore).toContain("fun acknowledgeDeliveryReceipt(connectionId: String, commandId: String)");
-    expect(nativeCommandStore).toContain("fun retryFailed(connectionId: String, commandId: String)");
-    expect(nativeCommandStore).toContain("return command.copy(state = \"uncertain\"");
+    expect(nativeCommandStore).toContain(
+      "fun acknowledgeDeliveryReceipt(connectionId: String, commandId: String)",
+    );
+    expect(nativeCommandStore).toContain(
+      "fun retryFailed(connectionId: String, commandId: String)",
+    );
+    expect(nativeCommandStore).toContain('return command.copy(state = "uncertain"');
     expect(nativeEngine).toContain("onOutboxChange");
     expect(nativeFrameStore).not.toContain("SQLiteDatabase.OPEN_READONLY");
     expect(nativeFrameStore).not.toContain('"codewide.db"');
     expect(nativeFrameStore).not.toContain('"SELECT sync_cursor FROM connections WHERE id = ?"');
-    expect(nativeFrameStore).toContain("fun syncCursor(connectionId: String): Long? = nativeCursor(connectionId)");
+    expect(nativeFrameStore).toContain(
+      "fun syncCursor(connectionId: String): Long? = nativeCursor(connectionId)",
+    );
     expect(nativeFrameStore).toContain("MAX_TOTAL_FRAMES = 50_000L");
     expect(nativeFrameStore).toContain("MAX_TOTAL_BYTES = 256L * 1024L * 1024L");
     expect(nativeFrameStore).toContain("fun storageStats(): NativeFrameStorageStats");
-    expect(nativeProtocolEngine).toContain('.put("journalPayloadBytes", storage?.payloadBytes ?: 0)');
-    expect(nativeEngine).toContain("journalPayloadBytes: Number.isSafeInteger(signal.journalPayloadBytes)");
+    expect(nativeProtocolEngine).toContain(
+      '.put("journalPayloadBytes", storage?.payloadBytes ?: 0)',
+    );
+    expect(nativeEngine).toContain(
+      "journalPayloadBytes: Number.isSafeInteger(signal.journalPayloadBytes)",
+    );
     expect(nativeCommandStore).toContain("fun storageStats(): NativeCommandStorageStats");
     expect(nativeCommandStore).toContain('.put("pendingBytes", storage.pendingBytes)');
     expect(nativeEngine).toContain('name: "outbox.native_sqlite_storage"');
-    expect(connectionService).toContain('.header("Authorization", "Bearer $sessionToken")');
+    expect(connectionService).toContain('.header("Authorization", "Bearer $token")');
     expect(sessionCredentialClient).toContain('"$origin/v1/auth"');
     expect(sessionCredentialClient).toContain('.put("action", "challenge")');
     expect(sessionCredentialClient).toContain('.put("action", "session")');
     expect(sessionCredentialClient).toContain('getString("sessionToken")');
-    expect(sessionCredentialClient).toContain("DeviceKeyStore.signChallenge(savedServerId, challenge)");
+    expect(sessionCredentialClient).toContain(
+      "DeviceKeyStore.signChallenge(savedServerId, challenge)",
+    );
     expect(connectionService).toContain("if (error is SessionAuthorizationException)");
     expect(connectionService).toContain('emitTransportStatus("authRequired")');
     expect(nativeEngine).toContain('addListener("CodeWideEngineEvent"');
     expect(nativeEngine).toContain("bridge.engineRpc(this.connectionId");
-    expect(nativeProtocolEngine).toContain("private val deferredRpcs = linkedMapOf<String, DeferredRpc>()");
+    expect(nativeProtocolEngine).toContain(
+      "private val deferredRpcs = linkedMapOf<String, DeferredRpc>()",
+    );
     expect(nativeProtocolEngine).toContain("dispatchDeferredRpcs()");
     expect(nativeProtocolEngine).toContain("Connection recovery queue is full");
     expect(nativeProtocolEngine).toContain("RPC_LIVE_WAIT_TIMEOUT_MS = 12_000L");
     expect(nativeProtocolEngine).toContain('.put("rpcAvailable", upstreamLive)');
     expect(nativeEngine).toContain('typeof state.rpcAvailable !== "boolean"');
     expect(nativeEngine).toContain("state.rpcAvailable");
-    expect(nativeEngine).toContain('setConnectionState(this.connectionId, "connecting", null, false)');
+    expect(nativeEngine).toContain(
+      'setConnectionState(this.connectionId, "connecting", null, false)',
+    );
     expect(nativeEngine).not.toContain("waitUntilLive");
     expect(nativeModule).toContain("private const val AUDIO_CHUNKS_PER_SECOND = 5");
     expect(nativeModule).toContain("private const val OPUS_BITRATE = 24_000");
@@ -628,43 +1214,65 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeModule).not.toContain("openJsSyncSocket");
     expect(voiceWorkspace).not.toContain("nativeJsSyncSocketFactory");
     expect(legacyRemoteStore).toContain("finalizeUnusedStatementsBeforeClosing: false");
-    expect(nativeModule).toContain("val publicKeySpki = DeviceKeyStore.publicKeySpki(savedServerId)");
+    expect(nativeModule).toContain(
+      "val publicKeySpki = DeviceKeyStore.publicKeySpki(savedServerId)",
+    );
     expect(nativeModule).toContain('.put("publicKeySpki", publicKeySpki)');
     expect(nativeModule).toContain('.put("action", "register")');
     expect(nativeModule).toContain('.put("proof", DeviceKeyStore.signPairingClaim(');
-    expect(deviceKeyStore).toContain("fun clientKeyManager(savedServerId: String): X509ExtendedKeyManager");
+    expect(deviceKeyStore).toContain(
+      "fun clientKeyManager(savedServerId: String): X509ExtendedKeyManager",
+    );
     expect(deviceKeyStore).toContain("ConnectionKeyManager(alias, entry)");
     expect(innerTlsTransport).toContain('DATA_TUNNEL_PATH = "/v1/e2ee-tunnel"');
     expect(innerTlsTransport).toContain('BOOTSTRAP_TUNNEL_PATH = "/v1/e2ee-bootstrap-tunnel"');
     expect(innerTlsTransport).toContain("DeviceKeyStore.clientKeyManager(saved.id)");
-    expect(innerTlsTransport).toContain("TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH))");
-    expect(nativeModule).toContain("InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin)");
+    expect(innerTlsTransport).toContain(
+      "TunnelSocketFactory(carrier, tunnelUrl(endpoint, BOOTSTRAP_TUNNEL_PATH))",
+    );
+    expect(nativeModule).toContain(
+      "InnerTlsTransport.bootstrapClient(pairingHttpClient, endpoint, identityPin)",
+    );
     expect(voiceWorkspace).toContain("await listNativeCommands()");
     expect(voiceWorkspace).not.toContain("commandDeliveries");
-    expect(threadDetailDatabase).toContain("reconcileNativeCommands(connectionId, threadId, deliveries)");
+    expect(threadDetailDatabase).toContain(
+      "reconcileNativeCommands(connectionId, threadId, deliveries)",
+    );
     expect(voiceWorkspace).toContain("details.applyCommandDelivery(delivery)");
-    expect(nativeCommandStore).toContain('database.delete("native_commands", "state = \'accepted\'", null)');
+    expect(nativeCommandStore).toContain(
+      'database.delete("native_commands", "state = \'accepted\'", null)',
+    );
     expect(nativeCommandStore).toContain("state IN ('queued', 'uncertain')");
     expect(nativeCommandStore).not.toContain("state IN ('queued', 'uncertain', 'accepted')");
     expect(connectionService).toContain("commandStore.markDelivered(sending)");
-    expect(connectionService).toContain('return "companion/queue/put" to JSONObject().put("command", queued)');
+    expect(connectionService).toContain(
+      'return "companion/queue/put" to JSONObject().put("command", queued)',
+    );
     expect(connectionService).toContain('.put("presentation", "delivery")');
-    expect(voiceWorkspace).toContain('mode.type === "queue" ? "queue" as const : "delivery" as const');
+    expect(voiceWorkspace).toContain(
+      'mode.type === "queue" ? "queue" as const : "delivery" as const',
+    );
     expect(connectionService).toContain("protocolEngine.rpc(outbound.first, outbound.second)");
     expect(voiceWorkspace).not.toContain("applyHostQueue(connectionId, commands)");
     expect(voiceWorkspace).toContain('"companion/queue/retry"');
     expect(voiceWorkspace).toContain('"companion/queue/steer"');
-    expect(nativeCommandPolicy).toContain('"companion/queue/steer" to NativeCommandReconciliation.IDEMPOTENT_RETRY');
+    expect(nativeCommandPolicy).toContain(
+      '"companion/queue/steer" to NativeCommandReconciliation.IDEMPOTENT_RETRY',
+    );
     expect(screen).toContain('accessibilityLabel="Drag queued prompt"');
     expect(screen).toContain('accessibilityLabel="Steer queued prompt"');
-    expect(screen).toContain('accessibilityLabel="Attach to queued prompt"');
+    expect(screen).not.toContain('accessibilityLabel="Attach to queued prompt"');
     expect(screen).not.toContain('accessibilityLabel="Move queued prompt up"');
     expect(screen).not.toContain('accessibilityLabel="Move queued prompt down"');
     expect(connectionService).toContain('"thread/turns/list"');
     expect(connectionService).toContain('.put("itemsView", "summary")');
-    expect(connectionService).not.toContain('JSONObject().put("threadId", threadId).put("includeTurns", true)');
-    expect(voiceWorkspace).toContain('rpcAfterAttach(session, "turn/interrupt", { threadId, turnId })');
-    expect(voiceWorkspace).not.toContain('enqueueNativeCommand(connectionId, `turn-interrupt-');
+    expect(connectionService).not.toContain(
+      'JSONObject().put("threadId", threadId).put("includeTurns", true)',
+    );
+    expect(voiceWorkspace).toContain(
+      'rpcAfterAttach(session, "turn/interrupt", { threadId, turnId })',
+    );
+    expect(voiceWorkspace).not.toContain("enqueueNativeCommand(connectionId, `turn-interrupt-");
     expect(nativeCommandStore).toContain("fun markDelivered(command: NativeCommand)");
     expect(nativeCommandStore).toContain("state NOT IN ('failed', 'delivered')");
     expect(nativeCommandStore).toContain("MAX_DELIVERED_RECEIPTS = 250");
@@ -677,7 +1285,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('testID="pre-turn-lifecycle"');
     expect(screen).toContain("preTurnActivityIndexes");
     expect(screen).toContain(': "Accepted by Companion"');
-    expect(screen).toContain('accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}');
+    expect(screen).toContain("accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}");
     expect(screen).not.toContain("styles.pendingDelivery");
     expect(connectionService).not.toContain("commandStore.markAccepted(sending");
     expect(screen).not.toContain("submissionHandoffs");
@@ -688,7 +1296,9 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeModule).toContain("fun attachSocket(connectionId: String");
     expect(nativeModule).toContain("fun mintStoredSession(connectionId: String");
     expect(nativeModule).not.toContain("fun mintSession(endpoint: String, capabilityToken: String");
-    expect(nativeModule).not.toContain("fun openSocket(connectionId: String, endpoint: String, token: String");
+    expect(nativeModule).not.toContain(
+      "fun openSocket(connectionId: String, endpoint: String, token: String",
+    );
     expect(connectionService).toContain("ACTION_ATTACH");
     expect(connectionService).toContain("private fun attach(connectionId: String)");
     expect(connectionService).toContain("if (saved == null)");
@@ -699,11 +1309,13 @@ describe("checked-in Android project mirrors app config", () => {
     expect(nativeCredentialsStore).toContain("private val STORE_LOCK = Any()");
     expect(baselineProfile).not.toContain("CodeWideModule;->openSocket");
     expect(baselineProfile).not.toContain("NativeFrameStore;->applicationCursor");
-    expect(baselineProfile).not.toContain("StoredNativeSession;-><init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+    expect(baselineProfile).not.toContain(
+      "StoredNativeSession;-><init>(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+    );
     expect(nativeEngine).toContain("bridge.attachSocket(this.connectionId)");
     expect(voiceWorkspace).toContain("mintNativeSession(connection.id)");
     expect(voiceWorkspace).not.toContain("capabilityToken: connection.token");
-    expect(deviceKeyStore).toContain('KeyProperties.KEY_ALGORITHM_EC');
+    expect(deviceKeyStore).toContain("KeyProperties.KEY_ALGORITHM_EC");
     expect(deviceKeyStore).toContain('Signature.getInstance("SHA256withECDSA")');
     expect(deviceKeyStore).not.toContain("private.encoded");
     expect(threadChatProjection).toContain("materializePendingTimeline(view.liveRows)");
@@ -715,63 +1327,82 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain('"Stop voice input and insert transcript"');
     expect(screen).toContain('"Finish voice input and send transcript"');
     expect(screen).not.toContain("voiceSessionPromiseRef");
-    expect(voiceController).toContain("private sessionPromise: Promise<VoiceTranscriptionSession> | null");
+    expect(voiceController).toContain(
+      "private sessionPromise: Promise<VoiceTranscriptionSession> | null",
+    );
     expect(voiceController).toContain("sendAfter?.(finalDraft)");
     expect(fileTransferController).toContain("this.isCurrent(options.scope, generation)");
-    expect(screen).toContain('<AppSheet isOpen={visible} onOpenChange={(open) => { if (!open) onClose(); }}');
-    expect(screen).not.toContain('function BottomSheetSurface');
+    expect(screen).toMatch(
+      /<AppSheet\s+isOpen=\{visible\}\s+onOpenChange=\{\(open\) => \{\s*if \(!open\) onClose\(\);\s*\}\}/u,
+    );
+    expect(screen).not.toContain("function BottomSheetSurface");
     expect(appPackage.dependencies["heroui-native"]).toBe("1.0.8");
     expect(screen).toContain('import Constants from "expo-constants"');
-    expect(screen).toContain('Version {Constants.expoConfig?.version ?? "unknown"}');
-    expect(screen).toContain("settingsVersion: { color: colors.textDim");
+    expect(screen).toContain(
+      '<SettingsVersion version={Constants.expoConfig?.version ?? "unknown"} />',
+    );
+    const versionFooter = readFileSync(
+      new URL("../src/ui/SettingsVersion.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(versionFooter).toContain("selectable={false}");
+    expect(versionFooter).toContain("onLongPress={copy}");
     expect(screen).toContain('testID="ui-generation-setting"');
     expect(screen).toContain("<UiGenerationControl current={uiGeneration.generation} />");
-    expect(screen).toContain("Switch between Legacy and V2. The app restarts after selection.");
     expect(appPackage.dependencies.uniwind).toBe("1.10.1");
     expect(rootLayout).toContain("<HeroUIRoot>");
     expect(heroUiRoot).toContain('from "heroui-native/provider-raw"');
     expect(heroUiRoot).toContain('from "heroui-native/portal"');
     expect(heroUiRoot).toContain("<AppDialogProvider>");
     expect(heroUiRoot).toContain("<PortalHost />");
-    expect(heroUiRoot.indexOf("<AppDialogProvider>")).toBeLessThan(heroUiRoot.indexOf("<PortalHost />"));
+    expect(heroUiRoot.indexOf("<AppDialogProvider>")).toBeLessThan(
+      heroUiRoot.indexOf("<PortalHost />"),
+    );
     expect(heroUiRoot).toContain('Uniwind.setTheme("dark")');
     expect(globalCss).toContain(".menu__content {");
     expect(globalCss).toContain("background-color: var(--color-overlay);");
     expect(appSheet).toContain('from "@expo/ui/jetpack-compose"');
     expect(appSheet).toContain('<Host colorScheme="dark"');
-    expect(appSheet).toContain('containerColor={colors.surfaceContainerHigh}');
-    expect(appSheet).toContain('contentColor={colors.text}');
-    expect(appSheet).toContain('<RNHostView matchContents={fitToContents}');
-    expect(appSheet).toContain('!fitToContents && styles.fixedHostContent');
-    expect(appSheet).toContain('fixedHostContent: { flexGrow: 1, height: 0 }');
-    expect(appSheet).toContain('const SHEET_MAX_WIDTH = 580;');
-    expect(appSheet).toContain('const detached = contentProps.detached ?? true;');
+    expect(appSheet).toContain("<ModalBottomSheet");
+    expect(appSheet).toContain("showDragHandle={contentProps.enablePanDownToClose ?? true}");
+    expect(appSheet).toContain("<RNHostView matchContents={fitToContents}");
+    expect(appSheet).toContain("!fitToContents && styles.fixedHostContent");
+    expect(appSheet).toContain("fixedHostContent: { flexGrow: 1, height: 0 }");
     expect(appSheet).toContain("useWindowDimensions");
-    expect(appSheet).toContain('borderRadius: radii.composer');
-    expect(appSheet).toContain('backgroundColor: colors.surfaceContainerHigh');
-    expect(appSheet).toContain('sheetRef.current');
-    expect(appSheet).toContain('sheetRef.current?.hide()');
-    expect(appSheet).toContain('onOpenChange(false)');
-    expect(appSheet).toContain('<RecoverableRenderBoundary');
+    expect(appSheet).not.toContain("borderRadius:");
+    expect(appSheet).not.toContain("backgroundColor:");
+    expect(appSheet).toContain("sheetRef.current");
+    expect(appSheet).toContain("sheetRef.current?.hide()");
+    expect(appSheet).toContain("onOpenChange(false)");
+    expect(appSheet).toContain("<RecoverableRenderBoundary");
     expect(appSheet).toContain('label="Bottom sheet content"');
     expect(appSheet).toContain('resetKey={isOpen ? "open" : "closed"}');
-    expect(appSheet).toContain('detached');
-    expect(appSheet).toContain('<ScrollView nestedScrollEnabled={nestedScrollEnabled}');
-    expect(screen).toContain('contentProps={{ index: 0, enableDynamicSizing: true }}');
+    expect(appSheet).toContain("detached");
+    expect(appSheet).toContain(
+      "<ScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />",
+    );
+    expect(screen).toContain("contentProps={{ index: 0, enableDynamicSizing: true }}");
     expect(screen).toContain('snapPoints: ["55%", "90%"]');
-    expect(appSheet).toContain('export function AppSheetScrollView');
+    expect(appSheet).toContain("export function AppSheetScrollView");
     expect(appFullscreenModal).toContain('presentationStyle="fullScreen"');
-    expect(screen).toContain('{menuVisible && <ResourceComposerMenu');
-    expect(screen).toContain('{projectPickerVisible && <ProjectPickerSheet');
-    expect(screen).toContain('{threadRenameVisible && <ThreadRenameSheet');
-    expect(screen).toContain('{threadResourceSheet !== null && <ThreadResourcesSheet');
-    expect(screen.match(/\{connectionSheetVisible && <ConnectionSheet/gu)).toHaveLength(2);
-    expect(screen.match(/\{settingsVisible && <ConnectionSettings/gu)).toHaveLength(2);
-    expect(screen.match(/\{newThreadVisible && <NewThreadServerSheet/gu)).toHaveLength(2);
-    expect(screen).toContain('{serverPickerVisible && <MobileServerSheet');
-    expect(screen).toContain('accessibilityLabel={`Model and thinking:');
-    expect(screen).toContain('<ModelThinkingMenu');
-    expect(screen).toContain('<PermissionsMenu');
+    expect(screen).toMatch(/\{menuVisible && \(\s*<ResourceComposerMenu/u);
+    expect(screen).toMatch(/\{projectPickerVisible && \(\s*<ProjectPickerSheet/u);
+    expect(screen).toMatch(/\{threadRenameVisible && \(\s*<ThreadRenameDialog/u);
+    expect(screen).toMatch(/\{threadResourceSheet !== null && \(\s*<ThreadResourcesSheet/u);
+    expect(screen.match(/\{connectionSheetVisible && \(\s*<ConnectionSheet/gu)).toHaveLength(2);
+    expect(screen.match(/\{settingsVisible && \(\s*<ConnectionSettings/gu)).toHaveLength(2);
+    expect(screen.match(/\{newThreadVisible && \(\s*<NewThreadServerSheet/gu)).toHaveLength(2);
+    expect(screen.match(/<ThreadFilterMenu/gu)).toHaveLength(2);
+    const threadFilterMenu = screen.slice(
+      screen.indexOf("function ThreadFilterMenu("),
+      screen.indexOf("function ThreadListSuspenseFallback("),
+    );
+    expect(threadFilterMenu).toContain("<ActionMenu");
+    expect(threadFilterMenu).not.toContain("<AppSheet");
+    expect(threadFilterMenu).not.toContain("<AppPopover");
+    expect(screen).toContain("accessibilityLabel={`Model and thinking:");
+    expect(screen).toContain("<ModelThinkingMenu");
+    expect(screen).toContain("<PermissionsMenu");
     expect(screen).toContain('onFallbackPress={() => onFallback("model")}');
     expect(screen).toContain('onFallbackPress={() => onFallback("permissions")}');
     expect(turnControlMenus).toContain('section: "Model"');
@@ -781,43 +1412,51 @@ describe("checked-in Android project mirrors app config", () => {
     expect(turnControlMenus).toContain("<ActionMenu");
     expect(turnControlMenus).not.toContain("heroui-native/menu");
     expect(turnControlMenus).not.toContain("heroui-native/sub-menu");
-    expect(screen).toContain('<ActionMenu');
-    expect(screen).not.toContain('<MenuView');
+    expect(screen).toContain("<ActionMenu");
+    expect(screen).not.toContain("<MenuView");
     expect(actionMenu).toContain('from "./CodeWideMenu.native"');
     expect(actionMenu).toContain("<CodeWideMenu");
     expect(actionMenu).not.toContain('from "heroui-native/menu"');
     expect(actionMenu).not.toContain("Menu.Portal");
     expect(actionMenu).not.toContain("requestAnimationFrame");
     expect(actionMenu).toContain("style={[styles.root, style]}");
-    expect(actionMenu).toContain('children.props.onPress?.(event)');
+    expect(actionMenu).toContain("children.props.onPress?.(event)");
     expect(actionMenu).toContain("expanded={isOpen}");
     expect(actionMenu).not.toContain("triggerLayout");
     expect(actionMenu).not.toContain("event.nativeEvent.locationX");
-    expect(actionMenu).toContain('children.props.onLongPress?.(event)');
-    expect(actionMenu).toContain('destructive: action.destructive');
-    expect(actionMenu).toContain('selected: action.selected');
-    expect(screen).toContain('Pressable as GesturePressable');
-    expect(screen).toContain('<MessageActionMenuProvider>');
+    expect(actionMenu).toContain("children.props.onLongPress?.(event)");
+    expect(actionMenu).toContain("destructive: action.destructive");
+    expect(actionMenu).toContain("selected: action.selected");
+    expect(screen).toContain("Pressable as GesturePressable");
+    expect(screen).toContain("<MessageActionMenuProvider>");
     expect(screen).not.toContain("function MessageContextMenu");
     expect(messageActionMenu.match(/<CodeWideMenu/gu)).toHaveLength(1);
     expect(messageActionMenu).not.toContain("heroui-native/menu");
-    expect(messageActionMenu).toContain('hostRef.current?.open(request, event)');
+    expect(messageActionMenu).toContain("hostRef.current?.open(request, event)");
     expect(turnControlMenus).toContain("id: SERVER_DEFAULT_PERMISSIONS");
     expect(turnControlMenus).toContain('description: "Use the server\'s configured access level"');
-    expect(screen).toContain('sheetHeaderIconSlot: { width: 28, height: 28');
-    expect(screen).toContain('menuTitleRow: { minHeight: touchTarget, marginBottom: spacing.xs');
-    expect(screen).not.toContain('sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.titleLarge, marginBottom:');
+    expect(screen).toMatch(
+      /sheetHeaderIconSlot: \{[^}]*width: controlSize\.compact[^}]*height: controlSize\.compact[^}]*flexShrink: 0/u,
+    );
+    expect(screen).toMatch(
+      /menuTitleRow: \{[^}]*minHeight: touchTarget[^}]*marginBottom: spacing\.xs/u,
+    );
+    expect(screen).not.toContain(
+      "sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.titleLarge, marginBottom:",
+    );
     expect(screen).not.toContain("ThreadListScrollGestureContext");
     expect(screen).not.toContain("simultaneousWithExternalGesture");
     expect(screen).not.toContain("renderScrollComponent={ThreadListScrollView}");
     expect(screen).toContain("function ThreadFilterMenu(");
-    expect(screen).toContain('accessibilityLabel="Thread filters"');
+    expect(screen).toContain('? "Thread filters, no filters selected"');
     expect(screen).not.toContain('from "heroui-native/menu"');
     expect(screen).not.toContain("function ThreadFilterSheet(");
-    expect(appDialog).toContain('{state.isOpen && <AppDialogSurface isOpen request={state.request}');
+    expect(appDialog).toContain(
+      "{state.isOpen && <AppDialogSurface isOpen request={state.request}",
+    );
     expect(appDialogSurface).toContain('from "heroui-native/dialog"');
     expect(appDialogSurface).toContain('<Dialog.Overlay variant="blur"');
-    expect(appDialogSurface).toContain('<Dialog.Portal style={styles.portal}>');
+    expect(appDialogSurface).toContain("<Dialog.Portal style={styles.portal}>");
     expect(appDialogSurface).toContain('alignItems: "center"');
     expect(appDialogSurface).toContain('justifyContent: "center"');
     expect(appDialogSurface).toContain('alignSelf: "center"');
@@ -826,75 +1465,112 @@ describe("checked-in Android project mirrors app config", () => {
     expect(accountPoolEditor).toContain("<AppSheet");
     expect(accountPoolEditor).toContain("One-time code");
     expect(accountPoolEditor).toContain('{codeCopied ? "Copied" : "Copy"}');
-    expect(accountPoolEditor).toContain('contentProps={{ index: 0, enableDynamicSizing: true, enableOverDrag: false }}');
+    expect(accountPoolEditor).toMatch(
+      /enableDynamicSizing: true,\s*enableOverDrag: false/u,
+    );
+    expect(accountPoolEditor).toContain('dismissLabel: "Close Codex account sign-in"');
     expect(accountPoolEditor).toContain('id: "activate"');
-    expect(accountPoolEditor).toContain('label: profile.active ? "Active account" : "Switch to account"');
+    expect(accountPoolEditor).toContain(
+      'label: profile.active ? "Active account" : "Switch to account"',
+    );
     expect(accountPoolEditor).toContain("Manual selection · automatic fallback on limit");
-    expect(accountPoolEditor).toContain('await onActivate(connectionId, profile.id)');
+    expect(accountPoolEditor).toContain("await onActivate(connectionId, profile.id)");
     expect(voiceWorkspace).toContain('"companion/accountPool/profile/activate"');
-    expect(screen).toContain('snapPoints: ["65%", "90%"], enableDynamicSizing: false, enableOverDrag: false, contentContainerClassName: "h-full"');
-    expect(screen).toContain('<AppSheetScrollView style={styles.menuScroll} contentContainerStyle={styles.menuScrollContent} keyboardShouldPersistTaps="handled">');
+    expect(settingsSheet).toContain(
+      'snapPoints: ["65%", "90%"], enableDynamicSizing: false, enableOverDrag: false, contentContainerClassName: "h-full"',
+    );
+    expect(screen).toMatch(
+      /<AppSheetScrollView\s+[^>]*style=\{styles\.menuScroll\}[^>]*contentContainerStyle=\{styles\.menuScrollContent\}[^>]*keyboardShouldPersistTaps="handled"[^>]*>/u,
+    );
     expect(screen).not.toContain("connectionSettingsList");
-    expect(screen).not.toContain('Alert.alert(');
-    expect(screen).toContain('<Text style={styles.controlSectionLabel}>Thinking</Text>');
-    expect(screen).toContain('onUpdateSettings({ model, effort })');
-    expect(screen).toContain('executionPermissionsLabel(serverExecution, pending)');
-    expect(screen).toContain('composerHeightForContent(draft, nativeEvent.contentSize.height)');
-    expect(screen).toContain('const reasoningEfforts = model === undefined ? []');
-    expect(screen).toContain('menuScroll: { flex: 1, minHeight: 0 }');
-    expect(screen).toContain('<VoiceAura phase={voiceAuraPhase} controller={remote.voiceController} scope={voiceAuraResource?.scope ?? null} reducedMotion={reduceVoiceMotion}>');
+    expect(screen).not.toContain("Alert.alert(");
+    expect(screen).toMatch(
+      /<Text style=\{styles\.controlSectionLabel\}>\s*Thinking\s*<\/Text>/u,
+    );
+    expect(screen).toContain("onUpdateSettings({ model, effort })");
+    expect(screen).toContain("executionPermissionsLabel(serverExecution, pending)");
+    expect(screen).toMatch(/const reasoningEfforts\s*=\s*model === undefined\s*\? \[\]/u);
+    expect(screen).toMatch(/menuScroll: \{[^}]*flex: 1[^}]*minHeight: 0[^}]*\}/u);
+    expect(screen).toMatch(
+      /<VoiceAura\s+phase=\{voiceAuraPhase\}\s+controller=\{remote\.voiceController\}\s+scope=\{voiceAuraResource\?\.scope \?\? null\}\s+reducedMotion=\{reduceVoiceMotion\}\s*>/u,
+    );
     expect(screen).toContain('resource?.phase === "recording") ?? null');
-    expect(screen).not.toContain('resource?.phase === "recording" || resource?.phase === "finishing"');
+    expect(screen).not.toContain(
+      'resource?.phase === "recording" || resource?.phase === "finishing"',
+    );
     expect(screen).toContain("function VoiceCaptureStatus({");
-    expect(screen).toContain('useVoiceInputLevel(controller, phase === "recording" ? scope : null)');
-    expect(voiceController).not.toContain('this.patch(binding.scope, { level: chunk.level })');
-    expect(voiceController).not.toContain('setInterval(() => this.patch(binding.scope');
-    expect(screen).toContain('<View testID="turn-activity" style={[styles.turnActivity, expanded && styles.turnActivityExpanded]}>');
-    expect(screen).toContain('showToggle={!shouldAutoExpand}');
-    expect(screen).toContain('{showToggle && (');
-    expect(screen).toContain('style={[styles.turnActivityList, !showToggle && styles.turnActivityListWithoutToggle]}');
-    expect(screen).toContain('turnActivityListWithoutToggle: { paddingLeft: 0 }');
+    expect(screen).toContain(
+      'useVoiceInputLevel(controller, phase === "recording" ? scope : null)',
+    );
+    expect(voiceController).not.toContain("this.patch(binding.scope, { level: chunk.level })");
+    expect(voiceController).not.toContain("setInterval(() => this.patch(binding.scope");
+    expect(screen).toMatch(
+      /<View\s+testID="turn-activity"\s+style=\{\[\s*styles\.turnActivity,\s*compactHeader && styles\.turnActivityCompact,\s*expanded && styles\.turnActivityExpanded,?\s*\]\}\s*>/u,
+    );
+    expect(screen).toContain("showToggle={!shouldAutoExpand}");
+    expect(screen).toContain("{showToggle && (");
+    expect(screen).toMatch(
+      /style=\{\[\s*styles\.turnActivityList,\s*!showToggle && styles\.turnActivityListWithoutToggle,?\s*\]\}/u,
+    );
+    expect(screen).toMatch(/turnActivityListWithoutToggle: \{\s*paddingLeft: 0,?\s*\}/u);
     expect(screen).toContain('testID="turn-activity-loading-shimmer"');
-    expect(screen).toContain('{expanded && (');
-    expect(screen).toContain('turnActivityExpanded: { width: "100%"');
+    expect(screen).toContain("{expanded && (");
+    expect(screen).toMatch(/turnActivityExpanded: \{[^}]*width: "100%"/u);
     expect(screen).not.toContain('from "./ui/AnimatedDisclosure"');
     expect(nativeTransport).toContain("pendingEvents.push(event)");
-    expect(nativeTransport).toContain('setTimeout(() => deliver({ type: "error", text: "timeout" }), 30_000)');
+    expect(nativeTransport).toContain(
+      'setTimeout(() => deliver({ type: "error", text: "timeout" }), 30_000)',
+    );
     expect(nativeTransport).toContain("export function cancelVoiceRecognition");
     expect(screen).not.toContain("stopVoiceRef");
-    expect(voiceController).toContain('if (processBinding !== null || processState.phase !== "idle" || this.stopCapture !== null)');
+    expect(voiceController).toContain(
+      'if (processBinding !== null || processState.phase !== "idle" || this.stopCapture !== null)',
+    );
     expect(nativeModule).toContain("voiceGeneration");
     expect(nativeModule).toContain("finishVoice(generation, recognizer");
     expect(nativeModule).toContain("fun startPcmCapture(promise: Promise)");
-    expect(nativeProtocolEngine).toContain('"companion/dictation/finish" -> maxOf(timeoutMs, DICTATION_FINISH_RPC_TIMEOUT_MS)');
+    expect(nativeProtocolEngine).toContain(
+      '"companion/dictation/finish" -> maxOf(timeoutMs, DICTATION_FINISH_RPC_TIMEOUT_MS)',
+    );
     expect(nativeProtocolEngine).toContain("DICTATION_FINISH_RPC_TIMEOUT_MS = 5 * 60_000L");
-    expect(nativeProtocolEngine).toContain('"companion/workspace/create" -> maxOf(timeoutMs, WORKSPACE_CREATE_RPC_TIMEOUT_MS)');
+    expect(nativeProtocolEngine).toContain(
+      '"companion/workspace/create" -> maxOf(timeoutMs, WORKSPACE_CREATE_RPC_TIMEOUT_MS)',
+    );
     expect(nativeProtocolEngine).toContain("WORKSPACE_CREATE_RPC_TIMEOUT_MS = 10 * 60_000L");
-    expect(nativeProtocolEngine).toContain('"thread/fork" -> maxOf(timeoutMs, THREAD_FORK_RPC_TIMEOUT_MS)');
+    expect(nativeProtocolEngine).toContain(
+      '"thread/fork" -> maxOf(timeoutMs, THREAD_FORK_RPC_TIMEOUT_MS)',
+    );
     expect(nativeProtocolEngine).toContain("THREAD_FORK_RPC_TIMEOUT_MS = 10 * 60_000L");
     expect(nativeProtocolEngine).toContain('EPHEMERAL_CONTROL_METHODS = setOf("turn/interrupt")');
-    expect(nativeProtocolEngine).toContain('completion(Result.failure(IllegalStateException("Connection is not live")))');
-    expect(nativeModule).toContain("AudioFormat.ENCODING_PCM_16BIT");
-    expect(nativeModule).toContain("AudioRecord.Builder()");
-    expect(nativeModule).toContain("MediaRecorder.AudioSource.VOICE_COMMUNICATION");
-    expect(nativeModule).toContain("MediaRecorder.AudioSource.VOICE_RECOGNITION");
-    expect(nativeModule).toContain("MediaRecorder.AudioSource.MIC");
-    expect(nativeModule.indexOf("MediaRecorder.AudioSource.VOICE_COMMUNICATION")).toBeLessThan(nativeModule.indexOf("MediaRecorder.AudioSource.VOICE_RECOGNITION"));
-    expect(nativeModule.indexOf("MediaRecorder.AudioSource.VOICE_RECOGNITION")).toBeLessThan(nativeModule.indexOf("MediaRecorder.AudioSource.MIC"));
-    expect(nativeModule).toContain("val capture = openPcmCapture()");
-    expect(nativeModule).toContain("recorder.startRecording()");
-    expect(nativeModule).toContain("trying fallback");
+    expect(nativeProtocolEngine).toContain(
+      'completion(Result.failure(IllegalStateException("Connection is not live")))',
+    );
+    expect(preparedMicrophone).toContain("AudioFormat.ENCODING_PCM_16BIT");
+    expect(preparedMicrophone).toContain("AudioRecord.Builder()");
+    expect(preparedMicrophone).toContain("MediaRecorder.AudioSource.VOICE_COMMUNICATION");
+    expect(preparedMicrophone).toContain("MediaRecorder.AudioSource.VOICE_RECOGNITION");
+    expect(preparedMicrophone).toContain("MediaRecorder.AudioSource.MIC");
+    expect(
+      preparedMicrophone.indexOf("MediaRecorder.AudioSource.VOICE_COMMUNICATION"),
+    ).toBeLessThan(preparedMicrophone.indexOf("MediaRecorder.AudioSource.VOICE_RECOGNITION"));
+    expect(preparedMicrophone.indexOf("MediaRecorder.AudioSource.VOICE_RECOGNITION")).toBeLessThan(
+      preparedMicrophone.indexOf("MediaRecorder.AudioSource.MIC"),
+    );
+    expect(nativeModule).toContain("val capture = microphone.start()");
+    expect(preparedMicrophone).toContain("recorder.startRecording()");
     expect(nativeModule).toContain('putString("source", capture.source.label)');
     expect(nativeModule).not.toContain("AUDIO_SAMPLE_RATE = 24_000");
-    expect(nativeModule).toContain("NoiseSuppressor.create(audioSessionId)");
-    expect(nativeModule).toContain("AutomaticGainControl.create(audioSessionId)");
+    expect(preparedMicrophone).toContain("NoiseSuppressor.create(recorder.audioSessionId)");
+    expect(preparedMicrophone).toContain("AutomaticGainControl.create(recorder.audioSessionId)");
     expect(nativeModule).not.toContain("AcousticEchoCanceler");
     expect(nativeTransport).toContain('emitter.addListener("CodeWideAudioEvent"');
     expect(nativeTransport).toContain("const info = isPcmCaptureInfo(capture) ? capture : null");
     expect(nativeTransport).toContain('info.source === "mic"');
     expect(nativeTransport).toContain("legacy native capture bridge");
     expect(screen).toContain("onStartVoiceTranscription");
-    expect(voiceController.indexOf("const capture = await startPcmCapture(")).toBeLessThan(voiceController.indexOf("const sessionPromise = startSession()"));
+    expect(voiceController.indexOf("const capture = await startPcmCapture(")).toBeLessThan(
+      voiceController.indexOf("const sessionPromise = startSession()"),
+    );
     expect(voiceController).not.toContain("pendingAudio.shift()");
     expect(voiceController).toContain("pendingAudio.push(chunk)");
     expect(voiceController).toContain("pendingAudio.splice(0)");
@@ -905,14 +1581,24 @@ describe("checked-in Android project mirrors app config", () => {
     expect(voiceWorkspace).toContain("sendDictationBatchUntilAccepted(session, {");
     expect(voiceWorkspace).toContain("batchId: String(batchId)");
     expect(voiceWorkspace).not.toContain("Audio upload is too slow");
-    expect(voiceWorkspace).toContain('rpcAfterAttach(session, "companion/dictation/finish", { sessionId })');
-    expect(voiceWorkspace).toContain('rpcAfterAttach(session, "companion/dictation/cancel", { sessionId })');
+    expect(voiceWorkspace).toContain(
+      'rpcAfterAttach(session, "companion/dictation/finish", { sessionId })',
+    );
+    expect(voiceWorkspace).toContain(
+      'rpcAfterAttach(session, "companion/dictation/cancel", { sessionId })',
+    );
     expect(voiceWorkspace).toContain('listener({ type: "done", text })');
-    expect(voiceWorkspace).toContain("await uploader.finish()");
+    expect(voiceWorkspace).toContain(
+      "await raceAudioUploadAbort(uploader.finish(), cancellation.signal)",
+    );
     expect(voiceWorkspace).toContain("RetryableVoiceTranscriptionError");
-    expect(screen).toContain('accessibilityLabel={voiceRetryAvailable ? "Retry voice transcription"');
+    expect(screen).toMatch(
+      /accessibilityLabel=\{\s*voiceRetryAvailable\s*\?\s*"Retry voice transcription"/,
+    );
     expect(voiceWorkspace).toContain("DICTATION_FINISH_TRANSPORT_RETRIES = 3");
-    expect(voiceWorkspace).toContain("finishDictationWithTransportRetry(session, sessionId)");
+    expect(voiceWorkspace).toContain(
+      "finishDictationWithTransportRetry(session, sessionId, cancellation.signal)",
+    );
     expect(screen).not.toContain("styles.streamingCodexBubble");
     expect(voiceWorkspace).not.toContain("thread/realtime/");
     expect(voiceWorkspace).not.toContain('config: { "features.realtime_conversation": true }');
@@ -924,8 +1610,8 @@ describe("checked-in Android project mirrors app config", () => {
     expect(threadRoute).toContain('<Redirect href="/legacy" />');
     expect(pairRoute).not.toContain("<CodeWideScreen />");
     expect(threadRoute).not.toContain("<CodeWideScreen />");
-    expect(screen).toContain("const defaultDesktopThreadId = desktop");
-    expect(screen).toContain("? threadSelectionKey(serverThreads[0])");
+    expect(screen).toMatch(/const defaultDesktopThreadId =\s*desktop/);
+    expect(screen).toMatch(/\?\s*threadSelectionKey\(serverThreads\[0\]\)/);
     expect(screen).toContain("threadNavigation.select(defaultDesktopThreadId)");
     expect(screen).toContain('scope="desktop-default-thread"');
     expect(screen).toContain("revision={defaultDesktopThreadId}");
@@ -935,9 +1621,11 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain("windowLayoutStore.subscribe");
     expect(screen).toContain("windowLayoutStore.getSnapshot");
     expect(screen).toContain("viewportWidth={windowLayout.width}");
-    expect(manifest).toContain("screenLayout|uiMode|smallestScreenSize|density|fontScale|assetsPaths");
+    expect(manifest).toContain(
+      "screenLayout|uiMode|smallestScreenSize|density|fontScale|assetsPaths",
+    );
     expect(manifest).toContain('android:resizeableActivity="true"');
-    expect(screen).toContain("Math.floor(viewportWidth * 0.32)");
+    expect(screen).toContain("width={desktopThreadSidebarWidth(viewportWidth)}");
     expect(screen).not.toContain('Dimensions.addEventListener("change"');
     expect(screen).not.toContain("useWindowDimensions");
     expect(screen).not.toContain("serverEmoji?: string");
@@ -946,13 +1634,17 @@ describe("checked-in Android project mirrors app config", () => {
     expect(threadChatProjection).not.toContain("staleTurnLifecycleId");
     expect(threadChatProjection).toContain('turn.status === "inProgress"');
     expect(screen).not.toContain("effectiveTurnLifecycleStatus");
-    expect(screen).toContain('normalizeThreadItem(connectionId(row.connectionId)');
-    expect(screen).not.toContain('normalizeTurn(');
+    expect(screen).toContain("normalizeThreadItem(connectionId(row.connectionId)");
+    expect(screen).not.toContain("normalizeTurn(");
     expect(screen).toContain('testID="user-image-gallery"');
-    expect(screen).toContain("const privateImage = usePrivateImageUri(source.uri, source.headers, retryRevision)");
+    expect(screen).toContain(
+      "const privateImage = usePrivateImageUri(source.uri, source.headers, retryRevision)",
+    );
     expect(heroUIRoot).toContain("<ImagePreviewHost>");
     expect(screen).toContain("useImagePreviewAnnotationHandler(annotateImage)");
-    expect(screen).toContain("onPress={() => openImagePreview({ ...previewItem, source: resolvedSource, groupId: resolvedGroupId })}");
+    expect(screen).toMatch(
+      /onPress=\{\(\) =>\s*openImagePreview\(\{ \.\.\.previewItem, source: resolvedSource, groupId: resolvedGroupId \}\)\s*\}/,
+    );
     expect(imagePreviewHost).toContain("Owns preview state above the virtualized timeline");
     expect(imagePreviewHost).toContain("fullscreen.present(({ close }) => (");
     expect(imagePreviewHost).not.toContain("<Modal");
@@ -961,31 +1653,59 @@ describe("checked-in Android project mirrors app config", () => {
     expect(imagePreviewHost).not.toContain("withSpring");
     expect(imagePreviewHost).toContain("Annotate image in QuickDraw");
     expect(imagePreviewHost).not.toContain("Attach image review");
-    expect(screen).toContain('mode: "image-annotation"');
+    expect(screen).toContain('mode: editor?.mode ?? "image-annotation"');
     expect(screen).not.toContain("codex-image-review-");
-    expect(timelineList).toContain("maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}");
+    expect(timelineList).toContain(
+      "maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}",
+    );
     expect(timelineList).toContain("maintainScrollAtEndThreshold={TIMELINE_TAIL_FOLLOW_THRESHOLD}");
+    expect(timelineList).not.toContain("androidScrollEdges");
+    expect(timelineList).not.toContain("fadingEdgeLength");
+    expect(timelineList).toContain("showsHorizontalScrollIndicator={false}");
+    expect(timelineList).toContain("showsVerticalScrollIndicator={false}");
     expect(timelineList).toContain("dataChange: true");
     expect(timelineList).toContain("itemLayout: true");
     expect(timelineList).not.toContain("footerLayout: true");
     expect(timelineList).not.toContain("layout: true");
-    expect(screen).toContain("followTail={historyViewport.containsLatest && !awayFromLatest && !threadSearchActive}");
-    expect(screen).toContain("const away = !historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;");
+    expect(screen).toMatch(
+      /followTail=\{\s*!fullscreenCovered\s*&&\s*historyViewport\.containsLatest\s*&&\s*!awayFromLatest\s*&&\s*!threadSearchActive\s*\}/,
+    );
+    expect(screen).toMatch(
+      /const away =\s*!historyViewport\.containsLatest\s*\|\|\s*distance > LATEST_TIMELINE_THRESHOLD_PX;/,
+    );
     expect(screen).not.toContain("autoscrollToBottomThreshold");
     expect(richMarkdown).toContain("const openImagePreview = useImagePreview()");
     expect(richMarkdown).not.toContain("<Modal visible={open}");
     expect(screen).not.toContain("<Modal visible={open}");
-    expect(screen).toContain('text={normalized.text}');
-    expect(screen).toContain('normalizeUserMessage(part.text)');
-    expect(screen).toContain('<RichMarkdown\n          source={text}');
-    expect(richMarkdown).toContain('accessibilityLabel={`Copy ${language} code block`}');
-    expect(richMarkdown).toContain('<NativeCodeBlock value={value} language={language} />');
-    expect(screen).toContain('<NativeCodeBlock value={projection.renderSource} language={nativeCodeLanguageForPath(path)} variant="diff"');
+    expect(screen).toContain("text={normalized.text}");
+    expect(screen).toContain("normalizeUserMessage(part.text)");
+    expect(screen).toContain("<RichMarkdown\n          source={text}");
+    expect(richMarkdown).toContain("accessibilityLabel={`Copy ${language} code block`}");
+    expect(richMarkdown).toContain("<NativeCodeBlock value={value} language={language} />");
+    expect(screen).toMatch(
+      /<NativeCodeBlock\s+value=\{projection\.renderSource\}\s+language=\{nativeCodeLanguageForPath\(path\)\}\s+variant="diff"/,
+    );
     expect(screen).toContain("language={nativeCodeLanguageForPath(document.request.path)}");
     expect(nativeCodeHighlighter).toContain('val sourceDiff = diff != null && language != "diff"');
-    expect(nativeCodeBlock).toContain('import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";');
-    expect(nativeCodeBlockHost).toContain('requireNativeComponent<NativeCodeBlockHostProps>("CodexNativeCodeBlock")');
-    expect(nativePackage).toContain("listOf(NativeCodeBlockManager(), AnimatedNumberManager(), NativeShimmerTextManager(), NativeRevealManager())");
+    expect(nativeCodeBlock).toContain(
+      'import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";',
+    );
+    expect(nativeCodeBlockHost).toContain(
+      'requireNativeComponent<NativeCodeBlockHostProps>("CodexNativeCodeBlock")',
+    );
+    const registeredManagers = nativePackage.slice(
+      nativePackage.indexOf("override fun createViewManagers"),
+    );
+    for (const manager of [
+      "NativeCodeBlockManager",
+      "AnimatedNumberManager",
+      "NativeShimmerTextManager",
+      "NativeRevealManager",
+      "NativeStreamingRevealManager",
+      "NativeFluidLayoutManager",
+    ]) {
+      expect(registeredManagers).toContain(`${manager}()`);
+    }
     expect(nativeCodeManager).toContain('override fun getName(): String = "CodexNativeCodeBlock"');
     expect(nativeCodeView).toContain("Paint source immediately");
     expect(nativeCodeView).toContain("HIGHLIGHT_DEBOUNCE_MS");
@@ -995,7 +1715,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(gradle).toContain('implementation("io.github.rosemoe:oniguruma-native:0.24.4")');
     expect(gradle).toContain('implementation("io.github.rosemoe:editor:0.24.4")');
     expect(richMarkdown).toContain("<CopyableInline key={index} value={node.value}");
-    expect(richMarkdown).toContain('<MarkdownLink key={index} url={node.url}>');
+    expect(richMarkdown).toContain("<MarkdownLink key={index} url={node.url}>");
     expect(richMarkdown).toContain('accessibilityRole="link"');
     expect(richMarkdown).toContain("if (external) void Linking.openURL(url);");
     expect(richMarkdown).toContain("if (openLocalLink?.(url)) return;");
@@ -1008,7 +1728,9 @@ describe("checked-in Android project mirrors app config", () => {
     expect(richMarkdown).toContain("source={node.value}");
     expect(richMarkdown).toContain("reviewTarget: review.target");
     expect(mermaidNative).toContain('rendererUri: "file:///android_asset/mermaid-renderer.html"');
-    expect(mermaidNative).toContain('rendererUri: "file:///android_asset/ascii-diagram-renderer.html"');
+    expect(mermaidNative).toContain(
+      'rendererUri: "file:///android_asset/ascii-diagram-renderer.html"',
+    );
     expect(mermaidNative).toContain('accessibilityLabel="Open diagram fullscreen"');
     expect(mermaidNative).toContain('accessibilityLabel="Zoom in"');
     expect(mermaidNative).toContain('accessibilityLabel="Reset zoom"');
@@ -1017,19 +1739,35 @@ describe("checked-in Android project mirrors app config", () => {
     expect(mermaidDocument).toContain("securityLevel: 'strict'");
     expect(mermaidDocument).toContain("window.diagramZoom");
     expect(mermaidDocument).toContain("window.diagramReset");
-    expect(mermaidDocument).toContain('#root[data-mode="inline"] #canvas svg { display: block; width: 100%');
-    expect(mermaidDocument).toContain('#root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; }');
-    expect(mermaidDocument).toContain('#root[data-mode="fullscreen"] #canvas { position: absolute; inset: 0 auto auto 0;');
-    expect(mermaidDocument).toContain("const horizontalGutter = Math.min(160, Math.max(48, innerWidth * .14));");
-    expect(mermaidDocument).toContain("const verticalGutter = Math.min(180, Math.max(72, innerHeight * .16));");
-    expect(mermaidDocument).toContain("panzoom = Panzoom(canvas");
-    expect(mermaidDocument).toContain("const startX = (stage.clientWidth - naturalWidth) / (2 * fitScale);");
-    expect(mermaidDocument).toContain("const startY = (stage.clientHeight - naturalHeight) / (2 * fitScale);");
-    expect(mermaidDocument).toContain("pinchAndPan: true");
+    expect(mermaidDocument).toContain(
+      '#root[data-mode="inline"] #canvas svg { display: block; width: 100%',
+    );
+    expect(mermaidDocument).toContain(
+      '#root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; }',
+    );
+    expect(mermaidDocument).toContain(
+      '#root[data-mode="fullscreen"] #canvas { position: absolute; inset: 0 auto auto 0;',
+    );
+    expect(mermaidDocument).toContain(
+      '#root[data-mode="preview"] #canvas svg { display: block; width: 100%; height: 100%;',
+    );
+    expect(mermaidDocument).toContain(
+      "return Math.max(.02, Math.min(1, stage.clientWidth / naturalWidth, stage.clientHeight / naturalHeight));",
+    );
+    expect(mermaidDocument).toContain(
+      "x: (stage.clientWidth - naturalWidth * fitScale) / 2,",
+    );
+    expect(mermaidDocument).toContain(
+      "y: (stage.clientHeight - naturalHeight * fitScale) / 2,",
+    );
+    expect(mermaidDocument).toContain("x: center.x - viewportGesture.localX * nextScale,");
+    expect(mermaidDocument).toContain("y: center.y - viewportGesture.localY * nextScale,");
+    expect(mermaidDocument).not.toContain("pinchAndPan: true");
+    expect(mermaidNative).not.toContain("useSafeAreaInsets");
     expect(mermaidNative).toContain('mode="inline"');
     expect(mermaidNative).toContain('mode="fullscreen"');
     expect(mermaidNative).toContain('if (message.type === "ready")');
-    expect(mermaidNative).toContain('loaded.current = true;\n      render();');
+    expect(mermaidNative).toContain("loaded.current = true;\n      render();");
     expect(mermaidNative).toContain("allowFileAccessFromFileURLs");
     expect(mermaidNative).toContain("allowUniversalAccessFromFileURLs={false}");
     expect(mermaidNative).toContain("onContentProcessDidTerminate={restartRenderer}");
@@ -1037,29 +1775,39 @@ describe("checked-in Android project mirrors app config", () => {
     expect(mermaidRuntime).toContain('globalThis["mermaid"]');
     expect(asciiDiagramDocument).toContain("window.renderAsciiDiagram");
     expect(asciiDiagramDocument).toContain("'wasm-unsafe-eval'");
-    expect(asciiDiagramDocument).toContain("script, foreignObject, iframe, object, embed, image, use");
+    expect(asciiDiagramDocument).toContain(
+      "script, foreignObject, iframe, object, embed, image, use",
+    );
     expect(asciiDiagramRuntime).toContain("WebAssembly.instantiate(");
     expect(asciiDiagramRuntime).toContain("window.renderSvgbob");
     expect(richMarkdown).toContain("style={[styles.tableViewport, minimumWidth > 0");
-    expect(richMarkdown).toContain('codeContainer: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch"');
+    expect(richMarkdown).toContain(
+      'codeContainer: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch"',
+    );
     expect(richMarkdown).toContain("style={styles.tableHorizontalScroller}");
     expect(richMarkdown).not.toContain("tableVerticalScroller");
     expect(richMarkdown).not.toContain("showsVerticalScrollIndicator");
-    expect(richMarkdown).toContain('tableHorizontalScroller: { flexGrow: 0');
-    expect(richMarkdown).toContain('tableCell: { flexShrink: 0');
+    expect(richMarkdown).toContain("tableHorizontalScroller: { flexGrow: 0");
+    expect(richMarkdown).toContain("tableCell: { flexShrink: 0");
     expect(richMarkdown).not.toContain("borderLeftWidth: 3");
-    expect(richMarkdown).toContain('document: { minWidth: 0, gap: 5 }');
+    expect(richMarkdown).toContain("document: { minWidth: 0, gap: spacing.xxs }");
     expect(richMarkdown).not.toContain('document: { minWidth: 0, maxWidth: "100%"');
-    expect(richMarkdown).toContain('<View style={styles.document}>');
+    expect(richMarkdown).toContain("<View style={styles.document}>");
     expect(richMarkdown).not.toContain("documentFill:");
-    expect(documentPreviewHost).toContain('document: { width: "100%", minWidth: 0, alignSelf: "center"');
+    expect(documentPreviewHost).toContain(
+      'document: { width: "100%", minWidth: 0, alignSelf: "center"',
+    );
     expect(documentPreviewHost).toContain('documentReading: { width: "100%" }');
     expect(documentPreviewHost).toContain("maxWidth: documentReadingWidth(textScale)");
     expect(screen).toContain("function ConversationHistorySubtitle(");
     expect(screen).toContain("const activity = useThreadHistoryActivity(model, resourceId)");
     expect(screen).toContain('const connecting = server?.status === "connecting"');
-    expect(screen).not.toContain('historyViewport.phase === "loading" || !timelinePositioned ? "updating" : null');
-    expect(screen).not.toContain('status: cachedSnapshotAvailable ? "background-updating" : "initial-loading"');
+    expect(screen).not.toContain(
+      'historyViewport.phase === "loading" || !timelinePositioned ? "updating" : null',
+    );
+    expect(screen).not.toContain(
+      'status: cachedSnapshotAvailable ? "background-updating" : "initial-loading"',
+    );
     expect(screen).toContain('activity.status !== "loading-history"');
     expect(screen).toContain('activity.status === "background-retrying"');
     expect(screen).not.toContain('"loading history…"');
@@ -1067,21 +1815,32 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).not.toContain('conversationActivity === "updating"');
     expect(screen).not.toContain('? "updating…"');
     expect(screen).toContain('activity === "connecting" ? colors.textDim : colors.amber');
-    expect(screen).toContain('<ConnectionActivityIndicator status={server.status} />');
+    expect(screen).toContain(
+      "<ConnectionActivityIndicator status={connection.state} size={iconSize.indicator} />",
+    );
     expect(screen).toContain("style={[styles.conversationSubtitle, { color }]}");
     expect(screen).toContain("{thread.title}");
     expect(screen).not.toContain("stripLeadingEmoji(thread.title)");
     expect(screen).not.toContain('thread.title.replace(/^[^\\p{L}\\p{N}]+\\s*/u, "")');
     expect(screen).toContain("isProfileOnlyConnectionUpdate(input, current)");
-    expect(screen).toContain("remote.updateConnectionProfile(connectionId, profile.displayName, profile.emoji)");
+    expect(screen).toContain(
+      "remote.updateConnectionProfile(connectionId, profile.displayName, profile.emoji)",
+    );
     expect(screen).toContain("connectionStateLabel(connection.state, connection.enabled)");
-    expect(screen).toContain('<View style={styles.connectionEndpointRow}>');
-    expect(screen).toContain('<Ionicons accessibilityLabel="Secure connection" name="lock-closed" size={12} color={colors.green} />');
-    expect(screen).toContain('style={[styles.menuActionSubtitle, styles.connectionEndpointText]}');
+    expect(screen).toContain("title: connection.displayName");
+    expect(screen).toMatch(
+      /<AppListRow\s+title="Connection"\s+description=\{connection\.endpoint\}/,
+    );
+    expect(screen).toMatch(
+      /<Ionicons\s+accessibilityLabel="Secure connection"\s+name="lock-closed"\s+size=\{iconSize\.indicator\}\s+color=\{colors\.green\}\s*\/>/,
+    );
+    expect(screen).toMatch(/descriptionLeading=\{\s*secureLive\s*\?/);
     expect(screen).not.toContain("TLS pinned</Text>");
     expect(screen).toContain("connectionDiagnosticSummary(connection.lastError)");
     expect(screen).toContain("Error details");
-    expect(screen).toContain('<ThreadTimelineList\n        ref={timelineRef}');
+    expect(screen).toMatch(
+      /<ThreadTimelineList\s+key=\{composerScope\}\s+ref=\{timelineRef\}/,
+    );
     expect(voiceWorkspace).not.toContain('reload(["connections"])');
     expect(voiceWorkspace).not.toContain("store.subscribe(");
     expect(voiceWorkspace).toContain("createConnectionProfileDatabase()");
@@ -1094,7 +1853,9 @@ describe("checked-in Android project mirrors app config", () => {
     expect(voiceWorkspace).toContain("if (initialProfiles.length === 0)");
     expect(voiceWorkspace).not.toContain("SqliteRemoteStore");
     expect(voiceWorkspace).toContain("LegacyRemoteStore.open()");
-    expect(legacyRemoteStore).toContain("Read-only adapter for the pre-TanStack Expo-SQLite database");
+    expect(legacyRemoteStore).toContain(
+      "Read-only adapter for the pre-TanStack Expo-SQLite database",
+    );
     expect(legacyRemoteStore).not.toContain("CREATE VIRTUAL TABLE");
     expect(legacyRemoteStore).not.toContain("PRAGMA user_version");
     expect(voiceWorkspace).not.toContain("store.hydrateThreadRuntimeMetadata");
@@ -1113,39 +1874,49 @@ describe("checked-in Android project mirrors app config", () => {
     expect(voiceWorkspace).not.toContain("requireStore(storeRef.current).saveDraft(");
     expect(voiceWorkspace).not.toContain("requireStore(storeRef.current).saveScrollOffset(");
     expect(voiceWorkspace).not.toContain("requireStore(storeRef.current).saveComposerPreferences(");
-    expect(voiceWorkspace).not.toContain('requireStore(storeRef.current).setConnectionState(connectionId, "connecting")');
-    expect(nativeFrameStore).toContain("applyPendingRequestEvents(connectionId, fresh.mapNotNull { it.pendingRequestPayload })");
+    expect(voiceWorkspace).not.toContain(
+      'requireStore(storeRef.current).setConnectionState(connectionId, "connecting")',
+    );
+    expect(nativeFrameStore).toContain(
+      "applyPendingRequestEvents(connectionId, fresh.mapNotNull { it.pendingRequestPayload })",
+    );
     expect(nativeProtocolEngine).toContain('emitEngineEvent(connectionId, "pendingRequests"');
-    expect(voiceWorkspace).toContain('createThreadSummaryDatabase()');
+    expect(voiceWorkspace).toContain("createThreadSummaryDatabase()");
     expect(voiceWorkspace).not.toContain("reconcileBeforeSummary");
-    expect(voiceWorkspace).toContain('projection.applySnapshot(connectionId, snapshots, cursor)');
-    expect(voiceWorkspace).toContain('projection.applyEvents(connectionId, events)');
+    expect(voiceWorkspace).toContain("projection.applySnapshot(connectionId, snapshots, cursor)");
+    expect(voiceWorkspace).toContain("projection.applyEvents(connectionId, events)");
     const liveProjectionStart = voiceWorkspace.indexOf("async applyEvents(connectionId, events) {");
     const liveProjectionEnd = voiceWorkspace.indexOf("onPendingRequests:", liveProjectionStart);
     const liveProjection = voiceWorkspace.slice(liveProjectionStart, liveProjectionEnd);
     expect(liveProjection).not.toContain("workspaceRuntime.threadSyncLane.markDirty");
     expect(liveProjection).toContain("projectedThreads.get(threadId)?.cwd");
     expect(liveProjection).not.toContain("details.getThread(");
-    expect(threadProjectionStore.indexOf('details.applyEvents(connectionId, events)')).toBeLessThan(threadProjectionStore.indexOf('summaries.applyEvents(connectionId, events)'));
+    expect(threadProjectionStore.indexOf("details.applyEvents(connectionId, events)")).toBeLessThan(
+      threadProjectionStore.indexOf("summaries.applyEvents(connectionId, events)"),
+    );
     expect(threadProjectionStore).not.toContain("reconcileBeforeSummary");
-    expect(uiCachePersistence).toContain('registerUiCacheCollectionFlusher');
-    expect(uiCachePersistence).not.toContain('createReactNativeSQLitePersistence');
-    expect(voiceWorkspace).toContain('useLiveQuery(');
+    expect(uiCachePersistence).toContain("registerUiCacheCollectionFlusher");
+    expect(uiCachePersistence).not.toContain("createReactNativeSQLitePersistence");
+    expect(voiceWorkspace).toContain("useLiveQuery(");
     expect(threadSummarySqlite).toContain('RUNTIME_ID = "thread-summaries-v2"');
     expect(threadSummaryDatabase).toContain("createThreadSummarySqlite()");
     expect(threadSummaryDatabase).not.toContain("createSqliteSyncRuntime");
     expect(threadSummaryDatabase).not.toContain("createSyncControlLease");
     expect(threadSummaryDatabase).toContain("createThreadSummaryModel()");
-    expect(threadSummaryDatabase).toContain("const loadView = async (request: ThreadSummaryViewRequest)");
+    expect(threadSummaryDatabase).toContain(
+      "const loadView = async (request: ThreadSummaryViewRequest)",
+    );
     expect(threadSummarySqlite).toContain("async loadView(request)");
     expect(threadSummaryDatabase).toContain("async applySnapshot(connectionId, snapshots)");
     expect(threadSummaryDatabase).toContain("async applyEvents(connectionId, events)");
-    expect(threadSummaryDatabase).toContain("async updateArchived(connectionId, threadId, archived)");
+    expect(threadSummaryDatabase).toContain(
+      "async updateArchived(connectionId, threadId, archived)",
+    );
     expect(voiceWorkspace).toContain(".updateArchived(connectionId, threadId, true)");
     expect(voiceWorkspace).toContain(".updateArchived(connectionId, threadId, false)");
     expect(threadSummaryDatabase).not.toContain("SqliteRemoteStore");
     expect(voiceWorkspace).not.toContain("() => threadDatabase?.collection");
-    expect(screen).toContain("recentLimit: threadListLimit");
+    expect(screen).toContain('recentLimit: threadListMode === "active" ? threadListLimit : 0');
     expect(screen).toContain("const threadSummaryView = useThreadSummaryView(");
     expect(screen).not.toContain("const selectedThreadSummaryQuery = useLiveQuery(");
     expect(screen).toContain("timestamp: thread.recencyAt ?? thread.updatedAt");
@@ -1161,36 +1932,48 @@ describe("checked-in Android project mirrors app config", () => {
     expect(threadDetailDatabase).not.toContain("collection.startSyncImmediate()");
     expect(threadDetailDatabase).toContain("return detailStorage;");
     expect(threadDetailDatabase).toContain("if (!hasLoadedThread && startedThreadIds.size === 0)");
-    const detailApplyEventsStart = threadDetailDatabase.indexOf("async applyEvents(connectionId, events)");
-    expect(threadDetailDatabase.indexOf("const controls = ensureControls();", detailApplyEventsStart)).toBeLessThan(
+    const detailApplyEventsStart = threadDetailDatabase.indexOf(
+      "async applyEvents(connectionId, events)",
+    );
+    expect(
+      threadDetailDatabase.indexOf("const controls = ensureControls();", detailApplyEventsStart),
+    ).toBeLessThan(
       threadDetailDatabase.indexOf("const byThread = new Map", detailApplyEventsStart),
     );
     expect(threadDetailDatabase).not.toContain("WARM_THREAD_LIMIT");
     expect(voiceWorkspace).not.toContain("details.collection.preload()");
-    expect(threadDetailProjection).toContain('kind: "thread" | "turn" | "turnMeta" | "activity" | "pending"');
-    expect(threadDetailProjection).toContain('previous?.sealed !== true');
-    expect(threadDetailProjection).toContain('shouldWriteAuthoritativeThreadDetailRow');
-    expect(voiceWorkspace).toContain('page.nextCursor !== null && page.nextCursor === cursor');
+    expect(threadDetailProjection).toContain(
+      'kind: "thread" | "turn" | "turnMeta" | "activity" | "pending"',
+    );
+    expect(threadDetailProjection).toContain("previous?.sealed !== true");
+    expect(threadDetailProjection).toContain("shouldWriteAuthoritativeThreadDetailRow");
+    expect(voiceWorkspace).toContain("page.nextCursor !== null && page.nextCursor === cursor");
     expect(threadDetailDatabase).toContain("const commitThreadProjection = async");
-    expect(threadDetailProjection).toContain("A sealed row is immutable inside one history generation");
+    expect(threadDetailProjection).toContain(
+      "A sealed row is immutable inside one history generation",
+    );
     expect(threadDetailDatabase).toContain("previous.turn === next.turn");
     expect(threadDetailDatabase).not.toContain("JSON.stringify(previous) === JSON.stringify(row)");
-    expect(nativeCommandStore).toContain('next_attempt_at INTEGER NOT NULL DEFAULT 0');
-    expect(nativeCommandStore).toContain('fun nextReady(connectionId: String');
-    expect(nativeCommandStore).toContain('if (lanes.add(laneKey(candidate))) add(candidate)');
-    expect(connectionService).toContain('private fun scheduleOutboxWake()');
-    expect(connectionService).not.toContain('handler.postDelayed({ drainOutbox() }, OUTBOX_RECONCILE_DELAY_MS)');
-    expect(threadDetailDatabase).toContain('async replaceQueued(connectionId, threadId, commands');
+    expect(nativeCommandStore).toContain("next_attempt_at INTEGER NOT NULL DEFAULT 0");
+    expect(nativeCommandStore).toContain("fun nextReady(connectionId: String");
+    expect(nativeCommandStore).toContain("if (lanes.add(laneKey(candidate))) add(candidate)");
+    expect(connectionService).toContain("private fun scheduleOutboxWake()");
+    expect(connectionService).not.toContain(
+      "handler.postDelayed({ drainOutbox() }, OUTBOX_RECONCILE_DELAY_MS)",
+    );
+    expect(threadDetailDatabase).toContain("async replaceQueued(connectionId, threadId, commands");
     expect(threadDetailDatabase).not.toContain("deferredCommandDeliveries");
     expect(threadDetailDatabase).not.toContain("flushDeferredTimelineUpdates");
     expect(threadDetailDatabase).toContain("persistPendingMutation");
     expect(voiceWorkspace).not.toContain("createOptimisticAction");
     expect(voiceWorkspace).toContain("details.stagePendingMutation(");
     expect(voiceWorkspace).toContain("details.applyCommandDelivery(delivery)");
-    expect(voiceWorkspace).not.toContain('new DurableOutbox');
-    expect(voiceWorkspace).not.toContain('mirrorQueuedCommands');
+    expect(voiceWorkspace).not.toContain("new DurableOutbox");
+    expect(voiceWorkspace).not.toContain("mirrorQueuedCommands");
     expect(voiceWorkspace).toContain('"companion/queue/put"');
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
+    expect(screen).toContain(
+      "const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)",
+    );
     expect(screen).toContain("onPressIn={() => onPreloadThread(threadSelectionKey(item.thread))}");
     expect(screen).toContain("remote.threadDetails.preloadWindow({");
     expect(screen).not.toContain("useThreadChatWindowContent");
@@ -1198,332 +1981,479 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain("threadId: activeRemoteThreadId");
     expect(screen).not.toContain("windowCoverage.complete ? remoteThread : null");
     expect(screen).not.toContain("const windowCoverage = chatDatabase.windowCoverage");
-    expect(threadDetailDatabase).toContain("const coverage = threadWindowCoverage(request, cachedWindow)");
-    expect(threadDetailDatabase).toContain("const requiresHydration = !coverage.complete || cachedThread === null");
-    expect(threadDetailDatabase).not.toContain('if (!source.has(threadMetaKey(connectionId, threadId)) || turns.length === 0');
+    expect(threadDetailDatabase).toContain(
+      "const coverage = threadWindowCoverage(request, cachedWindow)",
+    );
+    expect(threadDetailDatabase).toContain(
+      "const requiresHydration = !coverage.complete || cachedThread === null",
+    );
+    expect(threadDetailDatabase).not.toContain(
+      "if (!source.has(threadMetaKey(connectionId, threadId)) || turns.length === 0",
+    );
     expect(threadDetailDatabase).not.toContain("collection.startSyncImmediate();");
-    expect(screen).not.toContain('remoteThreadCacheRef');
-    expect(voiceWorkspace).not.toContain('sameConnections(');
+    expect(screen).not.toContain("remoteThreadCacheRef");
+    expect(voiceWorkspace).not.toContain("sameConnections(");
     expect(voiceWorkspace).toContain("supervisor.replaceConnections(initialProfiles)");
-    expect(legacyRemoteStore).toContain('readonly #tokenCache = new Map<string, string>()');
-    expect(screen).not.toContain('removeClippedSubviews={false}');
-    expect(timelineList).toContain('KeyboardAwareLegendList');
-    expect(screen).toContain('KeyboardStickyView');
-    expect(screen).toContain('KeyboardGestureArea');
-    expect(screen).toContain('</ThreadCwdContext.Provider>\n      </KeyboardGestureArea>\n\n      <KeyboardStickyView');
-    expect(screen).not.toContain('useKeyboardChatComposerInset');
-    expect(screen).not.toContain('useKeyboardScrollToEnd');
-    expect(screen).not.toContain('keyboardTrackingStore');
-    expect(screen).not.toContain('enabled={keyboardTrackingEnabled}');
-    expect(screen).toContain('KeyboardController.dismiss({ animated: false, keepFocus: false })');
-    expect(screen).toContain('KeyboardController.dismiss({ animated: true, keepFocus: false })');
-    expect(screen).toContain('keyboardLiftBehavior="whenAtEnd"');
-    expect(screen).not.toContain('maintainScrollAtEndEnabled=');
-    expect(screen).not.toContain('followLiveTail=');
-    expect(screen).not.toContain('contentInsetEndAdjustment={contentInsetEndAdjustment}');
-    expect(screen).not.toContain('freeze={timelineKeyboardFreeze}');
-    expect(screen).not.toContain('timelineTailFollowEnabled');
-    expect(screen).toContain('onScrollBeginDrag={({ nativeEvent }) => {');
-    expect(screen).not.toContain('updateFollowingLatest');
-    expect(screen).toContain('keyboardOffset={conversationInsets.bottom}');
-    expect(screen).toContain('offset={{ closed: 0, opened: conversationInsets.bottom }}');
+    expect(legacyRemoteStore).toContain("readonly #tokenCache = new Map<string, string>()");
+    expect(screen).not.toContain("removeClippedSubviews={false}");
+    expect(timelineList).toContain("KeyboardAwareLegendList");
+    expect(screen).toContain("KeyboardStickyView");
+    expect(screen).toContain("KeyboardGestureArea");
+    expect(screen).toMatch(
+      /<\/ThreadCwdContext\.Provider>\s*<\/KeyboardGestureArea>\s*<\/View>/,
+    );
+    expect(screen).toContain("<ConversationPanelUnderlay");
+    expect(screen).not.toContain("ConversationPanelBlur");
+    expect(screen).not.toContain('direction="down"');
+    expect(screen).not.toContain('direction="up"');
+    expect(screen).toContain("<ConversationPanelUnderlay style={StyleSheet.absoluteFill} />");
+    expect(conversationPanelUnderlay).toContain("backgroundColor: surfaceColor");
+    expect(conversationPanelUnderlay).not.toMatch(/blur/iu);
+    expect(conversationChromeLayout).not.toContain("conversationBlurExtent");
+    expect(screen).not.toContain("useKeyboardChatComposerInset");
+    expect(screen).not.toContain("useKeyboardScrollToEnd");
+    expect(screen).not.toContain("keyboardTrackingStore");
+    expect(screen).not.toContain("enabled={keyboardTrackingEnabled}");
+    expect(screen).toContain("KeyboardController.dismiss({ animated: false, keepFocus: false })");
+    expect(screen).toContain("KeyboardController.dismiss({ animated: true, keepFocus: false })");
+    expect(screen).toContain('keyboardLiftBehavior="always"');
+    expect(screen).not.toContain("maintainScrollAtEndEnabled=");
+    expect(screen).not.toContain("followLiveTail=");
+    expect(screen).not.toContain("contentInsetEndAdjustment={contentInsetEndAdjustment}");
+    expect(screen).not.toContain("freeze={timelineKeyboardFreeze}");
+    expect(screen).not.toContain("timelineTailFollowEnabled");
+    expect(screen).toContain("onScrollBeginDrag={({ nativeEvent }) => {");
+    expect(screen).not.toContain("updateFollowingLatest");
+    expect(screen).toContain("keyboardOffset={conversationInsets.bottom}");
+    expect(screen).toContain("offset={{ closed: 0, opened: conversationInsets.bottom }}");
     expect(screen).toContain('testID="composer-dock"');
-    expect(screen).not.toContain('ListFooterComponent={TimelineBottomSpacer}');
+    expect(screen).not.toContain("ListFooterComponent={TimelineBottomSpacer}");
     expect(screen).not.toContain('testID="timeline-bottom-spacer"');
     expect(screen).not.toContain('testID="last-user-footer-reserve"');
     expect(screen).toContain('testID="optimistic-turn-footer"');
-    expect(screen).toContain('const deliveryLabel = failed');
+    expect(screen).toContain("const deliveryLabel = failed");
     expect(screen).toContain('? "Checking delivery"');
     expect(screen).toContain('? "Sending to Companion"');
     expect(screen).toContain(': "Queued";');
-    expect(screen).toContain('`Message was rejected: ${item.lastError}`');
-    expect(screen).not.toContain('Message was not accepted. Edit it and retry.');
-    expect(screen).not.toContain('if (scrollRestoredRef.current && followingLatestRef.current) markTimelineAtLatest()');
-    expect(screen).toContain('disabled={sendDisabled}');
-    expect(swipeDiscardAction).toContain('accessibilityState={{ disabled }}');
-    expect(screen).toContain('style={styles.unreadDot}');
-    expect(screen).toContain('void action().catch((cause) => dialog.alert');
-    expect(screen.indexOf('void action().catch((cause) => dialog.alert')).toBeLessThan(screen.indexOf('if (closeSwipe) swipeableRef.current?.close()'));
-    expect(screen).toContain('backgroundColor: colors.errorContainer');
+    expect(screen).toContain("`Message was rejected: ${item.lastError}`");
+    expect(screen).not.toContain("Message was not accepted. Edit it and retry.");
+    expect(screen).not.toContain(
+      "if (scrollRestoredRef.current && followingLatestRef.current) markTimelineAtLatest()",
+    );
+    expect(screen).toContain("disabled={sendDisabled}");
+    expect(swipeDiscardAction).toContain("accessibilityState={{ disabled }}");
+    expect(screen).toContain("style={styles.unreadDot}");
+    const swipeActionStart = screen.search(
+      /void action\(\)\.catch\(\(cause\) =>\s*dialog\.alert/,
+    );
+    expect(swipeActionStart).toBeGreaterThanOrEqual(0);
+    expect(swipeActionStart).toBeLessThan(
+      screen.indexOf("if (closeSwipe) swipeableRef.current?.close()"),
+    );
+    expect(screen).toContain("renderRightActions={() => (");
+    expect(screen).toContain("<ThreadSwipeActions>");
+    expect(screen).not.toContain("THREAD_SWIPE_UNDERLAY_OVERLAP + translation.get()");
+    expect(screen).toMatch(
+      /swipeContainer: \{[\s\S]*?backgroundColor: "transparent"[\s\S]*?\},\s*swipeChildren: \{[\s\S]*?backgroundColor: "transparent"/,
+    );
+    expect(screen).toMatch(
+      /swipeActionsUnderlay: \{[\s\S]*?backgroundColor: colors\.surfaceContainerHigh[\s\S]*?paddingLeft: THREAD_SWIPE_UNDERLAY_OVERLAP/,
+    );
+    expect(screen).toMatch(/swipeActionsRight: \{[\s\S]*?height: "100%"/);
+    expect(screen).toMatch(/swipeAction: \{[\s\S]*?alignSelf: "stretch"/);
+    expect(screen).toContain("backgroundColor: colors.errorContainer");
     expect(screen).not.toContain('<MaterialIcons name="push-pin" size={19} color="#ffffff" />');
     expect(screen).not.toContain('<Ionicons name={icon} size={19} color="#ffffff" />');
     expect(screen).not.toContain('testID="unread-bubble-dot"');
-    expect(screen).not.toContain('unread={item.id === unreadFinalTurnId}');
+    expect(screen).not.toContain("unread={item.id === unreadFinalTurnId}");
     expect(screen).not.toContain('active={rawTurn.status === "inProgress"}');
-    expect(screen).toContain('onViewedLatest={markActiveThreadRead}');
+    expect(screen).toContain("onViewedLatest={markActiveThreadRead}");
     expect(screen).toContain("claimUnreadReceipt(");
     expect(screen).toContain("onViewedLatest?.();");
-    expect(screen).not.toContain('useEffect(() => markActiveThreadRead(), [markActiveThreadRead])');
-    expect(screen).not.toContain('styles.unreadBadge');
-    expect(screen).not.toContain('offset={{ opened: conversationInsets.bottom }}');
+    expect(screen).not.toContain("useEffect(() => markActiveThreadRead(), [markActiveThreadRead])");
+    expect(screen).not.toContain("styles.unreadBadge");
+    expect(screen).not.toContain("offset={{ opened: conversationInsets.bottom }}");
     expect(manifest).toContain('android:windowSoftInputMode="adjustResize"');
-    expect(screen).toContain('composerContentHeightRef.current = nativeEvent.contentSize.height');
-    expect(screen).toContain('Math.max(explicitLineFloor, Math.ceil(measuredContentHeight))');
-    expect(screen).not.toContain('followingLatestRef');
-    expect(screen).not.toContain('DECLARATIVE_TIMELINE_END');
-    expect(screen).not.toContain('scheduleTimelineEndPin');
-    expect(screen).not.toContain('timelineEndPinFrameRef');
-    expect(timelineList).not.toContain('pinToEnd');
-    expect(screen).not.toContain('onMomentumScrollBegin={() => {');
-    expect(screen).toContain('onMomentumScrollEnd={({ nativeEvent }) => {');
-    expect(screen).toContain('onScrollEndDrag={({ nativeEvent }) => {');
-    expect(screen).not.toMatch(/onScrollBeginDrag=\{\(\{ nativeEvent \}\) => \{[\s\S]{0,500}historyViewport\.freeze\(\)/u);
+    expect(composerMarkdownInput).toContain('flexBasis: "auto"');
+    expect(composerMarkdownInput).toContain("The native editor owns intrinsic content height");
+    expect(screen).not.toContain("followingLatestRef");
+    expect(screen).not.toContain("DECLARATIVE_TIMELINE_END");
+    expect(screen).not.toContain("scheduleTimelineEndPin");
+    expect(screen).not.toContain("timelineEndPinFrameRef");
+    expect(timelineList).not.toContain("pinToEnd");
+    // Momentum may pause drawing transitions, but must never take over the list's scroll position.
+    const momentumBegin = screen.match(/onMomentumScrollBegin=\{\(\) => \{([^}]+)\}\}/u)?.[1];
+    expect(momentumBegin).toContain("setTimelineGestureActive(true)");
+    expect(momentumBegin).toContain("cancelScheduledPaginationTrim()");
+    expect(momentumBegin).not.toMatch(/scrollTo|pinToEnd|historyViewport\.freeze/u);
+    expect(screen).toContain("onMomentumScrollEnd={({ nativeEvent }) => {");
+    expect(screen).toContain("onScrollEndDrag={({ nativeEvent }) => {");
+    expect(screen).not.toMatch(
+      /onScrollBeginDrag=\{\(\{ nativeEvent \}\) => \{[\s\S]{0,500}historyViewport\.freeze\(\)/u,
+    );
     expect(screen).not.toContain("freezeSettledHistoryRange");
     expect(screen).toContain("onStartReached={loadOlderAtTimelineStart}");
     expect(screen).toContain("onEndReached={loadNewerAtTimelineEnd}");
-    expect(screen).not.toContain('onScrollToIndexFailed={({ index, averageItemLength }) => {');
-    expect(screen).not.toContain('maxToRenderPerBatch={10}');
-    expect(screen).not.toContain('updateCellsBatchingPeriod={32}');
-    expect(screen).not.toContain('windowSize={11}');
-    expect(screen).toContain('scrollEventThrottle={16}');
+    expect(screen).not.toContain("onScrollToIndexFailed={({ index, averageItemLength }) => {");
+    expect(screen).not.toContain("maxToRenderPerBatch={10}");
+    expect(screen).not.toContain("updateCellsBatchingPeriod={32}");
+    expect(screen).not.toContain("windowSize={11}");
+    expect(screen).toContain("scrollEventThrottle={16}");
     expect(screen).toContain('testID="jump-to-latest"');
     expect(screen).toContain("const jumpTimelineToLatest = () => {");
     expect(screen).toContain("onPress={jumpTimelineToLatest}");
     expect(screen).not.toContain("markTimelineAtLatest");
-    expect(screen).not.toContain("timelineRef.current?.scrollToEnd({ animated: true });\n            markTimelineAtLatest();");
-    expect(screen).toContain('onEndReached={loadNewerAtTimelineEnd}');
-    expect(screen).not.toContain('sessionConversationScrollOffsets');
-    expect(screen).not.toContain('scrollRestoredRef');
-    expect(screen).not.toContain('INITIAL_TIMELINE_SETTLE_MS');
-    expect(screen).toContain('const [timelineDidLoad, setTimelineDidLoad] = useState(false)');
-    expect(screen).toContain('<ConversationPane\n        key={navigationKey}');
-    expect(screen).not.toContain('timelineInteractionStartedRef');
-    expect(screen).not.toContain('scheduleInitialTimelinePosition');
+    expect(screen).not.toContain(
+      "timelineRef.current?.scrollToEnd({ animated: true });\n            markTimelineAtLatest();",
+    );
+    expect(screen).toContain("onEndReached={loadNewerAtTimelineEnd}");
+    expect(screen).not.toContain("sessionConversationScrollOffsets");
+    expect(screen).not.toContain("scrollRestoredRef");
+    expect(screen).not.toContain("INITIAL_TIMELINE_SETTLE_MS");
+    expect(screen).toMatch(
+      /const \[timelineDidLoad, setTimelineDidLoad\] =\s*useConversationState\(composerScope, \(\) => \(?false\)?\)/,
+    );
+    expect(screen).not.toContain("<ConversationPane\n        key={navigationKey}");
+    expect(screen).not.toContain("timelineInteractionStartedRef");
+    expect(screen).not.toContain("scheduleInitialTimelinePosition");
     expect(screen).not.toContain("olderLoadTriggeredForDragRef");
-    expect(screen).toContain("onLoadTurnItems={async (turnId) => { await remote.loadTurnItems(connectionId, threadId, turnId); }}");
+    expect(screen).toContain(
+      "const items = await remote.loadTurnItems(connectionId, threadId, turnId)",
+    );
+    expect(screen).toContain("searchWindow?.replaceItems(turnId, items)");
     expect(screen).toContain("function CompletedTurnHistory");
     expect(screen).toContain("function CollapsedTurnActivity");
-    expect(screen).not.toContain('viewabilityConfig={timelineViewabilityConfig}');
-    expect(screen).toContain('onFirstVisibleItemChanged={onTimelineFirstVisibleItemChanged}');
-    expect(screen).toContain('lastTimelineOffsetYRef.current = nativeEvent.contentOffset.y');
-    expect(screen).not.toContain('OLDER_PAGE_TRIGGER_PX');
-    expect(screen).toContain('onStartReached={loadOlderAtTimelineStart}');
-    expect(screen).toContain('showsVerticalScrollIndicator={false}');
-    expect(screen).not.toContain('requestResidentRangeMove');
-    expect(timelineList).toContain('initialScrollAtEnd');
-    expect(timelineList).toContain('alignItemsAtEnd');
-    expect(timelineList).toContain('estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}');
-    expect(screen).toContain('getItemType={(item) => item.kind}');
+    expect(screen).not.toContain("viewabilityConfig={timelineViewabilityConfig}");
+    expect(screen).toContain("onFirstVisibleItemChanged={onTimelineFirstVisibleItemChanged}");
+    expect(screen).toMatch(
+      /lastTimelineOffsetYRef\.current =\s*nativeEvent\.contentOffset\.y/,
+    );
+    expect(screen).not.toContain("OLDER_PAGE_TRIGGER_PX");
+    expect(screen).toContain("onStartReached={loadOlderAtTimelineStart}");
+    expect(screen).toContain("showsVerticalScrollIndicator={false}");
+    expect(screen).not.toContain("requestResidentRangeMove");
+    expect(timelineList).toContain("initialScrollAtEnd");
+    expect(timelineList).toContain("alignItemsAtEnd");
+    expect(timelineList).toContain("estimatedItemSize={TIMELINE_ESTIMATED_ITEM_SIZE}");
+    expect(screen).toContain("getItemType={(item) => item.kind}");
     expect(screen).not.toContain('testID="timeline-positioning-loader"');
     expect(screen).toContain('const restoredToAnchor = timelineInitialPosition.kind === "item";');
-    expect(screen).toContain('const distance = Math.max(0, nativeEvent.contentSize.height - nativeEvent.layoutMeasurement.height - nativeEvent.contentOffset.y)');
-    expect(screen).not.toContain('contentHeight - timelineViewportHeightRef.current - pendingOffset');
-    expect(screen).toContain('initialPosition={timelineInitialPosition}');
-    expect(screen).toContain('historyAnchorOffsetPx');
-    expect(screen).toContain('commitInitialTimelineLoad();');
-    expect(screen).not.toContain('historyViewport.prefetch()');
-    expect(screen).not.toContain('pendingRestoreOffsetRef');
-    expect(screen).not.toContain('if (resolvedHeight === 0) return');
-    expect(screen).toContain('selectTurnRenderWindow(rawTurn)');
-    expect(screen).toContain('renderWindow.liveActivityIndexes.flatMap');
-    expect(screen).toContain('activeTurnSequence(liveActivityEntries, renderWindow.collapsedActivityIndexes)');
+    expect(screen).toMatch(
+      /const distance = Math\.max\(\s*0,\s*nativeEvent\.contentSize\.height -\s*nativeEvent\.layoutMeasurement\.height -\s*nativeEvent\.contentOffset\.y,?\s*\)/,
+    );
+    expect(screen).not.toContain(
+      "contentHeight - timelineViewportHeightRef.current - pendingOffset",
+    );
+    expect(screen).toContain("initialPosition={timelineInitialPosition}");
+    expect(screen).toContain("historyAnchorOffsetPx");
+    expect(screen).toContain("commitInitialTimelineLoad();");
+    expect(screen).not.toContain("historyViewport.prefetch()");
+    expect(screen).not.toContain("pendingRestoreOffsetRef");
+    expect(screen).not.toContain("if (resolvedHeight === 0) return");
+    expect(screen).toContain("selectTurnRenderWindow(rawTurn)");
+    expect(screen).toContain("renderWindow.liveActivityIndexes.flatMap");
+    expect(screen).toContain(
+      "activeTurnSequence(liveActivityEntries, renderWindow.collapsedActivityIndexes)",
+    );
     expect(screen).toContain('rawTurn.status === "inProgress"');
     expect(screen).toContain('accessibilityLabel="Message actions"');
-    expect(screen).toContain('<MessageActionRail completedAt={rawTurn.completedAt} showActions={showMessageActions} request={{');
-    expect(screen.match(/trigger="long-press"/g)).toHaveLength(3);
-    expect(screen).toContain('<GesturePressable\n      {...(selected ? { testID: "selected-thread-row" } : {})}\n      accessibilityRole="button"\n      cancelable\n      delayLongPress={350}');
+    expect(screen).toMatch(/<MessageActionRail\s+request=\{\{/);
+    expect(screen.match(/trigger="long-press"/g)).toHaveLength(2);
+    // The send action uses a sibling menu anchor so dragging can escape Compose bounds.
+    expect(screen).toContain("<ComposerDeliveryMenu");
+    const composerDeliveryMenu = readFileSync(
+      new URL("../src/ui/ComposerDeliveryMenu.native.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(composerDeliveryMenu).toContain("onLongPress: (event) =>");
+    expect(composerDeliveryMenu).toContain("setExpanded(true)");
+    expect(screen).toMatch(
+      /<GesturePressable\s+\{\.\.\.\(selected \? \{ testID: "selected-thread-row" \} : \{\}\)\}\s+accessibilityRole="button"\s+cancelable\s+delayLongPress=\{350\}/,
+    );
     expect(screen).toContain('testID="composer-accessory-tray"');
     expect(screen).toContain('const useAnchoredComposerMenu = Platform.OS === "android";');
-    expect(screen).toContain('<KeyboardStickyView\n        enabled');
-    expect(screen).not.toContain('composerTracksKeyboard');
-    expect(screen).toContain('if (open) dismissComposerKeyboardForOverlay();');
+    expect(screen).toMatch(/<KeyboardStickyView\s+enabled/);
+    expect(screen).not.toContain("composerTracksKeyboard");
+    expect(screen).toContain("if (open) dismissComposerKeyboardForOverlay();");
     expect(screen).toContain('icon: "pencil-outline"');
     expect(screen).toContain('icon: "terminal-outline"');
-    expect(screen).toContain('composerContextChip: { flexGrow: 0, flexShrink: 0');
-    expect(screen).toContain('composerContextText: { flexGrow: 0, flexShrink: 0');
-    expect(screen).toContain('containerStyle={[styles.composerContextValue, refreshing && styles.composerContextCountHidden]}');
-    expect(screen).toContain('composerContextValue: { alignSelf: "center", justifyContent: "center" }');
-    expect(screen).not.toContain('composerContextChip: { maxWidth:');
-    expect(screen).not.toContain('shouldOpenOnLongPress');
-    expect(screen).toContain('{ id: "compact", label: "Compact context"');
-    expect(messageActionMenu).toContain('{ id: "copy", label: "Copy", icon: "copy-outline"');
-    expect(messageActionMenu).toContain('{ id: "fork", label: "Fork", icon: "git-branch-outline"');
-    expect(screen).toContain('await onFork({ boundary: { kind: "through", turnId }, ephemeral: false })');
-    expect(screen).not.toContain('userCopyButton');
-    expect(screen).not.toContain('function AgentBubbleHeader({ copyText');
-    expect(screen).toContain('usePersistentExpansion(`${itemKey}:body:${section}`, false)');
+    expect(screen).toMatch(/composerContextChip: \{\s*flexGrow: 0,\s*flexShrink: 0/);
+    expect(screen).toMatch(/composerContextText: \{\s*flexGrow: 0,\s*flexShrink: 0/);
+    expect(screen).toMatch(
+      /containerStyle=\{\[\s*styles\.composerContextValue,\s*refreshing && styles\.composerContextCountHidden,?\s*\]\}/,
+    );
+    expect(screen).toMatch(
+      /composerContextValue: \{\s*alignSelf: "center",\s*justifyContent: "center",?\s*\}/,
+    );
+    expect(screen).not.toContain("composerContextChip: { maxWidth:");
+    expect(screen).not.toContain("shouldOpenOnLongPress");
+    expect(screen).toMatch(/\{\s*id: "compact",\s*label: "Compact context"/);
+    expect(messageActionMenu).toMatch(
+      /\{\s*id: "copy",\s*label: "Copy",\s*icon: "copy-outline"/,
+    );
+    expect(messageActionMenu).toMatch(
+      /\{\s*id: "fork",\s*label: "Fork",\s*icon: "git-branch-outline"/,
+    );
+    expect(screen).toContain(
+      'await onFork({ boundary: { kind: "through", turnId }, ephemeral: false })',
+    );
+    expect(screen).not.toContain("userCopyButton");
+    expect(screen).not.toContain("function AgentBubbleHeader({ copyText");
+    expect(screen).toContain("usePersistentExpansion(`${itemKey}:body:${section}`, false)");
     expect(screen).toContain('section="arguments"');
     expect(screen).toContain('section="progress"');
     expect(screen).toContain('section="result"');
-    expect(screen).not.toContain('stableTextKey(body)');
-    expect(screen).toContain('const actions: ActionMenuItem[] = [');
-    expect(screen).toContain('onSelect={handleAction}');
-    expect(screen).toContain('const TOOL_RESULT_MAX_HEIGHT = 400');
-    expect(screen).toContain('expandedMaxHeight={TOOL_RESULT_MAX_HEIGHT}');
-    expect(screen).toContain('<AppendOnlyLiveContent cacheKey={cacheKey} source={projection.source} mode="markdown" streamMetricKey={streamMetricKey} markdownProjection={projection} fill={fill} />');
+    expect(screen).not.toContain("stableTextKey(body)");
+    expect(screen).toContain("const actions: ActionMenuItem[] = [");
+    expect(screen).toContain("onSelect={handleAction}");
+    expect(screen).toContain("const TOOL_RESULT_MAX_HEIGHT = 400");
+    expect(screen).toContain("expandedMaxHeight={TOOL_RESULT_MAX_HEIGHT}");
+    expect(screen).toMatch(
+      /<AppendOnlyLiveContent\s+cacheKey=\{cacheKey\}\s+source=\{projection\.source\}\s+mode="markdown"\s+streamMetricKey=\{streamMetricKey\}\s+markdownProjection=\{projection\}\s+fill=\{fill\}\s+animateNew=\{animateNew\}\s*\/>/,
+    );
     expect(screen).toContain('mode === "markdown" ? "live-agent-response" : "live-tool-output"');
     expect(screen).toContain('const singleMarkdownTree = mode === "markdown";');
-    expect(screen).toContain('const visibleLiveActivitySequence = liveActivitySequence.map((part) => {');
-    expect(screen).toContain('projection={liveMarkdownProjections.get(part.block.key)!}');
-    expect(screen).toContain('nestedScrollEnabled');
-    expect(screen).toContain('setComposerInputHeight(composerHeightForContent(text, composerContentHeightRef.current))');
-    expect(screen).toContain('composerInputShell: { flex: 1, flexBasis: 0, flexShrink: 1, width: 0, minWidth: 0');
-    expect(screen).toContain('composerInput: { flex: 1, flexBasis: 0, flexShrink: 1, width: 0, minWidth: 0');
-    expect(timelineList).toContain('<KeyboardAwareTimelineList');
-    expect(screen.match(/<LegendList/g)).toHaveLength(2);
+    expect(screen).toMatch(
+      /const visibleLiveActivitySequence =\s*liveActivitySequence\.map\(\(part\) => \{/,
+    );
+    expect(screen).toContain("projection={liveMarkdownProjections.get(part.block.key)!}");
+    expect(screen).toContain("nestedScrollEnabled");
+    expect(screen).not.toContain("composerInputHeight");
+    expect(screen).toContain(
+      '<View testID="composer-input-shell" style={styles.composerInputShell}>',
+    );
+    expect(screen).toMatch(
+      /composerInputShell: \{\s*flex: 1,\s*flexBasis: 0,\s*flexShrink: 1,\s*width: 0,\s*minWidth: 0/,
+    );
+    expect(screen).toMatch(
+      /composerInput: \{\s*minHeight: COMPOSER_MIN_HEIGHT,\s*maxHeight: COMPOSER_MAX_HEIGHT/,
+    );
+    expect(timelineList).toContain("<KeyboardAwareTimelineList");
+    // Other surfaces can adopt LegendList without changing the two sidebar contracts.
     expect(screen.match(/getFixedItemSize=\{threadListRowHeight\}/g)).toHaveLength(2);
-    expect(screen).toContain('const THREAD_LIST_ROW_HEIGHT = THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;');
-    expect(screen).toContain('const THREAD_LIST_SECTION_HEIGHT = 26;');
-    expect(screen).not.toContain('estimatedItemSize={64}');
-    expect(screen).not.toContain('extraData={windowLayout.measurementRevision}');
-    expect(screen).not.toContain('<FlatList');
-    expect(timelineList).toContain('<KeyboardAwareTimelineList');
-    expect(timelineList).toContain('keyboardLiftBehavior={keyboardLiftBehavior}');
-    expect(timelineList).toContain('keyboardOffset={keyboardOffset}');
-    expect(timelineList).not.toContain('FlashList');
+    expect(screen).toContain(
+      "const THREAD_LIST_ROW_HEIGHT = THREAD_LIST_ROW_CONTENT_HEIGHT + THREAD_LIST_ROW_VERTICAL_MARGIN * 2;",
+    );
+    expect(screen).toContain("const THREAD_LIST_SECTION_HEIGHT = threadListLayout.sectionHeight;");
+    expect(screen).not.toContain("estimatedItemSize={64}");
+    expect(screen).not.toContain("extraData={windowLayout.measurementRevision}");
+    expect(screen).not.toContain("<FlatList");
+    expect(timelineList).toContain("<KeyboardAwareTimelineList");
+    expect(timelineList).toContain("keyboardLiftBehavior={keyboardLiftBehavior}");
+    expect(timelineList).toContain("keyboardOffset={keyboardOffset}");
+    expect(timelineList).not.toContain("FlashList");
     expect(appPackage.dependencies["@legendapp/list"]).toBeDefined();
     expect(appPackage.dependencies["expo-pretext"]).toBeUndefined();
     expect(appPackage.dependencies["@shopify/flash-list"]).toBeUndefined();
-    expect(timelineList).toContain('maintainVisibleContentPosition={{ data: true, size: true }}');
-    expect(timelineList).toContain('dataKey={renderRevision}');
-    expect(screen).toContain('<ConversationPane\n        key={navigationKey}');
-    expect(screen).not.toContain('const transitionConversationScope = useEffectEvent(() => {');
-    expect(screen).not.toContain('pendingRestoreOffsetRef');
-    expect(screen).not.toContain('transitionConversationScope();');
-    expect(timelineList).toContain('recycleItems={false}');
-    expect(screen).toContain('<RecoverableRenderBoundary key={boundaryKey} scope="bubble" label="Conversation item"');
-    expect(timelineList).toContain('drawDistance={250}');
-    expect(screen).toContain('const persistentExpansionStates = new Map<string, boolean>()');
-    expect(screen).toContain('const PERSISTENT_EXPANSION_STATE_LIMIT = 4_096');
-    expect(screen).toContain('writePersistentExpansionState(localKey, resolved)');
-    expect(screen).not.toContain('ExpansionRegistryContext');
-    expect(screen).toContain('function TurnTimelineItem({');
-    expect(screen).not.toContain('previous.turn === next.turn');
+    expect(timelineList).toContain("maintainVisibleContentPosition={{ data: true, size: true }}");
+    expect(timelineList).toContain("dataKey={renderRevision}");
+    expect(screen).not.toContain("<ConversationPane\n        key={navigationKey}");
+    expect(screen).not.toContain("const transitionConversationScope = useEffectEvent(() => {");
+    expect(screen).not.toContain("pendingRestoreOffsetRef");
+    expect(screen).not.toContain("transitionConversationScope();");
+    expect(timelineList).toContain("recycleItems={false}");
+    expect(screen).toMatch(
+      /<RecoverableRenderBoundary\s+key=\{boundaryKey\}\s+scope="bubble"\s+label="Conversation item"/,
+    );
+    expect(timelineList).toContain("drawDistance={250}");
+    expect(screen).toContain("const persistentExpansionStates = new Map<string, boolean>()");
+    expect(screen).toContain("const PERSISTENT_EXPANSION_STATE_LIMIT = 4_096");
+    expect(screen).toContain("writePersistentExpansionState(localKey, resolved)");
+    expect(screen).not.toContain("ExpansionRegistryContext");
+    expect(screen).toContain("function TurnTimelineItem({");
+    expect(screen).not.toContain("previous.turn === next.turn");
     expect(screen).not.toMatch(/\buseM[e]mo\(/u);
     expect(screen).not.toMatch(/\bm[e]mo\(function/u);
     expect(screen).not.toMatch(/React\.m[e]mo\(/u);
-    expect(timelineList).not.toContain('previous.data === next.data');
-    expect(timelineList).toContain('itemsAreEqual={itemsAreEqual ?? referenceEqual}');
-    expect(timelineList).toContain('function referenceEqual<ItemT>');
-    expect(screen).toContain('renderRevision={composerScope}');
-    expect(screen).not.toContain('renderRevision={`${composerScope}:${windowLayout.measurementRevision}`}');
-    expect(screen).toContain('const thinkingOnly = part.blocks.length > 0');
+    expect(timelineList).not.toContain("previous.data === next.data");
+    expect(timelineList).toContain("itemsAreEqual={itemsAreEqual ?? referenceEqual}");
+    expect(timelineList).toContain("function referenceEqual<ItemT>");
+    expect(screen).toContain("renderRevision={composerScope}");
+    expect(screen).not.toContain(
+      "renderRevision={`${composerScope}:${windowLayout.measurementRevision}`}",
+    );
+    expect(screen).toMatch(/const thinkingOnly =\s*part\.blocks\.length > 0/);
     expect(screen).toContain('testID="thinking-status-section"');
     expect(screen).toContain('testID="thinking-status"');
-    expect(screen).toContain('const TurnActivityContentContext = createContext(false);');
-    expect(screen).toContain('<TurnActivityContentContext.Provider value>');
-    expect(screen).toContain('insideTurnActivity && styles.thinkingStatusInActivity');
-    expect(screen).toContain('thinkingStatusSection: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", alignItems: "flex-start" }');
-    expect(screen).toContain('thinkingStatus: { minWidth: 0, minHeight: 25, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 2 }');
-    expect(screen).toContain('thinkingStatusInActivity: { paddingLeft: 8 }');
-    expect(screen).toContain('<ThreadTimelineList');
-    expect(screen).toContain('an already loaded sheet\n    // never refetches its model');
-    expect(screen).toContain('if (current === null || current.status === "error") requestControls();');
-    expect(screen).toContain('{ getAccess: getStableTransferAccess }');
+    expect(screen).toContain("const TurnActivityContentContext = createContext(false);");
+    expect(screen).toContain("<TurnActivityContentContext.Provider value>");
+    expect(screen).toContain("insideTurnActivity && styles.thinkingStatusInActivity");
+    expect(screen).toMatch(
+      /thinkingStatusSection: \{\s*minWidth: 0,\s*maxWidth: "100%",\s*alignSelf: "flex-start",\s*alignItems: "flex-start",?\s*\}/,
+    );
+    expect(screen).toMatch(
+      /thinkingStatus: \{\s*minWidth: 0,\s*minHeight: controlSize\.compact,\s*flexDirection: "row",\s*alignItems: "center",\s*gap: spacing\.compact,\s*paddingHorizontal: 0,?\s*\}/,
+    );
+    expect(screen).toContain("thinkingStatusInActivity: { paddingLeft: 0 }");
+    expect(screen).toContain("<ThreadTimelineList");
+    expect(screen).toContain("an already loaded sheet\n    // never refetches its model");
+    expect(screen).toContain(
+      'if (current === null || current.status === "error") requestControls();',
+    );
+    expect(screen).toContain("{ getAccess: getStableTransferAccess }");
     expect(screen).not.toContain('codexBubble: { overflow: "hidden"');
     expect(screen).toContain('testID="thread-detail-pane-shell"');
-    expect(screen).toContain('const paneWidth = Math.max(0, Math.floor(nativeEvent.layout.width))');
-    expect(screen).toContain('const next = paneWidth < 520');
-    expect(screen).not.toContain('const richContentWidth = timelineItemWidth > 0');
-    expect(screen).not.toContain('<RichContentWidthProvider width={richContentWidth}>');
-    expect(screen).toContain('style={styles.conversationKeyboard}');
-    expect(screen).toContain('conversationKeyboard: { flex: 1, minWidth: 0, alignSelf: "stretch"');
-    expect(screen).toContain('variant="agent"\n            fill={agentBubbleFill}');
-    expect(screen).toContain('testID="codex-bubble"\n            errorContext={`Thread: ${turn.threadId}\\nTurn: ${turn.id}`}');
-    expect(screen).toContain('variant="user"\n            testID="user-bubble"');
-    expect(screen).toContain('errorResetKey={`${turn.key}:user`}');
-    expect(screen).toContain('<View key={`${block.key}:${index}`} style={styles.userMessageBlock}>');
-    expect(bubble).toContain('export function BubbleContent({ children }: { children: ReactNode })');
-    expect(bubble).not.toContain('measurePretextBubble');
-    expect(bubble).not.toContain('measurementSource');
-    expect(bubble).toContain('width: "88%"');
+    expect(screen).toMatch(
+      /const paneWidth = Math\.max\(0, Math\.floor\(nativeEvent\.layout\.width\)\)/,
+    );
+    expect(screen).toContain("const next = paneWidth < 520");
+    expect(screen).not.toContain("const richContentWidth = timelineItemWidth > 0");
+    expect(screen).not.toContain("<RichContentWidthProvider width={richContentWidth}>");
+    expect(screen).toContain("style={styles.conversationKeyboard}");
+    expect(screen).toMatch(
+      /conversationKeyboard: \{\s*flex: 1,\s*minWidth: 0,\s*alignSelf: "stretch"/,
+    );
+    expect(screen).toMatch(/variant="agent"\s+fill=\{agentBubbleFill\}/);
+    expect(screen).toMatch(
+      /testID="codex-bubble"\s+errorContext=\{`Thread: \$\{turn\.threadId\}\\nTurn: \$\{turn\.id\}`\}/,
+    );
+    expect(screen).toMatch(/variant="user"\s+testID="user-bubble"/);
+    expect(screen).toContain("errorResetKey={`${turn.key}:user`}");
+    expect(screen).toMatch(
+      /<SearchMessage\s+key=\{`\$\{block\.key\}:\$\{index\}`\}\s+itemId=\{block\.raw\.id\}\s*>\s*<View style=\{styles\.userMessageBlock\}>/,
+    );
+    expect(bubble).toContain(
+      "export function BubbleContent({ children }: { children: ReactNode })",
+    );
+    expect(bubble).not.toContain("measurePretextBubble");
+    expect(bubble).not.toContain("measurementSource");
+    expect(bubble).toContain("flexGrow: 1");
+    expect(bubble).toContain("flexBasis: 0");
     expect(bubble).not.toMatch(/\bheight\s*:/u);
-    expect(bubble).toContain('agentSurface: {');
-    expect(bubble).toContain('maxWidth: "88%"');
-    expect(screen).not.toContain('agentBubbleWidthPolicy');
-    expect(screen).not.toContain('codexBubbleWide:');
-    expect(screen).toContain('richMarkdownLayout(latestAgentBlock.body ?? "") === "fill"');
-    expect(screen).not.toContain('rawTurn.status === "inProgress"\n    || latestAgentBlock?.content?.fields["/text"]');
-    expect(screen).toContain('liveAgentResponse: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start" }');
+    expect(bubble).toContain("agentSurface: {");
+    expect(bubble).toContain('maxWidth: "100%"');
+    expect(screen).not.toContain("agentBubbleWidthPolicy");
+    expect(screen).not.toContain("codexBubbleWide:");
+    expect(screen).toMatch(/richMarkdownLayout\(latestAgentBlock\??\.body \?\? ""\) === "fill"/u);
+    expect(screen).not.toContain(
+      'rawTurn.status === "inProgress"\n    || latestAgentBlock?.content?.fields["/text"]',
+    );
+    expect(screen).toContain(
+      'liveAgentResponse: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start" }',
+    );
     expect(screen).toContain('liveAgentResponseFill: { width: "100%", alignSelf: "stretch" }');
-    expect(screen).toContain('userMessageContent: { minWidth: 0, gap: 6 }');
-    expect(screen).toContain('userMessageBlock: { minWidth: 0 }');
-    expect(screen).toContain('userMessageTextBlock: { minWidth: 0 }');
+    expect(screen).toContain("userMessageContent: { minWidth: 0, gap: spacing.compact }");
+    expect(screen).toContain("userMessageBlock: { minWidth: 0 }");
+    expect(screen).toContain("userMessageTextBlock: { minWidth: 0 }");
     expect(screen).not.toContain('userMessageContent: { minWidth: 0, maxWidth: "100%"');
-    expect(screen).toContain('composerAttachments: { flexGrow: 0, backgroundColor: colors.surface }');
-    expect(screen).not.toContain('composerAttachments: { flexGrow: 0, backgroundColor: colors.surface, borderTopWidth');
-    expect(screen).toContain('const changesInitialLoading = changesPending && !changesReady;');
-    expect(screen).toContain('const attachmentsInitialLoading = attachmentsPending && !attachmentsReady;');
-    expect(screen).toContain('const changesUnavailable = changesError !== null && !changesReady;');
-    expect(screen).toContain('const attachmentsUnavailable = attachmentsError !== null && !attachmentsReady;');
-    expect(screen).toContain('{!changesUnavailable && (');
-    expect(screen).toContain('{!attachmentsUnavailable && (');
-    expect(screen).toContain('<ComposerContextCount label="Changes" value={changeCount} testID="composer-changes-label" />');
-    expect(screen).toContain('<ComposerContextCount label="Attachments" value={attachmentCount} testID="composer-attachments-label" />');
-    expect(screen).toContain('threadResourcesModel={remote.resourceDatabase?.threadResources ?? null}');
-    expect(screen).toContain('<ThreadResourceContextChips');
-    expect(screen).toContain('onInitialLoad: () => onLoadThreadResources(changesPreferences.scope ?? undefined, "changes")');
+    expect(screen).toContain("composerAttachments: { flexGrow: 0 }");
+    expect(screen).not.toContain("composerAttachments: { flexGrow: 0, backgroundColor:");
+    expect(screen).not.toContain("composerAttachments: { flexGrow: 0, borderTopWidth");
+    expect(screen).toContain("const changesInitialLoading = changesPending && !changesReady;");
+    expect(screen).toContain(
+      "const attachmentsInitialLoading = attachmentsPending && !attachmentsReady;",
+    );
+    expect(screen).toContain("const changesUnavailable = changesError !== null && !changesReady;");
+    expect(screen).toContain(
+      "const attachmentsUnavailable = attachmentsError !== null && !attachmentsReady;",
+    );
+    expect(screen).toContain("{!changesUnavailable && (");
+    expect(screen).toContain("{!attachmentsUnavailable && (");
+    expect(screen).toMatch(
+      /<ComposerContextCount\s+label="Changes"\s+value=\{changeCount\}\s+testID="composer-changes-label"\s*\/>/,
+    );
+    expect(screen).toMatch(
+      /<ComposerContextCount\s+label="Attachments"\s+value=\{attachmentCount\}\s+testID="composer-attachments-label"\s*\/>/,
+    );
+    expect(screen).toContain(
+      "threadResourcesModel={remote.resourceDatabase?.threadResources ?? null}",
+    );
+    expect(screen).toContain("<ThreadResourceContextChips");
+    expect(screen).toMatch(
+      /onInitialLoad: \(\) =>\s*onLoadThreadResources\(changesPreferences\.scope \?\? undefined, "changes"\)/,
+    );
     expect(screen).toContain('onLoadThreadResources?.(undefined, "attachments")');
     expect(screen).toContain("useThreadResources(");
-    expect(screen).toContain('onLoadThreadResources: async (scope?: ThreadChangeScope, kind?: "all" | "changes" | "attachments") => await remote.loadThreadResources(');
+    expect(screen).toMatch(
+      /onLoadThreadResources: async \(\s*scope\?: ThreadChangeScope,\s*kind\?: "all" \| "changes" \| "attachments",?\s*\) =>\s*await remote\.loadThreadResources\(/,
+    );
     expect(screen).toContain("threadResourceRevision={activeConnectionState}");
     expect(screen).not.toContain("activeThreadResourcesTaskKey");
-    expect(voiceWorkspace).toContain('projectThreadResourcePatch(current.value, cwd, patch, event.cursor)');
-    expect(voiceWorkspace).not.toContain('const changedThreads = new Set<string>();');
-    expect(screen).toContain('style={styles.agentMessageRow}');
-    expect(screen).not.toContain('styles.agentReplyMeta');
-    expect(screen).toContain('expanded={visiblyExpanded}');
-    expect(screen).not.toContain('autoExpandWhileRunning');
+    expect(voiceWorkspace).toContain(
+      "projectThreadResourcePatch(current.value, cwd, patch, event.cursor)",
+    );
+    expect(voiceWorkspace).not.toContain("const changedThreads = new Set<string>();");
+    expect(screen).toContain("style={styles.agentMessageRow}");
+    expect(screen).not.toContain("styles.agentReplyMeta");
+    expect(screen).toContain("expanded={visiblyExpanded}");
+    expect(screen).not.toContain("autoExpandWhileRunning");
     expect(richMarkdown).toContain('list: { minWidth: 0, alignSelf: "flex-start"');
     expect(richMarkdown).toContain('listRow: { minWidth: 0, alignSelf: "flex-start"');
-    expect(richMarkdown).toContain('listBody: { minWidth: 0, flexShrink: 1, gap: 2 }');
-    expect(richMarkdown).not.toContain('listBody: { minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: 0');
-    expect(privateImageCache).toContain('codex-remote-private-images-v2');
-    expect(privateImageCache).toContain('downloadAsync(uri, partialUri');
-    expect(privateImageCache).toContain('moveAsync({ from: partialUri, to: fileUri })');
-    expect(privateImageCache).toContain('deleteAsync(partialUri, { idempotent: true })');
-    expect(privateImageCache).toContain('headers === undefined ? {} : { headers }');
-    expect(imagePreviewHost).toContain('const [decodeState, setDecodeState]');
-    expect(imagePreviewHost).toContain('Image decode failed');
-    expect(screen).toContain('<PrivateImageAccessProvider scope={composerScope}');
-    expect(screen).toContain('usePrivateAssetUri(assetSource, attempt, getTransferAccess)');
-    expect(screen).toContain('`complete-markdown:${resourceScope}:${reference.id}:${reference.byteLength}`');
-    expect(screen).not.toContain('asyncResourceFunctionKey(getTransferAccess)');
-    expect(privateImageUri).toContain('`private-asset:${accessScope}:${revision}:${privateAssetCacheKey(source)}`');
+    expect(richMarkdown).toContain(
+      "listBody: { minWidth: 0, flexShrink: 1, gap: spacing.optical }",
+    );
+    expect(richMarkdown).not.toContain(
+      "listBody: { minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: 0",
+    );
+    expect(privateImageCache).toContain("codex-remote-private-images-v2");
+    expect(privateImageCache).toContain("downloadAsync(uri, partialUri");
+    expect(privateImageCache).toContain("moveAsync({ from: partialUri, to: fileUri })");
+    expect(privateImageCache).toContain("deleteAsync(partialUri, { idempotent: true })");
+    expect(privateImageCache).toContain("headers === undefined ? {} : { headers }");
+    expect(imagePreviewHost).toContain("const [decodeState, setDecodeState]");
+    expect(imagePreviewHost).toContain("Image decode failed");
+    expect(screen).toMatch(/<PrivateImageAccessProvider\s+scope=\{composerScope\}/);
+    expect(screen).toContain("usePrivateAssetUri(assetSource, attempt, getTransferAccess)");
+    expect(screen).toContain(
+      "`complete-markdown:${resourceScope}:${reference.id}:${reference.byteLength}`",
+    );
+    expect(screen).not.toContain("asyncResourceFunctionKey(getTransferAccess)");
+    expect(privateImageUri).toContain(
+      "`private-asset:${accessScope}:${revision}:${privateImageResourceKey(source)}`",
+    );
     expect(privateAsset).toContain('source.kind === "path"');
     expect(privateAsset).toContain('source.kind === "content"');
     expect(privateAsset).toContain('companionUrl(access, "/v1/media/materialize")');
-    expect(privateAsset).toContain('getAccess(attempt > 0)');
-    expect(privateAsset).toContain('export async function readPrivateAssetText');
-    expect(privateAsset).toContain('export async function fetchPrivateAsset');
-    expect(privateAsset).toContain('export async function fetchScopedUpload');
+    expect(privateAsset).toContain("getAccess(attempt > 0)");
+    expect(privateAsset).toContain("export async function readPrivateAssetText");
+    expect(privateAsset).toContain("export async function fetchPrivateAsset");
+    expect(privateAsset).toContain("export async function fetchScopedUpload");
     expect(fileTransferNative).not.toContain("fetch(");
     expect(fileTransferNative).not.toContain("/v1/files/");
     expect(fileTransferController).not.toContain("await options.getAccess()");
-    expect(documentPreviewHost).toContain('readPrivateAssetText(');
-    expect(screen).toContain('readPrivateAssetText(');
-    expect(screen).not.toContain('url.pathname = `/v1/content/${reference.id}`');
-    expect(screen).toContain('privateImageAssetProjection(item.codewideAsset)');
+    expect(documentPreviewHost).toContain("readPrivateAssetText(");
+    expect(screen).toContain("readPrivateAssetText(");
+    expect(screen).not.toContain("url.pathname = `/v1/content/${reference.id}`");
+    expect(screen).toContain("privateImageAssetProjection(item.codewideAsset)");
     expect(screen).toContain('source={{ kind: "content", id: projectedAsset.id }}');
-    expect(screen).toContain('privateImageAssetProjection(block.raw.codewideAsset)');
+    expect(screen).toContain("privateImageAssetProjection(block.raw.codewideAsset)");
     expect(screen).toContain('type === "inputText" || type === "input_text"');
     expect(nativeCodeBlock).toContain("fillAvailableWidth && availableWidth !== null");
     expect(screen).toContain("fillAvailableWidth");
-    expect(screen).toContain('toolTextNeedsCodeViewport(item.text)');
-    expect(screen).toContain('protocolBody: { width: "100%"');
+    expect(screen).toContain("toolTextNeedsCodeViewport(item.text)");
+    expect(screen).toMatch(/protocolBody: \{\s*width: "100%"/);
     expect(nativeCodeView).toContain("isHorizontalScrollBarEnabled = true");
-    expect(privateImageUri).not.toContain('asyncResourceFunctionKey');
-    expect(imagePreviewHost).toContain('const [controller] = useState<PreviewController>');
-    expect(screen).toContain('const resolvedSource = privateImage.source');
-    expect(screen).toContain('usePrivateImageUri(source.uri, source.headers, retryRevision)');
+    expect(privateImageUri).not.toContain("asyncResourceFunctionKey");
+    expect(imagePreviewHost).toContain("const [controller] = useState<PreviewController>");
+    expect(screen).toContain("const resolvedSource = privateImage.source");
+    expect(screen).toContain("usePrivateImageUri(source.uri, source.headers, retryRevision)");
     expect(nativeTransport).toBeDefined();
-    const remoteWorkspace = readFileSync(new URL("../src/data/use-remote-workspace.ts", import.meta.url), "utf8");
-    expect(remoteWorkspace).not.toContain('LIVE_RENDER_BATCH_MS');
-    expect(remoteWorkspace).toContain('readonly httpSessionMintInFlight = new Map');
-    expect(remoteWorkspace).toContain('if (!forceRefresh && existingMint !== undefined && existingMint.credentialKey === credentialKey)');
-    expect(remoteWorkspace).toContain('if (forceRefresh) workspaceRuntime.httpSessions.delete(connection.id)');
-    expect(privateAsset).toContain('getAccess(attempt > 0)');
-    expect(remoteWorkspace).not.toContain('liveEventQueueRef');
-    expect(remoteWorkspace).not.toContain('subscribeThreadEvents');
+    const remoteWorkspace = readFileSync(
+      new URL("../src/data/use-remote-workspace.ts", import.meta.url),
+      "utf8",
+    );
+    expect(remoteWorkspace).not.toContain("LIVE_RENDER_BATCH_MS");
+    expect(remoteWorkspace).toContain("readonly httpSessionMintInFlight = new Map");
+    expect(remoteWorkspace).toContain(
+      "if (!forceRefresh && existingMint !== undefined && existingMint.credentialKey === credentialKey)",
+    );
+    expect(remoteWorkspace).toContain(
+      "if (forceRefresh) workspaceRuntime.httpSessions.delete(connection.id)",
+    );
+    expect(privateAsset).toContain("getAccess(attempt > 0)");
+    expect(remoteWorkspace).not.toContain("liveEventQueueRef");
+    expect(remoteWorkspace).not.toContain("subscribeThreadEvents");
     expect(remoteWorkspace).toContain('session, "companion/thread/sync"');
     expect(remoteWorkspace).toContain("afterTurnId");
     expect(remoteWorkspace).toContain("response.history.hasMore");
-    expect(remoteWorkspace).toContain("materializeThreadSync(local, response, existingHistoryCursor)");
+    expect(remoteWorkspace).toContain(
+      "materialized = catchUp.accept(response)",
+    );
     expect(remoteWorkspace).toContain("details.synchronizeThread(");
     expect(remoteWorkspace).toContain("limit: THREAD_HISTORY_PAGE_SIZE");
     expect(remoteWorkspace).toContain('itemsView: "summary"');
     expect(remoteWorkspace).toContain('session, "thread/items/list"');
-    expect(remoteWorkspace).toContain('loadTurnItemsFromFullTurns(session, threadId, turnId)');
+    expect(remoteWorkspace).toContain("loadTurnItemsFromFullTurns(session, threadId, turnId)");
     expect(remoteWorkspace).toContain('itemsView: "full"');
     expect(remoteWorkspace).not.toContain('session, "companion/threadWindow/read"');
     expect(remoteWorkspace).not.toContain("threadReadInFlightRef");
@@ -1538,26 +2468,45 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).not.toContain("threadHydrationRef");
     expect(threadChatProjection).toContain("...view.turnRows");
     expect(threadChatProjection).toContain("...view.detailRows");
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
-    expect(screen).toContain("const [initialHistoryAnchorTurnId] = useState(() => composerState.historyAnchorTurnId ?? null)");
-    expect(screen).toContain("anchorTurnId: initialHistoryAnchorTurnId");
+    expect(screen).toContain(
+      "const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)",
+    );
+    expect(screen).toContain("const [initialHistoryAnchorTurnId, setHistoryAnchorTurnId] = useConversationState(");
+    expect(screen).toMatch(/\(\) => composerState\.historyAnchorTurnId \?\? null,?\s*\)/);
+    expect(screen).toContain(
+      "anchorTurnId: searchWindow === null ? initialHistoryAnchorTurnId : null",
+    );
     expect(screen).not.toContain("historyResourceRaw?.residentTurnLimit");
     expect(screen).not.toContain("historyResourceRaw.residentMaxOrdinal");
     expect(screen).not.toContain("threadInitialWindow");
     expect(screen).not.toContain("activeResidentOffset");
-    expect(screen).toContain("anchorTurnId: initialHistoryAnchorTurnId");
-    expect(screen.indexOf("const composerState = useThreadUiState")).toBeLessThan(screen.indexOf("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)"));
-    expect(threadChatProjection).toContain("materializeThreadDetails(view.liveRows, database.sessionId)");
-    expect(screen).not.toContain("remote.getCachedThread(activeConnectionId, activeRemoteThreadId)");
+    expect(screen).toContain(
+      "anchorTurnId: searchWindow === null ? initialHistoryAnchorTurnId : null",
+    );
+    expect(screen.indexOf("const composerState = useThreadUiState")).toBeLessThan(
+      screen.indexOf(
+        "const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)",
+      ),
+    );
+    expect(threadChatProjection).toContain(
+      "materializeThreadDetails(view.liveRows, database.sessionId)",
+    );
+    expect(screen).not.toContain(
+      "remote.getCachedThread(activeConnectionId, activeRemoteThreadId)",
+    );
     expect(screen).not.toContain("await remote.readThread(");
     expect(threadDetailDatabase).toContain("await loader.hydrateWindow({");
     expect(screen).not.toContain("applyThreadEventsImmutable(window.thread, bufferedPayloads)");
     expect(screen).toContain('status: remoteThread === null ? "initial-loading" : "ready"');
     expect(screen).not.toContain("requiresJournalCatchUp");
-    expect(threadDetailDatabase).toContain("const requiresHydration = !coverage.complete || cachedThread === null");
+    expect(threadDetailDatabase).toContain(
+      "const requiresHydration = !coverage.complete || cachedThread === null",
+    );
     expect(screen).not.toContain('recordTiming("thread_cached_visible_ms"');
     expect(screen).not.toContain('recordTiming("thread_fresh_visible_ms"');
-    expect(screen).toContain('const activeConnectionAvailable = activeConnectionState === "live" || activeConnectionState === "syncing"');
+    expect(screen).toMatch(
+      /const activeConnectionAvailable =\s*activeConnectionState === "live" \|\|\s*activeConnectionState === "syncing"/,
+    );
     expect(screen).not.toContain("const hydrationTaskKey");
     expect(screen).not.toContain("byThread.delete(hydration.key)");
     expect(screen).not.toContain("mergeVisibleThread(");
@@ -1577,29 +2526,38 @@ describe("checked-in Android project mirrors app config", () => {
     expect(manifest).toContain('android:usesCleartextTraffic="false"');
     expect(manifest).toContain('android:networkSecurityConfig="@xml/network_security_config"');
     expect(networkSecurity).toContain('<base-config cleartextTrafficPermitted="false"');
-    expect(networkSecurity).toContain('>localhost</domain>');
-    expect(networkSecurity).toContain('>127.0.0.1</domain>');
-    expect(networkSecurity).toContain('>[::1]</domain>');
-    expect(networkSecurity).toContain('>10.0.2.2</domain>');
+    expect(networkSecurity).toContain(">localhost</domain>");
+    expect(networkSecurity).toContain(">127.0.0.1</domain>");
+    expect(networkSecurity).toContain(">[::1]</domain>");
+    expect(networkSecurity).toContain(">10.0.2.2</domain>");
     expect(networkSecurity).not.toContain('includeSubdomains="true"');
   });
 
   it("keeps running indicators visible, consistent and reduced-motion aware", () => {
     expect(screen).toContain("function CalmSpinner");
     expect(waveText).toContain("function WaveText");
-    expect(reducedMotionStore).toContain('AccessibilityInfo.addEventListener("reduceMotionChanged"');
-    expect(waveText).toContain('useReducedMotionPreference()');
+    expect(reducedMotionStore).toContain(
+      'AccessibilityInfo.addEventListener("reduceMotionChanged"',
+    );
+    expect(waveText).toContain("useReducedMotionPreference()");
     expect(screen).toContain("durationMs={3_000}");
-    const shimmerRegistration = 'requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")';
+    const shimmerRegistration =
+      'requireNativeComponent<NativeShimmerTextProps>("CodexShimmerText")';
     expect(nativeShimmerTextHost).toContain(shimmerRegistration);
-    expect((`${waveText}\n${nativeShimmerTextHost}`.match(/requireNativeComponent<NativeShimmerTextProps>\("CodexShimmerText"\)/gu) ?? [])).toHaveLength(1);
+    expect(
+      `${waveText}\n${nativeShimmerTextHost}`.match(
+        /requireNativeComponent<NativeShimmerTextProps>\("CodexShimmerText"\)/gu,
+      ) ?? [],
+    ).toHaveLength(1);
     expect(waveText).toContain('usePerformanceExperiment("disableTextShimmer")');
     expect(waveText).toContain("const animated = !reducedMotion && !textShimmerDisabled");
-    expect(screen).toContain("borderTopColor: \"transparent\"");
+    expect(screen).toContain('borderTopColor: "transparent"');
     expect(screen).toContain("<ActivityIndicator");
     expect(screen).not.toContain("withRepeat(");
-    expect(screen).toContain('? <WaveText key="running-title" text={title} style={styles.cardTitle} containerStyle={styles.cardTitleWave} />');
-    expect(screen).not.toContain('autoExpandWhileRunning=');
+    expect(screen).toMatch(
+      /\? \(\s*<WaveText\s+key="running-title"\s+text=\{title\}\s+style=\{styles\.cardTitle\}\s+containerStyle=\{styles\.cardTitleWave\}\s*\/>/u,
+    );
+    expect(screen).not.toContain("autoExpandWhileRunning=");
     expect(screen).not.toContain("function AgentBubbleHeader");
     expect(screen).not.toContain('testID="active-turn-shimmer"');
     expect(screen).not.toContain('text="working"');
@@ -1611,15 +2569,29 @@ describe("checked-in Android project mirrors app config", () => {
     expect(waveText).not.toContain("useSharedValue");
     expect(waveText).toContain("styles.measure");
     expect(nativePackage).toContain("NativeShimmerTextManager()");
-    expect((nativePackage.match(/NativeShimmerTextManager\(\)/gu) ?? [])).toHaveLength(1);
+    expect(nativePackage.match(/NativeShimmerTextManager\(\)/gu) ?? []).toHaveLength(1);
     expect(nativeShimmerView).toContain("LinearGradient(");
     expect(nativeShimmerView).toContain("StaticLayout.Builder.obtain");
     expect(nativeShimmerView).toContain("setMaxLines(pendingNumberOfLines)");
     expect(waveText).toContain("numberOfLines={numberOfLines}");
-    expect(nativeShimmerView).toContain("class NativeShimmerTextView(context: Context) : ViewGroup(context)");
+    expect(nativeShimmerView).toContain(
+      "class NativeShimmerTextView(context: Context) : ViewGroup(context)",
+    );
     expect(nativeShimmerView).toContain("canvas.clipPath(textPath)");
     expect(nativeShimmerView).toContain("bandView.animate()");
-    expect(nativeShimmerView).toContain(".translationX(width.toFloat())");
+    expect(nativeShimmerView).toContain(".translationX(sweep.endX)");
+    // Fabric measures before onSizeChanged builds the wrapped text layout.
+    // The gradient child must be sized again using the final paragraph bounds.
+    const shimmerLayout = nativeShimmerView.slice(
+      nativeShimmerView.indexOf("override fun onLayout("),
+      nativeShimmerView.indexOf("override fun onDraw("),
+    );
+    expect(shimmerLayout).toContain("bandView.measure(");
+    expect(shimmerLayout).toContain("sweepFor(right - left, bottom - top)");
+    // Android's getTextPath replaces its destination; the paragraph clip must
+    // append the temporary line path instead of retaining only the last line.
+    expect(nativeShimmerView).toContain("textPath.addPath(linePath)");
+    expect(nativeShimmerView).toMatch(/paint\.getTextPath\([\s\S]*?linePath,\s*\)/u);
     expect(nativeShimmerView).toContain("SWEEP_DURATION_MS = 2_500L");
     expect(nativeShimmerView).not.toContain("Choreographer");
     expect(nativeShimmerView).not.toContain("onShimmerFrame");
@@ -1634,19 +2606,34 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain("const ActiveToolCallContext = createContext(false)");
     expect(screen).toContain("value={shouldAutoExpand && index === part.blocks.length - 1}");
     expect(screen).toContain("|| activeToolCall");
-    expect(screen).toContain('reasoningActivityTitle(block.body, activeToolCall ? "inProgress" : block.status)');
+    expect(screen).toContain(
+      'reasoningActivityTitle(block.body, activeToolCall ? "inProgress" : block.status)',
+    );
     expect(screen).not.toContain("voiceRetryAvailable && !voiceRetryReady");
-    expect(screen).toContain('disabled={voicePhase === "finishing" && !voiceRetryAvailable}');
-    expect(screen).toContain('const send = (textOverride?: string, preference: ComposerSendPreference = "start") =>');
-    expect(screen).toContain('const text = (textOverride ?? latestDraftRef.current.latest).trim()');
-    expect(screen).toContain('const sentAttachments = latestAttachmentsRef.current.latest');
-    expect(screen).toContain('resolveComposerSendMode(preference, threadLifecycleActive, currentTurnId)');
-    expect(screen).toContain('send(undefined, id)');
-    expect(screen).not.toContain('setSendMode(id)');
-    expect(screen).not.toContain('selected: effectiveSendMode');
-    expect(voiceController).toContain('if (previousFinish !== null) await previousFinish.catch(() => undefined)');
-    expect(voiceController).toContain('sendAfter?.(finalDraft)');
-    expect(screen).not.toContain('<ActivityIndicator size={14} color={colors.accent} />');
+    expect(screen).toMatch(
+      /disabled=\{\s*editingQueuedMessage \|\|\s*\(voicePhase === "finishing" && !voiceRetryAvailable\)\s*\}/u,
+    );
+    expect(screen).toContain(
+      'const send = (textOverride?: string, preference: ComposerSendPreference = "start") =>',
+    );
+    expect(screen).toMatch(
+      /const text = \(\s*textOverride \?\? markdownForComposerSubmission\(composerMarkdownRef\.current\)\s*\)\.trim\(\)/u,
+    );
+    expect(screen).toMatch(
+      /const sentAttachments = composerUploads\.readyAttachments\(\s*composerUploadScope,\s*latestAttachmentsRef\.current\.latest,?\s*\)/u,
+    );
+    expect(screen).toContain("{ onBeginQueuedEdit: beginQueuedComposerEdit }");
+    expect(screen).toMatch(
+      /resolveComposerSendMode\(\s*preference,\s*threadLifecycleActive,\s*currentTurnId,?\s*\)/u,
+    );
+    expect(screen).toContain("send(undefined, id)");
+    expect(screen).not.toContain("setSendMode(id)");
+    expect(screen).not.toContain("selected: effectiveSendMode");
+    expect(voiceController).toContain(
+      "if (previousFinish !== null) await previousFinish.catch(() => undefined)",
+    );
+    expect(voiceController).toContain("sendAfter?.(finalDraft)");
+    expect(screen).not.toContain("<ActivityIndicator size={14} color={colors.accent} />");
   });
 
   it("keeps the release Baseline Profile generator and comparison benchmark wired", () => {
@@ -1673,15 +2660,21 @@ describe("checked-in Android project mirrors app config", () => {
     expect(gradleProperties).toContain("reactNativeArchitectures=arm64-v8a,x86_64");
     expect(gradleProperties).toContain("android.enableMinifyInReleaseBuilds=true");
     expect(gradleProperties).toContain("android.enableShrinkResourcesInReleaseBuilds=true");
-    expect(androidGradleScript).toContain('assembleRelease|*:assembleRelease)');
-    expect(androidGradleScript).toContain('release_architectures=${CODEWIDE_RELEASE_ARCHITECTURES:-arm64-v8a}');
-    expect(androidGradleScript).toContain('set -- "-PreactNativeArchitectures=${release_architectures}" "$@"');
+    expect(androidGradleScript).toContain("assembleRelease|*:assembleRelease)");
+    expect(androidGradleScript).toContain(
+      "release_architectures=${CODEWIDE_RELEASE_ARCHITECTURES:-arm64-v8a}",
+    );
+    expect(androidGradleScript).toContain(
+      'set -- "-PreactNativeArchitectures=${release_architectures}" "$@"',
+    );
     expect(androidGradleScript).not.toContain("bundleRelease|*:bundleRelease)");
   });
 
   it("does not package unused Skia native binaries", () => {
     expect(appPackage.dependencies["@shopify/react-native-skia"]).toBeUndefined();
-    expect(rootPackage.pnpm?.onlyBuiltDependencies ?? []).not.toContain("@shopify/react-native-skia");
+    expect(rootPackage.pnpm?.onlyBuiltDependencies ?? []).not.toContain(
+      "@shopify/react-native-skia",
+    );
     expect(voiceAura).toContain("setNativeVoiceAuraState");
     expect(nativeModule).toContain("VoiceAuraRenderEffect");
   });

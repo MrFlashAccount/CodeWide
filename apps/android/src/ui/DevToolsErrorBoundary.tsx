@@ -1,7 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
-import { colors, radii, spacing, typeScale } from "../theme";
+import { colors, radii, spacing, typeScale, controlSize } from "../theme";
 import { AppText as Text } from "./Typography";
 
 export type DevToolsFailureKind = "react" | "renderer" | "load" | "health" | "bridge";
@@ -148,14 +148,14 @@ function normalizeError(value: unknown): Error {
 
 const styles = StyleSheet.create({
   root: { flex: 1, minHeight: 0, gap: spacing.sm, padding: spacing.md, backgroundColor: "#202124" },
-  title: { color: colors.text, ...typeScale.titleMedium },
-  message: { color: colors.red, ...typeScale.bodyMedium },
+  title: { color: colors.text, ...typeScale.title },
+  message: { color: colors.red, ...typeScale.body },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
-  primaryButton: { minHeight: 38, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.large, backgroundColor: colors.primary },
-  primaryLabel: { color: colors.onPrimary, ...typeScale.labelMedium },
-  secondaryButton: { minHeight: 38, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.large, backgroundColor: colors.surfaceRaised },
-  secondaryLabel: { color: colors.text, ...typeScale.labelMedium },
+  primaryButton: { minHeight: controlSize.touch, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.large, backgroundColor: colors.primary },
+  primaryLabel: { color: colors.onPrimary, ...typeScale.label },
+  secondaryButton: { minHeight: controlSize.regular, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.large, backgroundColor: colors.surfaceRaised },
+  secondaryLabel: { color: colors.text, ...typeScale.label },
   details: { flex: 1, minHeight: 80, borderRadius: radii.medium, backgroundColor: colors.background },
   detailsContent: { padding: spacing.sm },
-  detailsText: { color: colors.textMuted, fontFamily: "monospace", fontSize: 10, lineHeight: 14 },
+  detailsText: { color: colors.textMuted, ...typeScale.code, fontFamily: "monospace",  },
 });

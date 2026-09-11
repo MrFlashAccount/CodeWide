@@ -12,12 +12,15 @@
     #root[data-mode="inline"] { height: auto; min-height: 1px; padding: 10px; }
     #root[data-mode="inline"] #stage, #root[data-mode="inline"] #canvas { width: 100%; height: auto; }
     #root[data-mode="inline"] #canvas svg { display: block; width: 100%; max-width: none; height: auto; }
+    #root[data-mode="preview"] #stage, #root[data-mode="preview"] #canvas { width: 100%; height: 100%; }
+    #root[data-mode="preview"] #canvas svg { display: block; width: 100%; height: 100%; max-width: none; }
     #root[data-mode="fullscreen"] { touch-action: none; }
     #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
-    #root[data-mode="fullscreen"] #canvas { position: absolute; inset: 0 auto auto 0; touch-action: none; will-change: transform; transform-origin: 50% 50%; }
+    #root[data-mode="fullscreen"] #canvas { position: absolute; inset: 0 auto auto 0; touch-action: none; will-change: transform; transform-origin: 0 0; }
     #root[data-mode="fullscreen"] #canvas svg { display: block; width: 100%; height: 100%; max-width: none; }
     #root[data-annotating="true"] #stage, #root[data-annotating="true"] #canvas { cursor: crosshair !important; }
   </style>
+  <script src="diagram-preview.js"></script>
   <script src="mermaid.min.js"></script>
   <script src="panzoom.min.js"></script>
 </head>
@@ -26,9 +29,10 @@
   const root = document.getElementById('root');
   const stage = document.getElementById('stage');
   const canvas = document.getElementById('canvas');
-  let panzoom = null;
+  let viewport = null;
   let scale = 1;
   let fitScale = 1;
+  let minimumScale = .15;
   let naturalWidth = 1;
   let naturalHeight = 1;
   let currentMode = 'inline';
@@ -36,12 +40,15 @@
   let annotationEnabled = false;
   let pointerStart = null;
   let resizeFrame = null;
+  const viewportPointers = new Map();
+  let viewportGesture = null;
 
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'strict',
     suppressErrorRendering: true,
     theme: 'dark',
+    htmlLabels: false,
     flowchart: { htmlLabels: false },
     themeVariables: {
       background: '#171b20', primaryColor: '#232931', primaryTextColor: '#eef2f6',
@@ -51,7 +58,7 @@
   });
 
   function send(message) {
-    window.ReactNativeWebView.postMessage(JSON.stringify(message));
+    (window.CodeWideDiagramPreview || window.ReactNativeWebView).postMessage(JSON.stringify(message));
   }
 
   function reportSize(requestId, height) {
@@ -66,32 +73,140 @@
     });
   }
 
-  function destroyPanzoom() {
-    if (panzoom !== null) panzoom.destroy();
-    panzoom = null;
+  function destroyViewport() {
+    viewport = null;
+    viewportGesture = null;
+    viewportPointers.clear();
     canvas.style.removeProperty('transform');
     canvas.style.removeProperty('cursor');
   }
 
+  function clampScale(value) {
+    return Math.max(minimumScale, Math.min(8, value));
+  }
+
+  function applyViewport() {
+    if (viewport === null) return;
+    scale = viewport.scale;
+    canvas.style.transform = 'translate3d(' + viewport.x + 'px,' + viewport.y + 'px,0) scale(' + viewport.scale + ')';
+  }
+
+  function zoomViewportAt(nextScale, point) {
+    if (viewport === null) return;
+    const boundedScale = clampScale(nextScale);
+    const localX = (point.x - viewport.x) / viewport.scale;
+    const localY = (point.y - viewport.y) / viewport.scale;
+    viewport = {
+      x: point.x - localX * boundedScale,
+      y: point.y - localY * boundedScale,
+      scale: boundedScale
+    };
+    applyViewport();
+  }
+
+  function viewportPoint(event) {
+    const bounds = stage.getBoundingClientRect();
+    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  }
+
+  function firstTwoViewportPoints() {
+    return Array.from(viewportPointers.values()).slice(0, 2);
+  }
+
+  function midpoint(first, second) {
+    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+  }
+
+  function distance(first, second) {
+    return Math.hypot(second.x - first.x, second.y - first.y);
+  }
+
+  function beginViewportGesture() {
+    if (viewport === null || viewportPointers.size === 0) {
+      viewportGesture = null;
+      return;
+    }
+    const points = firstTwoViewportPoints();
+    if (points.length === 1) {
+      viewportGesture = {
+        kind: 'pan',
+        pointer: points[0],
+        x: viewport.x,
+        y: viewport.y
+      };
+      return;
+    }
+    const center = midpoint(points[0], points[1]);
+    viewportGesture = {
+      kind: 'pinch',
+      distance: Math.max(1, distance(points[0], points[1])),
+      scale: viewport.scale,
+      localX: (center.x - viewport.x) / viewport.scale,
+      localY: (center.y - viewport.y) / viewport.scale
+    };
+  }
+
+  function updateViewportGesture() {
+    if (viewport === null || viewportGesture === null) return;
+    const points = firstTwoViewportPoints();
+    if (viewportGesture.kind === 'pan' && points.length === 1) {
+      if (annotationEnabled) return;
+      viewport.x = viewportGesture.x + points[0].x - viewportGesture.pointer.x;
+      viewport.y = viewportGesture.y + points[0].y - viewportGesture.pointer.y;
+      applyViewport();
+      return;
+    }
+    if (viewportGesture.kind !== 'pinch' || points.length < 2) return;
+    const center = midpoint(points[0], points[1]);
+    const nextScale = clampScale(viewportGesture.scale * distance(points[0], points[1]) / viewportGesture.distance);
+    viewport = {
+      x: center.x - viewportGesture.localX * nextScale,
+      y: center.y - viewportGesture.localY * nextScale,
+      scale: nextScale
+    };
+    applyViewport();
+  }
+
+  stage.addEventListener('pointerdown', function (event) {
+    if (currentMode !== 'fullscreen' || viewport === null) return;
+    viewportPointers.set(event.pointerId, viewportPoint(event));
+    if (event.isTrusted) stage.setPointerCapture?.(event.pointerId);
+    beginViewportGesture();
+    event.preventDefault();
+  });
+  document.addEventListener('pointermove', function (event) {
+    if (!viewportPointers.has(event.pointerId)) return;
+    viewportPointers.set(event.pointerId, viewportPoint(event));
+    updateViewportGesture();
+  }, { passive: true });
+  function endViewportPointer(event) {
+    if (!viewportPointers.has(event.pointerId)) return;
+    viewportPointers.delete(event.pointerId);
+    if (stage.hasPointerCapture?.(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+    beginViewportGesture();
+  }
+  document.addEventListener('pointerup', endViewportPointer, { passive: true });
+  document.addEventListener('pointercancel', endViewportPointer, { passive: true });
+  stage.addEventListener('wheel', function (event) {
+    if (currentMode !== 'fullscreen' || viewport === null) return;
+    event.preventDefault();
+    zoomViewportAt(viewport.scale * Math.exp(-event.deltaY * .0015), viewportPoint(event));
+  }, { passive: false });
+
   window.diagramZoom = function (factor, requestId) {
-    if (panzoom === null) return;
-    const next = Math.max(.15, Math.min(8, panzoom.getScale() * factor));
-    panzoom.zoom(next, { animate: false });
-    scale = panzoom.getScale();
+    if (viewport === null) return;
+    zoomViewportAt(viewport.scale * factor, { x: stage.clientWidth / 2, y: stage.clientHeight / 2 });
     reportSize(requestId, innerHeight);
   };
 
   window.diagramReset = function (requestId) {
-    if (panzoom === null) return;
-    panzoom.reset({ animate: false, force: true });
-    scale = panzoom.getScale();
-    reportSize(requestId, innerHeight);
+    if (viewport === null) return;
+    layoutFullscreen(canvas.querySelector('svg'), requestId);
   };
 
   window.diagramSetAnnotationMode = function (enabled) {
     annotationEnabled = enabled === true && currentMode === 'fullscreen';
     root.dataset.annotating = annotationEnabled ? 'true' : 'false';
-    if (panzoom !== null) panzoom.setOptions({ disablePan: annotationEnabled });
   };
 
   function addReviewPoint(x, y, index, pending) {
@@ -157,7 +272,10 @@
   }
 
   stage.addEventListener('pointerdown', function (event) {
-    if (!annotationEnabled) return;
+    if (!annotationEnabled || viewportPointers.size > 1) {
+      pointerStart = null;
+      return;
+    }
     pointerStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
   });
   stage.addEventListener('pointercancel', function () { pointerStart = null; });
@@ -186,7 +304,7 @@
   }
 
   function layoutInline(svg, requestId) {
-    destroyPanzoom();
+    destroyViewport();
     canvas.style.width = '100%';
     canvas.style.height = 'auto';
     const size = viewBoxSize(svg);
@@ -196,48 +314,35 @@
   }
 
   function fullscreenFitScale() {
-    const horizontalGutter = Math.min(160, Math.max(48, innerWidth * .14));
-    const verticalGutter = Math.min(180, Math.max(72, innerHeight * .16));
-    return Math.min(
-      1,
-      Math.max(.15, (innerWidth - horizontalGutter * 2) / naturalWidth),
-      Math.max(.15, (innerHeight - verticalGutter * 2) / naturalHeight)
-    );
+    return Math.max(.02, Math.min(1, stage.clientWidth / naturalWidth, stage.clientHeight / naturalHeight));
   }
 
   function layoutFullscreen(svg, requestId) {
-    destroyPanzoom();
+    destroyViewport();
+    if (!svg) return;
     const size = viewBoxSize(svg);
     naturalWidth = Math.max(1, Math.ceil(size.width));
     naturalHeight = Math.max(1, Math.ceil(size.height));
     canvas.style.width = naturalWidth + 'px';
     canvas.style.height = naturalHeight + 'px';
     fitScale = fullscreenFitScale();
-    const startX = (stage.clientWidth - naturalWidth) / (2 * fitScale);
-    const startY = (stage.clientHeight - naturalHeight) / (2 * fitScale);
-    panzoom = Panzoom(canvas, {
-      canvas: true,
-      cursor: 'move',
-      minScale: .15,
-      maxScale: 8,
-      pinchAndPan: true,
-      startX,
-      startY,
-      startScale: fitScale,
-      step: .2,
-      touchAction: 'none'
-    });
-    panzoom.pan(startX, startY, { force: true });
-    scale = panzoom.getScale();
+    minimumScale = Math.min(.15, fitScale);
+    viewport = {
+      x: (stage.clientWidth - naturalWidth * fitScale) / 2,
+      y: (stage.clientHeight - naturalHeight * fitScale) / 2,
+      scale: fitScale
+    };
+    canvas.style.cursor = 'move';
+    applyViewport();
     reportSize(requestId, innerHeight);
   }
 
   window.addEventListener('resize', function () {
-    if (currentMode !== 'fullscreen' || panzoom === null) return;
+    if (currentMode !== 'fullscreen' || viewport === null) return;
     if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
     resizeFrame = requestAnimationFrame(function () {
       resizeFrame = null;
-      if (currentMode !== 'fullscreen' || panzoom === null) return;
+      if (currentMode !== 'fullscreen' || viewport === null) return;
       const svg = canvas.querySelector('svg');
       if (svg) layoutFullscreen(svg, currentRequestId);
     });
@@ -246,14 +351,14 @@
   window.renderMermaid = async function (source, requestId, mode) {
     try {
       canvas.replaceChildren();
-      destroyPanzoom();
+      destroyViewport();
       scale = 1;
-      currentMode = mode === 'fullscreen' ? 'fullscreen' : 'inline';
+      currentMode = mode === 'fullscreen' ? 'fullscreen' : mode === 'preview' ? 'preview' : 'inline';
       currentRequestId = requestId;
       annotationEnabled = false;
       root.dataset.annotating = 'false';
       root.dataset.mode = currentMode;
-      await waitForViewport(currentMode);
+      if (mode !== 'preview') await waitForViewport(currentMode);
       const result = await mermaid.render('diagram-' + requestId, source, canvas);
       canvas.innerHTML = result.svg;
       const svg = canvas.querySelector('svg');
@@ -267,6 +372,11 @@
         svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
       }
       if (!svg) throw new Error('Mermaid returned no SVG');
+      if (mode === 'preview') {
+        const size = viewBoxSize(svg);
+        send({ type: 'preview-ready', requestId, width: size.width, height: size.height });
+        return;
+      }
       if (currentMode === 'fullscreen') layoutFullscreen(svg, requestId);
       else layoutInline(svg, requestId);
     } catch (error) {

@@ -370,7 +370,7 @@ pub(crate) fn summary_projection_state_from_file(
     Ok(builder)
 }
 
-const SUMMARY_PROJECTION_VERSION: u8 = 2;
+const SUMMARY_PROJECTION_VERSION: u8 = 3;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct SummaryProjectionState {
@@ -381,6 +381,8 @@ pub(crate) struct SummaryProjectionState {
     user: Option<Value>,
     client_id: Option<String>,
     agent: Option<Value>,
+    #[serde(default)]
+    artifacts: Vec<Value>,
     fallback_user: Option<String>,
     fallback_agent: Option<String>,
     fallback_agent_phase: Option<String>,
@@ -405,6 +407,7 @@ impl SummaryProjectionState {
             user: None,
             client_id: None,
             agent: None,
+            artifacts: Vec::new(),
             fallback_user: None,
             fallback_agent: None,
             fallback_agent_phase: None,
@@ -425,6 +428,7 @@ impl SummaryProjectionState {
     }
 
     fn handle_event(&mut self, payload: &Value) {
+        self.collect_artifact(payload);
         match payload.get("type").and_then(Value::as_str) {
             Some("user_message") => {
                 if self.fallback_user.is_none() {
@@ -503,6 +507,43 @@ impl SummaryProjectionState {
 
     pub(crate) const fn is_current(&self) -> bool {
         self.projection_version == SUMMARY_PROJECTION_VERSION
+    }
+
+    fn collect_artifact(&mut self, payload: &Value) {
+        let candidate = match payload.get("type").and_then(Value::as_str) {
+            Some("image_generation_end") => payload,
+            Some("item_completed") => {
+                let Some(item) = payload.get("item") else {
+                    return;
+                };
+                if !matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some("imageGeneration" | "ImageGeneration")
+                ) {
+                    return;
+                }
+                item
+            }
+            _ => return,
+        };
+        let Some(path) = candidate
+            .get("savedPath")
+            .or_else(|| candidate.get("saved_path"))
+            .and_then(Value::as_str)
+        else {
+            return;
+        };
+        if !path.starts_with('/') || path.contains('\0') || path.len() > 4096 {
+            return;
+        }
+        if self
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.get("savedPath").and_then(Value::as_str) == Some(path))
+        {
+            return;
+        }
+        self.artifacts.push(json!({ "savedPath": path }));
     }
 
     fn handle_response_message(&mut self, payload: &Value) {
@@ -597,6 +638,14 @@ impl SummaryProjectionState {
         self.clone().finish()
     }
 
+    /// A subsequent task start closes an abandoned turn even when the writer
+    /// crashed before persisting its terminal event. Preserve explicit outcomes.
+    pub(crate) fn seal_interrupted(&mut self) {
+        if self.digest.status == "inProgress" {
+            self.digest.status = "interrupted".into();
+        }
+    }
+
     fn finish(mut self) -> Value {
         let usage = self.usage_projection(self.digest.status != "inProgress");
         let client_id = self.client_id.take().map_or(Value::Null, Value::String);
@@ -666,8 +715,11 @@ impl SummaryProjectionState {
             "completedAt": digest.completed_at,
             "durationMs": digest.duration_ms
         });
-        if digest.activity_count > 0 || usage.is_some() {
+        if digest.activity_count > 0 || usage.is_some() || !self.artifacts.is_empty() {
             let mut metadata = serde_json::Map::new();
+            if !self.artifacts.is_empty() {
+                metadata.insert("artifacts".into(), Value::Array(self.artifacts));
+            }
             if digest.activity_count > 0 {
                 metadata.insert(
                     "activity".into(),
@@ -779,6 +831,27 @@ mod tests {
     use crate::store::TurnRef;
 
     #[test]
+    fn summary_keeps_generated_image_references_without_tool_bodies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = SummaryProjectionState::new("turn".into());
+        let event = serde_json::json!({ "type": "image_generation_end", "saved_path": "/tmp/result.png", "result": "opaque binary output" });
+        state.handle_event(&event);
+        state.handle_event(&event);
+        state.handle_event(&serde_json::json!({ "type": "exec_command_end", "aggregated_output": "/tmp/not-an-artifact.png" }));
+        let restored: SummaryProjectionState =
+            serde_json::from_value(serde_json::to_value(&state)?)?;
+        assert!(restored.is_current());
+        let projection = restored.project();
+        assert_eq!(
+            projection["codewide"]["artifacts"],
+            serde_json::json!([{ "savedPath": "/tmp/result.png" }])
+        );
+        assert_eq!(projection["items"], serde_json::json!([]));
+        assert!(!projection.to_string().contains("opaque binary output"));
+        Ok(())
+    }
+
+    #[test]
     fn digests_summary_and_deduplicates_activity_updates() -> Result<(), Box<dyn std::error::Error>>
     {
         let directory = tempfile::tempdir()?;
@@ -864,7 +937,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_v2_summary_compacts_activity_without_reindexing()
+    fn persisted_v2_summary_requests_artifact_refresh_but_remains_readable()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut state = SummaryProjectionState::new("turn".into());
         for index in 0..300 {
@@ -878,7 +951,9 @@ mod tests {
         serialized["projection_version"] = serde_json::json!(2);
         let restored: SummaryProjectionState = serde_json::from_value(serialized)?;
 
-        assert!(restored.is_current());
+        // Version 2 lacked artifact references. Rebuild summaries on demand,
+        // without discarding or rebuilding the byte-offset index.
+        assert!(!restored.is_current());
         let projected = restored.project();
         assert_eq!(projected["codewide"]["activity"]["count"], 300);
         assert_eq!(
@@ -1144,7 +1219,7 @@ mod tests {
         );
         assert_eq!(
             projected["codewide"]["usage"]["turn"]["cost"]["pricingVersion"],
-            "openai-api-2026-08-17"
+            crate::usage::PRICING_VERSION
         );
         assert_eq!(
             projected["codewide"]["usage"]["thread"]["cost"]["model"],

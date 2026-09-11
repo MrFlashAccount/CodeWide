@@ -11,7 +11,7 @@ import {
 import { getUserPreferencesDatabase } from "../data/user-preferences-database";
 import { authenticateWithDevice } from "../native/local-authentication";
 import { useEvent } from "../react/useEvent";
-import { colors, radii, spacing, touchTarget } from "../theme";
+import { colors, radii, spacing, touchTarget, typeScale, typeWeight, iconSize, layoutSize } from "../theme";
 import { AppText as Text } from "./Typography";
 
 type AppLockContextValue = {
@@ -97,13 +97,13 @@ function LockedSurface({ loading, message = null, onUnlock }: { loading: boolean
   return (
     <View accessibilityLabel="CodeWide is locked" style={styles.root} testID="app-lock-screen">
       <View style={styles.icon}>
-        <Ionicons name="lock-closed" color={colors.text} size={34} />
+        <Ionicons name="lock-closed" color={colors.text} size={iconSize.illustration} />
       </View>
       <Text style={styles.title}>CodeWide is locked</Text>
       <Text style={styles.message}>{message ?? "Verify with your device to continue."}</Text>
       {loading ? <ActivityIndicator color={colors.textMuted} /> : onUnlock !== undefined && (
         <Pressable accessibilityRole="button" onPress={onUnlock} style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
-          <Ionicons name="finger-print" color={colors.background} size={20} />
+          <Ionicons name="finger-print" color={colors.background} size={iconSize.action} />
           <Text style={styles.buttonText}>Unlock</Text>
         </Pressable>
       )}
@@ -123,13 +123,13 @@ const styles = StyleSheet.create({
   icon: {
     alignItems: "center",
     borderColor: colors.border,
-    borderRadius: 36,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    height: 72,
+    height: layoutSize.row,
     justifyContent: "center",
     width: 72,
   },
-  title: { color: colors.text, fontSize: 20, fontWeight: "700" },
+  title: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold },
   message: { color: colors.textMuted, maxWidth: 320, textAlign: "center" },
   button: {
     alignItems: "center",
@@ -141,6 +141,6 @@ const styles = StyleSheet.create({
     minHeight: touchTarget,
     paddingHorizontal: spacing.lg,
   },
-  buttonText: { color: colors.background, fontWeight: "700" },
+  buttonText: { color: colors.background, fontWeight: typeWeight.semibold },
   pressed: { opacity: 0.78 },
 });

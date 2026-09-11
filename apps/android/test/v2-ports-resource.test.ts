@@ -20,7 +20,7 @@ class PersistentPortTransport implements PortTransport {
   readonly starts: string[] = [];
   readonly stops: string[] = [];
   readonly #listeners = new Set<(event: PortForwardingEvent) => void>();
-  discovery: V2PortsResponse = { ports: [], scannedAt: 1 };
+  discovery: V2PortsResponse = { ports: [{ ...discoveredPort(), port: 3_000 }], scannedAt: 1 };
   emitLiveBeforeStartReturns = false;
   listFailure: Error | null = null;
   #nextId = 1;
@@ -54,8 +54,7 @@ class PersistentPortTransport implements PortTransport {
   }
 
   async remove(_id: SavedServerId, profileId: string): Promise<void> {
-    this.profiles.delete(profileId);
-    this.#emit({ profileId, type: "removed" });
+    await this.stop(_id, profileId);
   }
 
   async start(_id: SavedServerId, profileId: string): Promise<PortForwardingProfile> {
@@ -80,6 +79,7 @@ class PersistentPortTransport implements PortTransport {
       ...current,
       enabled: false,
       localPort: null,
+      preference: "excluded" as const,
       previewUrl: null,
       status: "stopped" as const,
       updatedAt: current.updatedAt + 1,
@@ -154,7 +154,7 @@ class PersistentPortTransport implements PortTransport {
   }
 }
 
-describe("V2 durable port resource", () => {
+describe("V2 current native port resource", () => {
   it("restores a live native profile after the JavaScript runtime is recreated", async () => {
     const transport = new PersistentPortTransport();
     const first = new PortsResource(transport, SERVER);
@@ -208,12 +208,17 @@ describe("V2 durable port resource", () => {
     });
   });
 
-  it("persists and starts automatic profiles discovered after a cold launch", async () => {
+  it("reads automatic forwards owned by native discovery without starting duplicates", async () => {
     const transport = new PersistentPortTransport();
     transport.discovery = {
       ports: [{ ...discoveredPort(), defaultForwardingEnabled: true }],
       scannedAt: 3,
     };
+    const nativeProfile = await transport.upsert(SERVER, {
+      forwardingKey: FORWARDING_KEY, label: "Vite", port: discoveredPort().port,
+      preference: "automatic", preferredLocalPort: null, profileId: "profile-1",
+    });
+    await transport.start(SERVER, nativeProfile.id);
     const resource = new PortsResource(transport, SERVER);
     await resource.refresh();
     expect(resource.snapshot().value.profiles[0]).toMatchObject({
@@ -273,6 +278,37 @@ describe("V2 durable port resource", () => {
     });
   });
 
+  it("keeps automatic policy when reconnecting instead of persisting an inclusion", async () => {
+    const transport = new PersistentPortTransport();
+    await transport.upsert(SERVER, {
+      forwardingKey: FORWARDING_KEY, label: "Web", port: 3_000,
+      preference: "automatic", preferredLocalPort: null, profileId: "automatic-1",
+    });
+    await transport.start(SERVER, "automatic-1");
+    const resource = new PortsResource(transport, SERVER);
+    await resource.refresh();
+
+    const reconnected = await resource.reconnect("automatic-1");
+
+    expect(reconnected).toMatchObject({ enabled: true, preference: "automatic" });
+    expect(transport.stops).toEqual(["automatic-1"]);
+    expect(transport.starts).toEqual(["automatic-1", "automatic-1"]);
+    resource.stopResource();
+  });
+
+  it("records a stopped current service as excluded so a scan cannot restart it", async () => {
+    const transport = new PersistentPortTransport();
+    const resource = new PortsResource(transport, SERVER);
+    await resource.refresh();
+    const stopped = await resource.create({
+      forwardingKey: null, label: "Web", port: 3_000,
+      preferredLocalPort: null, profileId: null, start: false,
+    });
+    expect(stopped).toMatchObject({ enabled: false, preference: "excluded" });
+    expect(transport.starts).toEqual([]);
+    resource.stopResource();
+  });
+
   it("creates and revokes bounded tunnels through the shared port transport", async () => {
     const transport = new PersistentPortTransport();
     const resource = new PortsResource(transport, SERVER);
@@ -288,6 +324,28 @@ describe("V2 durable port resource", () => {
     });
     expect(transport.createdTunnels).toEqual([{ port: 3_000, ttlSeconds: 900 }]);
     expect(transport.deletedTunnels).toEqual(["tunnel-1"]);
+  });
+
+  it("does not create a forwarding for a port absent from current discovery", async () => {
+    const transport = new PersistentPortTransport();
+    transport.discovery = { ports: [], scannedAt: 1 };
+    const resource = new PortsResource(transport, SERVER);
+    await expect(resource.create({ forwardingKey: null, label: "Gone", port: 3000,
+      preferredLocalPort: null, profileId: null, start: true })).rejects.toThrow("current inventory");
+    expect(transport.profiles.size).toBe(0);
+    expect(transport.starts).toEqual([]);
+  });
+
+  it("reloads membership after discovery even when a native removal event was missed", async () => {
+    const transport = new PersistentPortTransport();
+    const resource = new PortsResource(transport, SERVER);
+    const profile = await resource.create({ forwardingKey: null, label: "Dev", port: 3000,
+      preferredLocalPort: null, profileId: null, start: true });
+    transport.profiles.delete(profile.id);
+    transport.discovery = { ports: [], scannedAt: 2 };
+    await resource.refresh();
+    expect(resource.snapshot().value.ports).toEqual([]);
+    expect(resource.snapshot().value.profiles).toEqual([]);
   });
 
   it("still discovers current listeners when persisted profile loading fails", async () => {

@@ -10,7 +10,17 @@ import {
 } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+  iconSize,
+  controlSize,
+  layoutSize,
+} from "../../theme";
 import { productFonts } from "../../ui/product-fonts";
 import { ContextRingView } from "../conversation/ContextRingActionView";
 import {
@@ -94,7 +104,7 @@ function Text(textProps: ComponentProps<typeof NativeText>): React.JSX.Element {
       : numericWeight <= 500
         ? productFonts.medium
         : productFonts.semibold;
-  return <NativeText {...props} style={[style, { fontFamily, fontWeight: "400" }]} />;
+  return <NativeText {...props} style={[style, { fontFamily, fontWeight: typeWeight.regular }]} />;
 }
 
 interface UsagePopoverViewProps {
@@ -215,7 +225,11 @@ export function UsagePopoverView(props: UsagePopoverViewProps): React.JSX.Elemen
                   testID="usage-accounts-section"
                 >
                   <View style={styles.sectionTitleRow}>
-                    <PresentationIcon color={colors.textMuted} name="people" size={17} />
+                    <PresentationIcon
+                      color={colors.textMuted}
+                      name="people"
+                      size={iconSize.inline}
+                    />
                     <Text accessibilityRole="header" style={styles.title}>
                       Accounts
                     </Text>
@@ -287,7 +301,11 @@ export function UsagePopoverView(props: UsagePopoverViewProps): React.JSX.Elemen
                     style={styles.sessionSummaryRow}
                     testID="usage-session-summary"
                   >
-                    <PresentationIcon color={colors.textMuted} name="analytics" size={17} />
+                    <PresentationIcon
+                      color={colors.textMuted}
+                      name="analytics"
+                      size={iconSize.inline}
+                    />
                     <Text style={styles.title}>Session</Text>
                     <View style={styles.sessionSummaryValues}>
                       {session === null ? (
@@ -311,7 +329,7 @@ export function UsagePopoverView(props: UsagePopoverViewProps): React.JSX.Elemen
                     <PresentationIcon
                       color={colors.textDim}
                       name={sessionExpanded ? "chevronUp" : "chevronDown"}
-                      size={15}
+                      size={iconSize.inline}
                     />
                   </Pressable>
                   {sessionExpanded && session !== null ? (
@@ -380,7 +398,7 @@ function UsageActionRow(props: UsageActionRowProps): React.JSX.Element {
       style={[styles.action, divided ? styles.dividedAction : undefined]}
     >
       <View style={styles.actionIcon}>
-        <PresentationIcon color={colors.textMuted} name={action.icon} size={18} />
+        <PresentationIcon color={colors.textMuted} name={action.icon} size={iconSize.action} />
       </View>
       <View style={styles.grow}>
         <Text style={styles.actionTitle}>{action.label}</Text>
@@ -390,7 +408,7 @@ function UsageActionRow(props: UsageActionRowProps): React.JSX.Element {
           </Text>
         )}
       </View>
-      <PresentationIcon color={colors.textDim} name="chevronForward" size={16} />
+      <PresentationIcon color={colors.textDim} name="chevronForward" size={iconSize.inline} />
     </Pressable>
   );
 }
@@ -427,15 +445,20 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     paddingTop: spacing.xs,
   },
-  accountName: { color: colors.text, ...typeScale.labelLarge },
-  accountRow: { gap: 3, paddingVertical: spacing.xxs },
-  accountStateDot: { borderRadius: 4, height: 8, width: 8 },
-  accountTitleRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minHeight: 38 },
+  accountName: { color: colors.text, ...typeScale.body },
+  accountRow: { gap: spacing.xxs, paddingVertical: spacing.xxs },
+  accountStateDot: { borderRadius: radii.pill, height: 8, width: 8 },
+  accountTitleRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: controlSize.regular,
+  },
   accountValue: {
     color: colors.text,
     flexShrink: 0,
     fontVariant: ["tabular-nums"],
-    ...typeScale.labelLarge,
+    ...typeScale.body,
   },
   action: {
     alignItems: "center",
@@ -451,67 +474,83 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 20,
   },
-  actionTitle: { color: colors.text, ...typeScale.labelLarge },
+  actionTitle: { color: colors.text, ...typeScale.body },
   content: { paddingVertical: spacing.xxs },
-  contextSummary: { alignItems: "center", flexDirection: "row", gap: spacing.sm, minHeight: 52 },
-  dividedAction: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth },
+  contextSummary: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    minHeight: layoutSize.header,
+  },
+  dividedAction: {
+    borderTopColor: colors.border,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
   dividedSection: { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth },
   grow: { flex: 1, minWidth: 0 },
-  meta: { color: colors.textDim, fontSize: 11, lineHeight: 15 },
+  meta: { color: colors.textDim, ...typeScale.label },
   popover: { borderRadius: radii.large, overflow: "hidden", padding: 0 },
   primaryValue: {
     color: colors.text,
-    fontSize: 18,
+    ...typeScale.heading,
     fontVariant: ["tabular-nums"],
-    fontWeight: "600",
-    lineHeight: 23,
+    fontWeight: typeWeight.semibold,
   },
   relativeReset: {
     color: colors.text,
     flexShrink: 0,
-    fontSize: 11,
+    ...typeScale.label,
     fontVariant: ["tabular-nums"],
-    fontWeight: "600",
-    lineHeight: 16,
+    fontWeight: typeWeight.semibold,
   },
-  resetRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minHeight: 24 },
+  resetRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: layoutSize.metadataRow,
+  },
   secondaryValue: {
     color: colors.textMuted,
     fontVariant: ["tabular-nums"],
-    ...typeScale.bodyMedium,
+    ...typeScale.body,
   },
   section: { gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   sectionTitleRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs },
-  sessionCostText: { color: colors.textMuted, flexShrink: 0, fontSize: 11, lineHeight: 15 },
-  sessionDetails: { gap: 2, paddingBottom: 2 },
-  sessionSummaryRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minHeight: 38 },
-  sessionSummarySeparator: { color: colors.textMuted, flexShrink: 0, fontSize: 11, lineHeight: 15 },
-  sessionSummaryText: { color: colors.textMuted, flexShrink: 1, fontSize: 11, lineHeight: 15 },
+  sessionCostText: { color: colors.textMuted, flexShrink: 0, ...typeScale.label },
+  sessionDetails: { gap: spacing.optical, paddingBottom: spacing.optical },
+  sessionSummaryRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minHeight: controlSize.regular,
+  },
+  sessionSummarySeparator: { color: colors.textMuted, flexShrink: 0, ...typeScale.label },
+  sessionSummaryText: { color: colors.textMuted, flexShrink: 1, ...typeScale.label },
   sessionSummaryValues: {
     alignItems: "center",
     flex: 1,
     flexDirection: "row",
-    gap: 4,
+    gap: spacing.xxs,
     justifyContent: "flex-end",
     minWidth: 0,
   },
-  sessionUsageLabel: { color: colors.textMuted, flexShrink: 1, ...typeScale.bodyMedium },
+  sessionUsageLabel: { color: colors.textMuted, flexShrink: 1, ...typeScale.body },
   sessionUsageRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
     justifyContent: "space-between",
-    minHeight: 25,
+    minHeight: controlSize.compact,
   },
   sessionUsageTotalRow: {
     borderTopColor: colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 3,
-    minHeight: 30,
-    paddingTop: 5,
+    marginTop: spacing.xxs,
+    minHeight: controlSize.compact,
+    paddingTop: spacing.xxs,
   },
-  sessionUsageTotalText: { color: colors.text, fontWeight: "700" },
-  sessionUsageValue: { color: colors.text, flexShrink: 0, fontSize: 12, lineHeight: 17 },
-  title: { color: colors.textMuted, ...typeScale.labelMedium },
+  sessionUsageTotalText: { color: colors.text, fontWeight: typeWeight.semibold },
+  sessionUsageValue: { color: colors.text, flexShrink: 0, ...typeScale.label },
+  title: { color: colors.textMuted, ...typeScale.label },
   unavailable: { color: colors.textMuted },
 });

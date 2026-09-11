@@ -7,10 +7,6 @@ import {
 
 import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
 
-export function iconButtonStyle(state: PressableStateCallbackType): StyleProp<ViewStyle> {
-  return [threadGoalSheetStyles.iconButton, state.pressed && threadGoalSheetStyles.pressed];
-}
-
 export function dangerButtonStyle(state: PressableStateCallbackType): StyleProp<ViewStyle> {
   return [
     threadGoalSheetStyles.button,
@@ -60,13 +56,6 @@ export const threadGoalSheetStyles = StyleSheet.create({
   details: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
   flex: { flex: 1 },
   header: { alignItems: "center", flexDirection: "row", minHeight: 64 },
-  iconButton: {
-    alignItems: "center",
-    borderRadius: radii.large,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
   input: {
     backgroundColor: colors.surfaceContainer,
     borderColor: colors.border,

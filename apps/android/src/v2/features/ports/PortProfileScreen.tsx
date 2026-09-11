@@ -197,7 +197,7 @@ function PortForm(props: PortFormProps): React.JSX.Element {
             </Pressable>
           )}
           <Pressable
-            accessibilityLabel="Save forwarding"
+            accessibilityLabel="Apply forwarding changes"
             disabled={pending}
             onPress={submit}
             style={styles.primaryButton}
@@ -205,7 +205,7 @@ function PortForm(props: PortFormProps): React.JSX.Element {
             {pending ? (
               <ShimmerText style={styles.primaryText} text="Saving" />
             ) : (
-              <Text style={styles.primaryText}>Save</Text>
+              <Text style={styles.primaryText}>Apply</Text>
             )}
           </Pressable>
         </View>

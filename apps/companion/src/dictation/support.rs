@@ -112,7 +112,7 @@ async fn persist_session(session: &Session) -> Result<(), DictationError> {
 async fn recover_sessions(
     root: &Path,
     max_audio_bytes: u64,
-) -> HashMap<String, Arc<Mutex<Session>>> {
+) -> HashMap<String, Arc<SessionHandle>> {
     let mut recovered = HashMap::new();
     let Ok(mut entries) = fs::read_dir(root).await else {
         return recovered;
@@ -156,13 +156,16 @@ async fn recover_sessions(
         if metadata.len() != stored.bytes && file.set_len(stored.bytes).await.is_err() {
             continue;
         }
-        recovered.insert(id, Arc::new(Mutex::new(stored.into_session(directory))));
+        recovered.insert(
+            id,
+            Arc::new(SessionHandle::new(stored.into_session(directory))),
+        );
     }
     recovered
 }
 
 async fn cleanup_idle_sessions(
-    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<Session>>>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     ttl: Duration,
     interval: Duration,
 ) {
@@ -180,7 +183,9 @@ async fn cleanup_idle_sessions(
             .collect::<Vec<_>>();
         let mut expired = Vec::new();
         for (id, session) in candidates {
-            let state = session.lock().await;
+            let Ok(state) = session.state.try_lock() else {
+                continue;
+            };
             if now.saturating_sub(state.last_activity_ms) >= ttl_ms {
                 expired.push((id, session.clone(), state.directory.clone()));
             }
@@ -521,9 +526,7 @@ fn decode_audio_chunk(
         sample_rate,
         channels,
         samples_per_channel,
-        rms_ppm: ratio_ppm(
-            (signal_quality.sum_squares / f64::from(quality_samples)).sqrt(),
-        ),
+        rms_ppm: ratio_ppm((signal_quality.sum_squares / f64::from(quality_samples)).sqrt()),
     })
 }
 
@@ -559,10 +562,11 @@ fn log_dictation_metrics(session: &Session, observation: &DictationFinishObserva
         seal_persist_ms = observation.seal_persist_ms,
         transcription_ms = observation.transcription_ms,
         final_persist_ms = observation.final_persist_ms,
-        unattributed_finish_ms = observation.finish_total_ms.saturating_sub(accounted_finish_ms),
+        unattributed_finish_ms = observation
+            .finish_total_ms
+            .saturating_sub(accounted_finish_ms),
         recording_ms = observation.recording_ms,
-        session_to_first_chunk_ms = first_chunk_at_ms
-            .saturating_sub(metrics.created_at_unix_ms),
+        session_to_first_chunk_ms = first_chunk_at_ms.saturating_sub(metrics.created_at_unix_ms),
         first_chunk_to_finish_ms = observation
             .finish_received_at_ms
             .saturating_sub(first_chunk_at_ms),
@@ -604,7 +608,7 @@ fn decode_opus_chunk(
                 i32::try_from(sample_rate).map_err(|_| DictationError::InvalidOpus)?,
                 opus_channels,
             )
-                .map_err(|_| DictationError::InvalidOpus)?,
+            .map_err(|_| DictationError::InvalidOpus)?,
         );
     }
     let decoder = decoder.as_mut().ok_or(DictationError::InvalidOpus)?;
@@ -629,7 +633,7 @@ fn decode_opus_chunk(
             packet,
             i32::try_from(sample_rate).map_err(|_| DictationError::InvalidOpus)?,
         )
-            .map_err(|_| DictationError::InvalidOpus)?;
+        .map_err(|_| DictationError::InvalidOpus)?;
         let sample_values = packet_samples
             .checked_mul(usize::from(channels))
             .ok_or(DictationError::InvalidOpus)?;
@@ -778,7 +782,11 @@ mod tests {
             .unwrap_or_else(|error| panic!("{error}"));
         packet.truncate(packet_bytes);
         let mut framed = Vec::with_capacity(packet.len() + 2);
-        framed.extend_from_slice(&u16::try_from(packet.len()).unwrap_or_default().to_be_bytes());
+        framed.extend_from_slice(
+            &u16::try_from(packet.len())
+                .unwrap_or_default()
+                .to_be_bytes(),
+        );
         framed.extend_from_slice(&packet);
 
         let decoded = decode_opus_chunk(&framed, 48_000, 1, &mut None)
@@ -840,6 +848,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn v2_cancel_and_replacement_do_not_wait_for_recording_state()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let root = tempfile::tempdir()?;
+        let service = DictationService::open(
+            root.path().join("absent-auth.json"),
+            root.path().join("sessions"),
+        )
+        .await?;
+        let id = service.v2_start("audience", None).await?;
+        let session = service
+            .sessions
+            .lock()
+            .await
+            .get(&id)
+            .cloned()
+            .ok_or("missing session")?;
+        let _busy = session.state.lock().await;
+        // Cancellation and ownership checks must not need the mutable recording,
+        // even while a finish operation owns it.
+        let replacement =
+            tokio::time::timeout(Duration::from_secs(2), service.v2_start("audience", None))
+                .await??;
+        assert_ne!(replacement, id);
+        assert!(session.cancellation.is_cancelled());
+        assert!(!session.directory.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn v2_cleanup_failure_retains_bounded_session_ownership() {
         let root = tempfile::tempdir().unwrap_or_else(|error| panic!("{error}"));
         let service = DictationService::open(
@@ -859,7 +896,7 @@ mod tests {
             .get(&session_id)
             .cloned()
             .unwrap_or_else(|| panic!("session missing"));
-        let directory = session.lock().await.directory.clone();
+        let directory = session.directory.clone();
         tokio::fs::remove_dir_all(&directory)
             .await
             .unwrap_or_else(|error| panic!("{error}"));
@@ -881,11 +918,7 @@ mod tests {
             .lock()
             .await
             .values()
-            .filter(|session| {
-                session
-                    .try_lock()
-                    .is_ok_and(|session| session.client_id == "audience")
-            })
+            .filter(|session| session.client_id == "audience")
             .count();
         assert_eq!(
             owned, 1,

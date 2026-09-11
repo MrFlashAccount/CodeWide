@@ -1,3 +1,4 @@
+import { typeWeight } from "../../theme";
 import { createContext, useContext, type PropsWithChildren, type ReactNode } from "react";
 import { StyleSheet, Text } from "react-native";
 
@@ -117,5 +118,5 @@ const glyphs: Record<PresentationIconName, string> = {
 };
 
 const styles = StyleSheet.create({
-  icon: { fontFamily: "sans-serif", fontWeight: "400", textAlign: "center" },
+  icon: { fontFamily: "sans-serif", fontWeight: typeWeight.regular, textAlign: "center" },
 });

@@ -84,6 +84,7 @@ export function DrawingWorkspaceView(props: DrawingWorkspaceViewProps): React.JS
           accessibilityRole="button"
           accessibilityState={{ busy: saving, disabled: !ready || saving }}
           disabled={!ready || saving}
+          hitSlop={spacing.xs}
           onPress={activateCommit}
           style={saveButtonStyle}
         >

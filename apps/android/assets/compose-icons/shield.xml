@@ -1,0 +1,6 @@
+<!-- Ionicons glyph from @expo/vector-icons 15.1.1; MIT, see NOTICE.md. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="512" android:viewportHeight="512">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M249 33Q249 33 249 33Q250 32 256.5 32.5Q263 33 281 41Q363 77 448 93Q468 97 471 99Q477 102 479 110Q480 114 480.0 138.0Q480 162 479 174Q468 306 379 397Q331 446 276 473Q261 480 255.5 480.0Q250 480 235 472Q156 434 102 361Q48 289 36 197Q32 170 32 139Q32 108 36 103Q40 98 60 94Q147 78 230 41Q248 33 249 33Z"/>
+</vector>

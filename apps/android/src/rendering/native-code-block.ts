@@ -2,6 +2,9 @@ import nativeCodeLanguageManifest from "./native-code-languages.json";
 
 export type NativeCodeVariant = "code" | "diff" | "terminal";
 
+// Fixed native-renderer geometry, mirrored by the plain-text fallback.
+// This is not the app's scalable prose/inline-code typography.
+export const NATIVE_CODE_FONT_SIZE = 11;
 export const NATIVE_CODE_LINE_HEIGHT = 16;
 export const NATIVE_CODE_VERTICAL_PADDING = 4;
 export const NATIVE_CODE_DEFAULT_MAX_HEIGHT = 400;

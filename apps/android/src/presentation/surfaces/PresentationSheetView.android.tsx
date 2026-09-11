@@ -12,6 +12,8 @@ export type PresentationSheetContentProps = Omit<
   bottomInset?: number;
   className?: string;
   contentContainerClassName?: string;
+  /** Accessible name of the dismissible drag handle. */
+  dismissLabel?: string;
   detached?: boolean;
   index?: number;
   maxDynamicContentSize?: number;

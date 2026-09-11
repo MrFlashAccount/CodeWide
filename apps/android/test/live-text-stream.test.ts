@@ -55,8 +55,8 @@ describe("append-only live text projection", () => {
     const first = projectCachedLiveMarkdown("agent", "Hello streaming wor");
     const second = projectCachedLiveMarkdown("agent", "Hello streaming word ");
 
-    expect(first.visibleSource).toBe("Hello streaming ");
-    expect(first.visibleRemainder).toBe("Hello streaming ");
+    expect(first.visibleSource).toBe("Hello streaming wor");
+    expect(first.visibleRemainder).toBe("Hello streaming wor");
     expect(second.visibleSource).toBe("Hello streaming word ");
     expect([...second.segments, second.remainder].join("")).toBe(second.source);
   });
@@ -68,7 +68,7 @@ describe("append-only live text projection", () => {
     const completed = projectCachedLiveMarkdown("completed-agent", "This fix will ship", true);
 
     expect(sentence.visibleSource).toBe("This fix will ship.");
-    expect(streaming.visibleSource).toBe("This fix will ");
+    expect(streaming.visibleSource).toBe("This fix will ship");
     expect(completed.visibleSource).toBe("This fix will ship");
   });
 

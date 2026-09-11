@@ -68,6 +68,7 @@ describe("native port forwarding store", () => {
     native.stop.mockReset();
     native.remove.mockReset();
     native.discover.mockReset();
+    native.discover.mockResolvedValue({ ports: [{ ...discoveredPort(false), port: 43_191 }], scannedAt: 1 });
   });
 
   it("deduplicates simultaneous loopback link taps and waits for the native port", async () => {
@@ -105,34 +106,23 @@ describe("native port forwarding store", () => {
     expect(native.start).not.toHaveBeenCalled();
   });
 
-  it("automatically starts companion-recognized developer services", async () => {
+  it("reads automatic forwards from native discovery without a second reconciler", async () => {
     const connectionId = "automatic-server";
     const candidate = discoveredPort(true);
-    native.list.mockResolvedValue([]);
     native.discover.mockResolvedValue({ ports: [candidate], scannedAt: Date.now() });
-    native.upsert.mockImplementation(async (input: { profileId: string }) => profile(connectionId, "stopped", null, {
-      id: input.profileId,
+    const forwarded = profile(connectionId, "live", 46_212, {
       label: candidate.name,
       remotePort: candidate.port,
       serviceKey: candidate.forwardingKey,
       preference: "automatic",
-    }));
-    native.start.mockImplementation(async (profileId: string) => profile(connectionId, "live", 46_212, {
-      id: profileId,
-      label: candidate.name,
-      remotePort: candidate.port,
-      serviceKey: candidate.forwardingKey,
-      preference: "automatic",
-    }));
+    });
+    native.list.mockResolvedValue([forwarded]);
 
     await nativePortForwardingStore.refreshDiscovery(connectionId);
 
-    expect(native.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      serviceKey: candidate.forwardingKey,
-      preference: "automatic",
-      remotePort: candidate.port,
-    }));
-    expect(native.start).toHaveBeenCalledTimes(1);
+    expect(nativePortForwardingStore.scope(connectionId).getSnapshot().profiles).toEqual([forwarded]);
+    expect(native.upsert).not.toHaveBeenCalled();
+    expect(native.start).not.toHaveBeenCalled();
   });
 
   it("leaves unknown ephemeral services available until explicitly included", async () => {

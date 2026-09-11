@@ -1,5 +1,6 @@
 package dev.codewide.app
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 
@@ -7,14 +8,28 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import com.facebook.react.uimanager.DisplayMetricsHolder
 
 import expo.modules.ReactActivityDelegateWrapper
 import expo.modules.splashscreen.SplashScreenManager
+import dev.codewide.app.remote.NativeStartupTrace
 
 class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
+    NativeStartupTrace.markActivityStarted()
+    NativeStartupTrace.registerContentMarker()
     SplashScreenManager.registerOnActivity(this)
+    SplashExitAnimation.install(this)
     super.onCreate(null)
+    DisplayMetricsHolder.initDisplayMetrics(this)
+  }
+
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    // RN's global text/icon conversions must use the same display as this Fabric surface.
+    // Application-context metrics can retain the phone density in Samsung freeform/DeX.
+    // https://github.com/react/react-native/issues/57183
+    DisplayMetricsHolder.initDisplayMetrics(this)
   }
 
   /**

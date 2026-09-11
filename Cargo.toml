@@ -24,3 +24,11 @@ suspicious_operation_groupings = "deny"
 todo = "deny"
 unimplemented = "deny"
 unwrap_used = "deny"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.test]
+debug = "line-tables-only"
+incremental = false

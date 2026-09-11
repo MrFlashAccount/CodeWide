@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { act, fireEvent, render, renderHook, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, renderHook, screen, within } from "@testing-library/react-native";
 import { StyleSheet, type View } from "react-native";
 
 import { TimelineView } from "../src/v2/presentation/conversation/TimelineView";
@@ -149,16 +149,47 @@ describe("V2 timeline interactions", () => {
   it("renders one full-width date separator for each local calendar day", () => {
     const first = turn("first-day-a");
     first.createdAt = "2024-01-02T10:00:00Z";
+    first.completedAt = "2024-01-02T10:01:00Z";
     const second = turn("first-day-b");
     second.createdAt = "2024-01-02T12:00:00Z";
+    second.completedAt = "2024-01-02T12:01:00Z";
     const third = turn("second-day");
     third.createdAt = "2024-01-03T12:00:00Z";
+    third.completedAt = "2024-01-03T12:01:00Z";
 
     render(<TimelineView turns={[first, second, third]} />);
 
     const separators = screen.getAllByTestId("timeline-date-separator");
     expect(separators).toHaveLength(2);
     expect(StyleSheet.flatten(separators[0]?.props.style)).toMatchObject({ width: "100%" });
+  });
+
+  it("puts the new day inside a midnight-spanning turn before its response", () => {
+    const first = turn("midnight-response");
+    first.createdAt = new Date(2026, 8, 8, 23, 37).toISOString();
+    first.completedAt = new Date(2026, 8, 9, 0, 14).toISOString();
+    const next = turn("next-request");
+    next.createdAt = new Date(2026, 8, 9, 0, 16).toISOString();
+    next.completedAt = new Date(2026, 8, 9, 0, 17).toISOString();
+    render(<TimelineView canLoadOlder turns={[first, next]} />);
+    expect(screen.getAllByTestId("timeline-date-separator")).toHaveLength(1);
+    const [firstGroup, secondGroup] = screen.getAllByTestId("turn-group");
+    if (firstGroup === undefined || secondGroup === undefined) throw new Error("Both turns must be rendered");
+    expect(within(firstGroup).getByTestId("timeline-date-separator")).toBeVisible();
+    expect(within(secondGroup).queryByTestId("timeline-date-separator")).toBeNull();
+  });
+
+  it("shows neither a made-up date nor a beginning marker at a partial page edge", () => {
+    const current = turn("partial-page");
+    const view = render(<TimelineView canLoadOlder turns={[current]} />);
+    expect(screen.queryByTestId("timeline-date-separator")).toBeNull();
+    expect(screen.queryByTestId("history-beginning")).toBeNull();
+    view.rerender(<TimelineView canLoadOlder={false} includesBeginning turns={[current]} />);
+    expect(screen.getByTestId("history-beginning")).toBeVisible();
+    expect(screen.getAllByTestId("timeline-date-separator")).toHaveLength(1);
+    view.rerender(<TimelineView canLoadOlder={false} includesBeginning={false} turns={[current]} />);
+    expect(screen.queryByTestId("history-beginning")).toBeNull();
+    expect(screen.queryByTestId("timeline-date-separator")).toBeNull();
   });
 
   it("stretches a copyable code block across the agent bubble", () => {

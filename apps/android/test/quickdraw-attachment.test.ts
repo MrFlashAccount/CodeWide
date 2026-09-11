@@ -2,12 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import {
   isQuickdrawDraftAttachment,
+  imageAnnotationAttachment,
   quickdrawAttachmentName,
   quickdrawPngBytes,
   remoteAttachment,
 } from "../src/data/quickdraw-attachment";
 
 describe("QuickDraw composer attachment", () => {
+  it("replaces the exact draft attachment rather than matching its name or making another card", () => {
+    const first = { id: "first", rootId: "attachments", path: "first.png", name: "photo.png", kind: "image" as const };
+    const second = { ...first, id: "second", path: "second.png" };
+    const target = { scope: "server/thread", attachmentId: second.id };
+    expect(imageAnnotationAttachment(target, target.scope, [first, second])).toBe(second);
+    expect(() => imageAnnotationAttachment(target, "another/thread", [second])).toThrow("different draft");
+    expect(() => imageAnnotationAttachment(target, target.scope, [first])).toThrow("no longer attached");
+  });
   it("decodes the exported PNG data URL", () => {
     expect([...quickdrawPngBytes("data:image/png;base64,iVBORw==")]).toEqual([137, 80, 78, 71]);
   });

@@ -2,7 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { cloneElement, useState } from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
 
-import { colors, spacing } from "../theme";
+import { colors, spacing, typeScale, iconSize, layoutSize, radii } from "../theme";
 import type { ActionMenuProps } from "./ActionMenu.types";
 import { AppSheet } from "./AppSheet";
 import { AppText as Text } from "./Typography";
@@ -47,7 +47,7 @@ export function ActionMenu({
               style={({ pressed }) => [styles.item, pressed && styles.pressed, action.disabled && styles.disabled]}
             >
               {typeof action.icon === "string" && (
-                <Ionicons name={action.icon} size={19} color={action.destructive ? colors.red : colors.textMuted} />
+                <Ionicons name={action.icon} size={iconSize.action} color={action.destructive ? colors.red : colors.textMuted} />
               )}
               {action.icon !== undefined && typeof action.icon !== "string" && (
                 <Image source={action.icon} style={[styles.icon, action.destructive && styles.dangerIcon]} />
@@ -56,7 +56,7 @@ export function ActionMenu({
                 <Text style={[styles.label, action.destructive && styles.danger]}>{action.label}</Text>
                 {action.description !== undefined && <Text style={styles.description}>{action.description}</Text>}
               </View>
-              {action.selected === true && <Ionicons name="checkmark" size={18} color={colors.accent} />}
+              {action.selected === true && <Ionicons name="checkmark" size={iconSize.action} color={colors.accent} />}
             </Pressable>
             </View>
           ))}
@@ -67,14 +67,14 @@ export function ActionMenu({
 }
 
 const styles = StyleSheet.create({
-  content: { gap: 2 },
-  section: { color: colors.textDim, fontSize: 12, lineHeight: 16, paddingHorizontal: spacing.sm, paddingBottom: 3, paddingTop: spacing.sm },
-  item: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: 14 },
+  content: { gap: spacing.optical },
+  section: { color: colors.textDim, ...typeScale.label, paddingHorizontal: spacing.sm, paddingBottom: spacing.xxs, paddingTop: spacing.sm },
+  item: { minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radii.medium },
   pressed: { backgroundColor: colors.surfaceContainerHigh },
   disabled: { opacity: 0.42 },
   text: { flex: 1, minWidth: 0 },
-  label: { color: colors.text, fontSize: 15, lineHeight: 20, fontFamily: "RobotoFlex-Medium" },
-  description: { color: colors.textMuted, fontSize: 12, lineHeight: 16 },
+  label: { color: colors.text, ...typeScale.body, fontFamily: "RobotoFlex-Medium" },
+  description: { color: colors.textMuted, ...typeScale.label, },
   danger: { color: colors.red },
   icon: { width: 19, height: 19, tintColor: colors.textMuted },
   dangerIcon: { tintColor: colors.red },

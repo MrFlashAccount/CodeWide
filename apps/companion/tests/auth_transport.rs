@@ -181,7 +181,7 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
         .is_err(),
         "an unregistered device certificate must not complete TLS"
     );
-    let (session_token, device_id) = secure_pair_and_authorize(
+    let (session_token, device_id, capability) = secure_pair_and_authorize(
         &public_client,
         &control_client,
         &public_base,
@@ -238,6 +238,11 @@ async fn pairing_proof_session_and_full_grant_work_over_wire()
     )
     .await?;
     assert_eq!(mismatched_status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        tunneled_sync_status(public_address, &certificate, &second_identity, &capability).await?,
+        StatusCode::UNAUTHORIZED,
+        "a valid certificate must not authorize another device's capability"
+    );
     for path in [
         "/v1/auth",
         "/v1/sync",
@@ -353,7 +358,7 @@ async fn secure_pair_and_authorize(
     address: std::net::SocketAddr,
     certificate: &[u8],
     identity: &TestDeviceIdentity,
-) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(String, String, String), Box<dyn std::error::Error + Send + Sync>> {
     let pairing: Value = control_client
         .post(format!("{control_base}/v1/pairing/start"))
         .bearer_auth(ADMIN_TOKEN)
@@ -390,6 +395,17 @@ async fn secure_pair_and_authorize(
     let device_token = claim["capabilityToken"]
         .as_str()
         .ok_or("device token missing")?;
+
+    // No session challenge or mint has happened: possession is proven by the
+    // mTLS handshake, and the capability must belong to that same device.
+    assert_eq!(
+        tunneled_sync_status(address, certificate, identity, device_token).await?,
+        StatusCode::SWITCHING_PROTOCOLS
+    );
+    assert_eq!(
+        tunneled_sync_status(address, certificate, identity, "invalid-capability").await?,
+        StatusCode::UNAUTHORIZED
+    );
 
     assert_eq!(
         public_client
@@ -440,6 +456,7 @@ async fn secure_pair_and_authorize(
             .as_str()
             .ok_or("device id missing")?
             .to_owned(),
+        device_token.to_owned(),
     ))
 }
 
@@ -489,6 +506,60 @@ async fn tunneled_json_request(
         let message = timeout(Duration::from_secs(5), socket.next())
             .await?
             .ok_or("inner TLS tunnel closed before the HTTP response")??;
+        if let Message::Binary(bytes) = message {
+            tls.read_tls(&mut Cursor::new(bytes))?;
+            tls.process_new_packets()?;
+            drain_plaintext(&mut tls, &mut plaintext)?;
+        }
+        flush_inner_tls(&mut socket, &mut tls).await?;
+    }
+}
+
+async fn tunneled_sync_status(
+    address: std::net::SocketAddr,
+    certificate: &[u8],
+    identity: &TestDeviceIdentity,
+    capability: &str,
+) -> Result<StatusCode, Box<dyn std::error::Error + Send + Sync>> {
+    let (mut socket, _) = connect_async(format!("ws://{address}/v1/e2ee-tunnel")).await?;
+    let mut roots = RootCertStore::empty();
+    roots.add(CertificateDer::from(certificate.to_vec()))?;
+    let config = ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_client_auth_cert(
+            vec![CertificateDer::from(identity.certificate.clone())],
+            PrivateKeyDer::try_from(identity.private_key.clone())?,
+        )?;
+    let mut tls = ClientConnection::new(
+        Arc::new(config),
+        ServerName::try_from("codewide-companion")?.to_owned(),
+    )?;
+    timeout(
+        Duration::from_secs(5),
+        drive_inner_tls(&mut socket, &mut tls),
+    )
+    .await??;
+    let websocket_key = tokio_tungstenite::tungstenite::handshake::client::generate_key();
+    let request = format!(
+        "GET /v1/sync HTTP/1.1\r\nHost: codewide-companion\r\nAuthorization: Bearer {capability}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {websocket_key}\r\n\r\n"
+    );
+    tls.writer().write_all(request.as_bytes())?;
+    flush_inner_tls(&mut socket, &mut tls).await?;
+    let mut plaintext = Vec::new();
+    loop {
+        if let Some(end) = plaintext.windows(4).position(|value| value == b"\r\n\r\n") {
+            let headers = std::str::from_utf8(&plaintext[..end])?;
+            let status = headers
+                .split_whitespace()
+                .nth(1)
+                .ok_or("missing status")?
+                .parse::<u16>()?;
+            socket.close(None).await?;
+            return Ok(StatusCode::from_u16(status)?);
+        }
+        let message = timeout(Duration::from_secs(5), socket.next())
+            .await?
+            .ok_or("tunnel closed before sync upgrade")??;
         if let Message::Binary(bytes) = message {
             tls.read_tls(&mut Cursor::new(bytes))?;
             tls.process_new_packets()?;

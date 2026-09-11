@@ -671,7 +671,7 @@ function useProjectedConversationSurface(
         : `restored:${initialHistoryRestore.turnId ?? "unknown"}`;
   const timelineSourceTurns = searchActive ? search.turns : history.snapshot.turns;
   const timelineTurns = timelineTurnsDisplayModel(timelineSourceTurns, threadAttachments);
-  const usage = usagePresentation({ turns: history.snapshot.turns });
+  const usage = usagePresentation({ turns: window?.turns ?? [] });
   const livePlan = liveTurnPlanPresentation(history.snapshot.turns);
   const searchMatchIds = new Set(search.matchTurnIds);
   const visibleTimelineTurns = searchActive
@@ -912,6 +912,7 @@ function useProjectedConversationSurface(
     attachmentTarget,
     canLoadNewer: !searchActive && history.snapshot.canLoadNewer,
     canLoadOlder: !searchActive && history.snapshot.canLoadOlder,
+    includesBeginning: window !== null && !searchActive && !history.snapshot.canLoadOlder,
     clearVersion,
     composerError,
     composerText,
@@ -1039,6 +1040,7 @@ interface ConversationSurfaceProps {
   attachmentTarget: ComposerAttachmentTarget;
   canLoadNewer: boolean;
   canLoadOlder: boolean;
+  includesBeginning: boolean;
   clearVersion: number;
   composerError: string | null;
   composerText: string;
@@ -1140,6 +1142,7 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
     attachmentTarget,
     canLoadNewer,
     canLoadOlder,
+    includesBeginning,
     clearVersion,
     composerError,
     composerText,
@@ -1267,6 +1270,7 @@ function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element
               actionsForTurn={actionsForTurn}
               canLoadNewer={canLoadNewer}
               canLoadOlder={canLoadOlder}
+              includesBeginning={includesBeginning}
               initialAnchorOffsetPx={initialAnchorOffsetPx}
               latestActivityMarker={latestActivityMarker}
               initialAnchorTurnId={initialAnchorTurnId}

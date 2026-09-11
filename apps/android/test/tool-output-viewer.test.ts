@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+import { compactSource } from "./source-contract";
+
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const fullscreenOverlay = readFileSync(new URL("../src/ui/AppFullscreenOverlay.tsx", import.meta.url), "utf8");
 const nativeCodeBlock = readFileSync(new URL("../src/rendering/NativeCodeBlock.tsx", import.meta.url), "utf8");
 const nativeCodeView = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/NativeCodeBlockView.kt", import.meta.url), "utf8");
@@ -21,7 +23,7 @@ describe("tool output presentation", () => {
     const controls = screen.slice(controlsStart, controlsEnd);
 
     expect(controls).toContain("useContext(LargeContentViewerContext)");
-    expect(controls).toContain("open?.({ pointer, reference, presentation: largeContentPresentation(pointer, reference), getTransferAccess })");
+    expect(controls).toContain("open?.({ pointer, reference, presentation: largeContentPresentation(pointer, reference), getTransferAccess, });");
     expect(controls).not.toContain("useState");
     expect(controls).not.toContain("AppFullscreenModal");
     expect(controls).not.toContain("readPrivateAssetText");
@@ -40,7 +42,9 @@ describe("tool output presentation", () => {
 
   it("does not manually reposition the timeline across fullscreen transitions", () => {
     expect(screen).not.toContain("timelineOverlay");
-    expect(screen).toContain("willOpen: () => dismissComposerKeyboardForOverlay()");
+    const freeze = screen.indexOf("fullscreenScrollOwnership.willOpen(id)");
+    expect(freeze).toBeGreaterThan(0);
+    expect(screen.indexOf("dismissComposerKeyboardForOverlay();", freeze)).toBeGreaterThan(freeze);
     expect(fullscreenOverlay).toContain("binding.lifecycle?.willOpen?.(id)");
     expect(fullscreenOverlay).toContain("entry.lifecycle?.didOpen?.(entry.id)");
     expect(fullscreenOverlay).toContain("entry.lifecycle?.didClose?.(entry.id)");
@@ -55,6 +59,12 @@ describe("tool output presentation", () => {
     expect(nativeCodeView).toContain("NestedScrollView(context)");
     expect(nativeCodeView).toContain("isHorizontalScrollBarEnabled = true");
     expect(nativeCodeView).toContain("isVerticalScrollBarEnabled = true");
+    expect(screen).toContain("embeddedInParentScroll={false}");
+    expect(nativeCodeBlock).toContain("embeddedInParentScroll = true");
+    expect(nativeCodeBlock).toContain("embeddedInParentScroll={embeddedInParentScroll}");
+    expect(nativeCodeView).toContain(
+      "horizontalScroll.setOnTouchListener(if (value) embeddedHorizontalGestureListener else null)",
+    );
   });
 
   it("presents command output as a terminal both inline and in full content", () => {

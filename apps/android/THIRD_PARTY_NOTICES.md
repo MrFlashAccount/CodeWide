@@ -4,6 +4,36 @@ This file is combined with notices discovered from the exact WebView bundle
 inputs by `scripts/write-third-party-notices.mjs`. Bundle generation fails when
 a distributed package has no readable license file.
 
+## Ionicons native vector assets
+
+CodeWide's Compose icon catalog includes glyph outlines from the Ionicons font
+distributed by `@expo/vector-icons`, converted to Android vector drawables.
+The source font hash and conversion details are in `assets/compose-icons/NOTICE.md`.
+
+MIT License
+
+Copyright (c) 2015-present Ionic (http://ionic.io/)
+Copyright (c) 2015 Joel Arvidsson
+Copyright (c) 2020 650 Industries
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## TanStack Query structural sharing
 
 The chat model's `replaceEqualDeep` utility is adapted from TanStack Query's
@@ -62,13 +92,17 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-## Reacticx Apple Intelligence shader
+## Reacticx Apple Intelligence and Skia Ripple shaders
 
 The live voice aura shader in
 `android/app/src/main/java/dev/codewide/app/rendering/VoiceAuraRenderEffect.kt`
 is adapted from the Apple Intelligence component in
 [Reacticx](https://github.com/rit3zh/reacticx), commit
 `369f0ebfa55f7ec690307b1bbcd4c648c2777fc1`.
+
+The microphone ripple in the same native effect is adapted from
+`src/components/organisms/skia-ripple/conf.ts` and its component defaults,
+commit `40a91c79d6aa44e2defed9a6a2886b9e0ded5ecd` of Reacticx.
 
 MIT License
 

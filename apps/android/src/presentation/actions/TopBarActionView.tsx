@@ -1,9 +1,10 @@
 import { Pressable, type PressableStateCallbackType, StyleSheet } from "react-native";
 
-import { colors, radii, touchTarget } from "../../theme";
+import { colors, radii, touchTarget, iconSize, controlSize, controlHitSlop } from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 
 interface TopBarActionViewProps {
+  compact?: boolean;
   active?: boolean;
   disabled?: boolean;
   icon: PresentationIconName;
@@ -12,7 +13,7 @@ interface TopBarActionViewProps {
 }
 
 export function TopBarActionView(props: TopBarActionViewProps): React.JSX.Element {
-  const { active = false, disabled = false, icon, label, onPress } = props;
+  const { active = false, compact = false, disabled = false, icon, label, onPress } = props;
   return (
     <Pressable
       accessibilityLabel={label}
@@ -20,9 +21,14 @@ export function TopBarActionView(props: TopBarActionViewProps): React.JSX.Elemen
       accessibilityState={{ disabled, selected: active }}
       disabled={disabled}
       onPress={onPress}
-      style={actionStyle}
+      hitSlop={compact ? controlHitSlop.regular : 0}
+      style={compact ? compactActionStyle : actionStyle}
     >
-      <PresentationIcon color={active ? colors.primary : colors.text} name={icon} size={22} />
+      <PresentationIcon
+        color={active ? colors.primary : colors.text}
+        name={icon}
+        size={compact ? iconSize.action : iconSize.navigation}
+      />
     </Pressable>
   );
 }
@@ -32,7 +38,12 @@ function actionStyle(state: PressableStateCallbackType) {
   return [styles.action, pressed && styles.pressed];
 }
 
+function compactActionStyle(state: PressableStateCallbackType) {
+  return [actionStyle(state), styles.compact];
+}
+
 const styles = StyleSheet.create({
+  compact: { width: controlSize.regular, height: controlSize.regular },
   action: {
     alignItems: "center",
     borderRadius: radii.large,

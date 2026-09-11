@@ -3,9 +3,12 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { compactSource, sourceObjectDeclaration } from "./source-contract";
+
 const sourceRoot = fileURLToPath(new URL("../src", import.meta.url));
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const nativeFullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url), "utf8");
+const androidFullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.android.tsx", import.meta.url), "utf8");
 const webFullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.tsx", import.meta.url), "utf8");
 const fullscreenOverlay = readFileSync(new URL("../src/ui/AppFullscreenOverlay.tsx", import.meta.url), "utf8");
 const heroUIRoot = readFileSync(new URL("../src/ui/HeroUIRoot.native.tsx", import.meta.url), "utf8");
@@ -28,7 +31,7 @@ function productSources(directory: string): Array<{ path: string; source: string
 
 describe("fullscreen workspace presentation", () => {
   it("owns system safe areas in the single shared fullscreen shell", () => {
-    for (const source of [nativeFullscreenModal, webFullscreenModal]) {
+    for (const source of [nativeFullscreenModal, androidFullscreenModal, webFullscreenModal]) {
       expect(source).toContain('testID="fullscreen-modal-safe-area"');
       expect(source).toContain("edges={FULLSCREEN_SAFE_AREA_EDGES}");
       expect(source).toContain('const FULLSCREEN_SAFE_AREA_EDGES: readonly Edge[] = ["top", "right", "bottom", "left"]');
@@ -37,6 +40,34 @@ describe("fullscreen workspace presentation", () => {
     expect(fullscreenOverlay).toContain('import { AppFullscreenModal } from "./AppFullscreenModal";');
     expect(subagentSheet).not.toContain("AppFullscreenModal");
     expect(screen).not.toContain("AppFullscreenModal");
+  });
+
+  it("hosts unchanged React workspaces inside a full-size dark Compose dialog", () => {
+    expect(androidFullscreenModal).toContain("<BasicAlertDialog");
+    expect(androidFullscreenModal).toContain('<Host colorScheme="dark"');
+    expect(androidFullscreenModal).toContain("usePlatformDefaultWidth: false");
+    expect(androidFullscreenModal).toContain("decorFitsSystemWindows: false");
+    expect(androidFullscreenModal).toContain("<RNHostView matchContents={false}>");
+    expect(androidFullscreenModal).toContain("<SafeAreaProvider");
+    expect(androidFullscreenModal).toContain("<FullscreenWindowReadyProvider ready={windowReady}>");
+    expect(androidFullscreenModal).toContain("setNativeVoiceAuraTarget(reactTag)");
+    expect(androidFullscreenModal).toContain("props.onShow?.()");
+    expect(androidFullscreenModal).not.toContain("<Modal");
+    expect(screen).toContain("fullscreenScrollOwnership.willOpen(id)");
+    expect(screen).toContain("scrollsChildToFocus={false}");
+  });
+
+  it("keeps keyboard geometry live while fullscreen coverage suspends timeline actions", () => {
+    // Wiring contract: native keyboard handlers cannot run in Node. Freezing them
+    // drops the IME close event and leaves its inset behind after the overlay closes.
+    const timelineList = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
+    expect(screen).toContain('keyboardLiftBehavior="always"');
+    expect(screen).not.toContain("keyboardScrollFrozen");
+    expect(timelineList).not.toContain("freeze:");
+    expect(timelineList).not.toContain("freeze=");
+    expect(screen).toContain("if (fullscreenScrollOwnership.isCovered()) return;");
+    expect(screen).toContain("followTail={ !fullscreenCovered &&");
+    expect(screen).toContain("didClose: fullscreenScrollOwnership.didClose");
   });
 
   it("hardware-accelerates the Android fullscreen window used by WebView renderers", () => {
@@ -87,7 +118,7 @@ describe("fullscreen workspace presentation", () => {
       .filter(({ path, source }) => /<Modal\b/u.test(source) && !path.endsWith("AppFullscreenModal.tsx") && !path.endsWith("AppFullscreenModal.native.tsx"))
       .map(({ path }) => path.slice(sourceRoot.length + 1));
     const directFullscreenShellConsumers = productSources(sourceRoot)
-      .filter(({ path, source }) => source.includes("AppFullscreenModal") && !path.endsWith("AppFullscreenModal.tsx") && !path.endsWith("AppFullscreenModal.native.tsx") && !path.endsWith("AppFullscreenOverlay.tsx"))
+      .filter(({ path, source }) => source.includes("AppFullscreenModal") && !path.endsWith("AppFullscreenModal.tsx") && !path.endsWith("AppFullscreenModal.native.tsx") && !path.endsWith("AppFullscreenModal.android.tsx") && !path.endsWith("AppFullscreenOverlay.tsx"))
       .map(({ path }) => path.slice(sourceRoot.length + 1));
 
     expect(directNativeModalOwners).toEqual([]);
@@ -107,7 +138,15 @@ describe("fullscreen workspace presentation", () => {
     expect(strip.indexOf("<ThreadResourceContextChips")).toBeGreaterThanOrEqual(0);
     expect(strip.indexOf("<ComposerSubagentContextChip")).toBeGreaterThan(strip.indexOf("<ThreadResourceContextChips"));
     expect(screen).toContain("Subagents: ${visible.length}");
-    expect(screen).toContain('composerContextContent: { alignItems: "center", gap: 6, paddingHorizontal: spacing.sm, paddingTop: 2, paddingBottom: spacing.xxs }');
+    const contextContent = sourceObjectDeclaration(screen, "composerContextContent");
+    expect(contextContent).toContain('alignItems: "center"');
+    expect(contextContent).toContain("paddingHorizontal: conversationChromeEdgeInset");
+    expect(contextContent).toContain("paddingTop: COMPOSER_CHIP_TOP_INSET");
+    expect(contextContent).toContain("paddingBottom: 0");
+    expect(screen).toContain("const COMPOSER_CHIP_TOP_INSET = spacing.xxs;");
+    expect(screen).toContain("const COMPOSER_CHIP_BOTTOM_INSET = spacing.xxs;");
+    expect(screen).toContain("minHeight: touchTarget + COMPOSER_CHIP_BOTTOM_INSET + spacing.compact");
+    expect(screen).toContain("paddingTop: COMPOSER_CHIP_BOTTOM_INSET, paddingBottom: spacing.compact");
   });
 
   it("exposes live port forwarding as a direct composer chip", () => {
@@ -119,7 +158,7 @@ describe("fullscreen workspace presentation", () => {
     expect(screen).toContain("snapshot.profiles.length === 0");
     expect(screen).toContain('snapshot.profiles.some(({ status }) => status === "live") ? colors.green : colors.textMuted');
     expect(screen).toContain('page === "ports" ? (');
-    expect(screen).toContain('<PortForwardingManager {...portForwarding} />');
+    expect(screen).toContain("<PortForwardingManager {...portForwarding} renderScrollComponent={AppSheetScrollView} />");
     expect(screen).toContain('if (page === "ports") return "Ports";');
   });
 
@@ -171,8 +210,9 @@ describe("fullscreen workspace presentation", () => {
     expect(screen.match(/label="Chat list"/gu)).toHaveLength(2);
     expect(screen.split("fallback={<ThreadListSuspenseFallback />}")).toHaveLength(3);
     expect(screen.match(/label="Conversation"/gu)).toHaveLength(2);
-    expect(screen.split("fallback={<ConversationNavigationFallback")).toHaveLength(3);
-    expect(screen).toContain('scope="bubble" label="Conversation item"');
+    expect(screen.match(/fallback=\{ <ConversationNavigationFallback/gu)).toHaveLength(2);
+    expect(screen).toContain('scope="bubble"');
+    expect(screen).toContain('label="Conversation item"');
     expect(subagentSheet).toContain('label="Subagent conversation"');
     expect(subagentSheet).toContain("<SubagentConversationDetail");
     expect(fullscreenOverlay).toContain("fullscreen-overlay-suspense-fallback");
@@ -182,13 +222,18 @@ describe("fullscreen workspace presentation", () => {
 
   it("opens a concrete subagent from agent activity instead of expanding an empty card", () => {
     const start = screen.indexOf("function AgentActivityProtocolBlock");
-    const end = screen.indexOf("function DocumentAttachmentChip", start);
+    const end = screen.indexOf("function subagentActivityLabel", start);
     const renderer = screen.slice(start, end);
     expect(renderer).toContain("subagentActivityTargetThreadId");
     expect(renderer).toContain('testID="subagent-activity-link"');
     expect(renderer).toContain('name="chevron-forward"');
-    expect(renderer).toContain("containerStyle={styles.agentNavigationTitleWave}");
-    expect(screen).toContain('agentNavigationTitleWave: { alignSelf: "flex-start", justifyContent: "center" }');
+    expect(renderer).toContain("containerStyle={styles.cardTitleWave}");
+    expect(renderer).toContain("styles.cardHeaderToggle");
+    expect(renderer).toContain("style={styles.cardHeader}");
+    expect(renderer).toContain("style={styles.agentActivityMeta}");
+    expect(renderer).toContain("{activityLabel} </Text>");
+    expect(renderer).not.toContain("· Open subagent");
+    expect(renderer).not.toContain("agentNavigationSubtitle");
     expect(renderer).not.toContain("<Card");
     expect(screen).toContain('testID="subagent-activity-navigation"');
     expect(screen).toContain("if (agentNavigationOnly)");

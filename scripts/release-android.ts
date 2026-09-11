@@ -6,7 +6,13 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { get as httpGet } from "node:http";
 
-import { deriveUpdateEndpoint, readAndroidReleaseVersion, updateAndroidReleaseVersion, type AndroidReleaseVersion } from "./android-release-lib";
+import {
+  deriveUpdateEndpoint,
+  readAndroidReleaseVersion,
+  updateAndroidReleaseVersion,
+  type AndroidReleaseVersion,
+  type AndroidReleaseVersionBaseline,
+} from "./android-release-lib";
 
 type ReleaseMode = "ota" | "apk";
 type JsonObject = Record<string, unknown>;
@@ -103,7 +109,11 @@ async function releaseOta(endpoint: string, dryRun: boolean): Promise<void> {
 
 async function releaseApk(endpoint: string, dryRun: boolean, requestedVersion?: string): Promise<void> {
   const source = await readReleaseSourceFiles();
-  const updated = updateAndroidReleaseVersion(source, requestedVersion);
+  const publishedBaseline = dryRun ? undefined : await findLatestPublishedApkVersion(endpoint);
+  const updated = updateAndroidReleaseVersion(source, {
+    requestedVersion,
+    published: publishedBaseline,
+  });
   const signing = await resolveApkSigning();
   await validateApkSigning(signing);
   await runReleaseChecks();
@@ -263,14 +273,74 @@ async function pruneApkArchive(retain: number): Promise<void> {
 
 async function findPublishedArtifact(endpoint: string, sha256: string, expected: AndroidReleaseVersion): Promise<BuildShelfArtifact> {
   const publicOrigin = new URL(endpoint).origin;
-  const response = expectOk(await fetch(new URL("/api/builds", publicOrigin), { cache: "no-store" }), "public build catalog");
-  const catalog = await response.json() as { builds?: BuildShelfArtifact[] };
-  const artifact = catalog.builds?.find((build) => build.sha256 === sha256);
+  const catalog = await fetchBuildShelfCatalog(publicOrigin);
+  const artifact = catalog.find((build) => build.sha256 === sha256);
   if (artifact === undefined) throw new Error(`Public build catalog did not contain APK ${sha256.slice(0, 12)}`);
   if (artifact.versionName !== expected.versionName || artifact.versionCode !== expected.versionCode || !artifact.latest) {
     throw new Error(`Published APK is not latest ${expected.versionName}/${expected.versionCode}`);
   }
   return artifact;
+}
+
+async function findLatestPublishedApkVersion(endpoint: string): Promise<AndroidReleaseVersionBaseline | undefined> {
+  const catalog = await fetchBuildShelfCatalog(new URL(endpoint).origin);
+  const latest = catalog.filter((artifact) => artifact.latest);
+  if (latest.length > 1) throw new Error(`Public build catalog contains ${latest.length} latest APKs`);
+  const artifact = latest[0];
+  if (artifact === undefined) return undefined;
+  if (artifact.versionCode === null) throw new Error("Latest public APK has no version code");
+  if (!/^\d+\.\d+\.\d+$/u.test(artifact.versionName)) {
+    throw new Error(`Latest public APK has invalid release version ${artifact.versionName}`);
+  }
+  return { versionName: artifact.versionName, versionCode: artifact.versionCode };
+}
+
+async function fetchBuildShelfCatalog(publicOrigin: string): Promise<BuildShelfArtifact[]> {
+  const response = expectOk(
+    await fetch(new URL("/api/builds", publicOrigin), { cache: "no-store" }),
+    "public build catalog",
+  );
+  return parseBuildShelfCatalog(await response.json());
+}
+
+function parseBuildShelfCatalog(value: unknown): BuildShelfArtifact[] {
+  if (!isJsonObject(value) || !Array.isArray(value.builds)) {
+    throw new Error("Public build catalog has an invalid response shape");
+  }
+  return value.builds.map(parseBuildShelfArtifact);
+}
+
+function parseBuildShelfArtifact(value: unknown): BuildShelfArtifact {
+  if (
+    !isJsonObject(value)
+    || typeof value.id !== "string"
+    || typeof value.versionName !== "string"
+    || !(
+      value.versionCode === null
+      || (typeof value.versionCode === "number" && Number.isInteger(value.versionCode))
+    )
+    || typeof value.sha256 !== "string"
+    || !/^[a-f0-9]{64}$/u.test(value.sha256)
+    || typeof value.size !== "number"
+    || !Number.isInteger(value.size)
+    || typeof value.downloadUrl !== "string"
+    || typeof value.latest !== "boolean"
+  ) {
+    throw new Error("Public build catalog contains an invalid APK record");
+  }
+  return {
+    id: value.id,
+    versionName: value.versionName,
+    versionCode: value.versionCode,
+    sha256: value.sha256,
+    size: value.size,
+    downloadUrl: value.downloadUrl,
+    latest: value.latest,
+  };
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function resolveUpdateEndpoint(): Promise<string> {

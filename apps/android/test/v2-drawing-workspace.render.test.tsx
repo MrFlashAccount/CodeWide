@@ -5,6 +5,7 @@ import { StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { DrawingWorkspaceView } from "../src/v2/presentation/drawing/DrawingWorkspaceView";
+import { drawingWorkspaceStyles } from "../src/v2/presentation/drawing/drawingWorkspaceStyles";
 
 const SAFE_AREA_METRICS = {
   frame: { height: 800, width: 400, x: 0, y: 0 },
@@ -30,6 +31,17 @@ describe("V2 drawing workspace", () => {
     expect(StyleSheet.flatten(screen.getByTestId("v2-drawing-board").props.style)).not.toHaveProperty(
       "paddingBottom",
     );
+  });
+
+  it("uses an even 56 dp header and a compact attachment action", () => {
+    const header = StyleSheet.flatten(drawingWorkspaceStyles.header);
+    const action = StyleSheet.flatten(drawingWorkspaceStyles.saveButton);
+
+    expect(header).toMatchObject({ minHeight: 56 });
+    expect(header).not.toHaveProperty("paddingBottom");
+    expect(header).not.toHaveProperty("paddingTop");
+    expect(action).toMatchObject({ borderRadius: 10, height: 32, paddingHorizontal: 12 });
+    expect(action).not.toHaveProperty("minWidth");
   });
 
   it("leaves pending state after a rejected commit without closing", async () => {

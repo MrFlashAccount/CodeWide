@@ -5,16 +5,17 @@ import {
   type BottomSheetProps,
 } from "@expo/ui/community/bottom-sheet";
 import { PortalHost } from "heroui-native/portal";
-import { useId, type ReactNode } from "react";
+import { useId, type ComponentPropsWithRef, type ReactNode } from "react";
 import {
+  Pressable,
   StyleSheet,
   View,
-  type ScrollViewProps,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
 
-import { colors, radii, spacing } from "../theme";
+import { colors, radii, spacing, layoutSize } from "../theme";
+import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetPerformanceSurface";
 import { OverlaySurfaceProvider } from "./OverlaySurfaceContext";
 import { RecoverableRenderBoundary } from "./RecoverableRenderBoundary";
 
@@ -26,10 +27,13 @@ type AppSheetContentProps = Omit<
   "children" | "index" | "onChange" | "onClose" | "onDismiss" | "ref"
 > & {
   index?: number;
+  performanceSurface?: SheetPerformanceSurface;
   /** Compatibility-only HeroUI props. Geometry now belongs to native Material 3. */
   className?: string;
   backgroundClassName?: string;
   contentContainerClassName?: string;
+  /** Accessible name of the dismissible drag handle. */
+  dismissLabel?: string;
   detached?: boolean;
   topInset?: number;
   bottomInset?: number;
@@ -70,9 +74,16 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
               contentProps.style,
             ]}
           >
-            <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.handleArea}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={contentProps.dismissLabel ?? "Dismiss sheet"}
+              disabled={contentProps.enablePanDownToClose === false}
+              onPress={() => onOpenChange(false)}
+              onAccessibilityEscape={contentProps.enablePanDownToClose === false ? undefined : () => onOpenChange(false)}
+              style={styles.handleArea}
+            >
               <View style={styles.handle} />
-            </View>
+            </Pressable>
             <OverlaySurfaceProvider surface="native-sheet" portalHostName={portalHostName}>
               <RecoverableRenderBoundary
                 scope="dialog"
@@ -90,8 +101,9 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
   );
 }
 
-export function AppSheetScrollView({ nestedScrollEnabled = true, ...props }: ScrollViewProps) {
-  return <BottomSheetScrollView nestedScrollEnabled={nestedScrollEnabled} {...props} />;
+/** Also serves as LegendList's scroll host, preserving its ref, events and sheet gesture handoff. */
+export function AppSheetScrollView(props: ComponentPropsWithRef<typeof BottomSheetScrollView>) {
+  return <BottomSheetScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />;
 }
 
 const styles = StyleSheet.create({
@@ -112,7 +124,6 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignSelf: "center",
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
   },
   expandedInset: {
     flex: 1,
@@ -130,14 +141,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceContainerHigh,
   },
   detachedSurface: {
-    borderRadius: 32,
+    borderRadius: radii.large,
   },
   expandedSurface: {
     flex: 1,
     minHeight: 0,
+    paddingBottom: 0,
   },
   handleArea: {
-    height: 24,
+    height: layoutSize.metadataRow,
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
@@ -145,7 +157,7 @@ const styles = StyleSheet.create({
   handle: {
     width: 36,
     height: 4,
-    borderRadius: 2,
+    borderRadius: radii.compact,
     backgroundColor: colors.textDim,
   },
 });

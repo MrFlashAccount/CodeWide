@@ -3,6 +3,23 @@ import type { RemoteFileAttachment } from "@codewide/sync-client";
 
 import type { QuickdrawDraftState, StoredDraftAttachment } from "./thread-ui-state-types";
 
+export interface ImageDraftTarget {
+  readonly scope: string;
+  readonly attachmentId: string;
+}
+
+/** A stale preview must never turn a replacement into an attachment in another draft. */
+export function imageAnnotationAttachment(
+  target: ImageDraftTarget,
+  scope: string,
+  attachments: readonly StoredDraftAttachment[],
+): StoredDraftAttachment {
+  if (target.scope !== scope) throw new Error("The image belongs to a different draft");
+  const attachment = attachments.find((item) => item.id === target.attachmentId);
+  if (attachment === undefined) throw new Error("The image is no longer attached to this draft");
+  return attachment;
+}
+
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 
 export function quickdrawPngBytes(dataUrl: string): Uint8Array {

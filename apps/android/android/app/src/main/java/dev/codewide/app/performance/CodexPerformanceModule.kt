@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.provider.MediaStore
 import android.view.FrameMetrics
 import android.view.Window
+import com.facebook.drawee.backends.pipeline.Fresco
 import com.facebook.hermes.instrumentation.HermesSamplingProfiler
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.LifecycleEventListener
@@ -23,7 +24,9 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.facebook.react.modules.fresco.FrescoModule
 import com.facebook.soloader.SoLoader
+import dev.codewide.app.rendering.NativeCodeHighlighter
 import java.util.ArrayDeque
 import java.io.File
 import java.util.concurrent.Executors
@@ -96,6 +99,10 @@ class CodexPerformanceModule(
   private val frameHandler = Handler(frameThread.looper)
   private val mainHandler = Handler(Looper.getMainLooper())
   private val frameAccumulator = FrameWindowAccumulator()
+  private val windowReports = WindowFrameReports()
+  private val windowJournal = WindowFrameJournal(context.filesDir, windowReports)
+  private val windowMonitor = WindowFrameMonitor(mainHandler, frameHandler, windowReports)
+  @Volatile private var foreground = false
   private val navigationTraceLock = Any()
   private val history = ArrayDeque<PerformanceSample>(HISTORY_CAPACITY)
   private val historyLock = Any()
@@ -123,7 +130,7 @@ class CodexPerformanceModule(
   private val frameListener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
     val totalDuration = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
     val deadline = metrics.getMetric(FrameMetrics.DEADLINE)
-    frameAccumulator.record(totalDuration, deadline, displayIntervalNanos)
+    if (enabled) frameAccumulator.record(totalDuration, deadline, displayIntervalNanos)
     synchronized(navigationTraceLock) {
       activeNavigationTrace?.frames?.record(totalDuration, deadline, displayIntervalNanos)
     }
@@ -131,14 +138,128 @@ class CodexPerformanceModule(
 
   init {
     context.addLifecycleEventListener(this)
+    collectorExecutor.execute { windowJournal.restore() }
+    collectorExecutor.scheduleWithFixedDelay({ windowJournal.persist() }, 5, 5, TimeUnit.SECONDS)
     if (enabled) startCollector()
   }
 
   override fun getName(): String = "CodexPerformanceNative"
 
   @ReactMethod
+  fun drainFrameIncidents(promise: Promise) {
+    val (windows, droppedWindows) = windowReports.drain()
+    promise.resolve(Arguments.createMap().apply {
+      putInt("droppedWindows", droppedWindows)
+      putArray("windows", Arguments.createArray().apply {
+        windows.forEach { report ->
+          pushMap(Arguments.createMap().apply {
+            putString("surface", report.surface)
+            putString("activity", report.activity)
+            putInt("appBuild", report.appBuild)
+            report.values.forEach { (key, value) -> putDouble(key, value) }
+          })
+        }
+      })
+    })
+  }
+
+  @ReactMethod
+  fun getWindowFrameReport(promise: Promise) {
+    mainHandler.post {
+      windowMonitor.flush()
+      frameHandler.post {
+        collectorExecutor.execute { promise.resolve(windowJournal.export()) }
+      }
+    }
+  }
+
+  @ReactMethod
   fun getPerformanceSnapshot(promise: Promise) {
     promise.resolve(snapshotMap())
+  }
+
+  @ReactMethod
+  fun captureMemoryReport(promise: Promise) {
+    heapSnapshotExecutor.execute {
+      try {
+        promise.resolve(MemoryInvestigationReport(context).capture())
+      } catch (cause: Throwable) {
+        promise.reject("MEMORY_REPORT_FAILED", "Could not capture memory report", cause)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun captureMemoryCheckpoint(promise: Promise) {
+    heapSnapshotExecutor.execute {
+      try {
+        promise.resolve(LightweightMemoryCheckpoint.capture())
+      } catch (cause: Throwable) {
+        promise.reject("MEMORY_CHECKPOINT_FAILED", "Could not capture memory checkpoint", cause)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun clearNativeCodeMemoryCache(promise: Promise) {
+    runMemoryAction(promise) {
+      NativeCodeHighlighter.trimMemory()
+      true
+    }
+  }
+
+  @ReactMethod
+  fun clearImageMemoryCache(promise: Promise) {
+    runMemoryAction(promise) {
+      if (!FrescoModule.hasBeenInitialized()) return@runMemoryAction false
+      Fresco.getImagePipeline().clearMemoryCaches()
+      true
+    }
+  }
+
+  @ReactMethod
+  fun collectJavaGarbage(promise: Promise) {
+    runMemoryAction(promise) {
+      Runtime.getRuntime().gc()
+      System.runFinalization()
+      true
+    }
+  }
+
+  @ReactMethod
+  fun collectHermesGarbage(promise: Promise) {
+    val holder = context.javaScriptContextHolder
+    if (holder == null) {
+      promise.resolve(memoryActionMap(performed = false, durationMs = 0.0))
+      return
+    }
+    val startedAtNanos = SystemClock.elapsedRealtimeNanos()
+    try {
+      ensurePerformanceNativeLoaded()
+      val scheduled = context.runOnJSQueueThread {
+        try {
+          synchronized(holder) {
+            val runtimePointer = holder.get()
+            check(runtimePointer != 0L) { "Hermes runtime is unavailable" }
+            nativeCollectHermesGarbage(runtimePointer)
+          }
+          promise.resolve(memoryActionMap(performed = true, durationMs = elapsedMs(startedAtNanos)))
+        } catch (cause: Throwable) {
+          promise.reject("HERMES_GC_FAILED", "Could not collect Hermes garbage", cause)
+        }
+      }
+      if (!scheduled) throw IllegalStateException("Hermes runtime queue is unavailable")
+    } catch (cause: Throwable) {
+      promise.reject("HERMES_GC_FAILED", "Could not collect Hermes garbage", cause)
+    }
+  }
+
+  @ReactMethod
+  fun purgeNativeAllocator(exhaustive: Boolean, promise: Promise) {
+    runMemoryAction(promise) {
+      ensurePerformanceNativeLoaded()
+      nativePurgeAllocator(exhaustive)
+    }
   }
 
   @ReactMethod
@@ -202,7 +323,7 @@ class CodexPerformanceModule(
     val captureDirectory = File(context.cacheDir, "heap-snapshots").apply { mkdirs() }
     val rawSnapshot = File(captureDirectory, "codewide-hermes-$collectedAt.heapsnapshot")
     try {
-      ensureHeapSnapshotNativeLoaded()
+      ensurePerformanceNativeLoaded()
       val scheduled = context.runOnJSQueueThread {
         try {
           synchronized(holder) {
@@ -247,21 +368,33 @@ class CodexPerformanceModule(
   }
 
   override fun onHostResume() {
-    if (enabled) attachWindow(context.currentActivity)
+    foreground = true
+    attachWindow(context.currentActivity)
+    // The same executor restores the journal first; new reports cannot displace restored history out of order.
+    collectorExecutor.execute {
+      mainHandler.post { if (foreground) windowMonitor.start(context.currentActivity?.window) }
+    }
   }
 
   override fun onHostPause() {
+    foreground = false
+    mainHandler.post {
+      windowMonitor.stop()
+      frameHandler.post { runCatching { collectorExecutor.execute { windowJournal.persist() } } }
+    }
     detachWindow()
   }
 
   override fun onHostDestroy() {
-    detachWindow()
+    onHostPause()
   }
 
   override fun invalidate() {
+    foreground = false
     context.removeLifecycleEventListener(this)
     stopCollector(clearLatest = false)
     mainHandler.post {
+      windowMonitor.stop()
       detachWindow()
       frameThread.quitSafely()
     }
@@ -271,11 +404,30 @@ class CodexPerformanceModule(
   }
 
   @Synchronized
-  private fun ensureHeapSnapshotNativeLoaded() {
+  private fun ensurePerformanceNativeLoaded() {
     if (heapSnapshotNativeLoaded) return
     SoLoader.loadLibrary("codewide_performance")
     heapSnapshotNativeLoaded = true
   }
+
+  private fun runMemoryAction(promise: Promise, action: () -> Boolean) {
+    heapSnapshotExecutor.execute {
+      val startedAtNanos = SystemClock.elapsedRealtimeNanos()
+      try {
+        promise.resolve(memoryActionMap(performed = action(), durationMs = elapsedMs(startedAtNanos)))
+      } catch (cause: Throwable) {
+        promise.reject("MEMORY_RECLAMATION_FAILED", "Memory reclamation action failed", cause)
+      }
+    }
+  }
+
+  private fun memoryActionMap(performed: Boolean, durationMs: Double): WritableMap = Arguments.createMap().apply {
+    putBoolean("performed", performed)
+    putDouble("durationMs", durationMs)
+  }
+
+  private fun elapsedMs(startedAtNanos: Long): Double =
+    (SystemClock.elapsedRealtimeNanos() - startedAtNanos) / 1_000_000.0
 
   private fun publishHeapSnapshot(rawSnapshot: File, collectedAt: Long): WritableMap {
     check(rawSnapshot.isFile && rawSnapshot.length() > 0L) { "Hermes produced an empty heap snapshot" }
@@ -319,6 +471,10 @@ class CodexPerformanceModule(
     collectGarbageFirst: Boolean,
   )
 
+  private external fun nativeCollectHermesGarbage(runtimePointer: Long)
+
+  private external fun nativePurgeAllocator(exhaustive: Boolean): Boolean
+
   @Synchronized
   private fun startCollector() {
     if (sampler?.isCancelled == false && sampler?.isDone == false) return
@@ -356,7 +512,7 @@ class CodexPerformanceModule(
       activeNavigationTrace?.takeIf { it.hermesSamplingEnabled }?.let { stopHermesSampling(null) }
       activeNavigationTrace = null
     }
-    mainHandler.post { detachWindow() }
+    // Low-volume frame incidents remain active when the optional HUD is off.
     if (clearLatest) latest = null
   }
 

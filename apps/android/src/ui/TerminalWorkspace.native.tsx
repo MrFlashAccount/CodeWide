@@ -18,7 +18,7 @@ import {
   subscribeNativeTerminal,
   writeNativeTerminal,
 } from "../native/native-transport";
-import { colors, spacing, touchTarget, typeScale } from "../theme";
+import { colors, spacing, touchTarget, typeScale, iconSize, radii, layoutSize, controlSize } from "../theme";
 import { useFullscreenWindowReady } from "./FullscreenWindowReady";
 import { AppText as Text } from "./Typography";
 
@@ -63,7 +63,7 @@ export function TerminalWorkspace({
                 onPress={() => closeInteractiveTerminalTab(connectionId, threadId, tab.id)}
                 style={({ pressed }) => [styles.tabClose, pressed && styles.pressed]}
               >
-                <Ionicons name="close" size={16} color={colors.textMuted} />
+                <Ionicons name="close" size={iconSize.inline} color={colors.textMuted} />
               </Pressable>
             </View>
           ))}
@@ -76,7 +76,7 @@ export function TerminalWorkspace({
           onPress={createTab}
           style={({ pressed }) => [styles.newTab, pressed && styles.pressed, workspace.tabs.length >= MAX_TABS && styles.disabled]}
         >
-          <Ionicons name="add" size={21} color={colors.text} />
+          <Ionicons name="add" size={iconSize.action} color={colors.text} />
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -84,16 +84,16 @@ export function TerminalWorkspace({
           onPress={onMinimize}
           style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
         >
-          <Ionicons name="chevron-down" size={24} color={colors.text} />
+          <Ionicons name="chevron-down" size={iconSize.navigation} color={colors.text} />
         </Pressable>
       </View>
 
       {active === null ? (
         <View style={styles.empty}>
-          <Ionicons name="terminal-outline" size={30} color={colors.textMuted} />
+          <Ionicons name="terminal-outline" size={iconSize.illustration} color={colors.textMuted} />
           <Text style={styles.emptyTitle}>No terminal tabs</Text>
           <Pressable accessibilityRole="button" onPress={createTab} style={({ pressed }) => [styles.createButton, pressed && styles.pressed]}>
-            <Ionicons name="add" size={18} color={colors.onPrimary} />
+            <Ionicons name="add" size={iconSize.action} color={colors.onPrimary} />
             <Text style={styles.createButtonText}>New terminal</Text>
           </Pressable>
         </View>
@@ -189,7 +189,7 @@ function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
     <View style={styles.terminalPane}>
       {error !== null && (
         <View style={styles.errorBanner}>
-          <Ionicons name="alert-circle-outline" size={17} color={colors.red} />
+          <Ionicons name="alert-circle-outline" size={iconSize.inline} color={colors.red} />
           <Text selectable style={styles.errorText}>{error}</Text>
         </View>
       )}
@@ -228,18 +228,18 @@ function message(cause: unknown, fallback: string): string {
 
 const styles = StyleSheet.create({
   root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
-  header: { minHeight: 48, flexDirection: "row", alignItems: "center", paddingLeft: spacing.xs, paddingRight: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft, backgroundColor: colors.surface },
-  headerButton: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", borderRadius: touchTarget / 2 },
+  header: { minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", paddingLeft: spacing.xs, paddingRight: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft, backgroundColor: colors.surface },
+  headerButton: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center", borderRadius: radii.pill },
   tabScroll: { flex: 1, minWidth: 0 },
   tabList: { alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs },
-  tab: { height: 34, maxWidth: 190, flexDirection: "row", alignItems: "center", borderRadius: 10, backgroundColor: colors.surfaceHover },
+  tab: { minHeight: controlSize.compact, maxWidth: "100%", flexDirection: "row", alignItems: "center", borderRadius: radii.small, backgroundColor: colors.surfaceHover },
   activeTab: { backgroundColor: colors.surfaceRaised },
-  tabSelect: { minWidth: 80, flex: 1, height: "100%", flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.sm },
-  tabText: { flexShrink: 1, color: colors.textMuted, ...typeScale.labelMedium },
+  tabSelect: { minWidth: controlSize.regular, flex: 1, alignSelf: "stretch", flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingLeft: spacing.sm },
+  tabText: { flexShrink: 1, color: colors.textMuted, ...typeScale.label },
   activeTabText: { color: colors.text },
-  tabClose: { width: 32, height: 32, alignItems: "center", justifyContent: "center", borderRadius: 8 },
-  newTab: { width: 38, height: 38, marginRight: spacing.xs, alignItems: "center", justifyContent: "center", borderRadius: 10 },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
+  tabClose: { width: controlSize.compact, height: controlSize.compact, alignItems: "center", justifyContent: "center", borderRadius: radii.small },
+  newTab: { width: controlSize.regular, height: controlSize.regular, marginRight: spacing.xs, alignItems: "center", justifyContent: "center", borderRadius: radii.small },
+  statusDot: { width: 7, height: 7, borderRadius: radii.pill },
   statusLive: { backgroundColor: colors.green },
   statusError: { backgroundColor: colors.red },
   statusIdle: { backgroundColor: colors.textDim },
@@ -247,11 +247,11 @@ const styles = StyleSheet.create({
   terminal: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
   connecting: { position: "absolute", top: spacing.md, right: spacing.md },
   errorBanner: { flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, backgroundColor: colors.errorContainer },
-  errorText: { flex: 1, color: colors.red, ...typeScale.labelMedium },
+  errorText: { flex: 1, color: colors.red, ...typeScale.label },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg },
-  emptyTitle: { color: colors.textMuted, ...typeScale.bodyLarge },
-  createButton: { minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, borderRadius: 14, backgroundColor: colors.accent },
-  createButtonText: { color: colors.onPrimary, ...typeScale.labelLarge },
+  emptyTitle: { color: colors.textMuted, ...typeScale.body },
+  createButton: { minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, borderRadius: radii.medium, backgroundColor: colors.accent },
+  createButtonText: { color: colors.onPrimary, ...typeScale.body },
   pressed: { opacity: 0.72 },
   disabled: { opacity: 0.4 },
 });

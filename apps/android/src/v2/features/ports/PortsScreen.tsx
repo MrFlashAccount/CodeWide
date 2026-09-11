@@ -75,30 +75,29 @@ export function PortsScreen(props: PortsScreenProps): React.JSX.Element {
   const serverName =
     servers.value.find((server) => server.id === savedServerId)?.displayName ?? "Server";
   const needle = query.trim().toLocaleLowerCase();
+  const currentProfiles = snapshot.value.profiles.filter(
+    (profile) => profileCandidate(profile, snapshot.value.ports) !== undefined,
+  );
   const configuredKeys = new Set(
-    snapshot.value.profiles.flatMap((profile) =>
+    currentProfiles.flatMap((profile) =>
       profile.forwardingKey === null ? [] : [profile.forwardingKey],
     ),
   );
-  const configuredPorts = new Set(snapshot.value.profiles.map((profile) => profile.port));
+  const configuredPorts = new Set(currentProfiles.map((profile) => profile.port));
   const available = snapshot.value.ports.filter(
-    (port) => !configuredKeys.has(port.forwardingKey) && !configuredPorts.has(port.port),
+    (port) =>
+      !port.defaultForwardingEnabled &&
+      !configuredKeys.has(port.forwardingKey) &&
+      !configuredPorts.has(port.port),
   );
-  const activeProfiles = snapshot.value.profiles.filter(
-    (profile) => profile.preference !== "excluded",
-  );
-  const excludedProfiles = snapshot.value.profiles.filter(
-    (profile) => profile.preference === "excluded",
-  );
+  const activeProfiles = currentProfiles.filter((profile) => profile.preference !== "excluded");
+  const excludedProfiles = currentProfiles.filter((profile) => profile.preference === "excluded");
   const filteredPorts = available.filter((port) => matches(port, needle));
   const filteredProfiles = (
     segment === "active" ? activeProfiles : segment === "excluded" ? excludedProfiles : []
   ).filter((profile) =>
     profileMatches(profile, profileCandidate(profile, snapshot.value.ports), needle),
   );
-  const refresh = useEvent(() => {
-    void resource.refresh().catch(() => undefined);
-  });
   const clear = useEvent(() => setQuery(""));
   const showActive = useEvent(() => setSegment("active"));
   const showAvailable = useEvent(() => setSegment("available"));
@@ -107,7 +106,6 @@ export function PortsScreen(props: PortsScreenProps): React.JSX.Element {
   const changeOpen = useEvent((open: boolean) => {
     if (!open) close();
   });
-
   return (
     <PresentationSheetView contentProps={PORTS_SHEET_PROPS} isOpen onOpenChange={changeOpen}>
       <View testID="v2-port-forwarding-manager" style={styles.root}>
@@ -122,18 +120,6 @@ export function PortsScreen(props: PortsScreenProps): React.JSX.Element {
               {serverName}
             </Text>
           </View>
-          <Pressable
-            accessibilityLabel="Refresh open ports"
-            accessibilityRole="button"
-            disabled={snapshot.value.discoveryStatus === "loading"}
-            onPress={refresh}
-            style={styles.iconButton}
-          >
-            <Ionicons color={colors.textMuted} name="refresh" size={19} />
-          </Pressable>
-          <Pressable accessibilityLabel="Close ports" onPress={close} style={styles.iconButton}>
-            <Ionicons color={colors.text} name="close" size={21} />
-          </Pressable>
         </View>
         <View style={styles.filters}>
           <View accessibilityRole="tablist" style={styles.segments}>
@@ -195,7 +181,7 @@ export function PortsScreen(props: PortsScreenProps): React.JSX.Element {
             />
           ) : snapshot.value.discoveryStatus === "error" && snapshot.value.ports.length === 0 ? (
             <InfoRow
-              subtitle={snapshot.value.discoveryError ?? "Tap refresh to try again"}
+              subtitle={snapshot.value.discoveryError ?? "Pull down to try again"}
               title="Could not scan ports"
             />
           ) : segment === "active" && filteredProfiles.length === 0 ? (
@@ -271,6 +257,8 @@ export function PortsScreen(props: PortsScreenProps): React.JSX.Element {
 }
 
 const PORTS_SHEET_PROPS: PresentationSheetContentProps = {
+  dismissLabel: "Close ports",
+  performanceSurface: "ports",
   contentContainerClassName: "h-full",
   enableDynamicSizing: false,
   enableOverDrag: false,
@@ -394,7 +382,7 @@ function ProfileRow(props: ProfileRowProps): React.JSX.Element {
     });
   });
   return (
-    <View style={styles.serviceRow}>
+    <View style={[styles.serviceRow, profile.error !== null && styles.serviceRowWithError]}>
       <Pressable
         accessibilityLabel={`${profile.label}, ${profile.status}`}
         onPress={open}
@@ -413,7 +401,7 @@ function ProfileRow(props: ProfileRowProps): React.JSX.Element {
               {pending ? "Updating" : profile.status}
             </Text>
           </View>
-          <Text style={styles.rowSubtitle}>
+          <Text numberOfLines={1} style={styles.rowSubtitle}>
             :{profile.port} → phone :{profile.localPort ?? "auto"}
           </Text>
           {profile.error === null ? null : (
@@ -458,8 +446,12 @@ function ManualPortRow(props: ManualPortRowProps): React.JSX.Element {
         <Ionicons color={colors.textMuted} name="keypad-outline" size={19} />
       </View>
       <View style={styles.rowText}>
-        <Text style={styles.rowTitle}>Port not listed</Text>
-        <Text style={styles.rowSubtitle}>Enter a localhost port manually</Text>
+        <Text numberOfLines={1} style={styles.rowTitle}>
+          Port not listed
+        </Text>
+        <Text numberOfLines={1} style={styles.rowSubtitle}>
+          Enter a localhost port manually
+        </Text>
       </View>
       <Ionicons color={colors.textDim} name="chevron-forward" size={17} />
     </Pressable>
@@ -479,8 +471,12 @@ function BoundedPreviewRow(props: ManualPortRowProps): React.JSX.Element {
         <Ionicons color={colors.textMuted} name="globe-outline" size={19} />
       </View>
       <View style={styles.rowText}>
-        <Text style={styles.rowTitle}>Bounded localhost preview</Text>
-        <Text style={styles.rowSubtitle}>Temporary browser tunnel through secure transport</Text>
+        <Text numberOfLines={1} style={styles.rowTitle}>
+          Bounded localhost preview
+        </Text>
+        <Text numberOfLines={1} style={styles.rowSubtitle}>
+          Temporary browser tunnel through secure transport
+        </Text>
       </View>
       <Ionicons color={colors.textDim} name="chevron-forward" size={17} />
     </Pressable>
@@ -490,7 +486,7 @@ function BoundedPreviewRow(props: ManualPortRowProps): React.JSX.Element {
 function InfoRow(props: InfoRowProps): React.JSX.Element {
   const { loading = false, subtitle, title } = props;
   return (
-    <View style={styles.serviceRow}>
+    <View style={[styles.serviceRow, styles.infoRow]}>
       {loading ? null : (
         <View style={styles.serviceIcon}>
           <Ionicons color={colors.textMuted} name="information-circle-outline" size={19} />
@@ -545,7 +541,7 @@ function profileMatches(
   if (needle === "") return true;
   return [
     profile.label,
-    candidate?.group ?? "Saved ports",
+    candidate?.group ?? "",
     candidate?.kind ?? "process",
     String(profile.port),
   ].some((value) => value.toLocaleLowerCase().includes(needle));
@@ -556,7 +552,9 @@ function profileCandidate(
   ports: V2PortDescriptor[],
 ): V2PortDescriptor | undefined {
   return ports.find(
-    (port) => port.forwardingKey === profile.forwardingKey || port.port === profile.port,
+    (port) =>
+      port.forwardingKey === profile.forwardingKey ||
+      (profile.forwardingKey === null && port.port === profile.port),
   );
 }
 
@@ -585,12 +583,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
-  filters: { gap: spacing.xs, paddingBottom: spacing.xs, paddingHorizontal: spacing.sm },
+  filters: { gap: spacing.xs, paddingBottom: spacing.xs },
   header: {
     alignItems: "center",
     flexDirection: "row",
     minHeight: 52,
-    paddingHorizontal: spacing.xs,
   },
   iconButton: {
     alignItems: "center",
@@ -612,7 +609,7 @@ const styles = StyleSheet.create({
     width: 9,
   },
   profileError: { color: colors.red, ...typeScale.caption },
-  root: { alignSelf: "center", flex: 1, maxWidth: 560, minHeight: 0, width: "100%" },
+  root: { flex: 1, minHeight: 0, width: "100%" },
   rowSubtitle: {
     color: colors.textMuted,
     ...typeScale.label,
@@ -628,7 +625,7 @@ const styles = StyleSheet.create({
   rowTitleLine: { alignItems: "center", flexDirection: "row", gap: spacing.xxs },
   rowText: { flex: 1, minWidth: 0 },
   rowShimmer: { alignSelf: "flex-start" },
-  rowTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
+  rowTitle: { color: colors.text, flexShrink: 1, ...typeScale.body, fontWeight: typeWeight.medium },
   searchField: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainerLow,
@@ -647,7 +644,6 @@ const styles = StyleSheet.create({
 
     marginBottom: spacing.xxs,
     marginTop: spacing.sm,
-    paddingHorizontal: spacing.sm,
   },
   segment: {
     alignItems: "center",
@@ -680,11 +676,12 @@ const styles = StyleSheet.create({
     borderRadius: radii.selected,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 62,
-    paddingHorizontal: spacing.sm,
+    height: 72,
     width: "100%",
   },
   subtitle: { color: colors.textMuted, ...typeScale.caption },
+  serviceRowWithError: { height: 112 },
+  infoRow: { height: "auto", minHeight: 72 },
   status: { color: colors.textDim, ...typeScale.caption, textTransform: "capitalize" },
   statusLive: { color: colors.green },
   title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },

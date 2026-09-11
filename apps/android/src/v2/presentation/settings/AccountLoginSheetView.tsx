@@ -24,7 +24,12 @@ export function AccountLoginSheetView(props: AccountLoginSheetViewProps): React.
   });
   return (
     <PresentationSheetView
-      contentProps={{ enableDynamicSizing: true, enableOverDrag: false, index: 0 }}
+      contentProps={{
+        dismissLabel: "Close Codex account sign-in",
+        enableDynamicSizing: true,
+        enableOverDrag: false,
+        index: 0,
+      }}
       isOpen
       onOpenChange={changeOpen}
     >
@@ -41,14 +46,6 @@ export function AccountLoginSheetView(props: AccountLoginSheetViewProps): React.
               Sign in to add this account as an automatic fallback.
             </ProductText>
           </View>
-          <Pressable
-            accessibilityLabel="Close Codex account sign-in"
-            disabled={pending}
-            onPress={onClose}
-            style={styles.iconButton}
-          >
-            <PresentationIcon color={colors.text} name="close" size={21} />
-          </Pressable>
         </View>
         <View style={styles.codeCard}>
           <View style={styles.copy}>

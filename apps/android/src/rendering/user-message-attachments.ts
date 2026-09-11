@@ -1,4 +1,5 @@
 import type { RemoteFileAttachment } from "@codewide/sync-client";
+import { fileMediaKind } from "@codewide/file-types";
 
 import { privateImageAssetProjection, safeImageUri, userImageSourceProjection, type PrivateImageAssetProjection } from "./image-source";
 import { normalizeUserMessage } from "./user-message-normalizer";
@@ -57,7 +58,7 @@ export function projectUserMessageAttachments(
     }
     if (part.type === "mention" && typeof part.path === "string" && part.path.length > 0) {
       push({
-        kind: "file",
+        kind: fileMediaKind(part.path) ?? "file",
         name: typeof part.name === "string" && part.name.length > 0 ? part.name : basename(part.path),
         source: { type: "path", path: part.path },
       });
@@ -65,7 +66,7 @@ export function projectUserMessageAttachments(
     }
     if (part.type === "text" && typeof part.text === "string") {
       for (const file of normalizeUserMessage(part.text).files) {
-        push({ kind: "file", name: file.name, source: { type: "path", path: file.path } });
+        push({ kind: fileMediaKind(file.name) ?? "file", name: file.name, source: { type: "path", path: file.path } });
       }
     }
   }
@@ -110,7 +111,7 @@ function parseProjectedSource(value: unknown): UserMessageAttachmentSource | nul
   return null;
 }
 
-function attachmentSourceKey(source: UserMessageAttachmentSource): string {
+export function attachmentSourceKey(source: UserMessageAttachmentSource): string {
   if (source.type === "path") return `path:${source.path}`;
   if (source.type === "content") return `content:${source.asset.id}`;
   if (source.type === "url") return `url:${source.url}`;

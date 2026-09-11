@@ -10,7 +10,17 @@ import {
   View,
 } from "react-native";
 
-import { colors, radii, spacing } from "../../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  iconSize,
+  typeScale,
+  typeTracking,
+  controlSize,
+  controlHitSlop,
+  layoutSize,
+} from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import {
@@ -19,6 +29,7 @@ import {
   ProductText,
 } from "../text/ProductText";
 import { useEvent } from "../../react/useEvent";
+import { searchFieldLayout } from "../input/searchLayout";
 
 type ThreadListFilter = "all" | "approval" | "pinned" | "running" | "unread";
 
@@ -126,10 +137,11 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
   return (
     <View style={styles.root}>
       <View style={styles.searchRow}>
-        <View style={styles.searchBox}>
-          <PresentationIcon color={colors.textMuted} name="search" size={18} />
+        <View testID="thread-search-field" style={styles.searchBox}>
+          <PresentationIcon color={colors.textMuted} name="search" size={iconSize.action} />
           <View style={styles.searchInputSlot}>
             <TextInput
+              compact
               accessibilityLabel="Search threads"
               onChangeText={changeQuery}
               placeholder="Search threads"
@@ -153,6 +165,7 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
                 accessibilityState={{ busy: voicePending, disabled: voice.disabled }}
                 disabled={voice.disabled}
                 onPress={activateVoice}
+                hitSlop={controlHitSlop.compact}
                 style={[styles.voiceButton, voice.disabled && styles.disabled]}
               >
                 {voicePending || voice.state === "starting" || voice.state === "finishing" ? (
@@ -167,7 +180,7 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
                           ? "stop"
                           : "mic"
                     }
-                    size={19}
+                    size={iconSize.action}
                   />
                 )}
               </Pressable>
@@ -188,7 +201,10 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
             accessibilityState={{ selected: filter !== "all" }}
             style={filterButtonStyle}
           >
-            <PresentationIcon color={colors.text} name="filter" size={20} />
+            <PresentationIcon color={colors.text} name="filter" size={iconSize.action} />
+            {filter === "all" ? null : (
+              <View testID="thread-filter-active-dot" style={styles.filterActiveDot} />
+            )}
           </Pressable>
         </ActionMenu>
       </View>
@@ -198,7 +214,7 @@ export function ThreadListView(props: ThreadListViewProps): React.JSX.Element {
         keyExtractor={threadKey}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <PresentationIcon color={colors.textDim} name="chat" size={24} />
+            <PresentationIcon color={colors.textDim} name="chat" size={iconSize.navigation} />
             <ProductText tone="muted">No threads found</ProductText>
           </View>
         }
@@ -267,7 +283,7 @@ function ThreadRow(props: ThreadRowProps): React.JSX.Element {
             <PresentationIcon
               color={active ? colors.amber : colors.red}
               name={active ? "flash" : "alert"}
-              size={14}
+              size={iconSize.inline}
             />
           ) : null}
           <View style={styles.titleSlot}>
@@ -326,18 +342,27 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.45 },
   empty: { alignItems: "center", gap: spacing.xs },
   emptyList: { flexGrow: 1, justifyContent: "center", paddingHorizontal: spacing.lg },
-  emoji: { flexShrink: 0, fontSize: 17, lineHeight: 20 },
+  emoji: { flexShrink: 0, ...typeScale.emoji },
   filterButton: {
     alignItems: "center",
-    backgroundColor: colors.surfaceContainerLow,
     borderRadius: radii.large,
-    height: 44,
+    minHeight: controlSize.touch,
     justifyContent: "center",
-    width: 40,
+    position: "relative",
+    width: controlSize.touch,
+  },
+  filterActiveDot: {
+    backgroundColor: colors.primary,
+    borderRadius: radii.pill,
+    height: 6,
+    position: "absolute",
+    right: spacing.xs,
+    top: spacing.xs,
+    width: 6,
   },
   list: { paddingBottom: spacing.md },
   pressed: { opacity: 0.68 },
-  preview: { flex: 1, fontSize: 12, lineHeight: 16 },
+  preview: { flex: 1, ...typeScale.label },
   previewRow: {
     alignItems: "center",
     flexDirection: "row",
@@ -348,26 +373,20 @@ const styles = StyleSheet.create({
   },
   root: { backgroundColor: colors.surface, flex: 1, minHeight: 0 },
   searchBox: {
-    alignItems: "center",
-    backgroundColor: colors.surfaceContainerLow,
-    borderRadius: radii.large,
+    ...searchFieldLayout,
     flex: 1,
-    flexDirection: "row",
-    gap: spacing.xs,
-    height: 44,
     minWidth: 0,
-    paddingHorizontal: spacing.sm,
   },
   searchInput: {
     color: colors.text,
     flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
+    ...typeScale.body,
+
     minWidth: 0,
     paddingVertical: 0,
     width: "100%",
   },
-  searchInputSlot: { alignSelf: "stretch", flex: 1, minHeight: 40, minWidth: 0 },
+  searchInputSlot: { alignSelf: "stretch", flex: 1, minHeight: controlSize.regular, minWidth: 0 },
   searchRow: {
     alignItems: "center",
     flexDirection: "row",
@@ -377,9 +396,9 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xs,
   },
   section: {
-    fontSize: 10,
-    letterSpacing: 0.7,
-    lineHeight: 14,
+    ...typeScale.caption,
+    letterSpacing: typeTracking.caps,
+
     paddingBottom: spacing.xxs,
     paddingHorizontal: spacing.sm,
     paddingTop: spacing.xs,
@@ -392,26 +411,26 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.xs,
     marginHorizontal: spacing.xs,
-    marginVertical: 1,
-    minHeight: 64,
+    marginVertical: spacing.optical,
+    minHeight: layoutSize.row,
     paddingHorizontal: spacing.xs,
-    paddingVertical: 6,
+    paddingVertical: spacing.compact,
   },
-  threadCopy: { flex: 1, gap: 1, minWidth: 0 },
+  threadCopy: { flex: 1, gap: spacing.optical, minWidth: 0 },
   threadSelected: { backgroundColor: colors.secondaryContainer },
   time: {
     color: colors.textMuted,
     flexShrink: 0,
-    fontSize: 10,
+    ...typeScale.caption,
     fontVariant: ["tabular-nums"],
     minWidth: 48,
     textAlign: "right",
   },
-  threadMeta: { alignItems: "center", flexDirection: "row", flexShrink: 0, gap: 5 },
-  title: { flexShrink: 1, fontSize: 14, lineHeight: 19, maxWidth: "100%", minWidth: 0 },
+  threadMeta: { alignItems: "center", flexDirection: "row", flexShrink: 0, gap: spacing.xxs },
+  title: { flexShrink: 1, ...typeScale.body, maxWidth: "100%", minWidth: 0 },
   titleRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minWidth: 0 },
   titleSlot: { alignItems: "flex-start", flex: 1, minWidth: 0 },
-  unreadDot: { backgroundColor: colors.accent, borderRadius: 4, height: 7, width: 7 },
+  unreadDot: { backgroundColor: colors.accent, borderRadius: radii.pill, height: 7, width: 7 },
   unreadSlot: {
     alignItems: "center",
     flexShrink: 0,
@@ -421,13 +440,13 @@ const styles = StyleSheet.create({
   },
   voiceButton: {
     alignItems: "center",
-    borderRadius: 20,
-    height: 40,
+    borderRadius: radii.pill,
+    height: controlSize.compact,
     justifyContent: "center",
     position: "absolute",
     right: 2,
-    top: 2,
-    width: 40,
+    top: spacing.xxs,
+    width: controlSize.compact,
   },
-  voiceSearchInput: { paddingRight: 44 },
+  voiceSearchInput: { paddingRight: controlSize.compact + spacing.xxs },
 });

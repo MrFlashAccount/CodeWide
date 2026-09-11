@@ -31,6 +31,7 @@ export type ThreadSummarySqlite = {
   loadRows(connectionId: string, threadIds: readonly string[]): Promise<StoredThreadSummary[]>;
   loadConnectionRows(connectionId: string): Promise<StoredThreadSummary[]>;
   loadAll(): Promise<StoredThreadSummary[]>;
+  loadUnread(): Promise<StoredThreadSummary[]>;
   flush(): Promise<void>;
   close(): Promise<void>;
 };
@@ -145,8 +146,10 @@ export function createThreadSummarySqlite(): ThreadSummarySqlite {
     },
     async loadView(request) {
       return await read(async (executor) => {
-        const connectionClause = request.connectionId === null ? "" : " AND connection_id = ?";
+        const connectionClause = (request.connectionId === null ? "" : " AND connection_id = ?")
+          + (request.projectCwd === undefined ? "" : " AND json_extract(__payload, '$.cwd') = ?");
         const connectionParams: SqliteValue[] = request.connectionId === null ? [] : [request.connectionId];
+        if (request.projectCwd !== undefined) connectionParams.push(request.projectCwd);
         const pinned = await executeRows(
           executor,
           `SELECT __payload FROM ${TABLE} WHERE parent_thread_id IS NULL AND delete_command_id IS NULL AND archived = 0 AND pinned = 1${connectionClause} ORDER BY recency_at DESC NULLS LAST, __key ASC`,
@@ -191,6 +194,9 @@ export function createThreadSummarySqlite(): ThreadSummarySqlite {
     async loadConnectionRows(connectionId) {
       return await readRows(`SELECT __payload FROM ${TABLE} WHERE connection_id = ?`, [connectionId]);
     },
+    async loadUnread() {
+      return await readRows(`SELECT __payload FROM ${TABLE} WHERE parent_thread_id IS NULL AND delete_command_id IS NULL AND archived = 0 AND json_extract(__payload, '$.unread') > 0`);
+    },
     async loadAll() {
       return await readRows(`SELECT __payload FROM ${TABLE}`);
     },
@@ -211,12 +217,21 @@ async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabas
       + `__key TEXT PRIMARY KEY NOT NULL, __payload TEXT NOT NULL, connection_id TEXT NOT NULL, thread_id TEXT NOT NULL, `
       + `recency_at REAL, pinned INTEGER NOT NULL, archived INTEGER NOT NULL, parent_thread_id TEXT, delete_command_id TEXT)`,
     );
-    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_0 ON ${TABLE} (connection_id, pinned, archived, recency_at)`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_1 ON ${TABLE} (connection_id, thread_id)`);
     await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_2 ON ${TABLE} (delete_command_id)`);
-    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_root_connection ON ${TABLE} (connection_id, parent_thread_id, delete_command_id, archived, pinned, recency_at)`);
-    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_root_global ON ${TABLE} (parent_thread_id, delete_command_id, archived, pinned, recency_at)`);
-    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_subagents ON ${TABLE} (connection_id, parent_thread_id, delete_command_id, recency_at)`);
+    const rootPredicate = "WHERE parent_thread_id IS NULL AND delete_command_id IS NULL";
+    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_root_connection_v6 ON ${TABLE}
+      (connection_id, archived, pinned DESC, recency_at DESC, __key ASC) ${rootPredicate}`);
+    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_root_global_v6 ON ${TABLE}
+      (archived, pinned DESC, recency_at DESC, __key ASC) ${rootPredicate}`);
+    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_subagents_v6 ON ${TABLE}
+      (connection_id, recency_at DESC, __key ASC) WHERE parent_thread_id IS NOT NULL AND delete_command_id IS NULL`);
+    await executor.execute(`CREATE INDEX IF NOT EXISTS ${TABLE}__idx_project_v6 ON ${TABLE}
+      (connection_id, json_extract(__payload, '$.cwd'), archived, pinned DESC, recency_at DESC, __key ASC) ${rootPredicate}`);
+    // Replace superseded access paths only after their complete-order indexes exist.
+    for (const suffix of ["0", "root_connection", "root_global", "subagents", "project"]) {
+      await executor.execute(`DROP INDEX IF EXISTS ${TABLE}__idx_${suffix}`);
+    }
     // v4 and v5 have the same physical schema. The version marks projection
     // semantics, not disposable user-visible contents, so upgrading must keep
     // the locally available thread catalog until the repaired snapshot lands.

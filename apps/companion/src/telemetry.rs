@@ -4,7 +4,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -125,7 +125,7 @@ pub enum TelemetryError {
 }
 
 pub struct TelemetryStore {
-    database: Database,
+    database: Arc<Database>,
     enabled: AtomicBool,
     settings_path: Option<PathBuf>,
     jsonl: Option<Mutex<TelemetryJsonlSink>>,
@@ -144,7 +144,7 @@ impl TelemetryStore {
     ///
     /// Returns an error when the database cannot be opened or has an unsupported schema.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TelemetryError> {
-        let database = Database::create(path)?;
+        let database = crate::database::open(path, "telemetry")?;
         let write = database.begin_write()?;
         {
             let mut meta = write.open_table(META)?;

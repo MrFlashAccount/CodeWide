@@ -185,7 +185,6 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("ATT-03", "attachment-open", "default", "Open attachment", WIDE_ONLY),
   control("CHG-06", "changes-review", "default", "Review", WIDE_ONLY),
   control("TERM-03", "terminal-minimize", "default", "Minimize terminal", WIDE_ONLY),
-  control("PORT-03", "ports-refresh", "default", "Refresh open ports"),
   prefixControl("PORT-03", "port-forward", "Forward "),
   prefixControl("AGENT-03", "subagent-open", "Open subagent "),
   prefixControl("NEW-01", "new-thread-project", "Change project, currently ", WIDE_ONLY),
@@ -299,7 +298,6 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   control("VOICE-03", "voice-finish-insert", "default", "Stop voice input and insert transcript"),
   control("VOICE-04", "voice-finish-send", "default", "Finish voice input and send transcript"),
   control("ATT-01", "attachments-close", "default", "Close attachments"),
-  control("ATT-03", "attachments-refresh", "default", "Refresh session resources", WIDE_ONLY),
   control("ATT-05", "preview-close", "default", "Close attachment", WIDE_ONLY),
   control("ATT-05", "preview-save", "default", "Save attachment", WIDE_ONLY),
   control("ATT-05", "preview-external", "default", "Open attachment in another app", WIDE_ONLY),
@@ -371,9 +369,7 @@ const CONTROL_INVENTORY: readonly ControlInventorySpec[] = [
   disabled("PAIR-01", "pairing-connect", "Connect server manually"),
   disabled("REQ-03", "user-question-submit", "Submit"),
   disabled("REQ-04", "elicitation-submit", "Submit"),
-  disabled("ATT-04", "attachments-refresh", "Refresh session resources"),
   disabled("CHG-01", "changes-refresh", "Refresh changes"),
-  disabled("PORT-01", "ports-refresh", "Refresh open ports"),
   disabled("PORT-05", "tunnel-open", "Open localhost tunnel"),
   disabled("PORT-06", "browser-close", "Close browser"),
 
@@ -418,14 +414,7 @@ const OVERLAY_INVENTORY: readonly OverlayInventorySpec[] = [
 ];
 
 const PENDING_ALIAS_INVENTORY: readonly PendingAliasInventorySpec[] = [
-  pendingAlias(
-    "ATT-04",
-    "attachments-refreshing",
-    "attachment-resource-refresh",
-    "Refresh session resources",
-  ),
   pendingAlias("CHG-01", "changes-loading", "changes-refresh", "Refresh changes"),
-  pendingAlias("PORT-01", "ports-loading", "ports-refresh", "Refresh open ports"),
   pendingAlias(
     "PORT-05",
     "bounded-tunnel-create-pending-policy",
@@ -484,11 +473,6 @@ export const ASYNC_ACTION_INVENTORY: readonly AsyncActionInventorySpec[] = [
     classification: "promise-pending",
     layouts: PHONE_AND_WIDE,
   },
-  {
-    action: "attachment-resource-refresh",
-    classification: "promise-pending",
-    layouts: PHONE_AND_WIDE,
-  },
   { action: "attachment-retry", classification: "promise-pending", layouts: PHONE_AND_WIDE },
   { action: "changes-refresh", classification: "promise-pending", layouts: PHONE_AND_WIDE },
   { action: "change-retry", classification: "promise-pending", layouts: PHONE_AND_WIDE },
@@ -499,7 +483,6 @@ export const ASYNC_ACTION_INVENTORY: readonly AsyncActionInventorySpec[] = [
     layouts: PHONE_AND_WIDE,
   },
   { action: "terminal-close", classification: "promise-pending", layouts: PHONE_AND_WIDE },
-  { action: "ports-refresh", classification: "promise-pending", layouts: PHONE_AND_WIDE },
   { action: "port-forward", classification: "promise-pending", layouts: PHONE_AND_WIDE },
   {
     action: "port-forward-remove",

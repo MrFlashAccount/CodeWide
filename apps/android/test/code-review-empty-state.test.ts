@@ -38,7 +38,10 @@ describe("code review empty states", () => {
     expect(webEditor).toContain('sidebarScroll: { flex: 1 }');
     expect(webEditor).toContain('sidebarContent: { flexGrow: 1');
     expect(webEditor).toContain('emptyState: { flex: 1, minHeight: 160, alignItems: "center", justifyContent: "center"');
-    expect(webEditor).toContain('emptyTitle: { color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "700", textAlign: "center" }');
-    expect(webEditor).toContain('emptyMessage: { maxWidth: 340, color: colors.textMuted, fontSize: 13, lineHeight: 19, textAlign: "center" }');
+    for (const name of ["emptyTitle", "emptyMessage"]) {
+      const style = webEditor.match(new RegExp(`${name}: \\{[^}]+\\}`, "u"))?.[0];
+      expect(style).toContain('textAlign: "center"');
+      expect(style).toContain('...typeScale.body');
+    }
   });
 });

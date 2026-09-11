@@ -150,5 +150,6 @@ describe("V2 validation gates", () => {
     expect(entrySection).toContain('"src/v2/V2Application.tsx"');
     expect(entrySection).not.toMatch(/src\/(?:boot|presentation|v2)\/\*\*/u);
     expect(knipConfig).not.toContain("ignoreIssues");
+    expect(knipConfig).toContain("node: false");
   });
 });

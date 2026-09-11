@@ -19,6 +19,11 @@ if [ ! -S "$managed_socket" ]; then
   exit 2
 fi
 
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+sh "$repo_root/scripts/cargo-target-budget.sh"
+export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1
+export CARGO_TARGET_DIR="$repo_root/target"
+
 echo "CodeWide Android E2E uses a real Observer and can take several minutes."
 echo "The runner builds Android and Companion, starts Appium, records video, and reports only meaningful progress."
 

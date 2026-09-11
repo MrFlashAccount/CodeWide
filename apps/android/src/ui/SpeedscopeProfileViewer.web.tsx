@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, View } from "react-native";
 
-import { colors, spacing, typeScale } from "../theme";
+import { colors, spacing, typeScale, radii, controlSize } from "../theme";
 import { AppText as Text } from "./Typography";
 
 export function SpeedscopeProfileViewer({ onClose }: {
@@ -21,7 +21,7 @@ export function SpeedscopeProfileViewer({ onClose }: {
 
 const styles = StyleSheet.create({
   root: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md, backgroundColor: colors.background },
-  message: { ...typeScale.bodyMedium, color: colors.textMuted },
-  button: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 12, backgroundColor: colors.surfaceRaised },
-  buttonText: { ...typeScale.labelLarge, color: colors.text },
+  message: { ...typeScale.body, color: colors.textMuted },
+  button: { minHeight: controlSize.regular, paddingHorizontal: spacing.md, paddingVertical: spacing.xxs, borderRadius: radii.medium, backgroundColor: colors.surfaceRaised },
+  buttonText: { ...typeScale.body, color: colors.text },
 });

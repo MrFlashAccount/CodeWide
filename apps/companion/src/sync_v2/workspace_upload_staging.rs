@@ -120,7 +120,8 @@ impl WorkspaceUploadStore {
         files: Arc<FileService>,
         limits: WorkspaceUploadLimits,
     ) -> Result<Self, WorkspaceUploadError> {
-        let database = Database::create(database_path.as_ref()).map_err(storage)?;
+        let database =
+            crate::database::open(database_path.as_ref(), "workspace_uploads").map_err(storage)?;
         std::fs::set_permissions(
             database_path.as_ref(),
             std::fs::Permissions::from_mode(0o600),
@@ -156,7 +157,7 @@ impl WorkspaceUploadStore {
         }
         write.commit().map_err(storage)?;
         Ok(Self {
-            database: Arc::new(database),
+            database,
             files,
             limits,
             cancellations: Arc::new(Mutex::new(

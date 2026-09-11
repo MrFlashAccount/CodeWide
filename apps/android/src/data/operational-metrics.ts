@@ -1,6 +1,9 @@
 import { recordTelemetryEvent } from "./telemetry";
 
 export type TimingMetric =
+  | "attachment_hash_ms"
+  | "attachment_transfer_ms"
+  | "attachment_upload_ms"
   | "cached_thread_read_ms"
   | "image_materialize_ms"
   | "live_batch_wait_ms"

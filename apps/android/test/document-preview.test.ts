@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   documentPreviewSurface,
-  isolatedHtmlDocument,
+  interactiveHtmlDocument,
   markdownLineTarget,
   previewableDocumentKind,
   remoteFileKind,
@@ -143,15 +143,21 @@ describe("document preview", () => {
     expect(documentPreview).toContain("useDocumentViewerPreferences()");
   });
 
-  it("injects an isolation policy into complete and fragment HTML", () => {
-    const complete = isolatedHtmlDocument("<!doctype html><html><head><title>x</title></head><body>ok</body></html>");
-    expect(complete).toContain("Content-Security-Policy");
-    expect(complete).toContain("script-src 'none'");
-    expect(complete).toContain("connect-src 'none'");
-    expect(complete.indexOf("Content-Security-Policy")).toBeLessThan(complete.indexOf("<title>"));
+  it("wraps complete and fragment HTML without imposing a security policy", () => {
+    const complete = interactiveHtmlDocument("<!doctype html><html><head><title>x</title></head><body>ok</body></html>");
+    expect(complete).not.toContain("Content-Security-Policy");
+    expect(complete).toContain('<meta name="viewport"');
+    expect(complete.indexOf('<meta name="viewport"')).toBeLessThan(complete.indexOf("<title>"));
 
-    const fragment = isolatedHtmlDocument("<h1>Preview</h1>");
+    const fragment = interactiveHtmlDocument("<h1>Preview</h1>");
     expect(fragment).toContain("<!doctype html>");
     expect(fragment).toContain("<body><h1>Preview</h1></body>");
+  });
+
+  it("preserves scripts, frames and network APIs", () => {
+    const source = '<iframe srcdoc="<button>Nested</button>"></iframe><script src="https://unpkg.com/example.js"></script><script>fetch("https://example.com/data")</script>';
+    const document = interactiveHtmlDocument(source);
+    expect(document).toContain(source);
+    expect(document).not.toContain("Content-Security-Policy");
   });
 });

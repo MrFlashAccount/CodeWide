@@ -1,10 +1,14 @@
 import { ScrollView, StyleSheet, View } from "react-native";
+import { useContext } from "react";
+import { HighlightSearchText, SearchHighlightQuery } from "../search/SearchMessageFocus";
 
 import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";
-import { colors } from "../theme";
+import { colors, spacing, typeScale } from "../theme";
 import { AppText as Text } from "../ui/Typography";
 import {
   nativeCodeHeight,
+  NATIVE_CODE_FONT_SIZE,
+  NATIVE_CODE_LINE_HEIGHT,
   nativeCodePreview,
   normalizeNativeCodeLanguage,
   stripTerminalControlSequences,
@@ -19,6 +23,7 @@ export function NativeCodeBlock({
   maxHeight,
   maxVisibleLines,
   fillAvailableWidth = false,
+  embeddedInParentScroll = true,
   truncate = true,
 }: {
   value: string;
@@ -27,9 +32,11 @@ export function NativeCodeBlock({
   maxHeight?: number;
   maxVisibleLines?: number;
   fillAvailableWidth?: boolean;
+  embeddedInParentScroll?: boolean;
   truncate?: boolean;
 }) {
   const availableWidth = useRichContentWidth();
+  const searchQuery = useContext(SearchHighlightQuery);
   const preview = truncate
     ? nativeCodePreview(value)
     : { value, truncated: false, originalLines: value === "" ? 1 : value.split("\n").length };
@@ -46,7 +53,7 @@ export function NativeCodeBlock({
         contentContainerStyle={styles.fallbackContent}
       >
         <Text selectable style={styles.fallbackText}>
-          {fallbackValue}
+          <HighlightSearchText text={fallbackValue} />
         </Text>
       </ScrollView>
     );
@@ -62,9 +69,11 @@ export function NativeCodeBlock({
     >
       <NativeCodeBlockHost
         code={preview.value}
+        searchQuery={searchQuery}
         language={normalizedLanguage}
         variant={variant}
         maxLines={maxVisibleLines ?? 0}
+        embeddedInParentScroll={embeddedInParentScroll}
         style={[styles.nativeView, { height }]}
       />
       {preview.truncated && (
@@ -78,7 +87,7 @@ export function NativeCodeBlock({
 }
 
 const styles = StyleSheet.create({
-  container: { width: "100%", minWidth: 0, maxWidth: "100%", gap: 3 },
+  container: { width: "100%", minWidth: 0, maxWidth: "100%", gap: spacing.xxs },
   nativeView: { width: "100%", minWidth: 0, maxWidth: "100%" },
   fallbackViewport: {
     width: "100%",
@@ -87,7 +96,7 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     backgroundColor: colors.code,
   },
-  fallbackContent: { flexGrow: 0, paddingVertical: 4 },
-  fallbackText: { color: "#c6d0da", fontFamily: "monospace", fontSize: 11, lineHeight: 16 },
-  truncated: { color: colors.textDim, fontSize: 9, lineHeight: 12 },
+  fallbackContent: { flexGrow: 0, paddingVertical: spacing.xxs },
+  fallbackText: { color: colors.textMuted, ...typeScale.code, fontSize: NATIVE_CODE_FONT_SIZE, lineHeight: NATIVE_CODE_LINE_HEIGHT },
+  truncated: { color: colors.textDim, ...typeScale.caption, },
 });

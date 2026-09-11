@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
+import type { WindowFrameReport } from "../data/window-frame-report";
 
-import type { HermesHeapSnapshot, PerformanceMetricsSnapshot } from "./performance-metrics.native";
+import type { HermesHeapSnapshot, MemoryCheckpoint, MemoryReclamationActionResult, PerformanceMetricsSnapshot } from "./performance-metrics.native";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
 
 const snapshot: PerformanceMetricsSnapshot = {
@@ -33,6 +34,8 @@ export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
 
 export async function setPerformanceMonitoringEnabled(_enabled: boolean): Promise<void> {}
 
+export async function getWindowFrameReport(): Promise<WindowFrameReport | null> { return null; }
+
 export async function beginNavigationFrameTrace(_traceId: string): Promise<boolean> {
   return false;
 }
@@ -43,6 +46,36 @@ export async function endNavigationFrameTrace(_traceId: string): Promise<ThreadN
 
 export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
   throw new Error("Hermes heap capture is available only in the Android app");
+}
+
+export async function captureMemoryReport(): Promise<string> {
+  throw new Error("Memory report is available only in the Android app");
+}
+
+export function memoryReclamationExperimentAvailable(): boolean { return false; }
+
+export async function captureMemoryCheckpoint(): Promise<MemoryCheckpoint> {
+  throw new Error("Memory experiment is available only in the Android app");
+}
+
+export async function clearNativeCodeMemoryCache(): Promise<MemoryReclamationActionResult> {
+  throw new Error("Memory experiment is available only in the Android app");
+}
+
+export async function clearImageMemoryCache(): Promise<MemoryReclamationActionResult> {
+  throw new Error("Memory experiment is available only in the Android app");
+}
+
+export async function collectJavaGarbage(): Promise<MemoryReclamationActionResult> {
+  throw new Error("Memory experiment is available only in the Android app");
+}
+
+export async function collectHermesGarbage(): Promise<MemoryReclamationActionResult> {
+  throw new Error("Memory experiment is available only in the Android app");
+}
+
+export async function purgeNativeAllocator(_exhaustive: boolean): Promise<MemoryReclamationActionResult> {
+  throw new Error("Memory experiment is available only in the Android app");
 }
 
 export type { PerformanceMetricsSnapshot } from "./performance-metrics.native";

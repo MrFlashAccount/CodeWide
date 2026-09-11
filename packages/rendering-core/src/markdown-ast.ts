@@ -1,12 +1,22 @@
 import type { Nodes, Root } from "mdast";
+import { DomUtils, parseDocument } from "htmlparser2";
 
-import { markedMarkdownBlockIndexAtLine, markedMarkdownRoot } from "./marked-mdast";
+import { markedMarkdownBlockIndexAtLine, markedMarkdownRoot, messageMarkupNodeHtml } from "./marked-mdast";
 
 export const MAX_MARKDOWN_SOURCE_CHARS = 512 * 1024;
 export const MAX_MARKDOWN_CACHE_SOURCE_CHARS = 4 * 1024 * 1024;
+export const MAX_MARKDOWN_CACHE_ESTIMATED_BYTES = 12 * 1024 * 1024;
 const MAX_CACHE_ENTRIES = 256;
-const cache = new Map<string, ParsedRichMarkdown>();
+const ESTIMATED_MARKDOWN_NODE_BYTES = 256;
+
+type CachedRichMarkdown = {
+  readonly parsed: ParsedRichMarkdown;
+  readonly estimatedBytes: number;
+};
+
+const cache = new Map<string, CachedRichMarkdown>();
 let cachedSourceChars = 0;
+let cachedEstimatedBytes = 0;
 
 export type ParsedRichMarkdown = {
   root: Root;
@@ -14,13 +24,13 @@ export type ParsedRichMarkdown = {
   originalLength: number;
 };
 
-export function parseRichMarkdown(source: string): ParsedRichMarkdown {
-  const cacheable = source.length <= MAX_MARKDOWN_SOURCE_CHARS;
+export function parseRichMarkdown(source: string, retain = true): ParsedRichMarkdown {
+  const cacheable = retain && source.length <= MAX_MARKDOWN_SOURCE_CHARS;
   const cached = cacheable ? cache.get(source) : undefined;
   if (cached !== undefined) {
     cache.delete(source);
     cache.set(source, cached);
-    return cached;
+    return cached.parsed;
   }
   const truncated = source.length > MAX_MARKDOWN_SOURCE_CHARS;
   const bounded = truncated ? `${source.slice(0, MAX_MARKDOWN_SOURCE_CHARS)}\n\n…` : source;
@@ -30,16 +40,38 @@ export function parseRichMarkdown(source: string): ParsedRichMarkdown {
     originalLength: source.length,
   };
   if (cacheable) {
-    cache.set(source, parsed);
+    const estimatedBytes = source.length * 2 + countMarkdownNodes(parsed.root) * ESTIMATED_MARKDOWN_NODE_BYTES;
+    cache.set(source, { parsed, estimatedBytes });
     cachedSourceChars += source.length;
-    while (cache.size > MAX_CACHE_ENTRIES || cachedSourceChars > MAX_MARKDOWN_CACHE_SOURCE_CHARS) {
-      const oldest = cache.keys().next().value as string | undefined;
+    cachedEstimatedBytes += estimatedBytes;
+    while (
+      cache.size > MAX_CACHE_ENTRIES
+      || cachedSourceChars > MAX_MARKDOWN_CACHE_SOURCE_CHARS
+      || cachedEstimatedBytes > MAX_MARKDOWN_CACHE_ESTIMATED_BYTES
+    ) {
+      const oldest = cache.entries().next().value;
       if (oldest === undefined) break;
-      cache.delete(oldest);
-      cachedSourceChars = Math.max(0, cachedSourceChars - oldest.length);
+      const [oldestSource, oldestEntry] = oldest;
+      cache.delete(oldestSource);
+      cachedSourceChars = Math.max(0, cachedSourceChars - oldestSource.length);
+      cachedEstimatedBytes = Math.max(0, cachedEstimatedBytes - oldestEntry.estimatedBytes);
     }
   }
   return parsed;
+}
+
+function countMarkdownNodes(root: Nodes): number {
+  const pending: Nodes[] = [root];
+  let count = 0;
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (node === undefined) break;
+    count += 1;
+    if ("children" in node) {
+      for (const child of node.children) pending.push(child);
+    }
+  }
+  return count;
 }
 
 export function richMarkdownBlockIndexAtLine(source: string, line: number): number | null {
@@ -59,9 +91,12 @@ function plainNodeText(node: Nodes): string {
     case "text":
     case "inlineCode":
     case "code":
-    case "html":
     case "yaml":
       return node.value;
+    case "html": {
+      const html = messageMarkupNodeHtml(node);
+      return html === null ? node.value : DomUtils.textContent(parseDocument(html));
+    }
     case "image":
       return node.alt?.trim() || "Image";
     case "break":
@@ -105,9 +140,14 @@ export function richMarkdownCacheStats(): { entries: number; sourceChars: number
   return { entries: cache.size, sourceChars: cachedSourceChars };
 }
 
+export function richMarkdownCacheEstimatedBytes(): number {
+  return cachedEstimatedBytes;
+}
+
 export function resetRichMarkdownCache(): void {
   cache.clear();
   cachedSourceChars = 0;
+  cachedEstimatedBytes = 0;
 }
 
 export function isSafeLink(url: string): boolean {

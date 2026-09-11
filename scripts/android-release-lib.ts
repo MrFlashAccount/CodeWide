@@ -4,6 +4,16 @@ export type AndroidReleaseVersion = {
   runtimeVersion: string;
 };
 
+export type AndroidReleaseVersionBaseline = Pick<
+  AndroidReleaseVersion,
+  "versionName" | "versionCode"
+>;
+
+export type AndroidReleaseVersionPlan = {
+  requestedVersion: string | undefined;
+  published: AndroidReleaseVersionBaseline | undefined;
+};
+
 type ReleaseSourceFiles = {
   appConfig: string;
   gradle: string;
@@ -49,14 +59,22 @@ export function readAndroidReleaseVersion(files: ReleaseSourceFiles): AndroidRel
   return app;
 }
 
-export function updateAndroidReleaseVersion(files: ReleaseSourceFiles, requestedVersion?: string): UpdatedReleaseSourceFiles {
+export function updateAndroidReleaseVersion(
+  files: ReleaseSourceFiles,
+  plan: AndroidReleaseVersionPlan,
+): UpdatedReleaseSourceFiles {
   const previous = readAndroidReleaseVersion(files);
-  const versionName = requestedVersion ?? nextPatchVersion(previous.versionName);
+  const baselineVersionName =
+    plan.published !== undefined && compareVersions(plan.published.versionName, previous.versionName) > 0
+      ? plan.published.versionName
+      : previous.versionName;
+  const baselineVersionCode = Math.max(previous.versionCode, plan.published?.versionCode ?? 0);
+  const versionName = plan.requestedVersion ?? nextPatchVersion(baselineVersionName);
   if (!/^\d+\.\d+\.\d+$/u.test(versionName)) throw new Error(`Invalid Android version ${versionName}`);
-  if (compareVersions(versionName, previous.versionName) <= 0) {
-    throw new Error(`Android version must increase from ${previous.versionName}, received ${versionName}`);
+  if (compareVersions(versionName, baselineVersionName) <= 0) {
+    throw new Error(`Android version must increase from ${baselineVersionName}, received ${versionName}`);
   }
-  const versionCode = previous.versionCode + 1;
+  const versionCode = baselineVersionCode + 1;
   const runtimeVersion = `${versionName}-native-${versionCode}`;
   const parsed = JSON.parse(files.appConfig) as {
     expo?: { version?: unknown; runtimeVersion?: unknown; android?: { versionCode?: unknown } };

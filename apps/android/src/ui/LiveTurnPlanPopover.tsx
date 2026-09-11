@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from "react-native";
 
 import { liveTurnPlanProgress, type LiveTurnPlan } from "../rendering/live-turn-plan";
-import { colors, radii, spacing, typeScale } from "../theme";
+import { colors, radii, spacing, typeScale, typeWeight, iconSize, controlSize } from "../theme";
 import { AppText as Text } from "./Typography";
 import { WaveText } from "./WaveText";
 
@@ -29,7 +29,7 @@ export function LiveTurnPlanPopover({ plan }: { plan: LiveTurnPlan }) {
           testID="live-plan-chip"
           style={({ pressed }) => [styles.trigger, pressed && styles.pressed]}
         >
-          <Ionicons name="list-outline" size={15} color={colors.textMuted} />
+          <Ionicons name="list-outline" size={iconSize.inline} color={colors.textMuted} />
           <Text style={styles.triggerTitle}>Plan</Text>
           <Text style={styles.triggerDivider}>·</Text>
           {currentIsRunning ? (
@@ -43,7 +43,7 @@ export function LiveTurnPlanPopover({ plan }: { plan: LiveTurnPlan }) {
             <Text numberOfLines={1} ellipsizeMode="tail" style={styles.triggerCurrent}>{currentLabel}</Text>
           )}
           <Text style={styles.triggerProgress}>{progressLabel}</Text>
-          <Ionicons name={open ? "chevron-down" : "chevron-up"} size={13} color={colors.textDim} />
+          <Ionicons name={open ? "chevron-down" : "chevron-up"} size={iconSize.inline} color={colors.textDim} />
         </Pressable>
       </Popover.Trigger>
       <Popover.Portal>
@@ -85,7 +85,7 @@ export function LiveTurnPlanPopover({ plan }: { plan: LiveTurnPlan }) {
                   >
                     <Ionicons
                       name={completed ? "checkmark-circle" : running ? "radio-button-on" : "ellipse-outline"}
-                      size={17}
+                      size={iconSize.inline}
                       color={completed ? colors.green : running ? colors.amber : colors.textDim}
                       style={styles.stepIcon}
                     />
@@ -113,35 +113,35 @@ export function LiveTurnPlanPopover({ plan }: { plan: LiveTurnPlan }) {
 
 const styles = StyleSheet.create({
   trigger: {
-    minHeight: 34,
+    minHeight: controlSize.compact,
     maxWidth: "92%",
     flexDirection: "row",
     flexShrink: 1,
     alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
+    gap: spacing.xxs,
+    paddingHorizontal: spacing.inputInset,
     borderWidth: 1,
     borderColor: colors.borderSoft,
     borderRadius: radii.pill,
     backgroundColor: colors.surfaceContainerHigh,
     elevation: 4,
   },
-  triggerTitle: { flexShrink: 0, color: colors.text, fontSize: 11, lineHeight: 15, fontWeight: "700" },
-  triggerDivider: { flexShrink: 0, color: colors.textDim, fontSize: 11, lineHeight: 15 },
+  triggerTitle: { flexShrink: 0, color: colors.text, ...typeScale.label, fontWeight: typeWeight.semibold },
+  triggerDivider: { flexShrink: 0, color: colors.textDim, ...typeScale.label, },
   triggerCurrentShell: { flex: 1, minWidth: 0, alignSelf: "center" },
-  triggerCurrent: { flex: 1, minWidth: 0, color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-  triggerProgress: { flexShrink: 0, color: colors.textDim, fontSize: 10, lineHeight: 14, fontVariant: ["tabular-nums"] },
+  triggerCurrent: { flex: 1, minWidth: 0, color: colors.textMuted, ...typeScale.label, },
+  triggerProgress: { flexShrink: 0, color: colors.textDim, ...typeScale.caption, fontVariant: ["tabular-nums"] },
   pressed: { opacity: 0.72 },
   popover: { padding: 0, borderRadius: radii.large, overflow: "hidden" },
   content: { gap: spacing.sm, padding: spacing.sm },
   heading: { minHeight: 22, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.xs },
-  title: { flex: 1, color: colors.text, ...typeScale.titleMedium },
-  progress: { color: colors.textMuted, ...typeScale.labelMedium, fontVariant: ["tabular-nums"] },
-  explanation: { color: colors.textMuted, ...typeScale.bodyMedium },
+  title: { flex: 1, color: colors.text, ...typeScale.title },
+  progress: { color: colors.textMuted, ...typeScale.label, fontVariant: ["tabular-nums"] },
+  explanation: { color: colors.textMuted, ...typeScale.body },
   steps: { gap: spacing.xs },
   step: { minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: spacing.xs },
-  stepIcon: { flexShrink: 0, marginTop: 1 },
+  stepIcon: { flexShrink: 0, marginTop: spacing.optical },
   stepTextShell: { flex: 1, minWidth: 0, alignSelf: "flex-start" },
-  stepText: { flex: 1, minWidth: 0, color: colors.text, ...typeScale.bodyMedium },
+  stepText: { flex: 1, minWidth: 0, color: colors.text, ...typeScale.body },
   completedStep: { color: colors.textMuted },
 });

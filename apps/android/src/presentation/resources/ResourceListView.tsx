@@ -7,7 +7,7 @@ import {
   View,
 } from "react-native";
 
-import { colors, radii, spacing } from "../../theme";
+import { colors, radii, spacing, typeScale, layoutSize } from "../../theme";
 import { ProductText } from "../text/ProductText";
 
 export interface ResourceListRow {
@@ -80,13 +80,13 @@ function resourceRowStyle(state: PressableStateCallbackType) {
 }
 
 const styles = StyleSheet.create({
-  chevron: { fontSize: 25, lineHeight: 28 },
+  chevron: { ...typeScale.heading },
   content: { gap: spacing.xs, padding: spacing.md },
-  copy: { flex: 1, gap: 3, minWidth: 0 },
-  detail: { fontSize: 12, lineHeight: 17 },
+  copy: { flex: 1, gap: spacing.xxs, minWidth: 0 },
+  detail: { ...typeScale.label },
   empty: { textAlign: "center" },
   emptyContent: { flexGrow: 1, justifyContent: "center", padding: spacing.lg },
-  label: { fontSize: 14, lineHeight: 19 },
+  label: { ...typeScale.body },
   pressed: { opacity: 0.68 },
   row: {
     alignItems: "center",
@@ -94,8 +94,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.selected,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 64,
+    minHeight: layoutSize.row,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 10,
+    paddingVertical: spacing.inputInset,
   },
 });

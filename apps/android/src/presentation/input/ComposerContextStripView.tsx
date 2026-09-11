@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, StyleSheet } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, spacing } from "../../theme";
+import { colors, spacing, iconSize, typeScale, typeWeight, radii, controlSize } from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 import { PresentationText as Text } from "../text/ProductText";
 
@@ -50,7 +50,7 @@ function ComposerContextChip(props: ComposerContextChipProps): React.JSX.Element
       style={[styles.chip, item.disabled === true && styles.disabled]}
     >
       {item.icon === undefined ? null : (
-        <PresentationIcon color={colors.textMuted} name={item.icon} size={15} />
+        <PresentationIcon color={colors.textMuted} name={item.icon} size={iconSize.inline} />
       )}
       <Text style={styles.label}>{item.label}</Text>
     </Pressable>
@@ -62,27 +62,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     alignSelf: "flex-start",
     backgroundColor: colors.surfaceContainer,
-    borderRadius: 12,
+    borderRadius: radii.medium,
     flexDirection: "row",
-    gap: 6,
-    minHeight: 24,
-    paddingHorizontal: 9,
+    gap: spacing.compact,
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.xs,
   },
   content: {
     alignItems: "center",
-    gap: 6,
+    gap: spacing.compact,
     paddingBottom: spacing.xxs,
     paddingHorizontal: spacing.sm,
-    paddingTop: 2,
+    paddingTop: spacing.optical,
   },
   disabled: { opacity: 0.45 },
   label: {
     color: colors.textMuted,
     flexGrow: 0,
     flexShrink: 0,
-    fontSize: 11,
-    fontWeight: "600",
-    lineHeight: 15,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
   },
   root: { backgroundColor: colors.surface, flexGrow: 0, flexShrink: 0 },
 });

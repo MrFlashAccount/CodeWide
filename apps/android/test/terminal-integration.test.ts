@@ -2,7 +2,9 @@ import { readFileSync, statSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+import { compactSource } from "./source-contract";
+
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const terminal = readFileSync(new URL("../src/ui/TerminalWorkspace.native.tsx", import.meta.url), "utf8");
 const transport = readFileSync(new URL("../src/native/native-transport.native.ts", import.meta.url), "utf8");
 const store = readFileSync(new URL("../src/data/interactive-terminal-store.native.ts", import.meta.url), "utf8");
@@ -70,7 +72,7 @@ describe("native terminal integration", () => {
     expect(terminal).toContain("<View style={styles.header}>");
     expect(terminal).toContain("contentContainerStyle={styles.tabList} style={styles.tabScroll}");
     expect(terminal).not.toContain("styles.tabBar");
-    expect(terminal).toContain("header: { minHeight: 48");
+    expect(terminal).toContain("header: { minHeight: layoutSize.header");
   });
 
   it("ships one full monospaced Nerd Font for terminal text and symbols", () => {

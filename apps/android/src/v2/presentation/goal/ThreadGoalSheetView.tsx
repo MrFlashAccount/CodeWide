@@ -113,11 +113,16 @@ export function ThreadGoalSheetView(props: ThreadGoalSheetViewProps): React.JSX.
 
   return (
     <PresentationSheetView
-      contentProps={{ enableDynamicSizing: true, index: 0 }}
+      contentProps={{
+        dismissLabel: "Close goal",
+        enablePanDownToClose: pending === null,
+        enableDynamicSizing: true,
+        index: 0,
+      }}
       isOpen
       onOpenChange={handleOpenChange}
     >
-      <ThreadGoalSheetHeader disabled={pending !== null} goal={goal} onClose={close} />
+      <ThreadGoalSheetHeader goal={goal} />
       <View style={styles.content}>
         {loading ? <ShimmerText text="Loading goal…" /> : null}
         {goal === null ? null : <ThreadGoalDetails goal={goal} />}

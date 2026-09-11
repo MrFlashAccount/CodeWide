@@ -43,7 +43,7 @@ describe("Android download finalization", () => {
     expect(documentPreviewHost).toContain('<Toast.Action');
     expect(documentPreviewHost).toContain('variant="primary"');
     expect(documentPreviewHost).toContain('style={styles.downloadToastAction}');
-    expect(documentPreviewHost).toContain('downloadToastAction: { backgroundColor: colors.primary }');
+    expect(documentPreviewHost).toContain('downloadToastAction: { minHeight: controlSize.regular, backgroundColor: colors.primary }');
     expect(documentPreviewHost).not.toContain('dialog.alert("Download complete"');
   });
 

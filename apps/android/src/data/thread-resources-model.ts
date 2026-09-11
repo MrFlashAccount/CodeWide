@@ -77,7 +77,7 @@ export function createThreadResourcesModel(maxResidentRows = 48): ThreadResource
       } else if (record.revision !== revision && record.loadingRevision !== revision) {
         void beginLoad(id, revision, loader, record).catch(() => {
           // The loader publishes its scoped error row. Keep the stale value;
-          // an explicit refresh or connection revision owns the next attempt.
+          // the next connection revision owns the automatic retry.
         });
       }
       return record.ready$;

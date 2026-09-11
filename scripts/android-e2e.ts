@@ -1940,7 +1940,6 @@ async function main(): Promise<void> {
         await assertDarkSystemBars(driver!, "ports");
         await captureRuntimeSurface(driver!, "ports-available");
         await clickVisibleText(driver!, "Available");
-        await clickAccessibility(driver!, "Refresh open ports");
         await clickAccessibilityContaining(driver!, `port ${fixtureWeb.port}`);
         const forwardingName = `E2E Web ${nonce.slice(-8)}`;
         const nameInput = await waitForAccessibility(driver!, "Forwarding name");

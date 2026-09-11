@@ -1,7 +1,7 @@
 import type { PropsWithChildren, ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 
-import { colors, spacing, typeScale } from "../../theme";
+import { colors, spacing, typeScale, layoutSize } from "../../theme";
 import { PresentationText as Text } from "../text/ProductText";
 
 export function WorkspaceView(
@@ -51,20 +51,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: colors.surface,
     flexDirection: "row",
-    minHeight: 56,
+    minHeight: layoutSize.header,
     paddingLeft: spacing.xs,
   },
   identity: { flex: 1, minWidth: 0 },
   leading: { alignItems: "center", justifyContent: "center" },
   root: { backgroundColor: colors.background, flex: 1 },
-  subtitle: { marginTop: 1 },
-  subtitleText: { color: colors.textMuted, ...typeScale.labelMedium },
+  subtitle: { marginTop: spacing.optical },
+  subtitleText: { color: colors.textMuted, ...typeScale.label },
   title: {
     alignSelf: "flex-start",
     color: colors.text,
     flexShrink: 1,
     maxWidth: "100%",
     minWidth: 0,
-    ...typeScale.titleMedium,
+    ...typeScale.title,
   },
 });

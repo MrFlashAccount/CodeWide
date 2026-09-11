@@ -38,5 +38,11 @@ export function codeReviewDocumentEmptyState(
       message: "This file has no content or renderable diff.",
     };
   }
+  if (mode === "source" && document.source === "" && document.patches.length > 0) {
+    return {
+      title: "No source content",
+      message: "Switch to Unified or Split to inspect the recorded changes.",
+    };
+  }
   return null;
 }

@@ -9,26 +9,41 @@ import {
   type ContentReviewComment,
 } from "../src/rendering/content-review";
 import { contentReviewNativeModule } from "../src/rendering/content-review-native-module";
+import { compactSource } from "./source-contract";
 
 const target = { id: "answer-1", label: "Completed agent response", reference: "item-1" };
 const contentReviewHost = readFileSync(new URL("../src/rendering/ContentReviewHost.tsx", import.meta.url), "utf8");
 const reviewableText = readFileSync(new URL("../src/rendering/ReviewableText.native.tsx", import.meta.url), "utf8");
 const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const selectionModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/ContentReviewSelectionModule.kt", import.meta.url), "utf8");
 const mermaidDiagram = readFileSync(new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url), "utf8");
 const mermaidRenderer = readFileSync(new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url), "utf8");
 
 describe("content review", () => {
+  it("attaches image pin coordinates and comments without treating the image as a Mermaid diagram", () => {
+    const image = { id: "image-1", label: "Screenshot", reference: "scoped:attachments:shot.png" };
+    const attachment = serializeContentReviewAttachment([
+      { id: "pin-1", createdAt: 1, body: "Move this button", anchor: { kind: "image", target: image, x: 0.25, y: 0.75 } },
+      { id: "pin-2", createdAt: 2, body: "Keep the heading", anchor: { kind: "image", target: image, x: 0.5, y: 0.1 } },
+    ]);
+    expect(attachment).toContain("scoped:attachments:shot.png");
+    expect(attachment).toContain("(25.0%, 75.0%)");
+    expect(attachment).toContain("(50.0%, 10.0%)");
+    expect(attachment).toContain("Move this button");
+    expect(attachment).toContain("Keep the heading");
+    expect(attachment).not.toContain("Mermaid");
+    expect(attachment).not.toContain("undefined");
+  });
   it("keeps review input inline with the currently visible content", () => {
-    expect(contentReviewHost).toContain("<KeyboardStickyView");
+    expect(contentReviewHost).toContain("<ContentReviewKeyboardDock>");
     expect(contentReviewHost).toContain("paddingBottom: Math.max(spacing.sm, insets.bottom)");
     expect(contentReviewHost).toContain("<InlineContentReviewComposer");
     expect(contentReviewHost).not.toContain("useAppFullscreenOverlay");
     expect(contentReviewHost).not.toContain("resumeTray");
     expect(documentPreview).toContain('<ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />');
     expect(screen).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
-    expect(screen).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />');
+    expect(compactSource(screen)).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />');
     expect(mermaidDiagram).toContain('<ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />');
   });
 

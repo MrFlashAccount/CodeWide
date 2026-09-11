@@ -2,13 +2,15 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+import { compactSource } from "./source-contract";
+
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const subagentSheet = readFileSync(new URL("../src/ui/SubagentSheet.tsx", import.meta.url), "utf8");
 const resources = readFileSync(new URL("../src/data/workspace-resource-database.ts", import.meta.url), "utf8");
 const summaryHook = readFileSync(new URL("../src/data/use-thread-summary-view.ts", import.meta.url), "utf8");
 
 describe("conversation transition parity", () => {
-  it("uses the same transition, local Suspense and chat-window resource path as subagents", () => {
+  it("reveals main-chat navigation immediately while retaining local Suspense and shared window loading", () => {
     const mainSelection = screen.slice(
       screen.indexOf("const setActiveThreadId ="),
       screen.indexOf("const preloadThread ="),
@@ -34,13 +36,22 @@ describe("conversation transition parity", () => {
       subagentSheet.indexOf("const detailRows"),
     );
 
-    expect(mainSelection).toContain("startThreadTransition(() => {");
+    // Main-chat navigation now reveals cached data or a skeleton immediately;
+    // retaining the previous destination until hydration is no longer its UX contract.
+    expect(mainSelection).not.toContain("startThreadTransition(");
+    expect(mainSelection).toContain("setThreadSelection(nextSelection)");
+    const fallback = screen.slice(screen.indexOf("function ConversationNavigationLoader"), screen.indexOf("function ConversationNavigationFallback"));
+    expect(fallback).toContain("<MessageListSkeleton />");
+    expect(fallback).not.toContain("<ActivityIndicator");
     expect(subagentSelection).toContain("startSubagentTransition(() => setSelectedId(threadId))");
     expect(mainBoundary.indexOf("<Suspense fallback=")).toBeLessThan(mainBoundary.indexOf("<ConversationDestination"));
     expect(subagentBoundary.indexOf("<Suspense fallback=")).toBeLessThan(subagentBoundary.indexOf("<SubagentConversationDetail"));
-    expect(mainDetail).toContain("useThreadChatWindow(chatDatabase, chatWindowRequest)");
+    expect(mainDetail).toContain("useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
+    expect(mainDetail).toContain("searchState === null ? messageListState");
+    expect(screen).toContain("<MessageListBoundary state={messageListState}>");
     expect(subagentDetail).toContain("useThreadChatWindow(threadDetails, {");
-    expect(mainDetail).toContain("<ConversationPane\n        key={navigationKey}");
+    expect(mainDetail).toContain("<ConversationPane");
+    expect(mainDetail).not.toContain("key={navigationKey}");
   });
 
   it("has no compatibility surface or manual presentation gate", () => {

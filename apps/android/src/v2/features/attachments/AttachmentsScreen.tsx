@@ -23,18 +23,8 @@ export function AttachmentsScreen(props: AttachmentsScreenProps): React.JSX.Elem
     if (!open) close();
   });
   // This callback is invoked during render, so useEvent intentionally cannot own it.
-  const renderResources = (
-    result: ThreadResourcesResult,
-    refresh: () => Promise<void>,
-  ): React.ReactNode => {
-    return (
-      <AttachmentList
-        attachments={result.attachments}
-        onClose={close}
-        onRefresh={refresh}
-        owner={owner}
-      />
-    );
+  const renderResources = (result: ThreadResourcesResult): React.ReactNode => {
+    return <AttachmentList attachments={result.attachments} owner={owner} />;
   };
   return (
     <PresentationSheetView contentProps={RESOURCE_SHEET_PROPS} isOpen onOpenChange={changeOpen}>
@@ -57,6 +47,7 @@ export function AttachmentsScreen(props: AttachmentsScreenProps): React.JSX.Elem
 }
 
 const RESOURCE_SHEET_PROPS: PresentationSheetContentProps = {
+  dismissLabel: "Close attachments",
   contentContainerClassName: "h-full",
   enableDynamicSizing: false,
   enableOverDrag: false,

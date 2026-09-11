@@ -22,21 +22,24 @@ describe("Expo UI menu shape", () => {
     expect(patch).toContain("takeUnless { it.alpha == 0f }");
   });
 
-  it("uses the same 30dp radius as the configured HeroUI menu token", () => {
-    const globalCss = readSource("../global.css");
-    const theme = readSource("../src/theme.ts");
+  it("uses the bubble radius and compiles the patched Compose source, not the prebuilt AAR", () => {
     const menu = readSource("../src/ui/CodeWideMenu.native.tsx");
-    const baseRadiusRem = Number(globalCss.match(/--radius:\s*([\d.]+)rem/u)?.[1]);
-
-    expect(baseRadiusRem * 16 * 3).toBe(30);
-    expect(theme).toContain("menu: 30");
-    expect(menu).toContain("cornerRadius={radii.menu}");
+    const bubble = readSource("../src/rendering/Bubble.tsx");
+    const manifest = JSON.parse(readSource("../package.json"));
+    expect(manifest.expo.autolinking.android.buildFromSource).toEqual(["expo-ui"]);
+    expect(menu).toContain("cornerRadius={radii.selected}");
+    expect(bubble).toContain("borderRadius: radii.selected");
   });
 
-  it("moves only the message action glyph two dp away from the bubble", () => {
+  it("places the message action beside the bubble without shrinking its touch area", () => {
     const screen = readSource("../src/CodeWideScreen.tsx");
 
-    expect(screen).toContain('style={styles.messageActionIcon}');
-    expect(screen).toContain("messageActionIcon: { transform: [{ translateX: 2 }] }");
+    expect(screen).not.toContain('style={styles.messageActionIcon}');
+    const actionStyle = screen.match(/messageActionButton: \{[^}]+\}/u)?.[0];
+    expect(actionStyle).toContain('alignItems: "flex-start"');
+    expect(actionStyle).toContain('width: controlSize.compact');
+    expect(screen.match(/agentMessageRow: \{[^}]+\}/u)?.[0]).toContain('gap: 0');
+    expect(actionStyle).toContain('justifyContent: "center"');
+    expect(actionStyle).not.toContain('marginLeft');
   });
 });

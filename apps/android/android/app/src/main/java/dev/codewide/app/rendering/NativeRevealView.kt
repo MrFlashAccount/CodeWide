@@ -15,20 +15,24 @@ class NativeRevealView(context: Context) : ReactViewGroup(context) {
   private var pendingReady = true
   private var pendingReduceMotion = false
   private var pendingRevealKey = ""
+  private var delayMs = 0L
   private var committedReady = false
   private var committedRevealKey: String? = null
   private var restartWhenSized = false
   private var effectApplied = false
   private var animator: ValueAnimator? = null
   private var shader: RuntimeShader? = null
+  private var historyKey = ""
 
   fun setPendingReady(value: Boolean) { pendingReady = value }
   fun setPendingReduceMotion(value: Boolean) { pendingReduceMotion = value }
   fun setPendingRevealKey(value: String?) { pendingRevealKey = value ?: "" }
+  fun setDelayMs(value: Int) { delayMs = value.coerceIn(0, 120).toLong() }
 
   fun commitProps() {
     val keyChanged = committedRevealKey != pendingRevealKey
     val becameReady = !committedReady && pendingReady
+    if (keyChanged) historyKey = RevealHistory.key(pendingRevealKey)
     committedReady = pendingReady
     committedRevealKey = pendingRevealKey
 
@@ -38,7 +42,7 @@ class NativeRevealView(context: Context) : ReactViewGroup(context) {
       applyProgress(0f)
       return
     }
-    if (pendingReduceMotion || !ValueAnimator.areAnimatorsEnabled()) {
+    if (pendingReduceMotion || !ValueAnimator.areAnimatorsEnabled() || RevealHistory.contains(historyKey)) {
       finishReveal()
       return
     }
@@ -78,6 +82,10 @@ class NativeRevealView(context: Context) : ReactViewGroup(context) {
   }
 
   private fun startRevealWhenPossible() {
+    if (pendingReduceMotion || !ValueAnimator.areAnimatorsEnabled() || RevealHistory.contains(historyKey)) {
+      finishReveal()
+      return
+    }
     if (!isAttachedToWindow || width <= 0 || height <= 0) {
       restartWhenSized = true
       applyProgress(0f)
@@ -92,6 +100,7 @@ class NativeRevealView(context: Context) : ReactViewGroup(context) {
     applyProgress(0f)
     val next = ValueAnimator.ofFloat(0f, 1f).apply {
       duration = REVEAL_DURATION_MS
+      startDelay = delayMs
       interpolator = REVEAL_INTERPOLATOR
       addUpdateListener { applyProgress(it.animatedValue as Float) }
       addListener(object : AnimatorListenerAdapter() {
@@ -106,7 +115,8 @@ class NativeRevealView(context: Context) : ReactViewGroup(context) {
 
   private fun finishReveal() {
     restartWhenSized = false
-    animator = null
+    cancelAnimator()
+    RevealHistory.record(historyKey)
     setRenderEffect(null)
     effectApplied = false
     invalidate()
@@ -137,20 +147,14 @@ class NativeRevealView(context: Context) : ReactViewGroup(context) {
       uniform float2 resolution;
       uniform float progress;
 
-      float hash21(float2 point) {
-        point = fract(point * float2(123.34, 456.21));
-        point += dot(point, point + 45.32);
-        return fract(point.x * point.y);
-      }
-
       half4 main(float2 position) {
         half4 color = contents.eval(position);
         float2 uv = position / max(resolution, float2(1.0));
-        float grain = hash21(floor(position / 3.0)) - 0.5;
         float axis = uv.x * 0.82 + uv.y * 0.18;
-        float front = progress * 1.24 - 0.14 + grain * 0.07;
-        float mask = 1.0 - smoothstep(front, front + 0.105, axis);
-        return color * half(mask);
+        float front = progress * 1.4 - 0.2;
+        float mask = 1.0 - smoothstep(front, front + 0.2, axis);
+        half highlight = half(0.12 * 4.0 * mask * (1.0 - mask));
+        return half4(mix(color.rgb, half3(color.a), highlight), color.a) * half(mask);
       }
     """
   }

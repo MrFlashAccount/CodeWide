@@ -33,6 +33,13 @@ const USAGE: V2TurnUsage = {
 };
 
 describe("V2 usage parity", () => {
+  it("uses the latest request and accepts a context decrease after compaction", () => {
+    const previous = turn("previous", USAGE);
+    const compacted = turn("current", { ...USAGE, latestRequestTokens: 2_000 });
+    expect(usagePresentation({ turns: [previous, compacted] }).context?.usedTokens).toBe(2_000);
+    expect(usagePresentation({ turns: [previous, compacted] }).session?.totalTokens).toBe(22_000);
+  });
+
   it("preserves every authoritative usage field and the compaction aggregate", () => {
     const presentation = usagePresentation({
       turns: [turn("old", null), turn("current", USAGE)],

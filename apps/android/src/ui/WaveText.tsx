@@ -33,7 +33,7 @@ export function WaveText(props: WaveTextProps) {
   if (!animated || NativeShimmerText === null) {
     return (
       <View testID={testID} accessible accessibilityRole="text" accessibilityLabel={text} style={[styles.shell, containerStyle]}>
-        <Text accessible={false} numberOfLines={numberOfLines} ellipsizeMode="tail" style={style}>{text}</Text>
+        <Text accessible={false} numberOfLines={numberOfLines} ellipsizeMode="tail" style={[style, styles.textGeometry]}>{text}</Text>
       </View>
     );
   }
@@ -45,7 +45,7 @@ export function WaveText(props: WaveTextProps) {
 
   return (
     <View testID={testID} accessible accessibilityRole="text" accessibilityLabel={text} style={[styles.shell, containerStyle]}>
-      <Text accessible={false} importantForAccessibility="no-hide-descendants" numberOfLines={numberOfLines} ellipsizeMode="tail" style={[style, styles.measure]}>{text}</Text>
+      <Text accessible={false} importantForAccessibility="no-hide-descendants" numberOfLines={numberOfLines} ellipsizeMode="tail" style={[style, styles.textGeometry, styles.measure]}>{text}</Text>
       <NativeShimmerText
         text={text}
         {...(color === undefined ? {} : { color })}
@@ -65,5 +65,8 @@ export function WaveText(props: WaveTextProps) {
 
 const styles = StyleSheet.create({
   shell: { minWidth: 0, maxWidth: "100%", flexShrink: 1, alignSelf: "center", justifyContent: "center", overflow: "hidden" },
+  // NativeShimmerText uses StaticLayout.setIncludePad(false). Its Yoga measure
+  // and reduced-motion fallback must not reserve Android's extra font padding.
+  textGeometry: { includeFontPadding: false },
   measure: { opacity: 0 },
 });

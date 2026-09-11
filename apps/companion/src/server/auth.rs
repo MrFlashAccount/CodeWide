@@ -321,6 +321,22 @@ async fn authorize_sync(state: &AppState, headers: &HeaderMap) -> Option<Authori
     }
 }
 
+// A device capability can open V1 sync directly only when the TLS acceptor
+// has already proved possession of that same registered device's key.
+async fn authorize_sync_transport(
+    state: &AppState,
+    headers: &HeaderMap,
+    tls: Option<&DeviceTlsConnectInfo>,
+) -> Option<AuthorizationContext> {
+    if let (Some(tls), Authorization::Registry(registry)) = (tls, &state.authorization)
+        && let Some(context @ AuthorizationContext::Device { .. }) =
+            registry.authorization_context(header_auth(headers)).await
+    {
+        return (context.device_id() == Some(tls.device_id.as_str())).then_some(context);
+    }
+    authorize_sync(state, headers).await
+}
+
 async fn is_authenticated_session(state: &AppState, headers: &HeaderMap) -> bool {
     authenticated_session(state, headers)
         .await

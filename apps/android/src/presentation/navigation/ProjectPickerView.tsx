@@ -9,7 +9,16 @@ import {
 } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  iconSize,
+  typeTracking,
+  layoutSize,
+} from "../../theme";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import {
   PresentationSheetScrollView,
@@ -62,11 +71,11 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
       onOpenChange(false);
     });
   });
-  const close = useEvent(() => onOpenChange(false));
   const selectDefault = useEvent(() => select(null));
   return (
     <PresentationSheetView
       contentProps={{
+        dismissLabel: "Close project picker",
         enableDynamicSizing: false,
         enableOverDrag: false,
         index: 0,
@@ -85,17 +94,9 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
           </ProductText>
         </View>
         {pending ? <ActivityIndicator color={colors.accent} size="small" /> : null}
-        <Pressable
-          accessibilityLabel="Close project picker"
-          accessibilityRole="button"
-          onPress={close}
-          style={closeStyle}
-        >
-          <PresentationIcon color={colors.text} name="close" size={21} />
-        </Pressable>
       </View>
       <View style={styles.search}>
-        <PresentationIcon color={colors.textMuted} name="search" size={20} />
+        <PresentationIcon color={colors.textMuted} name="search" size={iconSize.action} />
         <TextInput
           accessibilityLabel="Search projects"
           autoCapitalize="none"
@@ -127,7 +128,7 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
         ))}
         {visibleProjects.length === 0 ? (
           <View style={styles.empty}>
-            <PresentationIcon color={colors.textDim} name="search" size={24} />
+            <PresentationIcon color={colors.textDim} name="search" size={iconSize.navigation} />
             <ProductText tone="muted">No matching projects</ProductText>
           </View>
         ) : null}
@@ -141,7 +142,7 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
             style={currentPath === null ? selectedRowStyle : rowStyle}
           >
             <View style={styles.rowIcon}>
-              <PresentationIcon color={colors.textMuted} name="server" size={21} />
+              <PresentationIcon color={colors.textMuted} name="server" size={iconSize.action} />
             </View>
             <View style={styles.rowCopy}>
               <ProductText style={styles.rowTitle} weight="semibold">
@@ -154,7 +155,7 @@ export function ProjectPickerView(props: ProjectPickerViewProps): React.JSX.Elem
             <PresentationIcon
               color={currentPath === null ? colors.accent : colors.textDim}
               name={currentPath === null ? "checkCircle" : "radio"}
-              size={20}
+              size={iconSize.action}
             />
           </Pressable>
         ) : null}
@@ -179,7 +180,7 @@ function ProjectRowView(props: ProjectRowViewProps): React.JSX.Element {
         <PresentationIcon
           color={project.pinned ? colors.accent : colors.textMuted}
           name={project.pinned ? "pin" : "folder"}
-          size={20}
+          size={iconSize.action}
         />
       </View>
       <View style={styles.rowCopy}>
@@ -193,7 +194,7 @@ function ProjectRowView(props: ProjectRowViewProps): React.JSX.Element {
       <PresentationIcon
         color={selected ? colors.accent : colors.textDim}
         name={selected ? "checkCircle" : "radio"}
-        size={20}
+        size={iconSize.action}
       />
     </Pressable>
   );
@@ -213,11 +214,6 @@ function SectionLabel(props: SectionLabelProps): React.JSX.Element {
   );
 }
 
-function closeStyle(state: PressableStateCallbackType) {
-  const { pressed } = state;
-  return [styles.close, pressed && styles.pressed];
-}
-
 function rowStyle(state: PressableStateCallbackType) {
   const { pressed } = state;
   return [styles.row, pressed && styles.pressed];
@@ -229,16 +225,9 @@ function selectedRowStyle(state: PressableStateCallbackType) {
 }
 
 const styles = StyleSheet.create({
-  close: {
-    alignItems: "center",
-    borderRadius: radii.large,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
   content: { paddingBottom: spacing.lg },
   empty: { alignItems: "center", gap: spacing.xs, paddingVertical: spacing.xl },
-  header: { alignItems: "center", flexDirection: "row", minHeight: 56 },
+  header: { alignItems: "center", flexDirection: "row", minHeight: layoutSize.header },
   headerCopy: { flex: 1, minWidth: 0 },
   list: { flex: 1, minHeight: 0 },
   pressed: { opacity: 0.68 },
@@ -247,12 +236,12 @@ const styles = StyleSheet.create({
     borderRadius: radii.selected,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 64,
+    minHeight: layoutSize.row,
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xs,
   },
   rowCopy: { flex: 1, minWidth: 0 },
-  rowDetail: { fontSize: 12, lineHeight: 16, marginTop: 1 },
+  rowDetail: { ...typeScale.label, marginTop: spacing.optical },
   rowIcon: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainer,
@@ -262,7 +251,7 @@ const styles = StyleSheet.create({
     width: touchTarget,
   },
   rowSelected: { backgroundColor: colors.secondaryContainer },
-  rowTitle: { fontSize: 14, lineHeight: 20 },
+  rowTitle: { ...typeScale.body },
   search: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainer,
@@ -277,7 +266,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     paddingVertical: 0,
-    ...typeScale.bodyLarge,
+    ...typeScale.body,
   },
   section: {
     alignItems: "center",
@@ -287,8 +276,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     paddingTop: spacing.sm,
   },
-  sectionCount: { fontSize: 11, lineHeight: 15 },
-  sectionTitle: { fontSize: 10, letterSpacing: 0.7, lineHeight: 14, textTransform: "uppercase" },
-  subtitle: { ...typeScale.labelMedium },
-  title: { ...typeScale.titleLarge },
+  sectionCount: { ...typeScale.label },
+  sectionTitle: {
+    ...typeScale.caption,
+    letterSpacing: typeTracking.caps,
+    textTransform: "uppercase",
+  },
+  subtitle: { ...typeScale.label },
+  title: { ...typeScale.heading },
 });

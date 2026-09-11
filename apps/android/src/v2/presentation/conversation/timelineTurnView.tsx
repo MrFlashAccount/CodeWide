@@ -11,6 +11,7 @@ import { ShimmerText } from "../text/ShimmerText";
 import { MessageActionRailView } from "./MessageActionRailView";
 import { TimelineActivityRow, TimelineActivityView } from "./timelineActivityView";
 import { TimelineUserInputView } from "./timelineUserInputView";
+import { TimelineDateSeparator } from "./timelineDateSeparator";
 import {
   timelineClockLabel,
   timelineCompactNumber,
@@ -26,6 +27,7 @@ import type {
 } from "./timelineTypes";
 
 interface TimelineTurnViewProps {
+  agentDateLabel?: string | null;
   activityActions?: TimelineActivityActions;
   actions?: TimelineTurnActions;
   latestAssistantRef?(node: View | null): void;
@@ -37,6 +39,7 @@ interface TimelineTurnViewProps {
 
 export function TimelineTurnView(props: TimelineTurnViewProps): React.JSX.Element {
   const {
+    agentDateLabel = null,
     actions,
     activityActions,
     latestAssistantRef,
@@ -94,37 +97,40 @@ export function TimelineTurnView(props: TimelineTurnViewProps): React.JSX.Elemen
         </View>
       )}
       {showAgentBubble ? (
-        <View
-          key={latestAssistantMeasurementKey ?? "initial-authority"}
-          {...(latestAssistantRef === undefined ? {} : { ref: latestAssistantRef })}
-          {...(onLatestAssistantLayout === undefined
-            ? {}
-            : { onLayout: handleLatestAssistantLayout })}
-          style={styles.agentMessageRow}
-        >
-          <Bubble fill={agentBubbleFill} variant="agent" testID="codex-bubble">
-            <BubbleContent>
-              <TimelineActivityView
-                {...(activityActions === undefined ? {} : { actions: activityActions })}
-                activityCount={turn.activityCount}
-                rows={turn.responseRows}
-                {...(onLoadActivity === undefined ? {} : { onLoadActivity: loadActivity })}
-                turnId={turn.id}
-                turnState={turn.state}
-              />
-              {assistantText === "" && turn.activityCount === 0 ? (
-                <ProductText style={styles.agentPlaceholder} tone="dim">
-                  {emptyResponseLabel(turn.state)}
-                </ProductText>
-              ) : null}
-            </BubbleContent>
-          </Bubble>
-          <MessageActionRailView
-            {...(actions === undefined ? {} : { actions })}
-            completedAt={completedAt}
-            copyText={assistantText}
-          />
-        </View>
+        <>
+          {agentDateLabel === null ? null : <TimelineDateSeparator label={agentDateLabel} />}
+          <View
+            key={latestAssistantMeasurementKey ?? "initial-authority"}
+            {...(latestAssistantRef === undefined ? {} : { ref: latestAssistantRef })}
+            {...(onLatestAssistantLayout === undefined
+              ? {}
+              : { onLayout: handleLatestAssistantLayout })}
+            style={styles.agentMessageRow}
+          >
+            <Bubble fill={agentBubbleFill} variant="agent" testID="codex-bubble">
+              <BubbleContent>
+                <TimelineActivityView
+                  {...(activityActions === undefined ? {} : { actions: activityActions })}
+                  activityCount={turn.activityCount}
+                  rows={turn.responseRows}
+                  {...(onLoadActivity === undefined ? {} : { onLoadActivity: loadActivity })}
+                  turnId={turn.id}
+                  turnState={turn.state}
+                />
+                {assistantText === "" && turn.activityCount === 0 ? (
+                  <ProductText style={styles.agentPlaceholder} tone="dim">
+                    {emptyResponseLabel(turn.state)}
+                  </ProductText>
+                ) : null}
+              </BubbleContent>
+            </Bubble>
+            <MessageActionRailView
+              {...(actions === undefined ? {} : { actions })}
+              completedAt={completedAt}
+              copyText={assistantText}
+            />
+          </View>
+        </>
       ) : null}
       {showAgentBubble || actions === undefined ? null : (
         <View style={styles.turnOnlyActionRow}>

@@ -14,4 +14,7 @@ export CARGO_ENCODED_RUSTFLAGS
 export CARGO_INCREMENTAL=0
 
 cd "$repo_root"
+sh "$repo_root/scripts/cargo-target-budget.sh"
+export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1
+export CARGO_TARGET_DIR="$repo_root/target"
 exec cargo build --release -p codewide-companion --bins "$@"

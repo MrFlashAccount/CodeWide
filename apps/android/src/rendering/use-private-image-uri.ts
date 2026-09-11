@@ -1,12 +1,12 @@
 import { createContext, createElement, type ReactNode, useContext } from "react";
 
 import {
-  privateAssetCacheKey,
   type GetTransferAccess,
   type PrivateAssetSource,
 } from "../data/private-transfer";
 import { materializePrivateAsset } from "./private-asset";
 import { useAsyncResource } from "./async-resource-store";
+import { privateImageResourceKey } from "./private-image-resource-key";
 import { incrementMetric, recordTiming } from "../data/operational-metrics";
 
 type ResolvedImageSource = { uri: string; headers?: Record<string, string> };
@@ -59,7 +59,7 @@ export function usePrivateAssetUri(source: PrivateAssetSource | null, revision =
   const accessScope = usePrivateFileAccessScope();
   const key = source === null
     ? null
-    : `private-asset:${accessScope}:${revision}:${privateAssetCacheKey(source)}`;
+    : `private-asset:${accessScope}:${revision}:${privateImageResourceKey(source)}`;
   const resource = useAsyncResource<PrivateImageSource>(key, key ?? "none", async (_publish, signal) => {
     if (source === null) return EMPTY_PRIVATE_IMAGE;
     const materialize = materializePrivateAsset(source, getAccess, recoverMissing ?? undefined).then((uri): ResolvedImageSource => ({ uri }));

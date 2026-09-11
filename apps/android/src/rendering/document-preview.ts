@@ -122,8 +122,9 @@ export function resolvePreviewableDocumentLink(href: string, cwd: string): Previ
   const location = resolveRemoteDocumentLocation(href, cwd);
   if (location === null) return null;
   const name = remoteDocumentBasename(location.path);
+  const kind = remoteFileKind(name, location.path);
   return {
-    kind: remoteFileKind(name, location.path),
+    kind,
     name,
     path: location.path,
     ...(location.line === undefined ? {} : { line: location.line }),
@@ -213,14 +214,9 @@ function normalizeAbsoluteRemotePath(value: string): string {
   return `/${segments.join("/")}`;
 }
 
-/**
- * Repository HTML is untrusted content. Keep its visual HTML/CSS fidelity but
- * prevent scripts, network requests, forms and top-level navigation inside the
- * authenticated application WebView.
- */
-export function isolatedHtmlDocument(source: string): string {
-  const policy = "default-src 'none'; img-src data: blob:; media-src data: blob:; font-src data:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
-  const head = `<meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width, initial-scale=1"><style>:root{color-scheme:light dark}html{font-family:system-ui,sans-serif;line-height:1.45;padding:16px}body{margin:0;overflow-wrap:anywhere}img,video,svg,canvas{max-width:100%;height:auto}table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}pre{overflow:auto}a{color:#79a9ff}</style>`;
+/** Wrap HTML fragments without narrowing the document's own browser capabilities. */
+export function interactiveHtmlDocument(source: string): string {
+  const head = `<meta name="viewport" content="width=device-width, initial-scale=1"><style>:root{color-scheme:light dark}html{font-family:system-ui,sans-serif;line-height:1.45;padding:16px}body{margin:0;overflow-wrap:anywhere}img,video,svg,canvas{max-width:100%;height:auto}table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}pre{overflow:auto}a{color:#79a9ff}</style>`;
   const headTag = /<head(?:\s[^>]*)?>/iu;
   if (headTag.test(source)) return source.replace(headTag, (match) => `${match}${head}`);
   const htmlTag = /<html(?:\s[^>]*)?>/iu;

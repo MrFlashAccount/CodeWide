@@ -32,6 +32,7 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
     textSize = PixelUtil.toPixelFromSP(14f)
   }
   private val textPath = Path()
+  private val linePath = Path()
   private val bandView = GradientBandView(context)
   private val linearInterpolator = LinearInterpolator()
 
@@ -47,7 +48,7 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
 
   private var textLayout: StaticLayout? = null
   private var textTopPx = 0f
-  private var bandWidthPx = 0f
+  private var sweep = ShimmerSweep(0f, 0f, false, 0f)
   private var animationGeneration = 0
   private var aggregatedVisible = true
 
@@ -109,7 +110,7 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
     super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-    val childWidth = max(1, ceil(bandWidthFor(measuredWidth)).toInt())
+    val childWidth = max(1, ceil(sweepFor(measuredWidth, measuredHeight).viewWidth).toInt())
     val childHeight = max(1, measuredHeight)
     bandView.measure(
       MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
@@ -118,6 +119,14 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
   }
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+    // onMeasure may still see a single-line layout from before onSizeChanged.
+    // The diagonal shader then starts outside that narrow child, clipping the
+    // upper lines. Size the native-owned band from the final wrapped geometry.
+    val finalSweep = sweepFor(right - left, bottom - top)
+    bandView.measure(
+      MeasureSpec.makeMeasureSpec(max(1, ceil(finalSweep.viewWidth).toInt()), MeasureSpec.EXACTLY),
+      MeasureSpec.makeMeasureSpec(max(1, bottom - top), MeasureSpec.EXACTLY),
+    )
     bandView.layout(0, 0, bandView.measuredWidth, bandView.measuredHeight)
     if (changed) updateAnimation()
   }
@@ -146,6 +155,7 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
     stopAnimation()
     paint.shader = null
     textPath.reset()
+    linePath.reset()
   }
 
   private fun rebuildTextGeometry() {
@@ -177,22 +187,26 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
       val start = layout.getLineStart(line)
       val end = layout.getLineVisibleEnd(line)
       if (start < end) {
+        // getTextPath replaces its destination. Accumulate each line explicitly
+        // so the RenderThread band is clipped by the entire paragraph.
+        linePath.reset()
         paint.getTextPath(
           pendingText,
           start,
           end,
           layout.getLineLeft(line),
           textTopPx + layout.getLineBaseline(line),
-          textPath,
+          linePath,
         )
+        textPath.addPath(linePath)
       }
     }
   }
 
   private fun configureBand() {
-    bandWidthPx = bandWidthFor(width)
+    sweep = sweepFor(width, height)
     val highlightColor = ColorUtils.setAlphaComponent(Color.WHITE, Color.alpha(pendingColor))
-    bandView.configure(bandWidthPx, highlightColor)
+    bandView.configure(sweep, highlightColor)
     requestLayout()
     updateAnimation()
   }
@@ -211,9 +225,9 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
 
   private fun animateBand(generation: Int) {
     if (generation != animationGeneration || !shouldAnimate()) return
-    bandView.translationX = -bandWidthPx
+    bandView.translationX = sweep.startX
     bandView.animate()
-      .translationX(width.toFloat())
+      .translationX(sweep.endX)
       .setDuration(SWEEP_DURATION_MS)
       .setInterpolator(linearInterpolator)
       .withEndAction {
@@ -228,8 +242,11 @@ class NativeShimmerTextView(context: Context) : ViewGroup(context) {
     bandView.visibility = INVISIBLE
   }
 
-  private fun bandWidthFor(availableWidth: Int): Float =
-    max(PixelUtil.toPixelFromDIP(28f), availableWidth * 0.46f)
+  private fun sweepFor(availableWidth: Int, availableHeight: Int): ShimmerSweep =
+    ShimmerSweep(
+      availableWidth.toFloat(), availableHeight.toFloat(),
+      (textLayout?.lineCount ?: 0) > 1, PixelUtil.toPixelFromDIP(28f),
+    )
 
   private fun fontWeight(): Int = when (pendingFontWeight) {
     "bold" -> 700
@@ -244,13 +261,13 @@ private class GradientBandView(context: Context) : View(context) {
     setWillNotDraw(false)
   }
 
-  fun configure(widthPx: Float, highlightColor: Int) {
+  fun configure(sweep: ShimmerSweep, highlightColor: Int) {
     val transparent = ColorUtils.setAlphaComponent(highlightColor, 0)
     paint.shader = LinearGradient(
+      sweep.gradientStartX,
       0f,
-      0f,
-      max(1f, widthPx),
-      0f,
+      sweep.gradientEndX,
+      sweep.gradientEndY,
       intArrayOf(transparent, transparent, highlightColor, transparent, transparent),
       floatArrayOf(0f, 0.2f, 0.5f, 0.8f, 1f),
       Shader.TileMode.CLAMP,

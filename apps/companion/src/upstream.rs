@@ -125,6 +125,7 @@ pub async fn bridge_raw_app_server(
 pub struct UpstreamHandle {
     commands: mpsc::Sender<UpstreamCommand>,
     events: broadcast::Sender<Value>,
+    ordered_events: Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
     status: watch::Receiver<ConnectionStatus>,
     generation: Arc<AtomicU64>,
 }
@@ -132,6 +133,29 @@ pub struct UpstreamHandle {
 struct UpstreamRequest {
     request: Value,
     response: oneshot::Sender<Result<Value, UpstreamError>>,
+    fence: Option<oneshot::Sender<Result<u64, UpstreamError>>>,
+}
+
+struct PendingUpstreamRequest {
+    response: oneshot::Sender<Result<Value, UpstreamError>>,
+    fence: Option<oneshot::Sender<Result<u64, UpstreamError>>>,
+}
+
+pub(crate) enum OrderedUpstreamEvent {
+    Notification(Value),
+    Fence(oneshot::Sender<Result<u64, UpstreamError>>),
+}
+
+pub(crate) struct UpstreamFence {
+    receiver: oneshot::Receiver<Result<u64, UpstreamError>>,
+}
+
+impl UpstreamFence {
+    pub(crate) async fn wait(self) -> Result<u64, UpstreamError> {
+        self.receiver
+            .await
+            .map_err(|_| UpstreamError::Disconnected)?
+    }
 }
 
 struct UpstreamResponse {
@@ -166,11 +190,13 @@ impl UpstreamHandle {
     pub fn spawn_with_message_limit(socket_path: PathBuf, max_message_bytes: usize) -> Self {
         let (commands, command_rx) = mpsc::channel(REQUEST_QUEUE_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let ordered_events = Arc::new(std::sync::Mutex::new(None));
         let (status_tx, status) = watch::channel(ConnectionStatus::Reconnecting);
         let generation = Arc::new(AtomicU64::new(0));
         let handle = Self {
             commands,
             events: events.clone(),
+            ordered_events: ordered_events.clone(),
             status,
             generation: generation.clone(),
         };
@@ -178,6 +204,7 @@ impl UpstreamHandle {
             socket_path,
             command_rx,
             events,
+            ordered_events,
             status_tx,
             generation,
             max_message_bytes,
@@ -204,16 +231,24 @@ impl UpstreamHandle {
             .ok_or_else(|| UpstreamError::Protocol("App Server stdout is not piped".into()))?;
         let (commands, command_rx) = mpsc::channel(REQUEST_QUEUE_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let ordered_events = Arc::new(std::sync::Mutex::new(None));
         let (status_tx, status) = watch::channel(ConnectionStatus::Reconnecting);
         let generation = Arc::new(AtomicU64::new(0));
         let handle = Self {
             commands,
             events: events.clone(),
+            ordered_events: ordered_events.clone(),
             status,
             generation: generation.clone(),
         };
         tokio::spawn(run_stdio(
-            stdin, stdout, command_rx, events, status_tx, generation,
+            stdin,
+            stdout,
+            command_rx,
+            events,
+            ordered_events,
+            status_tx,
+            generation,
         ));
         Ok(handle)
     }
@@ -239,6 +274,21 @@ impl UpstreamHandle {
         self.events.subscribe()
     }
 
+    /// Installs the single lossless event stream used to fence durable replay.
+    pub(crate) fn take_ordered_events(&self) -> mpsc::Receiver<OrderedUpstreamEvent> {
+        let (sender, receiver) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let mut slot = match self.ordered_events.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        assert!(
+            slot.is_none(),
+            "ordered App Server event stream already attached"
+        );
+        *slot = Some(sender);
+        receiver
+    }
+
     /// Forwards one JSON-RPC request through the connected App Server stream.
     ///
     /// # Errors
@@ -246,6 +296,25 @@ impl UpstreamHandle {
     /// Returns an explicit reconnect, backpressure, disconnect, or protocol
     /// error without buffering an unbounded request backlog.
     pub async fn request(&self, request: Value) -> Result<Value, UpstreamError> {
+        self.request_with_fence(request, None).await
+    }
+
+    /// Sends a request whose response position can be resolved to the exact
+    /// durable replay cursor after every preceding notification is committed.
+    pub(crate) async fn request_fenced(
+        &self,
+        request: Value,
+    ) -> Result<(Value, UpstreamFence), UpstreamError> {
+        let (fence, receiver) = oneshot::channel();
+        let response = self.request_with_fence(request, Some(fence)).await?;
+        Ok((response, UpstreamFence { receiver }))
+    }
+
+    async fn request_with_fence(
+        &self,
+        request: Value,
+        fence: Option<oneshot::Sender<Result<u64, UpstreamError>>>,
+    ) -> Result<Value, UpstreamError> {
         if self.status() != ConnectionStatus::Live {
             return Err(UpstreamError::Reconnecting);
         }
@@ -254,6 +323,7 @@ impl UpstreamHandle {
             .try_send(UpstreamCommand::Request(UpstreamRequest {
                 request,
                 response,
+                fence,
             }))
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => UpstreamError::Backpressure,
@@ -296,6 +366,7 @@ async fn run(
     socket_path: PathBuf,
     mut commands: mpsc::Receiver<UpstreamCommand>,
     events: broadcast::Sender<Value>,
+    ordered_events: Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
     status: watch::Sender<ConnectionStatus>,
     generation: Arc<AtomicU64>,
     max_message_bytes: usize,
@@ -307,6 +378,7 @@ async fn run(
             &socket_path,
             &mut commands,
             &events,
+            &ordered_events,
             &status,
             &generation,
             max_message_bytes,
@@ -336,6 +408,7 @@ async fn run_stdio(
     stdout: ChildStdout,
     mut commands: mpsc::Receiver<UpstreamCommand>,
     events: broadcast::Sender<Value>,
+    ordered_events: Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
     status: watch::Sender<ConnectionStatus>,
     generation: Arc<AtomicU64>,
 ) {
@@ -345,6 +418,7 @@ async fn run_stdio(
         &mut lines,
         &mut commands,
         &events,
+        &ordered_events,
         &status,
         &generation,
     )
@@ -364,6 +438,7 @@ async fn run_stdio_connection(
     lines: &mut tokio::io::Lines<BufReader<ChildStdout>>,
     commands: &mut mpsc::Receiver<UpstreamCommand>,
     events: &broadcast::Sender<Value>,
+    ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
     status: &watch::Sender<ConnectionStatus>,
     generation: &AtomicU64,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -392,7 +467,7 @@ async fn run_stdio_connection(
             break value;
         }
         if value.get("method").and_then(Value::as_str).is_some() {
-            let _ = events.send(value);
+            publish_notification(events, ordered_events, value).await;
         }
     };
     if initialized.get("error").is_some() {
@@ -404,13 +479,12 @@ async fn run_stdio_connection(
     info!("Connected to private Codex App Server over stdio");
 
     let mut counter = 0_u64;
-    let mut pending: HashMap<String, oneshot::Sender<Result<Value, UpstreamError>>> =
-        HashMap::new();
+    let mut pending: HashMap<String, PendingUpstreamRequest> = HashMap::new();
     let mut pending_cleanup = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
             _ = pending_cleanup.tick() => {
-                pending.retain(|_, response| !response.is_closed());
+                pending.retain(|_, request| !request.response.is_closed());
             }
             outbound = commands.recv() => {
                 let Some(outbound) = outbound else { break; };
@@ -430,7 +504,10 @@ async fn run_stdio_connection(
                             let _ = outbound.response.send(Err(UpstreamError::Disconnected));
                             break;
                         }
-                        pending.insert(upstream_id, outbound.response);
+                        pending.insert(upstream_id, PendingUpstreamRequest {
+                            response: outbound.response,
+                            fence: outbound.fence,
+                        });
                     }
                     UpstreamCommand::ServerResponse(outbound) => {
                         let valid = outbound.response.get("id").is_some()
@@ -453,7 +530,7 @@ async fn run_stdio_connection(
                 let Some(line) = line? else { break; };
                 let value: Value = serde_json::from_str(&line)?;
                 if value.get("method").and_then(Value::as_str).is_some() {
-                    let _ = events.send(value);
+                    publish_notification(events, ordered_events, value).await;
                     continue;
                 }
                 let id = match value.get("id") {
@@ -461,14 +538,14 @@ async fn run_stdio_connection(
                     Some(id) => id.to_string(),
                     None => continue,
                 };
-                if let Some(response) = pending.remove(&id) {
-                    let _ = response.send(Ok(value));
+                if let Some(request) = pending.remove(&id) {
+                    complete_pending_request(request, value, ordered_events).await;
                 }
             }
         }
     }
-    for (_, response) in pending {
-        let _ = response.send(Err(UpstreamError::Disconnected));
+    for (_, request) in pending {
+        let _ = request.response.send(Err(UpstreamError::Disconnected));
     }
     Ok(())
 }
@@ -483,6 +560,7 @@ async fn run_connection(
     socket_path: &PathBuf,
     commands: &mut mpsc::Receiver<UpstreamCommand>,
     events: &broadcast::Sender<Value>,
+    ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
     status: &watch::Sender<ConnectionStatus>,
     generation: &AtomicU64,
     max_message_bytes: usize,
@@ -493,13 +571,12 @@ async fn run_connection(
     info!(socket = %socket_path.display(), "Connected to Codex App Server");
 
     let mut counter = 0_u64;
-    let mut pending: HashMap<String, oneshot::Sender<Result<Value, UpstreamError>>> =
-        HashMap::new();
+    let mut pending: HashMap<String, PendingUpstreamRequest> = HashMap::new();
     let mut pending_cleanup = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
             _ = pending_cleanup.tick() => {
-                pending.retain(|_, response| !response.is_closed());
+                pending.retain(|_, request| !request.response.is_closed());
             }
             outbound = commands.recv() => {
                 let Some(outbound) = outbound else { return Ok(()); };
@@ -519,7 +596,10 @@ async fn run_connection(
                             let _ = outbound.response.send(Err(UpstreamError::Disconnected));
                             return Ok(());
                         }
-                        pending.insert(upstream_id, outbound.response);
+                        pending.insert(upstream_id, PendingUpstreamRequest {
+                            response: outbound.response,
+                            fence: outbound.fence,
+                        });
                     }
                     UpstreamCommand::ServerResponse(outbound) => {
                         let valid = outbound.response.get("id").is_some()
@@ -546,7 +626,7 @@ async fn run_connection(
                     log_large_app_server_frame(frame_bytes, &value);
                 }
                 if value.get("method").and_then(Value::as_str).is_some() {
-                    let _ = events.send(value);
+                    publish_notification(events, ordered_events, value).await;
                     continue;
                 }
                 let id = match value.get("id") {
@@ -554,17 +634,82 @@ async fn run_connection(
                     Some(id) => id.to_string(),
                     None => continue,
                 };
-                if let Some(response) = pending.remove(&id) {
-                    let _ = response.send(Ok(value));
+                if let Some(request) = pending.remove(&id) {
+                    complete_pending_request(request, value, ordered_events).await;
                 }
             }
         }
     }
     let _ = status.send(ConnectionStatus::Reconnecting);
-    for (_, response) in pending {
-        let _ = response.send(Err(UpstreamError::Disconnected));
+    for (_, request) in pending {
+        let _ = request.response.send(Err(UpstreamError::Disconnected));
     }
     Ok(())
+}
+
+async fn publish_notification(
+    events: &broadcast::Sender<Value>,
+    ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
+    value: Value,
+) {
+    let ordered = ordered_event_sender(ordered_events);
+    if let Some(ordered) = ordered
+        && ordered
+            .send(OrderedUpstreamEvent::Notification(value.clone()))
+            .await
+            .is_err()
+    {
+        clear_ordered_event_sender(ordered_events);
+    }
+    let _ = events.send(value);
+}
+
+async fn complete_pending_request(
+    request: PendingUpstreamRequest,
+    value: Value,
+    ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
+) {
+    let Some(fence) = request.fence else {
+        let _ = request.response.send(Ok(value));
+        return;
+    };
+    let Some(ordered) = ordered_event_sender(ordered_events) else {
+        let _ = fence.send(Err(UpstreamError::Protocol(
+            "durable event fence is unavailable".into(),
+        )));
+        let _ = request.response.send(Err(UpstreamError::Protocol(
+            "durable event fence is unavailable".into(),
+        )));
+        return;
+    };
+    if let Err(error) = ordered.send(OrderedUpstreamEvent::Fence(fence)).await {
+        clear_ordered_event_sender(ordered_events);
+        let OrderedUpstreamEvent::Fence(fence) = error.0 else {
+            unreachable!("only a fence is sent from this branch");
+        };
+        let _ = fence.send(Err(UpstreamError::Disconnected));
+        let _ = request.response.send(Err(UpstreamError::Disconnected));
+        return;
+    }
+    let _ = request.response.send(Ok(value));
+}
+
+fn ordered_event_sender(
+    ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
+) -> Option<mpsc::Sender<OrderedUpstreamEvent>> {
+    match ordered_events.lock() {
+        Ok(slot) => slot.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+fn clear_ordered_event_sender(
+    ordered_events: &Arc<std::sync::Mutex<Option<mpsc::Sender<OrderedUpstreamEvent>>>>,
+) {
+    match ordered_events.lock() {
+        Ok(mut slot) => *slot = None,
+        Err(poisoned) => *poisoned.into_inner() = None,
+    }
 }
 
 async fn connect_initialized(
@@ -871,6 +1016,63 @@ mod tests {
                 .await?["result"]["ok"],
             true
         );
+        fake.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fenced_request_orders_prior_notifications_before_its_cursor()
+    -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let directory = tempfile::tempdir()?;
+        let socket_path = directory.path().join("fenced-app-server.sock");
+        let handle = UpstreamHandle::spawn(socket_path.clone());
+        let mut ordered = handle.take_ordered_events();
+        let listener = UnixListener::bind(&socket_path)?;
+        let fake = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let mut socket = accept_async(stream).await?;
+            let initialize = receive_json(&mut socket).await?;
+            socket
+                .send(Message::Text(
+                    json!({"id": initialize["id"].clone(), "result": {}})
+                        .to_string()
+                        .into(),
+                ))
+                .await?;
+            let initialized = receive_json(&mut socket).await?;
+            assert_eq!(initialized["method"], "initialized");
+            let request = receive_json(&mut socket).await?;
+            socket
+                .send(Message::Text(
+                    json!({"method":"item/agentMessage/delta","params":{"delta":"tail"}})
+                        .to_string()
+                        .into(),
+                ))
+                .await?;
+            socket
+                .send(Message::Text(
+                    json!({"id": request["id"].clone(), "result": {"ok": true}})
+                        .to_string()
+                        .into(),
+                ))
+                .await?;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+
+        wait_for_status(&handle, ConnectionStatus::Live).await?;
+        let (response, fence) = handle
+            .request_fenced(json!({"method":"thread/read","params":{}}))
+            .await?;
+        assert_eq!(response["result"]["ok"], true);
+        let Some(OrderedUpstreamEvent::Notification(notification)) = ordered.recv().await else {
+            return Err("notification did not precede fence".into());
+        };
+        assert_eq!(notification["method"], "item/agentMessage/delta");
+        let Some(OrderedUpstreamEvent::Fence(completion)) = ordered.recv().await else {
+            return Err("fence was not emitted after notification".into());
+        };
+        let _ = completion.send(Ok(41));
+        assert_eq!(fence.wait().await?, 41);
         fake.await??;
         Ok(())
     }

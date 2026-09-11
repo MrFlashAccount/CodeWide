@@ -20,32 +20,6 @@ export function TimelineDateSeparator(props: TimelineDateSeparatorProps): React.
   );
 }
 
-export function timelineDateSeparatorLabel(
-  timestampMs: number,
-  previousTimestampMs: number | null,
-): string | null {
-  if (!Number.isFinite(timestampMs)) return null;
-  const current = new Date(timestampMs);
-  if (!Number.isFinite(current.getTime())) return null;
-  if (previousTimestampMs !== null && Number.isFinite(previousTimestampMs)) {
-    const previous = new Date(previousTimestampMs);
-    if (sameLocalDate(current, previous)) return null;
-  }
-  return current.toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function sameLocalDate(left: Date, right: Date): boolean {
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
-  );
-}
-
 const styles = StyleSheet.create({
   label: { ...typeScale.caption, flexShrink: 0 },
   line: { backgroundColor: colors.borderSoft, flex: 1, height: 1 },

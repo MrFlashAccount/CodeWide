@@ -6,7 +6,7 @@ import {
   View,
 } from "react-native";
 
-import { colors, radii, spacing, touchTarget } from "../../theme";
+import { colors, radii, spacing, touchTarget, iconSize, typeScale, layoutSize } from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 import { PresentationText as Text } from "../text/ProductText";
 import { useEvent } from "../../react/useEvent";
@@ -95,7 +95,7 @@ function RailAction(props: RailActionProps): React.JSX.Element {
       onPress={onPress}
       style={railActionStyle}
     >
-      <PresentationIcon color={colors.text} name={icon} size={23} />
+      <PresentationIcon color={colors.text} name={icon} size={iconSize.navigation} />
     </Pressable>
   );
 }
@@ -108,8 +108,8 @@ function railActionStyle(state: PressableStateCallbackType) {
 const styles = StyleSheet.create({
   activeMarker: {
     backgroundColor: colors.primary,
-    borderRadius: 2,
-    height: 24,
+    borderRadius: radii.compact,
+    height: layoutSize.metadataRow,
     left: -10,
     position: "absolute",
     width: 3,
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
   },
   avatarActive: { backgroundColor: colors.primaryContainer, borderRadius: radii.selected },
   content: { alignItems: "center", gap: spacing.xs, paddingVertical: spacing.xs },
-  emoji: { color: colors.text, fontSize: 22 },
+  emoji: { color: colors.text, ...typeScale.emoji },
   pressed: { opacity: 0.68 },
   rail: {
     alignItems: "center",

@@ -1,40 +1,51 @@
 import type { ThreadListResponse } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { RpcClient, SyncSnapshotThread } from "@codewide/sync-client";
+import { parseArchivedCatalogCount } from "./catalog-summary-model";
 
-const THREAD_CATALOG_PAGE_SIZE = 100;
+export const THREAD_CATALOG_PAGE_SIZE = 36;
 
-/** Loads one complete root-thread catalog before the caller replaces SQLite. */
-export async function loadThreadCatalog(session: RpcClient): Promise<SyncSnapshotThread[]> {
-  const loadPartition = async (archived: boolean): Promise<SyncSnapshotThread[]> => {
-    const snapshots: SyncSnapshotThread[] = [];
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    do {
-      const response: ThreadListResponse = await session.rpc<ThreadListResponse>("thread/list", {
-        archived,
-        cursor,
-        limit: THREAD_CATALOG_PAGE_SIZE,
-        sortKey: "updated_at",
-        sortDirection: "desc",
-        modelProviders: [],
-        // Sidebar hydration must stay on Codex's queryable metadata path.
-        // JSONL scan-and-repair is a separate maintenance operation and must
-        // never block the interactive catalog request.
-        useStateDbOnly: true,
-      });
-      snapshots.push(...response.data
-        .filter((thread) => !thread.ephemeral && thread.parentThreadId == null)
-        .map((thread) => ({ thread, archived })));
-      cursor = response.nextCursor;
-      if (cursor !== null && seenCursors.has(cursor)) throw new Error("thread/list returned a repeated catalog cursor");
-      if (cursor !== null) seenCursors.add(cursor);
-    } while (cursor !== null);
-    return snapshots;
-  };
+export interface ThreadCatalogPageRequest {
+  archived: boolean;
+  cursor: string | null;
+  projectCwd?: string;
+}
 
-  const [active, archived] = await Promise.all([
-    loadPartition(false),
-    loadPartition(true),
-  ]);
-  return [...active, ...archived];
+export interface ThreadCatalogPage {
+  archivedCount?: number | null;
+  threads: SyncSnapshotThread[];
+  nextCursor: string | null;
+}
+
+/** Reads one metadata page. Continuation belongs to explicit list demand. */
+export async function loadThreadCatalogPage(session: RpcClient, request: ThreadCatalogPageRequest): Promise<ThreadCatalogPage> {
+  const response = await session.rpc<ThreadListResponse>("thread/list", {
+    archived: request.archived,
+    cursor: request.cursor,
+    limit: THREAD_CATALOG_PAGE_SIZE,
+    sortKey: "updated_at",
+    sortDirection: "desc",
+    modelProviders: [],
+    sourceKinds: ["cli", "vscode"],
+    useStateDbOnly: true,
+    ...(request.projectCwd === undefined ? {} : { cwd: request.projectCwd }),
+  });
+  if (response === null || typeof response !== "object" || !Array.isArray(response.data)
+    || (response.nextCursor !== null && typeof response.nextCursor !== "string")) {
+    throw new Error("thread/list returned an invalid catalog page");
+  }
+  if (response.nextCursor !== null && (response.nextCursor.length === 0 || response.nextCursor === request.cursor)) {
+    throw new Error("thread/list returned a repeated catalog cursor");
+  }
+  const threads: SyncSnapshotThread[] = [];
+  for (const thread of response.data) {
+    if (thread === null || typeof thread !== "object" || typeof thread.id !== "string"
+      || typeof thread.cwd !== "string" || typeof thread.preview !== "string"
+      || !Number.isFinite(thread.updatedAt) || !Array.isArray(thread.turns)
+      || thread.status === null || typeof thread.status !== "object" || typeof thread.status.type !== "string") {
+      throw new Error("thread/list returned invalid thread metadata");
+    }
+    if (!thread.ephemeral && thread.parentThreadId == null) threads.push({ thread, archived: request.archived });
+  }
+  const archivedCount = parseArchivedCatalogCount("codewideCatalogSummary" in response ? response.codewideCatalogSummary : null);
+  return { threads, nextCursor: response.nextCursor, archivedCount };
 }

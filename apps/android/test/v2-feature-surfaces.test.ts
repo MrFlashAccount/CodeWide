@@ -337,12 +337,17 @@ describe("V2 feature surfaces", () => {
     );
   });
 
-  it("qualifies durable native port profiles through one saved server", async () => {
+  it("qualifies current native port forwards through one saved server", async () => {
     const server = savedServerId("server-1");
+    const forwardingKey = "a".repeat(64);
+    const port = {
+      cwd: null, defaultForwardingEnabled: false, details: "", forwardingKey,
+      group: "Development", kind: "node", name: "Web", pid: 42, port: 3000, process: "node",
+    };
     const stopped = {
       enabled: false,
       error: null,
-      forwardingKey: null,
+      forwardingKey,
       id: "profile-1",
       label: "Web",
       localPort: null,
@@ -358,7 +363,7 @@ describe("V2 feature surfaces", () => {
     const list = vi.fn<PortTransport["list"]>().mockResolvedValue([]);
     const discover = vi
       .fn<PortTransport["discover"]>()
-      .mockResolvedValue({ ports: [], scannedAt: 42 });
+      .mockResolvedValue({ ports: [port], scannedAt: 42 });
     const upsert = vi.fn<PortTransport["upsert"]>().mockResolvedValue(stopped);
     const start = vi.fn<PortTransport["start"]>().mockResolvedValue(connecting);
     const stop = vi.fn<PortTransport["stop"]>().mockResolvedValue(stopped);
@@ -383,7 +388,7 @@ describe("V2 feature surfaces", () => {
       value: {
         discoveryError: null,
         discoveryStatus: "ready",
-        ports: [],
+        ports: [port],
         profileError: null,
         profiles: [],
         scannedAt: 42,
@@ -401,7 +406,7 @@ describe("V2 feature surfaces", () => {
     await resource.stop("profile-1");
     expect(list).toHaveBeenCalledWith(server);
     expect(upsert).toHaveBeenCalledWith(server, {
-      forwardingKey: null,
+      forwardingKey,
       label: "Web",
       port: 3000,
       preference: "included",
@@ -409,7 +414,9 @@ describe("V2 feature surfaces", () => {
       profileId: "profile-1",
     });
     expect(start).toHaveBeenCalledWith(server, "profile-1");
-    expect(stop).toHaveBeenCalledWith(server, "profile-1");
+    expect(upsert).toHaveBeenCalledWith(server, expect.objectContaining({
+      profileId: "profile-1", forwardingKey, preference: "excluded",
+    }));
   });
 
   it("renders bounded attachment sizes", () => {

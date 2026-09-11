@@ -9,6 +9,7 @@ import type {
 } from "./timelineTypes";
 import { TimelineTurnView } from "./timelineTurnView";
 import { TimelineDateSeparator } from "./timelineDateSeparator";
+import type { TimelineTurnDateLabels } from "../../../presentation/conversation/timelineDates";
 
 interface TimelineRenderItem {
   item: TimelineDisplayTurn;
@@ -17,7 +18,7 @@ interface TimelineRenderItem {
 interface TimelineRowContextValue {
   activityActions?: TimelineActivityActions;
   actionsForTurn?: TimelineTurnActionsResolver;
-  dateLabels: ReadonlyMap<string, string>;
+  dateLabels: ReadonlyMap<string, TimelineTurnDateLabels>;
   latestAssistantTurnId: string | null;
   latestAssistantMeasurementKey?: string | null;
   onLatestAssistantLayout?(): void;
@@ -52,11 +53,13 @@ function TimelineRow(props: TimelineRowProps): React.JSX.Element {
   const context = useContext(TimelineRowContext);
   const actions = context.actionsForTurn?.(turn);
   const latestAssistant = context.latestAssistantTurnId === turn.id;
-  const dateLabel = context.dateLabels.get(turn.id);
+  const dateLabels = context.dateLabels.get(turn.id);
+  const dateLabel = dateLabels?.before ?? null;
   return (
     <View style={styles.row}>
-      {dateLabel === undefined ? null : <TimelineDateSeparator label={dateLabel} />}
+      {dateLabel === null ? null : <TimelineDateSeparator label={dateLabel} />}
       <TimelineTurnView
+        agentDateLabel={dateLabels?.agent ?? null}
         {...(context.activityActions === undefined
           ? {}
           : { activityActions: context.activityActions })}

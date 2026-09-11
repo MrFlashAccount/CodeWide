@@ -45,6 +45,8 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     },
     async saveDraft() {},
     async saveAttachments() {},
+    async upsertAttachment() {},
+    async removeAttachment() {},
     async saveScrollOffset() {},
     async savePreferences() {},
     async deleteConnection(connectionId) {

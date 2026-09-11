@@ -37,6 +37,7 @@ describe("goal and plan presentation contract", () => {
     expect(legacyConversation).toContain(
       "<ThreadGoalChip goal={currentGoal} onPress={openGoalDetails} />",
     );
-    expect(legacyConversation).toContain('testID="thread-goal-details"');
+    expect(legacyConversation).not.toContain('testID="thread-goal-details"');
+    expect(legacyConversation).not.toContain("<ThreadGoalDetail");
   });
 });

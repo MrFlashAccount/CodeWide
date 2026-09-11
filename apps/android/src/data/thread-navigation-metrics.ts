@@ -1,5 +1,6 @@
 import { recordDiagnosticTiming, type TimingMetric } from "./operational-metrics";
-import { recordTelemetryEvent } from "./telemetry";
+import { recordOperationalTelemetryEvent, recordTelemetryEvent } from "./telemetry";
+import { recordFrameContext } from "./ui-frame-telemetry";
 
 export type ThreadNavigationStage =
   | "selection_requested"
@@ -130,6 +131,7 @@ export function beginThreadNavigation(connectionId: string, threadId: string, tr
     measures: [],
     visualEvents: [],
   };
+  recordFrameContext(connectionId, threadId, activeNavigation.id);
   emitStage(activeNavigation, "selection_requested");
   return activeNavigation.id;
 }
@@ -357,7 +359,7 @@ function emitStage(
     tags: { ...details.tags },
   }];
 
-  recordTelemetryEvent(navigation.connectionId, {
+  recordOperationalTelemetryEvent(navigation.connectionId, {
     name: "navigation.thread_stage",
     sessionId: navigation.threadId,
     requestId: navigation.id,

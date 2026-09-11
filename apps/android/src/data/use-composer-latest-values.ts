@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, type MutableRefObject } from "react";
+import { useLayoutEffect, type MutableRefObject } from "react";
+import { useConversationRef } from "../ui/use-conversation-scope";
 
 import { reconcileComposerLatestValue, type ComposerLatestValue } from "./composer-latest-value";
 
@@ -17,13 +18,13 @@ export function useComposerLatestValues<Draft, Attachment, Preferences>(
   attachments: MutableRefObject<ComposerLatestValue<Attachment>>;
   preferences: MutableRefObject<ComposerLatestValue<Preferences>>;
 } {
-  const latestDraft = useRef<ComposerLatestValue<Draft>>({ scope, rendered: draft, latest: draft });
-  const latestAttachments = useRef<ComposerLatestValue<Attachment>>({ scope, rendered: attachments, latest: attachments });
-  const latestPreferences = useRef<ComposerLatestValue<Preferences>>({ scope, rendered: preferences, latest: preferences });
+  const latestDraftRef = useConversationRef(scope, () => ({ scope, rendered: draft, latest: draft }));
+  const latestAttachmentsRef = useConversationRef(scope, () => ({ scope, rendered: attachments, latest: attachments }));
+  const latestPreferencesRef = useConversationRef(scope, () => ({ scope, rendered: preferences, latest: preferences }));
   useLayoutEffect(() => {
-    latestDraft.current = reconcileComposerLatestValue(latestDraft.current, scope, draft);
-    latestAttachments.current = reconcileComposerLatestValue(latestAttachments.current, scope, attachments);
-    latestPreferences.current = reconcileComposerLatestValue(latestPreferences.current, scope, preferences);
-  }, [attachments, draft, preferences, scope]);
-  return { draft: latestDraft, attachments: latestAttachments, preferences: latestPreferences };
+    latestDraftRef.current = reconcileComposerLatestValue(latestDraftRef.current, scope, draft);
+    latestAttachmentsRef.current = reconcileComposerLatestValue(latestAttachmentsRef.current, scope, attachments);
+    latestPreferencesRef.current = reconcileComposerLatestValue(latestPreferencesRef.current, scope, preferences);
+  }, [attachments, draft, preferences, scope, latestDraftRef, latestAttachmentsRef, latestPreferencesRef]);
+  return { draft: latestDraftRef, attachments: latestAttachmentsRef, preferences: latestPreferencesRef };
 }

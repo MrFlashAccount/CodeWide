@@ -49,6 +49,22 @@ export function parseAddedRemoteProject(value: unknown): RemoteProject {
   return parseRemoteProject(source?.project);
 }
 
+/** The server resolves Home; history paths and the phone's user directory are not substitutes. */
+export function parseProjectHome(value: unknown): string {
+  const path = record(value)?.path;
+  if (typeof path !== "string" || path.includes("\0") || !/^(?:\/|[A-Za-z]:[\\/])/u.test(path)) {
+    throw new Error("Companion returned an invalid home directory");
+  }
+  return normalizeDirectoryPath(path);
+}
+
+/** Collapse the server-owned home prefix without guessing usernames from path segments. */
+export function directoryCrumbs(path: string, home: string | null): PathCrumb[] {
+  const crumbs = pathCrumbs(path);
+  const homeIndex = home === null ? -1 : crumbs.findIndex((crumb) => crumb.path === home);
+  return homeIndex < 0 ? crumbs : [{ label: "Home", path: home ?? "" }, ...crumbs.slice(homeIndex + 1)];
+}
+
 export function parseRemoteDirectory(value: unknown): RemoteDirectoryEntry[] {
   const source = record(value);
   if (!Array.isArray(source?.entries)) throw new Error("Companion returned an invalid directory listing");

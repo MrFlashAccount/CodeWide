@@ -5,6 +5,9 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 export CARGO_INCREMENTAL=0
 
 cd "$repo_root"
+sh "$repo_root/scripts/cargo-target-budget.sh"
+export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1
+export CARGO_TARGET_DIR="$repo_root/target"
 pnpm --filter @codewide/sync-client contract:check
 pnpm exec vitest run packages/sync-client/test/v2-*.test.ts
 cargo test -p codewide-companion sync_v2 --lib

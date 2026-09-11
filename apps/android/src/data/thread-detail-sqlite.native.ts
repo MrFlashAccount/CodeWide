@@ -1,16 +1,13 @@
-import type { ThreadDetailRow } from "./thread-detail-projection";
+import { pendingTimelineRowId, type ThreadDetailRow } from "./thread-detail-projection";
+import type { CommandReceipt } from "./command-receipt-evidence";
 import { getUiCacheFileDiagnostics, getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import { incrementMetric, recordSqliteSubsetLoad, recordTiming } from "./operational-metrics";
+import { historyMemberSource, historyMemberPayload, historyScope, historyMetaSql, historyLiveSql, resolvedHistoryWindowSql, retainedHistoryMemberSource } from "./thread-history-queries";
+import { collectUnreferencedHistoryContent, persistHistoryRow, prepareHistoryRelations } from "./thread-history-relations";
 
 const TABLE = "codewide_thread_details";
-const META_TABLE = "__tanstack_db_sqlite_meta";
 const CACHE_META_TABLE = "codewide_thread_detail_cache_meta";
-const RUNTIME_ID = "thread-details-v2";
-// Version 4 clears caches written while direct delivery receipts could replace
-// off-window canonical turns sharing the same stable client-id key. Transcript
-// rows are reconstructable from Companion; pending commands remain in the
-// native ledger and are reconciled after the clean tail is installed.
-const SCHEMA_VERSION = 4;
+const CONTENT_TABLE = "codewide_history_content";
 const CHECKPOINT_DELAY_MS = 250;
 const CHECKPOINT_ATTEMPTS = 3;
 // History is a reconstructable FIFO cache, not an LRU. Let it grow to 2 GiB,
@@ -82,6 +79,7 @@ type PendingCheckpoint = {
 };
 
 export type ThreadDetailSqlite = ThreadDetailSqliteControls & {
+  confirmCommandReceipts(connectionId: string, receipts: readonly CommandReceipt[]): Promise<ThreadDetailRow[]>;
   prepare(): Promise<void>;
   diagnostics(): Promise<ThreadDetailSqliteDiagnostics>;
   flush(): Promise<void>;
@@ -247,6 +245,29 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
   );
 
   return {
+    async confirmCommandReceipts(connectionId, receipts) {
+      if (receipts.length === 0) return [];
+      await ensurePrepared();
+      await flushPending();
+      return await database.transaction(async (executor) => {
+        const updated: ThreadDetailRow[] = [];
+        for (const receipt of receipts) {
+          const candidates = await executeRows(executor,
+            `SELECT payload AS __payload FROM codewide_history_pending WHERE __key = ? AND connection_id = ? AND thread_id = ?`,
+            [storageKey(pendingTimelineRowId(connectionId, receipt.threadId, receipt.commandId)), connectionId, receipt.threadId]);
+          const row = candidates[0];
+          const pendingEntry = row?.pending;
+          if (row?.kind !== "pending" || pendingEntry == null || pendingEntry.commandId !== receipt.commandId
+            || pendingEntry.confirmation !== undefined) continue;
+          const confirmed: ThreadDetailRow = { ...row, pending: {
+            ...pendingEntry, presentation: "delivery", state: "appServerAccepted", lastError: null, confirmation: receipt,
+          } };
+          await persistHistoryRow(executor, confirmed);
+          updated.push(confirmed);
+        }
+        return updated;
+      });
+    },
     prepare: ensurePrepared,
     async diagnostics() {
       await ensurePrepared();
@@ -289,19 +310,19 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
     },
     async loadThreadMeta(connectionId, threadId) {
       return await queryOne(
-        `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "kind" = 'thread' LIMIT 1`,
+        historyMetaSql,
         [connectionId, threadId],
       );
     },
     async loadTurn(connectionId, threadId, turnId, historyEpoch) {
       return await queryOne(
-        `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "turn_id" = ? AND "history_epoch" = ? AND "kind" = 'turn' AND "sealed" = 1 LIMIT 1`,
+        `SELECT ${historyMemberPayload} AS __payload FROM ${historyMemberSource} WHERE ${historyScope} AND p.turn_id = ? AND p.history_epoch = ? AND c.kind = 'turn' AND c.sealed = 1 LIMIT 1`,
         [connectionId, threadId, turnId, historyEpoch],
       );
     },
     async loadBoundary(connectionId, threadId, historyEpoch, direction) {
       return await queryOne(
-        `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "kind" = 'turn' AND "sealed" = 1 ORDER BY "ordinal" ${direction === "asc" ? "ASC" : "DESC"}, "__key" ${direction === "asc" ? "ASC" : "DESC"} LIMIT 1`,
+        `SELECT ${historyMemberPayload} AS __payload FROM ${historyMemberSource} WHERE ${historyScope} AND p.history_epoch = ? AND c.kind = 'turn' AND c.sealed = 1 ORDER BY p.ordinal ${direction === "asc" ? "ASC" : "DESC"}, p.turn_id ${direction === "asc" ? "ASC" : "DESC"} LIMIT 1`,
         [connectionId, threadId, historyEpoch],
       );
     },
@@ -311,23 +332,23 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
       const startedAt = performance.now();
       const result = await database.transaction(async (executor) => {
         const turnParams: SqliteValue[] = [connectionId, threadId, historyEpoch];
-        const maxClause = maxOrdinal === null ? "" : ` AND "ordinal" <= ?`;
+        const maxClause = maxOrdinal === null ? "" : ` AND p.ordinal <= ?`;
         if (maxOrdinal !== null) turnParams.push(maxOrdinal);
         turnParams.push(turnLimit);
         const turnRows = await executeRows(
           executor,
-          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "kind" = 'turn' AND "sealed" = 1${maxClause} ORDER BY "ordinal" DESC, "__key" DESC LIMIT ?`,
+          `SELECT ${historyMemberPayload} AS __payload FROM ${historyMemberSource} WHERE ${historyScope} AND p.history_epoch = ? AND c.kind = 'turn' AND c.sealed = 1${maxClause} ORDER BY p.ordinal DESC, p.turn_id DESC LIMIT ?`,
           turnParams,
         );
         const ordinals = turnRows.map(({ ordinal }) => ordinal);
         const detailRows = ordinals.length === 0 ? [] : await executeRows(
           executor,
-          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "sealed" = 1 AND "kind" IN ('turnMeta', 'activity') AND "ordinal" >= ? AND "ordinal" <= ?`,
+          `SELECT ${historyMemberPayload} AS __payload FROM ${historyMemberSource} WHERE ${historyScope} AND p.history_epoch = ? AND c.sealed = 1 AND c.kind IN ('turnMeta', 'activity') AND p.ordinal >= ? AND p.ordinal <= ?`,
           [connectionId, threadId, historyEpoch, Math.min(...ordinals), Math.max(...ordinals)],
         );
         const liveRows = await executeRows(
           executor,
-          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "sealed" = 0 AND ("kind" = 'pending' OR "history_epoch" = ?)`,
+          historyLiveSql,
           [connectionId, threadId, historyEpoch],
         );
         return { turnRows, detailRows, liveRows };
@@ -341,7 +362,7 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
       const startedAt = performance.now();
       const loaded = await database.transaction(async (executor) => {
         const result = await executor.execute(
-          resolvedWindowSql(),
+          resolvedHistoryWindowSql(),
           [
             connectionId,
             threadId,
@@ -364,13 +385,13 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
         const order = direction === "older" ? "DESC" : "ASC";
         const turnRows = await executeRows(
           executor,
-          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "kind" = 'turn' AND "sealed" = 1 AND "ordinal" ${comparison} ? ORDER BY "ordinal" ${order}, "__key" ${order} LIMIT ?`,
+          `SELECT ${historyMemberPayload} AS __payload FROM ${historyMemberSource} WHERE ${historyScope} AND p.history_epoch = ? AND c.kind = 'turn' AND c.sealed = 1 AND p.ordinal ${comparison} ? ORDER BY p.ordinal ${order}, p.turn_id ${order} LIMIT ?`,
           [connectionId, threadId, historyEpoch, boundaryOrdinal, turnLimit],
         );
         const ordinals = turnRows.map(({ ordinal }) => ordinal);
         const detailRows = ordinals.length === 0 ? [] : await executeRows(
           executor,
-          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "sealed" = 1 AND "kind" IN ('turnMeta', 'activity') AND "ordinal" IN (${ordinals.map(() => "?").join(", ")})`,
+          `SELECT ${historyMemberPayload} AS __payload FROM ${historyMemberSource} WHERE ${historyScope} AND p.history_epoch = ? AND c.sealed = 1 AND c.kind IN ('turnMeta', 'activity') AND p.ordinal IN (${ordinals.map(() => "?").join(", ")})`,
           [connectionId, threadId, historyEpoch, ...ordinals],
         );
         return { turnRows, detailRows, liveRows: [] };
@@ -393,7 +414,7 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
       if (overlapIndex >= 0) {
         const baseOrdinal = incomingOrdinalById.get(incomingTurnIds[overlapIndex]!)! - overlapIndex;
         occupied = await query(
-          `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "history_epoch" = ? AND "kind" = 'turn' AND "ordinal" >= ? AND "ordinal" <= ?`,
+          `SELECT ${historyMemberPayload} AS __payload FROM ${historyMemberSource} WHERE ${historyScope} AND p.history_epoch = ? AND c.kind = 'turn' AND p.ordinal >= ? AND p.ordinal <= ?`,
           [connectionId, threadId, historyEpoch, baseOrdinal, baseOrdinal + incomingTurnIds.length - 1],
         );
       }
@@ -411,38 +432,13 @@ export function createThreadDetailSqlite(onCommit: (changes: readonly ThreadDeta
 
 async function prepareSchema(database: ReturnType<typeof getUiCacheSqliteDatabase>): Promise<ThreadDetailSqliteMaintenance> {
   return await database.transaction(async (executor) => {
-    await executor.execute(
-      `CREATE TABLE IF NOT EXISTS "${META_TABLE}" ("runtime_id" TEXT PRIMARY KEY NOT NULL, "schema_version" INTEGER NOT NULL)`,
-    );
-    await executor.execute(
-      `CREATE TABLE IF NOT EXISTS "${TABLE}" (`
-      + `"__key" TEXT PRIMARY KEY NOT NULL, "__payload" TEXT NOT NULL, `
-      + `"connection_id" TEXT NOT NULL, "thread_id" TEXT NOT NULL, "turn_id" TEXT, `
-      + `"history_epoch" INTEGER NOT NULL, "kind" TEXT NOT NULL, "ordinal" REAL NOT NULL, "sealed" INTEGER NOT NULL)`,
-    );
-    await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_0" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "sealed", "kind", "ordinal")`);
-    await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_1" ON "${TABLE}" ("connection_id", "thread_id", "turn_id")`);
-    await executor.execute(`CREATE INDEX IF NOT EXISTS "${TABLE}__idx_2" ON "${TABLE}" ("connection_id", "thread_id", "history_epoch", "kind", "ordinal")`);
+    await prepareHistoryRelations(executor);
     // Old invalidation cursors represented the removed replay/repair model.
     // Authoritative thread sync now compares semantic sealed-turn ids.
     await executor.execute(`DROP TABLE IF EXISTS "codewide_thread_detail_invalidations"`);
     await executor.execute(`DROP TABLE IF EXISTS "codewide_thread_invalidations"`);
     await prepareHistoryCacheAccounting(executor);
-    const storedVersion = numericSqliteValue(extractRows(await executor.execute(
-      `SELECT "schema_version" FROM "${META_TABLE}" WHERE "runtime_id" = ?`,
-      [RUNTIME_ID],
-    ))[0]?.schema_version);
-    if (storedVersion !== null && storedVersion !== SCHEMA_VERSION) {
-      // The transcript cache is reconstructable. A schema change drops the old
-      // model instead of importing or normalizing obsolete ownership rules.
-      await executor.execute(`DELETE FROM "${TABLE}"`);
-      await executor.execute(`DELETE FROM "${CACHE_META_TABLE}"`);
-    }
     const rotation = await rotateHistoryCache(executor);
-    await executor.execute(
-      `INSERT INTO "${META_TABLE}" ("runtime_id", "schema_version") VALUES (?, ?) ON CONFLICT("runtime_id") DO UPDATE SET "schema_version" = excluded."schema_version"`,
-      [RUNTIME_ID, SCHEMA_VERSION],
-    );
     return { staleDeliveryRowsRemoved: 0, ...rotation };
   });
 }
@@ -452,159 +448,8 @@ async function persistChange(executor: Executor, change: ThreadDetailChange): Pr
     await executor.execute(`DELETE FROM "${TABLE}" WHERE "__key" = ?`, [storageKey(change.key)]);
     return;
   }
-  const row = change.value;
-  const params: SqliteValue[] = [
-    storageKey(row.id),
-    JSON.stringify(row),
-    row.connectionId,
-    row.remoteThreadId,
-    row.remoteTurnId,
-    row.historyEpoch,
-    row.kind,
-    row.ordinal,
-    row.sealed ? 1 : 0,
-  ];
-  await executor.execute(
-    `INSERT INTO "${TABLE}" ("__key", "__payload", "connection_id", "thread_id", "turn_id", "history_epoch", "kind", "ordinal", "sealed") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) `
-    + `ON CONFLICT("__key") DO UPDATE SET "__payload" = excluded."__payload", "connection_id" = excluded."connection_id", "thread_id" = excluded."thread_id", "turn_id" = excluded."turn_id", "history_epoch" = excluded."history_epoch", "kind" = excluded."kind", "ordinal" = excluded."ordinal", "sealed" = excluded."sealed"`
-    // A pending mirror may claim an empty key, but can never replace a
-    // canonical turn that is merely outside the in-memory resident window.
-    + (row.kind === "pending" ? ` WHERE "${TABLE}"."kind" != 'turn'` : ""),
-    params,
-  );
-}
-
-/** Resolve the semantic viewport cursor and materialize its complete resident
- * row family in one native SQLite call. The tagged UNION keeps metadata out of
- * JSON payloads while avoiding the former meta/bounds/anchor/turn/detail/live
- * sequence of bridge round-trips. */
-function resolvedWindowSql(): string {
-  return `
-    WITH
-      "args"("connection_id", "thread_id", "anchor_turn_id", "turn_limit", "newer_buffer") AS (
-        VALUES (?, ?, ?, ?, ?)
-      ),
-      "meta" AS (
-        SELECT COALESCE((
-          SELECT "details"."history_epoch"
-          FROM "${TABLE}" AS "details", "args"
-          WHERE "details"."connection_id" = "args"."connection_id"
-            AND "details"."thread_id" = "args"."thread_id"
-            AND "details"."kind" = 'thread'
-          LIMIT 1
-        ), 0) AS "history_epoch"
-      ),
-      "bounds" AS (
-        SELECT
-          "meta"."history_epoch" AS "history_epoch",
-          (
-            SELECT "details"."ordinal"
-            FROM "${TABLE}" AS "details", "args"
-            WHERE "details"."connection_id" = "args"."connection_id"
-              AND "details"."thread_id" = "args"."thread_id"
-              AND "details"."history_epoch" = "meta"."history_epoch"
-              AND "details"."kind" = 'turn'
-              AND "details"."sealed" = 1
-            ORDER BY "details"."ordinal" DESC, "details"."__key" DESC
-            LIMIT 1
-          ) AS "latest_ordinal",
-          (
-            SELECT "details"."ordinal"
-            FROM "${TABLE}" AS "details", "args"
-            WHERE "details"."connection_id" = "args"."connection_id"
-              AND "details"."thread_id" = "args"."thread_id"
-              AND "details"."history_epoch" = "meta"."history_epoch"
-              AND "details"."kind" = 'turn'
-              AND "details"."sealed" = 1
-            ORDER BY "details"."ordinal" ASC, "details"."__key" ASC
-            LIMIT 1
-          ) AS "earliest_ordinal",
-          (
-            SELECT "details"."ordinal"
-            FROM "${TABLE}" AS "details", "args"
-            WHERE "details"."connection_id" = "args"."connection_id"
-              AND "details"."thread_id" = "args"."thread_id"
-              AND "details"."turn_id" = "args"."anchor_turn_id"
-              AND "details"."history_epoch" = "meta"."history_epoch"
-              AND "details"."kind" = 'turn'
-              AND "details"."sealed" = 1
-            LIMIT 1
-          ) AS "anchor_ordinal"
-        FROM "meta"
-      ),
-      "restored" AS (
-        SELECT
-          "bounds".*,
-          CASE
-            WHEN "anchor_ordinal" IS NULL
-              OR "latest_ordinal" IS NULL
-              OR "anchor_ordinal" + "args"."newer_buffer" >= "latest_ordinal"
-            THEN NULL
-            ELSE "anchor_ordinal" + "args"."newer_buffer"
-          END AS "restored_max_ordinal"
-        FROM "bounds", "args"
-      ),
-      "resolved" AS (
-        SELECT
-          "restored"."history_epoch",
-          "restored"."latest_ordinal",
-          "restored"."earliest_ordinal",
-          "restored"."restored_max_ordinal" AS "range_max_ordinal"
-        FROM "restored"
-      ),
-      "turns" AS (
-        SELECT "details"."__payload", "details"."__key", "details"."ordinal"
-        FROM "${TABLE}" AS "details", "args", "resolved"
-        WHERE "details"."connection_id" = "args"."connection_id"
-          AND "details"."thread_id" = "args"."thread_id"
-          AND "details"."history_epoch" = "resolved"."history_epoch"
-          AND "details"."kind" = 'turn'
-          AND "details"."sealed" = 1
-          AND ("resolved"."range_max_ordinal" IS NULL OR "details"."ordinal" <= "resolved"."range_max_ordinal")
-        ORDER BY "details"."ordinal" DESC, "details"."__key" DESC
-        LIMIT (SELECT "turn_limit" FROM "args")
-      ),
-      "window_rows" AS (
-        SELECT 1 AS "bucket_order", 'turn' AS "bucket", "turns"."__payload", "turns"."ordinal" AS "result_ordinal"
-        FROM "turns"
-        UNION ALL
-        SELECT 2, 'detail', "details"."__payload", "details"."ordinal"
-        FROM "${TABLE}" AS "details", "args", "resolved"
-        WHERE "details"."connection_id" = "args"."connection_id"
-          AND "details"."thread_id" = "args"."thread_id"
-          AND "details"."history_epoch" = "resolved"."history_epoch"
-          AND "details"."sealed" = 1
-          AND "details"."kind" IN ('turnMeta', 'activity')
-          AND EXISTS (SELECT 1 FROM "turns" WHERE "turns"."ordinal" = "details"."ordinal")
-        UNION ALL
-        SELECT 3, 'live', "details"."__payload", "details"."ordinal"
-        FROM "${TABLE}" AS "details", "args", "resolved"
-        WHERE "details"."connection_id" = "args"."connection_id"
-          AND "details"."thread_id" = "args"."thread_id"
-          AND "details"."sealed" = 0
-          AND ("details"."kind" = 'pending' OR "details"."history_epoch" = "resolved"."history_epoch")
-      )
-    SELECT
-      0 AS "bucket_order",
-      'meta' AS "bucket",
-      NULL AS "__payload",
-      "history_epoch",
-      "latest_ordinal",
-      "earliest_ordinal",
-      0 AS "result_ordinal"
-    FROM "resolved"
-    UNION ALL
-    SELECT
-      "bucket_order",
-      "bucket",
-      "__payload",
-      NULL,
-      NULL,
-      NULL,
-      "result_ordinal"
-    FROM "window_rows"
-    ORDER BY "bucket_order" ASC, "result_ordinal" DESC
-  `;
+  // The relational writer also guards off-window canonical identities from pending mirrors.
+  await persistHistoryRow(executor, change.value);
 }
 
 function parseResolvedWindowRows(rows: readonly Record<string, SqliteValue>[]): ResolvedThreadDetailWindow {
@@ -630,6 +475,8 @@ export async function rotateHistoryCache(executor: Executor, limits: {
   ThreadDetailSqliteMaintenance,
   "historyFamiliesEvicted" | "historyBytesEvicted"
 >> {
+  // Scan orphan references only during bounded cache maintenance, never per live patch.
+  await collectUnreferencedHistoryContent(executor);
   const currentBytes = await readHistoryPayloadBytes(executor);
   if (currentBytes <= limits.hardLimitBytes) {
     return { historyFamiliesEvicted: 0, historyBytesEvicted: 0 };
@@ -637,27 +484,13 @@ export async function rotateHistoryCache(executor: Executor, limits: {
 
   const reclaimBytes = currentBytes - limits.softLimitBytes;
   const candidateCte = `
-    WITH "turns" AS (
+    WITH "families" AS (
       SELECT
-        "connection_id", "thread_id", "history_epoch", "ordinal", MIN("rowid") AS "first_rowid"
-      FROM "${TABLE}"
-      WHERE "sealed" = 1 AND "kind" = 'turn'
-      GROUP BY "connection_id", "thread_id", "history_epoch", "ordinal"
-    ),
-    "families" AS (
-      SELECT
-        "turns".*,
-        COALESCE((
-          SELECT SUM(LENGTH(CAST("family"."__payload" AS BLOB)))
-          FROM "${TABLE}" AS "family"
-          WHERE "family"."connection_id" = "turns"."connection_id"
-            AND "family"."thread_id" = "turns"."thread_id"
-            AND "family"."history_epoch" = "turns"."history_epoch"
-            AND "family"."ordinal" = "turns"."ordinal"
-            AND "family"."sealed" = 1
-            AND "family"."kind" IN ('turn', 'turnMeta', 'activity')
-        ), 0) AS "payload_bytes"
-      FROM "turns"
+        "connection_id", "thread_id", "turn_id", MIN("content_id") AS "first_rowid",
+        SUM("payload_bytes") AS "payload_bytes"
+      FROM "${CONTENT_TABLE}"
+      WHERE "sealed" = 1
+      GROUP BY "connection_id", "thread_id", "turn_id"
     ),
     "ranked" AS (
       SELECT
@@ -675,18 +508,20 @@ export async function rotateHistoryCache(executor: Executor, limits: {
   const historyFamiliesEvicted = numericSqliteValue(selected?.family_count) ?? 0;
   const historyBytesEvicted = numericSqliteValue(selected?.payload_bytes) ?? 0;
   if (historyFamiliesEvicted === 0) return { historyFamiliesEvicted, historyBytesEvicted };
-  await executor.execute(
-    `${candidateCte}
-     DELETE FROM "${TABLE}" AS "details"
+  const selectedContent = `SELECT "details"."content_id" FROM "${CONTENT_TABLE}" AS "details"
      WHERE "details"."sealed" = 1
-       AND "details"."kind" IN ('turn', 'turnMeta', 'activity')
        AND EXISTS (
          SELECT 1 FROM "chosen"
          WHERE "chosen"."connection_id" = "details"."connection_id"
            AND "chosen"."thread_id" = "details"."thread_id"
-           AND "chosen"."history_epoch" = "details"."history_epoch"
-           AND "chosen"."ordinal" = "details"."ordinal"
-       )`,
+           AND "chosen"."turn_id" IS "details"."turn_id"
+       )`;
+  await executor.execute(
+    `${candidateCte} DELETE FROM codewide_history_members WHERE content_id IN (${selectedContent})`,
+    [reclaimBytes],
+  );
+  await executor.execute(
+    `${candidateCte} DELETE FROM "${CONTENT_TABLE}" WHERE content_id IN (${selectedContent})`,
     [reclaimBytes],
   );
   return { historyFamiliesEvicted, historyBytesEvicted };
@@ -745,27 +580,27 @@ export async function prepareHistoryCacheAccounting(executor: Executor): Promise
   if (!present) {
     await executor.execute(
       `INSERT INTO "${CACHE_META_TABLE}" ("singleton", "history_bytes") `
-        + `SELECT 1, COALESCE(SUM(LENGTH(CAST("__payload" AS BLOB))), 0) `
-        + `FROM "${TABLE}" WHERE "sealed" = 1 AND "kind" IN ('turn', 'turnMeta', 'activity')`,
+        + `SELECT 1, COALESCE(SUM("payload_bytes"), 0) `
+        + `FROM "${CONTENT_TABLE}" WHERE "sealed" = 1`,
     );
   }
   const newHistory = `NEW."sealed" = 1 AND NEW."kind" IN ('turn', 'turnMeta', 'activity')`;
   const oldHistory = `OLD."sealed" = 1 AND OLD."kind" IN ('turn', 'turnMeta', 'activity')`;
   await executor.execute(
-    `CREATE TRIGGER IF NOT EXISTS "${TABLE}__cache_insert" AFTER INSERT ON "${TABLE}" `
+    `CREATE TRIGGER IF NOT EXISTS "${CONTENT_TABLE}__cache_insert" AFTER INSERT ON "${CONTENT_TABLE}" `
       + `WHEN ${newHistory} BEGIN `
-      + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = "history_bytes" + LENGTH(CAST(NEW."__payload" AS BLOB)) WHERE "singleton" = 1; END`,
+      + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = "history_bytes" + NEW."payload_bytes" WHERE "singleton" = 1; END`,
   );
   await executor.execute(
-    `CREATE TRIGGER IF NOT EXISTS "${TABLE}__cache_delete" AFTER DELETE ON "${TABLE}" `
+    `CREATE TRIGGER IF NOT EXISTS "${CONTENT_TABLE}__cache_delete" AFTER DELETE ON "${CONTENT_TABLE}" `
       + `WHEN ${oldHistory} BEGIN `
-      + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = MAX(0, "history_bytes" - LENGTH(CAST(OLD."__payload" AS BLOB))) WHERE "singleton" = 1; END`,
+      + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = MAX(0, "history_bytes" - OLD."payload_bytes") WHERE "singleton" = 1; END`,
   );
   await executor.execute(
-    `CREATE TRIGGER IF NOT EXISTS "${TABLE}__cache_update" AFTER UPDATE ON "${TABLE}" BEGIN `
+    `CREATE TRIGGER IF NOT EXISTS "${CONTENT_TABLE}__cache_update" AFTER UPDATE ON "${CONTENT_TABLE}" BEGIN `
       + `UPDATE "${CACHE_META_TABLE}" SET "history_bytes" = MAX(0, "history_bytes" `
-      + `- CASE WHEN ${oldHistory} THEN LENGTH(CAST(OLD."__payload" AS BLOB)) ELSE 0 END `
-      + `+ CASE WHEN ${newHistory} THEN LENGTH(CAST(NEW."__payload" AS BLOB)) ELSE 0 END) `
+      + `- CASE WHEN ${oldHistory} THEN OLD."payload_bytes" ELSE 0 END `
+      + `+ CASE WHEN ${newHistory} THEN NEW."payload_bytes" ELSE 0 END) `
       + `WHERE "singleton" = 1; END`,
   );
 }
@@ -792,7 +627,10 @@ async function loadTurnFamilies(
 ): Promise<ThreadDetailRow[]> {
   if (turnIds.length === 0) return [];
   return await query(
-    `SELECT "__payload" FROM "${TABLE}" WHERE "connection_id" = ? AND "thread_id" = ? AND "turn_id" IN (${turnIds.map(() => "?").join(", ")})`,
+    `SELECT ${historyMemberPayload} AS __payload FROM ${retainedHistoryMemberSource}
+      WHERE ${historyScope} AND p.turn_id IN (${turnIds.map(() => "?").join(", ")})
+      ORDER BY CASE WHEN p.history_epoch=h.active_epoch THEN 1 ELSE 0 END ASC,
+        p.history_epoch ASC,c.content_id ASC`,
     [connectionId, threadId, ...turnIds],
   );
 }

@@ -18,8 +18,8 @@ export function startOtaPrefetchRuntime(): void {
 
   let checking = false;
   let updateReady = false;
-  // Native ON_LOAD owns the cold-start check. JS is the foreground/retry path,
-  // so do not immediately duplicate the same request when the module loads.
+  // Native launch never waits for the update service. Check asynchronously
+  // after startup, then on foreground/retry; cached bundles remain launchable offline.
   let nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
 
   const prefetch = async (force = false) => {

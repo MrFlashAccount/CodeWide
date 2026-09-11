@@ -120,9 +120,16 @@ describe("V2 native notification authority", () => {
     expect(connectionService).toContain("internal fun activateLegacySync()");
     expect(stopLegacy).toContain("terminalSessionManager.deactivateGeneration()");
     expect(stopLegacy).not.toContain("authenticatedTransportLeases");
-    expect(connectionService).toContain(
-      "terminalSessionManager.activateGeneration()\n    restoreLegacySync()",
+    const activateLegacy = connectionService.slice(
+      connectionService.indexOf("internal fun activateLegacySync()"),
+      connectionService.indexOf("private fun selectLegacySync()"),
     );
+    expect(activateLegacy).toContain("selectLegacySync()\n    restoreLegacySync()");
+    const selectLegacy = connectionService.slice(
+      connectionService.indexOf("private fun selectLegacySync()"),
+      connectionService.indexOf("private fun restoreSelectedSyncGeneration()"),
+    );
+    expect(selectLegacy).toContain("terminalSessionManager.activateGeneration()");
     expect(v2TerminalTransport).toContain("acquireSharedConnectionLease");
     expect(v2TerminalTransport).not.toContain("NativeTerminalSessionManager");
   });
@@ -139,7 +146,14 @@ describe("V2 native notification authority", () => {
   });
 
   it("restores one service-owned V2 notification socket after headless recreation", () => {
-    expect(connectionService).toContain("null -> restoreSelectedSyncGeneration()");
+    expect(connectionService).toContain("null -> recoveryWorker.submit {");
+    expect(connectionService).toContain("if (!destroyed) restoreSelectedSyncGeneration()");
+    const restoreGeneration = connectionService.slice(
+      connectionService.indexOf("private fun restoreSelectedSyncGeneration()"),
+      connectionService.indexOf("private fun restoreLegacySync()"),
+    );
+    expect(restoreGeneration).toContain("if (syncGeneration == NativeSyncGeneration.V2) activateV2Sync(headless = true)");
+    expect(restoreGeneration).toContain("else activateLegacySync()");
     expect(connectionService).toContain(
       "if (headlessV2Subscriptions.containsKey(savedServerId)) {",
     );

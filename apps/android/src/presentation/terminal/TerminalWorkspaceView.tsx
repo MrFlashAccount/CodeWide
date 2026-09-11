@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ScrollView, StyleSheet, TextInput, View } from "react-native";
 
-import { colors, radii, spacing } from "../../theme";
+import { colors, radii, spacing, typeScale, controlSize, layoutSize } from "../../theme";
 import { ProductText } from "../text/ProductText";
 
 interface TerminalWorkspaceViewProps {
@@ -56,15 +56,16 @@ export function TerminalWorkspaceView(props: TerminalWorkspaceViewProps): React.
 }
 
 const styles = StyleSheet.create({
-  dot: { borderRadius: 4, height: 8, width: 8 },
+  dot: { borderRadius: radii.pill, height: 8, width: 8 },
   dotIdle: { backgroundColor: colors.textDim },
   dotLive: { backgroundColor: colors.green },
   input: {
     color: colors.text,
     flex: 1,
+
+    ...typeScale.code,
     fontFamily: "monospace",
-    fontSize: 13,
-    minHeight: 46,
+    minHeight: controlSize.touch,
     minWidth: 0,
     paddingVertical: spacing.xs,
   },
@@ -80,17 +81,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   output: { backgroundColor: colors.code, flex: 1, padding: spacing.sm },
-  prompt: { fontFamily: "monospace", fontSize: 18, lineHeight: 22 },
+  prompt: { ...typeScale.code, fontFamily: "monospace" },
   root: { backgroundColor: colors.code, flex: 1, minHeight: 0 },
-  state: { fontSize: 11, marginLeft: "auto", textTransform: "capitalize" },
-  tab: { fontSize: 13, lineHeight: 18 },
-  terminalText: { color: "#D7FBD7", fontFamily: "monospace", fontSize: 13, lineHeight: 19 },
+  state: { ...typeScale.label, marginLeft: "auto", textTransform: "capitalize" },
+  tab: { ...typeScale.body },
+  terminalText: { color: "#D7FBD7", ...typeScale.code, fontFamily: "monospace" },
   toolbar: {
     alignItems: "center",
     backgroundColor: colors.surface,
     flexDirection: "row",
     gap: spacing.xs,
-    minHeight: 52,
+    minHeight: layoutSize.header,
     paddingHorizontal: spacing.sm,
   },
 });

@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { parseRichMarkdown, projectLiveMarkdownTail } from "@codewide/rendering-core";
 
 describe("live Markdown semantic projection", () => {
-  it("reveals plain text at completed word boundaries", () => {
+  it("publishes plain text immediately so native glyph animation owns its pacing", () => {
     expect(projectLiveMarkdownTail("Hello streaming wor")).toEqual({
-      visible: "Hello streaming ",
-      pending: "wor",
+      visible: "Hello streaming wor",
+      pending: "",
     });
     expect(projectLiveMarkdownTail("Hello streaming word ")).toEqual({
       visible: "Hello streaming word ",
@@ -24,8 +24,8 @@ describe("live Markdown semantic projection", () => {
       pending: "",
     });
     expect(projectLiveMarkdownTail("Still stream")).toEqual({
-      visible: "Still ",
-      pending: "stream",
+      visible: "Still stream",
+      pending: "",
     });
   });
 
@@ -44,14 +44,14 @@ describe("live Markdown semantic projection", () => {
     });
   });
 
-  it("does not expose unresolved reference syntax across a block boundary", () => {
+  it("does not let unresolved references hide subsequent blocks", () => {
     expect(projectLiveMarkdownTail("[documentation][docs]\n\n")).toEqual({
-      visible: "",
-      pending: "[documentation][docs]\n\n",
+      visible: "[documentation][docs]\n\n",
+      pending: "",
     });
     expect(projectLiveMarkdownTail("[documentation][docs]\n\nAnother paragraph ")).toEqual({
-      visible: "",
-      pending: "[documentation][docs]\n\nAnother paragraph ",
+      visible: "[documentation][docs]\n\nAnother paragraph ",
+      pending: "",
     });
 
     const resolved = "[documentation][docs]\n\n[docs]: https://example.com";
@@ -59,6 +59,14 @@ describe("live Markdown semantic projection", () => {
     const paragraph = parseRichMarkdown(resolved).root.children[0];
     expect(paragraph?.type).toBe("paragraph");
     if (paragraph?.type === "paragraph") expect(paragraph.children[0]?.type).toBe("link");
+  });
+
+  it.each([
+    "Literal [brackets with no link", "```ts\nconst x = 1;\n```",
+    "```mermaid\ngraph TD\nA --> B\n```", "| Name | Value |\n| --- | --- |\n| one | 1 |",
+  ])("keeps streaming after a completed block: %s", (block) => {
+    const source = `Before\n\n${block}\n\nAfter, still arriv`;
+    expect(projectLiveMarkdownTail(source)).toEqual({ visible: source, pending: "" });
   });
 
   it("does not flash a potential GFM table header", () => {

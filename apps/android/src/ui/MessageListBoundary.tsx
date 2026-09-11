@@ -1,0 +1,71 @@
+import { useState, useTransition, type ReactNode } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+
+import { colors, radii, spacing, touchTarget, typeScale } from "../theme";
+
+export type MessageListState =
+  | { status: "loading" }
+  | { status: "ready" }
+  | { status: "error"; message: string; retry(): Promise<void> };
+
+interface MessageListBoundaryProps {
+  state: MessageListState;
+  children: ReactNode;
+}
+
+/** Only the transcript waits for history; surrounding controls keep their owners. */
+export function MessageListBoundary(props: MessageListBoundaryProps) {
+  if (props.state.status === "ready") return props.children;
+  if (props.state.status === "error") return <MessageListError state={props.state} />;
+  return <MessageListSkeleton />;
+}
+
+export function MessageListSkeleton() {
+  return (
+    <View accessibilityLabel="Loading messages" testID="message-list-skeleton" style={styles.content}>
+      <View style={styles.user} />
+      <View style={styles.answer}>
+        <View style={styles.line} />
+        <View style={styles.line} />
+        <View style={styles.shortLine} />
+      </View>
+    </View>
+  );
+}
+
+interface MessageListErrorProps {
+  state: Extract<MessageListState, { status: "error" }>;
+}
+
+function MessageListError(props: MessageListErrorProps) {
+  const [pending, startTransition] = useTransition();
+  const [retryError, setRetryError] = useState<string | null>(null);
+  function retry() {
+    startTransition(async () => {
+      try {
+        await props.state.retry();
+      } catch (error) {
+        setRetryError(error instanceof Error ? error.message : "Could not load messages");
+      }
+    });
+  }
+  return (
+    <View style={styles.content}>
+      <Text accessibilityRole="alert" style={styles.error}>{retryError ?? props.state.message}</Text>
+      <Pressable accessibilityRole="button" disabled={pending} onPress={retry} style={styles.retry}>
+        <Text style={styles.label}>Retry loading messages</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: { flex: 1, padding: spacing.lg, gap: spacing.lg, justifyContent: "flex-end" },
+  user: { alignSelf: "flex-end", width: "55%", height: touchTarget, borderRadius: radii.bubble, backgroundColor: colors.surface },
+  answer: { width: "88%", padding: spacing.md, gap: spacing.sm, borderRadius: radii.bubble, backgroundColor: colors.surface },
+  line: { height: spacing.sm, borderRadius: radii.small, backgroundColor: colors.border },
+  shortLine: { width: "60%", height: spacing.sm, borderRadius: radii.small, backgroundColor: colors.border },
+  error: { ...typeScale.body, color: colors.red },
+  label: { ...typeScale.body, color: colors.text },
+  retry: { minHeight: touchTarget, justifyContent: "center" },
+});

@@ -1,20 +1,16 @@
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import type { V2ThreadGoal } from "@codewide/sync-client/v2";
 
-import { colors } from "../../theme";
-import { PresentationIcon } from "../icons/PresentationIcon";
 import { ProductText } from "../text/ProductText";
-import { iconButtonStyle, threadGoalSheetStyles as styles } from "./threadGoalSheetStyles";
+import { threadGoalSheetStyles as styles } from "./threadGoalSheetStyles";
 
 interface ThreadGoalSheetHeaderProps {
-  disabled: boolean;
   goal: V2ThreadGoal | null;
-  onClose(): void;
 }
 
 /** Stable goal-sheet chrome shared by loading and ready editor states. */
 export function ThreadGoalSheetHeader(props: ThreadGoalSheetHeaderProps): React.JSX.Element {
-  const { disabled, goal, onClose } = props;
+  const { goal } = props;
   return (
     <View style={styles.header}>
       <View style={styles.titleBlock}>
@@ -27,15 +23,6 @@ export function ThreadGoalSheetHeader(props: ThreadGoalSheetHeaderProps): React.
             : "Goal details and controls."}
         </ProductText>
       </View>
-      <Pressable
-        accessibilityLabel="Close goal"
-        accessibilityRole="button"
-        disabled={disabled}
-        onPress={onClose}
-        style={iconButtonStyle}
-      >
-        <PresentationIcon color={colors.text} name="close" size={22} />
-      </Pressable>
     </View>
   );
 }

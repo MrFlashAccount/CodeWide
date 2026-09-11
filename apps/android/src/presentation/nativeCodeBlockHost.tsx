@@ -8,6 +8,8 @@ import {
 
 export interface NativeCodeBlockHostProps {
   code: string;
+  embeddedInParentScroll?: boolean;
+  searchQuery?: string;
   language: string;
   maxLines: number;
   style: StyleProp<ViewStyle>;

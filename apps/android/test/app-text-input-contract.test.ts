@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { compactSource } from "./source-contract";
+
 const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const largePasteModule = readFileSync(
   new URL("../android/app/src/main/java/dev/codewide/app/remote/LargePasteModule.kt", import.meta.url),
   "utf8",
@@ -15,6 +17,8 @@ const largePastePolicy = readFileSync(
   "utf8",
 );
 const codeReviewEditor = readFileSync(new URL("../src/rendering/CodeReviewEditor.web.tsx", import.meta.url), "utf8");
+const composerMarkdownInputWeb = readFileSync(new URL("../src/ui/ComposerMarkdownInput.web.tsx", import.meta.url), "utf8");
+const composerMarkdownInputNative = readFileSync(new URL("../src/ui/ComposerMarkdownInput.native.tsx", import.meta.url), "utf8");
 const heroBottomSheetPrimitive = readFileSync(
   new URL("../node_modules/heroui-native/src/primitives/bottom-sheet/bottom-sheet.tsx", import.meta.url),
   "utf8",
@@ -36,13 +40,15 @@ describe("application text input contract", () => {
     expect(nativeInputOwners).toEqual(["ui/Typography.tsx"]);
   });
 
-  it("provides one voice runtime around both adaptive roots", () => {
+  it("provides voice runtime around adaptive roots and the standalone browser; sidebar search inherits its root", () => {
     expect(screen).toContain("const voiceInputRuntime: AppVoiceInputRuntime");
-    expect(screen.match(/<AppVoiceInputProvider runtime=\{voiceInputRuntime\}>/gu)).toHaveLength(2);
+    expect(screen.match(/<AppVoiceInputProvider runtime=\{voiceInputRuntime\}>/gu)).toHaveLength(3);
+    expect(screen.match(/searchContent=\{sidebarSearch\}/gu)).toHaveLength(2);
   });
 
   it("keeps fields with specialized voice controls opted out", () => {
-    expect(screen).toMatch(/<TextInput\s+voiceInput=\{false\}\s+accessibilityLabel="Message Codex"/u);
+    expect(screen).toMatch(/<ComposerMarkdownInput\s+ref=\{composerInputRef\}\s+accessibilityLabel="Message Codex"/u);
+    expect(composerMarkdownInputWeb).toContain("voiceInput={false}");
     expect(codeReviewEditor).toMatch(/<TextInput\s+voiceInput=\{false\}\s+autoFocus/u);
   });
 
@@ -65,6 +71,10 @@ describe("application text input contract", () => {
     expect(largePasteModule).toContain("view.filters = arrayOf(inputFilter, *view.filters)");
     expect(largePasteModule).toContain("clipboard.primaryClip");
     expect(largePasteModule).toContain("emitLargePaste(registration, clipboardText");
+    expect(largePasteModule).toContain("registeredView.findTextView()");
+    expect(largePasteModule).toContain("private fun View.findTextView(): TextView?");
+    expect(composerMarkdownInputNative).toContain("installLargePasteInterceptor(");
+    expect(composerMarkdownInputNative).toContain('ref={root} testID="composer-input-layout" collapsable={false}');
     expect(largePasteModule).not.toContain("MAX_RESOLVE_ATTEMPTS");
     expect(largePastePolicy).toContain("ContentInfoCompat.SOURCE_CLIPBOARD");
     expect(largePastePolicy).toContain("ContentInfoCompat.SOURCE_INPUT_METHOD");
@@ -72,7 +82,7 @@ describe("application text input contract", () => {
   });
 
   it("keeps the conversation composer attached to every IME session", () => {
-    expect(screen).toContain("<KeyboardStickyView\n        enabled");
+    expect(compactSource(screen)).toContain("<KeyboardStickyView enabled");
     expect(screen).not.toContain("composerTracksKeyboard");
     expect(screen).not.toContain("setComposerTracksKeyboard");
   });

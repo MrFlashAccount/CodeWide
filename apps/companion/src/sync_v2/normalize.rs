@@ -587,37 +587,57 @@ fn weekly_rate_limit(value: Option<&Value>) -> Result<Option<WeeklyRateLimit>, V
     let response = response
         .as_object()
         .ok_or_else(|| source_invalid("account rate limits are invalid"))?;
-    let mut snapshots = match response.get("rateLimitsByLimitId") {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::Object(values)) => values.values().collect::<Vec<_>>(),
+    let snapshots_by_limit = match response.get("rateLimitsByLimitId") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(values)) => Some(values),
         Some(_) => return Err(source_invalid("account rate limit map is invalid")),
     };
-    if let Some(snapshot) = response.get("rateLimits")
-        && !snapshot.is_null()
+    let canonical = response
+        .get("rateLimits")
+        .filter(|snapshot| !snapshot.is_null());
+    if let Some(snapshot) = canonical
+        && let Some(weekly) = weekly_rate_limit_snapshot(snapshot)?
     {
-        snapshots.push(snapshot);
+        return Ok(Some(weekly));
     }
-    for snapshot in snapshots {
-        let snapshot = snapshot
-            .as_object()
-            .ok_or_else(|| source_invalid("account rate limit snapshot is invalid"))?;
-        for name in ["primary", "secondary"] {
-            let Some(window) = snapshot.get(name) else {
-                continue;
-            };
-            let duration = required_i64(window, "windowDurationMins")?;
-            if duration != 10_080 {
-                continue;
-            }
-            let used = required_f64(window, "usedPercent")?;
-            if !used.is_finite() || !(0.0..=100.0).contains(&used) {
-                return Err(source_invalid("weekly rate limit usage is invalid"));
-            }
-            return Ok(Some(WeeklyRateLimit {
-                remaining_percent: 100.0 - used,
-                resets_at: optional_timestamp(window, "resetsAt")?,
-            }));
+
+    let canonical_limit_id = canonical
+        .and_then(|snapshot| snapshot.get("limitId"))
+        .and_then(Value::as_str);
+    if let Some(limit_id) = canonical_limit_id
+        && let Some(snapshot) = snapshots_by_limit.and_then(|snapshots| snapshots.get(limit_id))
+        && let Some(weekly) = weekly_rate_limit_snapshot(snapshot)?
+    {
+        return Ok(Some(weekly));
+    }
+    if canonical_limit_id != Some("codex")
+        && let Some(snapshot) = snapshots_by_limit.and_then(|snapshots| snapshots.get("codex"))
+    {
+        return weekly_rate_limit_snapshot(snapshot);
+    }
+    Ok(None)
+}
+
+fn weekly_rate_limit_snapshot(snapshot: &Value) -> Result<Option<WeeklyRateLimit>, V2Error> {
+    let snapshot = snapshot
+        .as_object()
+        .ok_or_else(|| source_invalid("account rate limit snapshot is invalid"))?;
+    for name in ["primary", "secondary"] {
+        let Some(window) = snapshot.get(name) else {
+            continue;
+        };
+        let duration = required_i64(window, "windowDurationMins")?;
+        if duration != 10_080 {
+            continue;
         }
+        let used = required_f64(window, "usedPercent")?;
+        if !used.is_finite() || !(0.0..=100.0).contains(&used) {
+            return Err(source_invalid("weekly rate limit usage is invalid"));
+        }
+        return Ok(Some(WeeklyRateLimit {
+            remaining_percent: 100.0 - used,
+            resets_at: optional_timestamp(window, "resetsAt")?,
+        }));
     }
     Ok(None)
 }

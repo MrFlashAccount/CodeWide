@@ -11,14 +11,10 @@ import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.IOException
-import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.nio.charset.StandardCharsets
-import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -30,11 +26,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 internal data class PortForwardProjection(
-  val profile: StoredPortForward,
+  val profile: CurrentPortForward,
   val localPort: Int?,
   val status: String,
   val error: String?,
-  val localCapability: String? = null,
 ) {
   fun json(): JSONObject = JSONObject().apply {
     put("id", profile.id)
@@ -50,8 +45,8 @@ internal data class PortForwardProjection(
     put("status", status)
     put(
       "previewUrl",
-      if (localPort == null || localCapability == null || status != "live") JSONObject.NULL
-      else "http://127.0.0.1:$localPort/$localCapability/",
+      if (localPort == null || status != "live") JSONObject.NULL
+      else "http://127.0.0.1:$localPort/",
     )
     put("error", error ?: JSONObject.NULL)
     put("updatedAt", profile.updatedAt)
@@ -103,20 +98,38 @@ internal class NativePortForwardManager(
     val profileId: String,
     val permit: PortForwardStartGate.Permit,
     val serverSocket: ServerSocket,
-    val localCapability: String = randomLocalCapability(),
     val clientSlots: Semaphore = Semaphore(MAX_CLIENTS_PER_PROFILE, true),
     val clients: MutableSet<Socket> = ConcurrentHashMap.newKeySet(),
     val webSockets: MutableSet<WebSocket> = ConcurrentHashMap.newKeySet(),
     val closed: AtomicBoolean = AtomicBoolean(false),
   )
 
-  private val store = NativePortForwardStore(context)
+  private val store = NativePortForwardStore()
+  // Invalid policy data must fail port discovery closed, not prevent the
+  // shared connection service (and unrelated chat traffic) from starting.
+  private val policies by lazy { NativePortForwardPolicyStore(context) }
+  private val inventoryLock = Any()
+  private val inventoryEpochs = mutableMapOf<String, Long>()
+  private val suspended = mutableSetOf<String>()
+  private var closed = false
+  private val discoveryLocks = CredentialLockRegistry()
+  private val inventoryMonitor = PortForwardInventoryMonitor { discover(it) }
   private val runtimes = ConcurrentHashMap<String, Runtime>()
   private val projections = ConcurrentHashMap<String, PortForwardProjection>()
   private val availablePorts = ConcurrentHashMap<String, Map<Int, String>>()
   private val credentialCache = ConcurrentHashMap<String, CachedCredential>()
   private val credentialLocks = CredentialLockRegistry()
   private val startGate = PortForwardStartGate()
+  private val inventoryReconciler = PortForwardInventoryReconciler(
+    store, { connectionId, serviceKey, port -> policies.preference(connectionId, serviceKey, port) },
+    { connectionId, entry, existing, preference ->
+      upsertCurrent(connectionId, existing?.id ?: "forward-${java.util.UUID.randomUUID()}",
+        entry.label, entry.port, existing?.preferredLocalPort, entry.serviceKey, preference).profile
+    },
+    runtimes::containsKey,
+    { startCurrent(it) },
+    ::removeCurrent,
+  )
   private val bridgePool: ExecutorService = ThreadPoolExecutor(
     0,
     MAX_ACTIVE_CLIENTS,
@@ -128,23 +141,23 @@ internal class NativePortForwardManager(
   )
 
   fun restore() {
-    val enabled = store.list().filter { it.enabled && it.preference != "excluded" }
-    enabled.forEach { start(it.id) }
-    enabled.map { it.connectionId }.distinct().forEach { connectionId ->
-      thread(name = "CodeWideForwardDiscovery-${safeId(connectionId)}", isDaemon = true) {
-        runCatching { discover(connectionId) }
-      }
-    }
+    credentialsStore.list().filter { it.enabled }.forEach { resumeConnection(it.id) }
   }
 
   fun list(connectionId: String): List<PortForwardProjection> = store.list(connectionId)
-    .sortedWith(compareByDescending<StoredPortForward> { it.enabled }.thenByDescending { it.updatedAt })
+    .sortedWith(compareByDescending<CurrentPortForward> { it.enabled }.thenByDescending { it.updatedAt })
     .map { profile -> projections[profile.id] ?: PortForwardProjection(profile, null, if (profile.enabled) "connecting" else "stopped", null) }
 
   fun discover(connectionId: String): String {
-    val saved = credentialsStore.get(connectionId) ?: error("Saved server credentials are missing")
-    require(saved.enabled) { "Server connection is disabled" }
-    return discover(saved, allowCredentialRetry = true)
+    return synchronized(discoveryLocks.lockFor(connectionId)) {
+      val (saved, epoch) = synchronized(inventoryLock) {
+        check(!closed && connectionId !in suspended) { "Port inventory is suspended" }
+        val current = credentialsStore.get(connectionId) ?: error("Saved server credentials are missing")
+        require(current.enabled) { "Server connection is disabled" }
+        current to (inventoryEpochs[connectionId] ?: 0L)
+      }
+      discover(saved, allowCredentialRetry = true, epoch)
+    }
   }
 
   fun upsert(
@@ -156,14 +169,37 @@ internal class NativePortForwardManager(
     serviceKey: String?,
     preference: String,
   ): PortForwardProjection {
+    return synchronized(inventoryLock) {
+      check(!closed && connectionId !in suspended) { "Port inventory is suspended" }
+      val currentKey = availablePorts[connectionId]?.get(remotePort)
+        ?: error("Port is not present in the current inventory")
+      require(serviceKey == null || serviceKey == currentKey) { "Port service has changed" }
+      val requested = store.get(profileId)
+      require(requested == null || requested.connectionId == connectionId) { "Port forward belongs to another server" }
+      // A scan may create the automatic forward before an explicit UI action
+      // arrives. One discovered service owns exactly one phone listener.
+      val currentId = store.list(connectionId).firstOrNull { it.serviceKey == currentKey }?.id ?: profileId
+      upsertCurrent(connectionId, currentId, label, remotePort, preferredLocalPort, currentKey, preference, persistPreference = true)
+    }
+  }
+
+  private fun upsertCurrent(
+    connectionId: String,
+    profileId: String,
+    label: String,
+    remotePort: Int,
+    preferredLocalPort: Int?,
+    serviceKey: String,
+    preference: String,
+    persistPreference: Boolean = false,
+  ): PortForwardProjection {
     val previous = store.get(profileId)
     require(previous == null || previous.connectionId == connectionId) { "Port forward belongs to another server" }
-    val nextIdentityMode = if (serviceKey == null) PortForwardIdentityMode.MANUAL else PortForwardIdentityMode.DISCOVERED
+    val nextIdentityMode = PortForwardIdentityMode.DISCOVERED
     require(portForwardIdentityTransitionAllowed(previous?.identityMode, nextIdentityMode)) {
       "A discovered port profile cannot be downgraded to manual"
     }
-    val profile = store.upsert(
-      StoredPortForward(
+    val draft = CurrentPortForward(
         id = profileId,
         connectionId = connectionId,
         label = label.trim(),
@@ -174,8 +210,10 @@ internal class NativePortForwardManager(
         enabled = preference != "excluded" && (previous?.enabled ?: false),
         updatedAt = System.currentTimeMillis(),
         identityMode = nextIdentityMode,
-      ),
-    )
+      )
+    NativePortForwardStore.validate(draft)
+    if (persistPreference) policies.set(connectionId, serviceKey, remotePort, preference)
+    val profile = store.upsert(draft)
     val wasRunning = runtimes.containsKey(profileId)
     val transportChanged = previous == null
       || previous.remotePort != profile.remotePort
@@ -193,7 +231,6 @@ internal class NativePortForwardManager(
       return projection(
         profile,
         runtime.serverSocket.localPort,
-        runtime.localCapability,
         current?.status ?: "live",
         current?.error,
       ).also(::publish)
@@ -202,11 +239,23 @@ internal class NativePortForwardManager(
   }
 
   fun start(profileId: String): PortForwardProjection {
+    return synchronized(inventoryLock) { startCurrent(profileId) }
+  }
+
+  private fun startCurrent(profileId: String): PortForwardProjection {
+    val selected = store.get(profileId) ?: error("Port forward not found")
+    check(!closed && selected.connectionId !in suspended) { "Port inventory is suspended" }
+    check(availablePorts[selected.connectionId]?.get(selected.remotePort) == selected.serviceKey) {
+      "Port is not present in the current inventory"
+    }
+    if (selected.preference == "excluded") {
+      policies.set(selected.connectionId, requireNotNull(selected.serviceKey), selected.remotePort, "included")
+      store.upsert(selected.copy(preference = "included"))
+    }
     runtimes[profileId]?.let { runtime ->
       return projections[profileId] ?: projection(
         store.get(profileId) ?: error("Port forward not found"),
         runtime.serverSocket.localPort,
-        runtime.localCapability,
         "live",
         null,
       )
@@ -216,7 +265,7 @@ internal class NativePortForwardManager(
       return projection(stored, null, "stopped", null).also(::publish)
     }
     val permit = startGate.begin(profileId)
-    var enabledProfile: StoredPortForward? = null
+    var enabledProfile: CurrentPortForward? = null
     startGate.runIfCurrent(permit) {
       enabledProfile = store.setEnabled(profileId, true)
     }
@@ -233,7 +282,7 @@ internal class NativePortForwardManager(
           bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), profile.preferredLocalPort ?: 0), LISTENER_BACKLOG)
         }
         val runtime = Runtime(profile.id, permit, socket)
-        var runningProfile: StoredPortForward? = null
+        var runningProfile: CurrentPortForward? = null
         startGate.runIfCurrent(permit) {
           val current = store.get(profile.id)
           if (current?.enabled == true && current.preference != "excluded" && runtimes.putIfAbsent(profile.id, runtime) == null) {
@@ -241,7 +290,7 @@ internal class NativePortForwardManager(
             val confirmedPorts = availablePorts[current.connectionId]
             val error = confirmedPorts?.let { portAvailabilityError(current, it) }
             val status = if (error == null) "live" else "unavailable"
-            publish(projection(current, socket.localPort, runtime.localCapability, status, error))
+            publish(projection(current, socket.localPort, status, error))
           }
         }
         val acceptedProfile = runningProfile
@@ -263,12 +312,27 @@ internal class NativePortForwardManager(
   }
 
   fun stop(profileId: String): PortForwardProjection {
+    return synchronized(inventoryLock) {
+      val current = store.get(profileId) ?: error("Port forward not found")
+      policies.set(current.connectionId, requireNotNull(current.serviceKey), current.remotePort, "excluded")
+      store.upsert(current.copy(preference = "excluded"))
+      stopCurrent(profileId)
+    }
+  }
+
+  private fun stopCurrent(profileId: String): PortForwardProjection {
     stopRuntime(profileId, persistDisabled = true)
     val profile = store.get(profileId) ?: error("Port forward not found")
     return projection(profile, null, "stopped", null).also(::publish)
   }
 
   fun remove(profileId: String) {
+    // Removing a visible forward is an explicit exclusion. Inventory eviction
+    // uses removeCurrent instead and never erases the user's policy.
+    stop(profileId)
+  }
+
+  private fun removeCurrent(profileId: String) {
     stopRuntime(profileId, persistDisabled = false)
     store.remove(profileId)
     projections.remove(profileId)
@@ -276,26 +340,32 @@ internal class NativePortForwardManager(
   }
 
   fun resumeConnection(connectionId: String) {
-    store.list(connectionId).filter { it.enabled }.forEach { start(it.id) }
+    synchronized(inventoryLock) { suspended.remove(connectionId) }
+    inventoryMonitor.start(connectionId)
   }
 
   fun suspendConnection(connectionId: String) {
-    store.list(connectionId).forEach { profile ->
-      stopRuntime(profile.id, persistDisabled = false)
-      publish(projection(profile, null, "stopped", null))
+    inventoryMonitor.stop(connectionId)
+    synchronized(inventoryLock) {
+      suspended.add(connectionId)
+      inventoryEpochs[connectionId] = (inventoryEpochs[connectionId] ?: 0L) + 1
+      store.list(connectionId).forEach { removeCurrent(it.id) }
+      availablePorts.remove(connectionId)
     }
     credentialCache.remove(connectionId)
   }
 
   fun removeConnection(connectionId: String) {
-    store.list(connectionId).forEach { stopRuntime(it.id, persistDisabled = false) }
-    store.removeConnection(connectionId)
+    suspendConnection(connectionId)
+    policies.removeConnection(connectionId)
     credentialCache.remove(connectionId)
     credentialLocks.remove(connectionId)
     availablePorts.remove(connectionId)
   }
 
   fun close() {
+    inventoryMonitor.close()
+    synchronized(inventoryLock) { closed = true }
     startGate.close()
     runtimes.keys.toList().forEach { stopRuntime(it, persistDisabled = false) }
     credentialCache.clear()
@@ -303,7 +373,7 @@ internal class NativePortForwardManager(
     bridgePool.shutdownNow()
   }
 
-  private fun accept(profile: StoredPortForward, runtime: Runtime) {
+  private fun accept(profile: CurrentPortForward, runtime: Runtime) {
     while (!runtime.closed.get()) {
       val client = try {
         runtime.serverSocket.accept()
@@ -332,7 +402,7 @@ internal class NativePortForwardManager(
     }
   }
 
-  private fun bridge(profile: StoredPortForward, runtime: Runtime, client: Socket) {
+  private fun bridge(profile: CurrentPortForward, runtime: Runtime, client: Socket) {
     var webSocket: WebSocket? = null
     val closed = AtomicBoolean(false)
     val close = {
@@ -343,16 +413,6 @@ internal class NativePortForwardManager(
         webSocket?.close(1000, "phone_connection_closed")
       }
       Unit
-    }
-    val authorized = try {
-      client.soTimeout = LOCAL_AUTH_TIMEOUT_MS
-      PortForwardLocalAuthorization.authenticateBeforeUpstream(
-        BufferedInputStream(client.getInputStream()),
-        runtime.localCapability,
-      ) { it }
-    } catch (_: Throwable) {
-      close()
-      return
     }
     try {
       val saved = credentialsStore.get(profile.connectionId) ?: error("Saved server credentials are missing")
@@ -380,20 +440,11 @@ internal class NativePortForwardManager(
             close()
             return
           }
-          client.soTimeout = 0
-          if (authorized.initialPayload.isNotEmpty() && !socket.send(authorized.initialPayload.toByteString())) {
-            close()
-            return
-          }
           thread(name = "CodeWideForwardUpload-${safeId(profile.id)}", isDaemon = true) {
             try {
-              val input = authorized.input
-              val buffer = ByteArray(STREAM_CHUNK_BYTES)
-              while (!closed.get()) {
-                val count = input.read(buffer)
-                if (count < 0) break
+              copyPortForwardInput(client.getInputStream()) { buffer, count ->
                 while (!closed.get() && socket.queueSize() > MAX_WEBSOCKET_QUEUE_BYTES) Thread.sleep(10)
-                if (!socket.send(buffer.toByteString(0, count))) throw IOException("Remote stream closed")
+                !closed.get() && socket.send(buffer.toByteString(0, count))
               }
             } catch (_: Throwable) {
               // The paired close path reports only one compact profile state.
@@ -476,7 +527,7 @@ internal class NativePortForwardManager(
     }
   }
 
-  private fun discover(saved: StoredNativeSession, allowCredentialRetry: Boolean): String {
+  private fun discover(saved: StoredNativeSession, allowCredentialRetry: Boolean, epoch: Long): String {
     val credential = credential(saved)
     val request = Request.Builder()
       .url(InnerTlsTransport.url(saved, portDiscoveryEndpoint(saved.endpoint)))
@@ -490,34 +541,23 @@ internal class NativePortForwardManager(
     clientForServer.newCall(request).execute().use { response ->
       if ((response.code == 401 || response.code == 403) && allowCredentialRetry) {
         credentialCache.remove(saved.id)
-        return discover(saved, allowCredentialRetry = false)
+        return discover(saved, allowCredentialRetry = false, epoch)
       }
       check(response.isSuccessful) { "Port discovery failed (${response.code})" }
       val body = response.body?.string() ?: error("Port discovery returned an empty response")
       require(body.length <= MAX_DISCOVERY_RESPONSE_CHARS) { "Port discovery response is too large" }
       val envelope = JSONTokener(body).nextValue() as? JSONObject ?: error("Port discovery response is invalid")
       val rows = envelope.optJSONArray("ports") ?: error("Port discovery response is invalid")
-      val discoveredByPort = buildMap {
-        for (index in 0 until rows.length()) {
-          val row = rows.getJSONObject(index)
-          put(row.getInt("port"), row.getString("forwardingKey"))
+      val inventory = parsePortForwardInventory(rows)
+      val discoveredByPort = inventory.associate { it.port to it.serviceKey }
+      synchronized(inventoryLock) {
+        check(!closed && saved.id !in suspended && (inventoryEpochs[saved.id] ?: 0L) == epoch) {
+          "Port inventory was superseded"
         }
+        availablePorts[saved.id] = discoveredByPort
+        inventoryReconciler.reconcile(saved.id, inventory)
       }
-      availablePorts[saved.id] = discoveredByPort
-      reconcileAvailability(saved.id, discoveredByPort)
       return body
-    }
-  }
-
-  private fun reconcileAvailability(connectionId: String, discovered: Map<Int, String>) {
-    store.list(connectionId).filter { it.enabled }.forEach { profile ->
-      val runtime = runtimes[profile.id] ?: return@forEach
-      val error = portAvailabilityError(profile, discovered)
-      val status = if (error == null) "live" else "unavailable"
-      publishRuntimeIfCurrent(
-        runtime,
-        runtimeProjection(profile, runtime, status, error),
-      )
     }
   }
 
@@ -535,29 +575,20 @@ internal class NativePortForwardManager(
   }
 
   private fun projection(
-    profile: StoredPortForward,
+    profile: CurrentPortForward,
     localPort: Int?,
     status: String,
     error: String?,
   ): PortForwardProjection = PortForwardProjection(profile, localPort, status, error?.take(240))
 
-  private fun projection(
-    profile: StoredPortForward,
-    localPort: Int?,
-    localCapability: String?,
-    status: String,
-    error: String?,
-  ): PortForwardProjection = PortForwardProjection(profile, localPort, status, error?.take(240), localCapability)
-
   private fun runtimeProjection(
-    profile: StoredPortForward,
+    profile: CurrentPortForward,
     runtime: Runtime,
     status: String,
     error: String?,
   ): PortForwardProjection = projection(
     profile,
     runtime.serverSocket.localPort,
-    runtime.localCapability,
     status,
     error,
   )
@@ -566,7 +597,7 @@ internal class NativePortForwardManager(
     val previous = projections[next.profile.id]
     if (
       previous?.status == next.status && previous.error == next.error &&
-      previous.localPort == next.localPort && previous.localCapability == next.localCapability &&
+      previous.localPort == next.localPort &&
       previous.profile == next.profile
     ) return
     publish(next)
@@ -603,13 +634,11 @@ internal class NativePortForwardManager(
     private const val MAX_CLIENTS_PER_PROFILE = 64
     private const val MAX_ACTIVE_CLIENTS = 64
     private const val IDLE_WORKER_TIMEOUT_SECONDS = 30L
-    private const val STREAM_CHUNK_BYTES = 64 * 1024
     private const val MAX_WEBSOCKET_QUEUE_BYTES = 4L * 1024 * 1024
     private const val CREDENTIAL_TIMEOUT_MS = 20_000L
     private const val CREDENTIAL_EXPIRY_LEAD_MS = 30_000L
     private const val DISCOVERY_TIMEOUT_MS = 10_000L
     private const val MAX_DISCOVERY_RESPONSE_CHARS = 256 * 1024
-    private const val LOCAL_AUTH_TIMEOUT_MS = 5_000
     internal const val FORWARDING_KEY_HEADER = "X-CodeWide-Forwarding-Key"
     internal const val FORWARDING_MODE_HEADER = "X-CodeWide-Forwarding-Mode"
 
@@ -642,7 +671,7 @@ internal class NativePortForwardManager(
     private fun unavailableMessage(port: Int): String =
       "Nothing is listening on remote localhost:$port"
 
-    internal fun portAvailabilityError(profile: StoredPortForward, discovered: Map<Int, String>): String? {
+    internal fun portAvailabilityError(profile: CurrentPortForward, discovered: Map<Int, String>): String? {
       val currentKey = discovered[profile.remotePort] ?: return unavailableMessage(profile.remotePort)
       return if (
         profile.identityMode == PortForwardIdentityMode.DISCOVERED &&
@@ -652,23 +681,9 @@ internal class NativePortForwardManager(
       } else null
     }
 
-    private fun randomLocalCapability(): String {
-      val bytes = ByteArray(32)
-      SecureRandom().nextBytes(bytes)
-      return android.util.Base64.encodeToString(
-        bytes,
-        android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP,
-      )
-    }
-
     private fun safeId(value: String): String = value.replace(Regex("[^A-Za-z0-9._-]"), "_").take(48)
   }
 }
-
-internal data class AuthorizedPortForwardClient(
-  val input: BufferedInputStream,
-  val initialPayload: ByteArray,
-)
 
 internal class CredentialLockRegistry {
   private val locks = ConcurrentHashMap<String, Any>()
@@ -684,85 +699,4 @@ internal class CredentialLockRegistry {
   }
 
   fun size(): Int = locks.size
-}
-
-/** Authenticates a local caller before credentials or an upstream socket are touched. */
-internal object PortForwardLocalAuthorization {
-  private val CAPABILITY_PATTERN = Regex("^[A-Za-z0-9_-]{43}$")
-  private val HTTP_VERSION_PATTERN = Regex("^HTTP/1\\.[01]$")
-  private const val PREFACE_PREFIX = "CODEWIDE/1 "
-  private const val CAPABILITY_HEADER = "x-codewide-local-capability"
-  private const val MAX_FIRST_LINE_BYTES = 8 * 1024
-  private const val MAX_HEADER_BYTES = 64 * 1024
-
-  fun <T> authenticateBeforeUpstream(
-    input: BufferedInputStream,
-    capability: String,
-    openUpstream: (AuthorizedPortForwardClient) -> T,
-  ): T = openUpstream(authenticate(input, capability))
-
-  fun authenticate(input: BufferedInputStream, capability: String): AuthorizedPortForwardClient {
-    require(CAPABILITY_PATTERN.matches(capability)) { "Local capability is invalid" }
-    val firstLine = readLine(input, MAX_FIRST_LINE_BYTES)
-    val firstLineText = firstLine.toString(StandardCharsets.ISO_8859_1).removeSuffix("\r\n")
-    if (firstLineText == "$PREFACE_PREFIX$capability") {
-      return AuthorizedPortForwardClient(input, ByteArray(0))
-    }
-    val parts = firstLineText.split(' ', limit = 3)
-    check(parts.size == 3 && HTTP_VERSION_PATTERN.matches(parts[2])) { "Local port client is unauthorized" }
-    val headerTail = readHeaderTail(input, firstLine.size)
-    val fields = headerTail.toString(StandardCharsets.ISO_8859_1)
-      .removeSuffix("\r\n\r\n")
-      .split("\r\n")
-      .filter(String::isNotEmpty)
-    val headerCapabilities = fields.mapNotNull { line ->
-      val separator = line.indexOf(':')
-      if (separator <= 0 || !line.substring(0, separator).equals(CAPABILITY_HEADER, ignoreCase = true)) null
-      else line.substring(separator + 1).trim()
-    }
-    check(headerCapabilities.size <= 1) { "Local port client capability is ambiguous" }
-    val pathPrefix = "/$capability"
-    val pathAuthorized = parts[1].startsWith("$pathPrefix/")
-    val headerCapability = headerCapabilities.singleOrNull()
-    check(headerCapability == null || headerCapability == capability) { "Local port client is unauthorized" }
-    val headerAuthorized = headerCapability == capability
-    check(pathAuthorized || headerAuthorized) { "Local port client is unauthorized" }
-    val target = if (pathAuthorized) parts[1].removePrefix(pathPrefix) else parts[1]
-    val retained = fields.filterNot { line ->
-      val separator = line.indexOf(':')
-      separator > 0 && line.substring(0, separator).equals(CAPABILITY_HEADER, ignoreCase = true)
-    }
-    val sanitized = buildString {
-      append(parts[0]).append(' ').append(target).append(' ').append(parts[2]).append("\r\n")
-      retained.forEach { append(it).append("\r\n") }
-      append("\r\n")
-    }.toByteArray(StandardCharsets.ISO_8859_1)
-    return AuthorizedPortForwardClient(input, sanitized)
-  }
-
-  private fun readLine(input: BufferedInputStream, maximum: Int): ByteArray {
-    val output = ByteArrayOutputStream()
-    var previous = -1
-    while (output.size() < maximum) {
-      val value = input.read()
-      check(value >= 0) { "Local port client disconnected during authorization" }
-      output.write(value)
-      if (previous == '\r'.code && value == '\n'.code) return output.toByteArray()
-      previous = value
-    }
-    error("Local port authorization line is too large")
-  }
-
-  private fun readHeaderTail(input: BufferedInputStream, consumed: Int): ByteArray {
-    val output = ByteArrayOutputStream()
-    var tail = 0x0d0a
-    while (consumed + output.size() < MAX_HEADER_BYTES) {
-      val value = input.read()
-      check(value >= 0) { "Local HTTP client disconnected during authorization" }
-      output.write(value)
-      tail = ((tail shl 8) or value) and 0xffffffff.toInt()
-      if (tail == 0x0d0a0d0a) return output.toByteArray()
-    }
-    error("Local HTTP authorization headers are too large")
-  }
 }

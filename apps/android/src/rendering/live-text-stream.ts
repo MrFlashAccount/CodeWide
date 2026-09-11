@@ -46,8 +46,8 @@ export function projectCachedLiveText(cacheKey: string, source: string): LiveTex
 /**
  * One render-frame projection for live Markdown. Bubble measurement and the
  * Markdown renderer must consume this same visible source: the authoritative
- * native value can end in an incomplete word or Markdown construct that is
- * deliberately withheld from the current frame.
+ * native value can end in an incomplete Markdown construct that is withheld
+ * from this frame. Plain text, including unfinished words, is never batched here.
  */
 export function projectCachedLiveMarkdown(cacheKey: string, source: string, complete = false): LiveMarkdownProjection {
   const projection = projectCachedLiveText(cacheKey, source);

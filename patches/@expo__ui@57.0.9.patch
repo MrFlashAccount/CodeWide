@@ -20,7 +20,7 @@ index 202c2e55693f15b165127c4b56ee0c485e81013e..7cae284e1de2e54a3f2b4c504348ec3f
 +      var strokeLineCap = StrokeCap.Butt
 +      var strokeLineJoin = StrokeJoin.Miter
 +      var strokeMiterLimit = 4f
-
+ 
        for (i in 0 until parser.attributeCount) {
          when (parser.getAttributeName(i)) {
 @@ -305,7 +312,22 @@ class VectorIconLoader(
@@ -46,7 +46,7 @@ index 202c2e55693f15b165127c4b56ee0c485e81013e..7cae284e1de2e54a3f2b4c504348ec3f
 +          // Note: groups, clips, gradients, fillType and opacity are not yet supported.
          }
        }
-
+ 
 @@ -313,7 +335,12 @@ class VectorIconLoader(
          val nodes = PathParser().parsePathString(pathData).toNodes()
          builder.addPath(
@@ -64,7 +64,7 @@ index 202c2e55693f15b165127c4b56ee0c485e81013e..7cae284e1de2e54a3f2b4c504348ec3f
 @@ -321,6 +348,18 @@ class VectorIconLoader(
      }
    }
-
+ 
 +  private fun parseStrokeLineCap(value: String): StrokeCap = when (value) {
 +    "round" -> StrokeCap.Round
 +    "square" -> StrokeCap.Square
@@ -86,7 +86,7 @@ index 1791eace9a68362520bd39a41c6f8c55d32eb9c2..c4f09a2933e94e07acc06dd22f67aa0e
 +++ b/android/src/main/java/expo/modules/ui/menu/DropdownMenu.kt
 @@ -1,9 +1,11 @@
  package expo.modules.ui.menu
-
+ 
  import androidx.compose.foundation.layout.Box
 +import androidx.compose.foundation.shape.RoundedCornerShape
  import androidx.compose.material3.DropdownMenu
@@ -123,7 +123,7 @@ index 05d6909108a74317ac3117327ad19b0c9661b082..b8a195b9879a99fce7dbfee542f858ca
 +++ b/build/jetpack-compose/DropdownMenu/index.d.ts
 @@ -23,6 +23,11 @@ export interface DropdownMenuProps {
       * The color of the container holding the dropdown menu items.
-     */
+      */
      color?: ColorValue;
 +    /**
 +     * Corner radius of the dropdown menu container, in density-independent pixels.
@@ -140,7 +140,7 @@ index 6b7e3e7fdabcb43eb192a703cf6479d306eed80e..2205a126a88dcb2883e4929c82250d52
 @@ -42,6 +42,12 @@ export interface DropdownMenuProps {
     */
    color?: ColorValue;
-
+ 
 +  /**
 +   * Corner radius of the dropdown menu container, in density-independent pixels.
 +   * Uses the platform default when omitted.
@@ -162,7 +162,7 @@ diff --git a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt b/and
 index 46b7003c61d356f6474456511841f6b1e6c1ef54..3a856b5ddf6dd1ad1d3880984c081c66c0281b7b 100644
 --- a/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
 +++ b/android/src/main/java/expo/modules/ui/ModalBottomSheetView.kt
-@@ -107,6 +107,8 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
+@@ -108,5 +108,7 @@ fun FunctionalComposableScope.ModalBottomSheetContent(
      },
      properties = ModalBottomSheetProperties(
 +      isAppearanceLightStatusBars = false,

@@ -7,6 +7,7 @@ export type AppDialogAction = {
 export type AppDialogRequest = {
   title: string;
   message?: string;
+  diagnostic?: string;
   actions: readonly AppDialogAction[];
 };
 

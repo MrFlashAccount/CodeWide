@@ -27,11 +27,14 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { spacing, touchTarget } from "../theme";
+import { spacing, touchTarget, typeScale, typeWeight, iconSize, radii, controlSize } from "../theme";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { useAppDialog } from "../ui/AppDialog";
 import { useAppFullscreenOverlay, type AppFullscreenOverlayController } from "../ui/AppFullscreenOverlay";
 import { AppText as Text } from "../ui/Typography";
+import { ContentReviewComments, ContentReviewComposer, useContentReview, useImageReviewPoints } from "./ContentReviewHost";
+import { imageReviewPoint } from "./image-review-point";
+import type { ImageDraftTarget } from "../data/quickdraw-attachment";
 
 export type ImagePreviewItem = {
   id: string;
@@ -41,6 +44,7 @@ export type ImagePreviewItem = {
   reference?: string | null;
   download?: (() => Promise<void>) | null;
   order?: number;
+  draft?: ImageDraftTarget;
 };
 
 export type ImagePreviewRequest = ImagePreviewItem & {
@@ -194,7 +198,7 @@ export function useRegisterImagePreviewItem(groupId: string | null, item: ImageP
   });
   useEffect(() => {
     return registerCurrentItem();
-  }, [groupId, headersKey, item.id, item.label, item.link, item.order, item.reference, item.source.uri, register, registerCurrentItem]);
+  }, [groupId, headersKey, item.id, item.label, item.link, item.order, item.reference, item.source.uri, item.draft?.scope, item.draft?.attachmentId, register, registerCurrentItem]);
 }
 
 function ImageViewer({
@@ -211,6 +215,7 @@ function ImageViewer({
   onAnnotate?(): void;
 }) {
   const insets = useSafeAreaInsets();
+  const [pinMode, setPinMode] = useState(false);
   const item = session.items[session.index];
   if (item === undefined) return null;
   const imageActions: ActionMenuItem[] = [
@@ -222,6 +227,7 @@ function ImageViewer({
       <ZoomableImage
         key={item.id}
         item={item}
+        pinMode={pinMode}
         canGoPrevious={session.index > 0}
         canGoNext={session.index < session.items.length - 1}
         onPrevious={() => onChangeIndex(session.index - 1)}
@@ -230,12 +236,21 @@ function ImageViewer({
       />
       <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top + spacing.xs }]}> 
         <Pressable accessibilityRole="button" accessibilityLabel="Close image" onPress={onClose} style={styles.roundButton}>
-          <Ionicons name="close" size={23} color="#ffffff" />
+          <Ionicons name="close" size={iconSize.navigation} color="#ffffff" />
         </Pressable>
         <View style={styles.counterPill}>
           <Text style={styles.counterText}>{session.index + 1} / {session.items.length}</Text>
         </View>
         <View style={styles.topBarActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Pin a comment on image"
+            accessibilityState={{ selected: pinMode }}
+            onPress={() => setPinMode(!pinMode)}
+            style={styles.roundButton}
+          >
+            <Ionicons name={pinMode ? "pin" : "pin-outline"} size={iconSize.action} color={pinMode ? "#B794F6" : "#ffffff"} />
+          </Pressable>
           {imageActions.length > 0 && (
             <ActionMenu
               accessibilityLabel="Image actions"
@@ -247,7 +262,7 @@ function ImageViewer({
               style={styles.imageMenuAnchor}
             >
               <Pressable style={styles.roundButton}>
-                <Ionicons name="ellipsis-horizontal" size={20} color="#ffffff" />
+                <Ionicons name="ellipsis-horizontal" size={iconSize.action} color="#ffffff" />
               </Pressable>
             </ActionMenu>
           )}
@@ -261,7 +276,7 @@ function ImageViewer({
             >
               {annotationPreparing
                 ? <ActivityIndicator size="small" color="#ffffff" />
-                : <Ionicons name="brush-outline" size={20} color="#ffffff" />}
+                : <Ionicons name="brush-outline" size={iconSize.action} color="#ffffff" />}
             </Pressable>
           )}
         </View>
@@ -272,6 +287,7 @@ function ImageViewer({
 
 function ZoomableImage({
   item,
+  pinMode,
   canGoPrevious,
   canGoNext,
   onPrevious,
@@ -279,12 +295,19 @@ function ZoomableImage({
   onClose,
 }: {
   item: ImagePreviewItem;
+  pinMode: boolean;
   canGoPrevious: boolean;
   canGoNext: boolean;
   onPrevious(): void;
   onNext(): void;
   onClose(): void;
 }) {
+  const reviewTargetId = `image:${item.draft?.scope ?? ""}:${item.id}`;
+  const review = useContentReview();
+  const points = useImageReviewPoints(reviewTargetId);
+  const placePin = useEvent((x: number, y: number) => {
+    void review({ kind: "image", target: { id: reviewTargetId, label: item.label, reference: item.reference ?? null }, x, y });
+  });
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [intrinsic, setIntrinsic] = useState({ width: 1, height: 1 });
   const [decodeState, setDecodeState] = useState<"loading" | "ready" | "error">("loading");
@@ -406,7 +429,16 @@ function ZoomableImage({
     }
   });
 
-  const gestures = Gesture.Simultaneous(pan, pinch, doubleTap);
+  const pinTap = Gesture.Tap().withTestId("image-review-pin-tap").enabled(pinMode && decodeState === "ready").onEnd((event, success) => {
+    if (!success) return;
+    const point = imageReviewPoint(event, {
+      width: fit.width, height: fit.height,
+      viewportWidth: viewport.width, viewportHeight: viewport.height,
+      scale: scale.get(), translateX: translateX.get() + pageOffset.get(), translateY: translateY.get(),
+    });
+    if (point !== null) runOnJS(placePin)(point.x, point.y);
+  });
+  const gestures = Gesture.Simultaneous(pan, pinch, Gesture.Exclusive(doubleTap, pinTap));
   const imageStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: translateX.get() + pageOffset.get() },
@@ -418,6 +450,7 @@ function ZoomableImage({
 
   return (
     <Animated.View
+      testID="image-preview-viewport"
       style={[styles.viewer, backdropStyle]}
       onLayout={({ nativeEvent }) => setViewport({
         width: Math.max(1, nativeEvent.layout.width),
@@ -433,7 +466,7 @@ function ZoomableImage({
           )}
           {decodeState === "error" && (
             <View pointerEvents="none" style={styles.imageStatus}>
-              <Ionicons name="image-outline" size={28} color="#ffffff" />
+              <Ionicons name="image-outline" size={iconSize.illustration} color="#ffffff" />
               <Text style={styles.imageError}>Image decode failed</Text>
             </View>
           )}
@@ -442,7 +475,7 @@ function ZoomableImage({
               accessibilityLabel={`${item.label} full screen`}
               source={item.source}
               resizeMode="contain"
-              resizeMethod="none"
+              resizeMethod="resize"
               style={styles.image}
               onLoadStart={() => setDecodeState("loading")}
               onLoad={({ nativeEvent }) => {
@@ -457,9 +490,20 @@ function ZoomableImage({
               }}
               onError={() => setDecodeState("error")}
             />
+            {points.map((point, index) => (
+              <View
+                key={point.id}
+                pointerEvents="none"
+                style={[styles.pin, { left: `${point.x * 100}%`, top: `${point.y * 100}%`, opacity: point.pending ? 0.6 : 1 }]}
+              >
+                <Text style={styles.pinText}>{index + 1}</Text>
+              </View>
+            ))}
           </Animated.View>
         </View>
       </GestureDetector>
+      <ContentReviewComments targetId={reviewTargetId} presentation="overlay" />
+      <ContentReviewComposer targetId={reviewTargetId} anchorKind="image" />
     </Animated.View>
   );
 }
@@ -480,14 +524,16 @@ const styles = StyleSheet.create({
   viewer: { position: "absolute", left: 0, top: 0, right: 0, bottom: 0, backgroundColor: "#000000" },
   gestureSurface: { flex: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   imageStatus: { position: "absolute", alignItems: "center", justifyContent: "center", gap: spacing.sm, zIndex: 2 },
-  imageError: { color: "#ffffff", fontSize: 13, fontWeight: "600" },
+  imageError: { color: "#ffffff", ...typeScale.body, fontWeight: typeWeight.semibold },
   imageLayer: { alignItems: "center", justifyContent: "center" },
   image: { width: "100%", height: "100%" },
+  pin: { position: "absolute", width: controlSize.compact, height: controlSize.compact, marginLeft: -controlSize.compact / 2, marginTop: -controlSize.compact / 2, borderRadius: radii.pill, backgroundColor: "#B794F6", alignItems: "center", justifyContent: "center" },
+  pinText: { color: "#000000", ...typeScale.label, fontWeight: typeWeight.semibold },
   topBar: { position: "absolute", left: spacing.sm, right: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   topBarActions: { flexDirection: "row", gap: spacing.xs },
-  roundButton: { width: touchTarget, height: touchTarget, borderRadius: touchTarget / 2, backgroundColor: "rgba(36,36,36,0.9)", alignItems: "center", justifyContent: "center" },
+  roundButton: { width: touchTarget, height: touchTarget, borderRadius: radii.pill, backgroundColor: "rgba(36,36,36,0.9)", alignItems: "center", justifyContent: "center" },
   imageMenuAnchor: { width: touchTarget, height: touchTarget },
-  counterPill: { minHeight: 30, borderRadius: 16, backgroundColor: "rgba(36,36,36,0.82)", paddingHorizontal: 12, alignItems: "center", justifyContent: "center" },
-  counterText: { color: "#ffffff", fontSize: 12, fontWeight: "600" },
+  counterPill: { minHeight: controlSize.compact, borderRadius: radii.medium, backgroundColor: "rgba(36,36,36,0.82)", paddingHorizontal: spacing.sm, alignItems: "center", justifyContent: "center" },
+  counterText: { color: "#ffffff", ...typeScale.label, fontWeight: typeWeight.semibold },
   disabled: { opacity: 0.4 },
 });

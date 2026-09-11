@@ -1,6 +1,23 @@
-import { recordTelemetryEvent, type TelemetryEventInput } from "./telemetry";
+import { recordOperationalTelemetryEvent, recordTelemetryEvent, type TelemetryEventInput } from "./telemetry";
 
 type ThreadHistoryTelemetryInput = Omit<TelemetryEventInput, "name" | "connectionId" | "threadId">;
+
+/** Low-volume opening diagnostics stay available without enabling render profiling. */
+export function recordThreadOpeningMeasure(
+  connectionId: string,
+  threadId: string,
+  stage: "queue_wait" | "sqlite_read" | "cache_read" | "hydrate" | "open",
+  durationMs: number,
+): void {
+  if (connectionId === "" || threadId === "") return;
+  recordOperationalTelemetryEvent(connectionId, {
+    name: "chat.window.open_stage",
+    connectionId,
+    threadId,
+    values: { durationMs },
+    tags: { stage },
+  });
+}
 
 /** Records content-free diagnostics for the chat viewport and its durable history window. */
 export function recordThreadHistoryTelemetry(

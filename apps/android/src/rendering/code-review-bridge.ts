@@ -42,6 +42,7 @@ export type CodeReviewComposerState = {
   reference: CodeReviewLineReference;
   draft: string;
   voicePhase: "idle" | "starting" | "recording" | "finishing";
+  voicePermissionGranted: boolean;
   voiceRetryAvailable: boolean;
   voiceError: string | null;
 };
@@ -59,7 +60,7 @@ export type CodeReviewClientEvent =
   | BridgeEvent<"rendered", { requestId: number; renderMs: number }>
   | BridgeEvent<"fileSelect", { requestId: number; path: string }>
   | BridgeEvent<"lineTap", { requestId: number; reference: CodeReviewLineReference }>
-  | BridgeEvent<"draftChanged", { requestId: number; draft: string; selectionStart: number; selectionEnd: number }>
+  | BridgeEvent<"draftChanged", { requestId: number; reference: CodeReviewLineReference; draft: string; selectionStart: number; selectionEnd: number }>
   | BridgeEvent<"commentSubmit", { requestId: number; reference: CodeReviewLineReference; draft: string }>
   | BridgeEvent<"voiceAction", { requestId: number; reference: CodeReviewLineReference; draft: string; selectionStart: number; selectionEnd: number }>
   | BridgeEvent<"diffUnavailable", { requestId: number; message: string }>

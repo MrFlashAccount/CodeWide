@@ -1,18 +1,21 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { compactSource, sourceObjectDeclaration } from "./source-contract";
+
 const bubble = readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("../src/rendering/RichMarkdown.tsx", import.meta.url), "utf8");
 const mermaidNative = readFileSync(new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url), "utf8");
 const mermaidWeb = readFileSync(new URL("../src/rendering/MermaidDiagram.web.tsx", import.meta.url), "utf8");
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 
 describe("Yoga-owned bubble layout", () => {
   it("keeps bubble geometry declarative", () => {
     expect(bubble).not.toMatch(/measurePretextBubble|useMemo|PixelRatio|onLayout/u);
     expect(bubble).not.toMatch(/\bheight\s*:/u);
-    expect(bubble).toContain('maxWidth: "88%"');
-    expect(bubble).toContain('width: "88%"');
+    expect(bubble).toContain('maxWidth: "100%"');
+    expect(bubble).toContain('flexGrow: 1');
+    expect(bubble).toContain('flexBasis: 0');
     expect(bubble).toContain('maxWidth: "82%"');
     expect(bubble).toContain('alignSelf: "flex-start"');
     expect(bubble).toContain('alignSelf: "flex-end"');
@@ -37,9 +40,9 @@ describe("Yoga-owned bubble layout", () => {
   it("keeps the intrinsic plain-text chain free of percentage width caps", () => {
     expect(bubble).toContain("surface: {\n    minWidth: 0,\n    borderRadius:");
     expect(bubble).toContain("content: { minWidth: 0 }");
-    expect(markdown).toContain("document: { minWidth: 0, gap: 5 }");
+    expect(markdown).toContain("document: { minWidth: 0, gap: spacing.xxs }");
     expect(markdown).toContain("paragraph: { minWidth: 0, color:");
-    expect(screen).toContain("userMessageContent: { minWidth: 0, gap: 6 }");
+    expect(screen).toContain("userMessageContent: { minWidth: 0, gap: spacing.compact }");
     expect(screen).toContain("userMessageBlock: { minWidth: 0 }");
     expect(screen).toContain("userMessageTextBlock: { minWidth: 0 }");
   });
@@ -57,14 +60,17 @@ describe("Yoga-owned bubble layout", () => {
   });
 
   it("fills only disclosed activity while keeping thinking intrinsically sized", () => {
-    expect(screen).toContain("const hasDisclosedBubbleActivity = preTurnBlocks.some(preTurnBlockUsesDisclosure)");
+    expect(compactSource(screen)).toContain("const hasDisclosedBubbleActivity = preTurnBlocks.some(preTurnBlockUsesDisclosure)");
     expect(screen).toContain("|| completedActivityCount > 0");
     expect(screen).toContain('part.kind === "collapsedActivity"');
     expect(screen).toContain('part.kind === "activity" && activitySegmentUsesDisclosure(part)');
-    expect(screen).toContain('thinkingStatusSection: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start", alignItems: "flex-start" }');
+    const thinkingStatusSection = sourceObjectDeclaration(screen, "thinkingStatusSection");
+    expect(thinkingStatusSection).toContain('maxWidth: "100%"');
+    expect(thinkingStatusSection).toContain('alignSelf: "flex-start"');
+    expect(thinkingStatusSection).toContain('alignItems: "flex-start"');
 
     const turnStart = screen.indexOf("function TurnTimelineItem(");
-    const agentBubbleStart = screen.indexOf('<Bubble\n            variant="agent"', turnStart);
+    const agentBubbleStart = screen.indexOf('<Bubble variant="agent"', turnStart);
     const agentBubbleEnd = screen.indexOf("</Bubble>", agentBubbleStart);
     const beforeAgentBubble = screen.slice(turnStart, agentBubbleStart);
     const agentBubble = screen.slice(agentBubbleStart, agentBubbleEnd);

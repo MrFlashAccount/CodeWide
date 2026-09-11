@@ -2,7 +2,7 @@ import type { PropsWithChildren, ReactNode } from "react";
 import { StyleSheet, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors, spacing } from "../../theme";
+import { colors, spacing, iconSize } from "../../theme";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { ProductText } from "../text/ProductText";
 import { desktopThreadSidebarWidth, isDesktopWindow } from "./windowLayout";
@@ -52,7 +52,7 @@ export function SavedServerWorkspaceView(
       <View style={styles.main}>
         {emptyMain ? (
           <View style={styles.empty}>
-            <PresentationIcon color={colors.textDim} name="chat" size={28} />
+            <PresentationIcon color={colors.textDim} name="chat" size={iconSize.illustration} />
             <ProductText tone="muted">Select a thread</ProductText>
           </View>
         ) : (
@@ -76,7 +76,7 @@ export function ThreadCatalogWorkspaceView(
       </View>
       <View style={styles.main}>
         <View style={styles.empty}>
-          <PresentationIcon color={colors.textDim} name="chat" size={28} />
+          <PresentationIcon color={colors.textDim} name="chat" size={iconSize.illustration} />
           <ProductText tone="muted">Select a thread</ProductText>
         </View>
       </View>

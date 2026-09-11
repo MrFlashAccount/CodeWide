@@ -29,7 +29,7 @@ export function ProjectPickerRowView(props: ProjectPickerRowViewProps): React.JS
   const select = useEvent(() => onSelect(project.path));
   const pin = useEvent(() => onPin(project));
   return (
-    <View style={selected ? styles.rowSelected : styles.row}>
+    <View style={[styles.row, selected && styles.rowSelected]}>
       <Pressable
         accessibilityLabel={`Project ${project.path}`}
         accessibilityRole="button"

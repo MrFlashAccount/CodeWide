@@ -6,6 +6,9 @@ import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.BackgroundColorSpan
 import android.util.Log
 import android.util.TypedValue
 import android.view.MotionEvent
@@ -70,6 +73,7 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   }
 
   private var code: String = ""
+  private var searchQuery: String = ""
   private var language: String = "text"
   private var variant: String = "code"
   private var maxLines: Int = 0
@@ -78,37 +82,49 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
   private var touchStartX = 0f
   private var touchStartY = 0f
   private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+  private val embeddedHorizontalGestureListener = View.OnTouchListener { view, event ->
+    when (event.actionMasked) {
+      MotionEvent.ACTION_DOWN -> {
+        touchStartX = event.x
+        touchStartY = event.y
+        // An embedded code block must reserve the gesture until its direction
+        // is known, otherwise the timeline steals horizontal panning.
+        view.parent?.requestDisallowInterceptTouchEvent(true)
+      }
+      MotionEvent.ACTION_MOVE -> {
+        val deltaX = kotlin.math.abs(event.x - touchStartX)
+        val deltaY = kotlin.math.abs(event.y - touchStartY)
+        if (deltaX > touchSlop || deltaY > touchSlop) {
+          view.parent?.requestDisallowInterceptTouchEvent(deltaX >= deltaY)
+        }
+      }
+      MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+        view.parent?.requestDisallowInterceptTouchEvent(false)
+    }
+    false
+  }
 
   init {
     clipChildren = true
     clipToPadding = true
     setBackgroundColor(Color.TRANSPARENT)
     addView(verticalScroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-    horizontalScroll.setOnTouchListener { view, event ->
-      when (event.actionMasked) {
-        MotionEvent.ACTION_DOWN -> {
-          touchStartX = event.x
-          touchStartY = event.y
-          // LegendList otherwise steals the gesture before the horizontal
-          // direction is known. Capture the stream first and hand it back as
-          // soon as it is clearly vertical.
-          view.parent?.requestDisallowInterceptTouchEvent(true)
-        }
-        MotionEvent.ACTION_MOVE -> {
-          val deltaX = kotlin.math.abs(event.x - touchStartX)
-          val deltaY = kotlin.math.abs(event.y - touchStartY)
-          if (deltaX > touchSlop || deltaY > touchSlop) {
-            view.parent?.requestDisallowInterceptTouchEvent(deltaX >= deltaY)
-          }
-        }
-        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> view.parent?.requestDisallowInterceptTouchEvent(false)
-      }
-      false
-    }
+    horizontalScroll.setOnTouchListener(embeddedHorizontalGestureListener)
   }
 
   fun setCode(value: String?) {
     code = value.orEmpty()
+  }
+
+  fun setEmbeddedInParentScroll(value: Boolean) {
+    // A fullscreen viewer has no competing timeline. Let NestedScrollView own
+    // vertical interception from ACTION_DOWN instead of releasing it one move late.
+    horizontalScroll.setOnTouchListener(if (value) embeddedHorizontalGestureListener else null)
+    if (!value) horizontalScroll.parent?.requestDisallowInterceptTouchEvent(false)
+  }
+
+  fun setSearchQuery(value: String?) {
+    searchQuery = value.orEmpty()
   }
 
   fun setLanguage(value: String?) {
@@ -132,6 +148,7 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
     val source = code
     val requestedLanguage = language
     val requestedVariant = variant
+    val requestedSearch = searchQuery
     textView.maxLines = if (maxLines > 0) maxLines else Int.MAX_VALUE
     gutterView.maxLines = textView.maxLines
     gutterView.visibility = if (requestedVariant == "diff") View.VISIBLE else View.GONE
@@ -152,10 +169,17 @@ class NativeCodeBlockView(context: Context) : FrameLayout(context) {
         try {
           val startedAt = SystemClock.elapsedRealtimeNanos()
           val highlighted = NativeCodeHighlighter.highlight(context, source, requestedLanguage, requestedVariant)
+          // Syntax spans are cached across views. Search owns a separate span
+          // buffer so one focused message cannot highlight another bubble.
+          val displayed = if (requestedSearch.isBlank()) highlighted.code else SpannableString(highlighted.code).apply {
+            for (range in nativeSearchRanges(toString(), requestedSearch)) {
+              setSpan(BackgroundColorSpan(Color.rgb(111, 86, 35)), range.first, range.last + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+          }
           val elapsedMs = (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000.0
           mainHandler.post {
             if (generation.get() == request) {
-              textView.text = highlighted.code
+              textView.text = displayed
               gutterView.text = highlighted.gutter ?: ""
               updateCodeViewportWidth(width)
               if (BuildConfig.DEBUG) {

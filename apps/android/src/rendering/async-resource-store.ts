@@ -13,6 +13,8 @@ type Loader<T> = (publish: (value: T) => void, signal: AbortSignal) => Promise<T
 const MAX_RESIDENT_RESOURCES = 256;
 const MAX_RESIDENT_RESOURCE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_RESOURCE_BYTES = 512;
+const AUTO_RETRY_BASE_MS = 1_000;
+const MAX_AUTO_RETRY_ATTEMPTS = 5;
 const EMPTY_SNAPSHOT: AsyncResourceSnapshot<never> = { status: "idle", value: null, error: null };
 const resources = new Map<string, AsyncResource<unknown>>();
 let residentResourceBytes = 0;
@@ -20,6 +22,7 @@ let residentResourceBytes = 0;
 export type AsyncResourceHandle<T> = {
   readonly snapshot$: Observable<AsyncResourceSnapshot<T>>;
   retain(): () => void;
+  read(): Promise<T>;
 };
 
 class AsyncResource<T> implements AsyncResourceHandle<T> {
@@ -27,14 +30,16 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
   readonly key: string;
   readonly cacheKey: string;
   readonly revision: string | number;
-  private readonly loader: Loader<T>;
+  private loader: Loader<T> | null;
   private readonly estimateWeight: (value: T) => number;
   private readonly cancelWhenUnobserved: boolean;
   private readonly controller = new AbortController();
   private retainCount = 0;
   private weight = 0;
   private loading = false;
+  private promise: Promise<T> | null = null;
   private retryAttempt = 0;
+  private retryable = true;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -44,6 +49,7 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
     loader: Loader<T>,
     estimateWeight: (value: T) => number,
     cancelWhenUnobserved: boolean,
+    initialValue: T | null,
   ) {
     this.key = key;
     this.cacheKey = cacheKey;
@@ -51,19 +57,26 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
     this.loader = loader;
     this.estimateWeight = estimateWeight;
     this.cancelWhenUnobserved = cancelWhenUnobserved;
-    this.snapshot$ = observable<AsyncResourceSnapshot<T>>({ status: "loading", value: null, error: null });
+    this.weight = initialValue === null ? 0 : estimateWeight(initialValue);
+    residentResourceBytes += this.weight;
+    this.snapshot$ = observable<AsyncResourceSnapshot<T>>({ status: "loading", value: initialValue, error: null });
     this.load();
   }
 
   retain(): () => void {
     this.retainCount += 1;
     this.touch();
-    if (this.snapshot$.peek().status === "error") this.scheduleRetry(true);
+    if (this.snapshot$.peek().status === "error") this.scheduleRetry();
     return () => {
       this.retainCount = Math.max(0, this.retainCount - 1);
       if (this.retainCount === 0 && this.retryTimer !== null) {
         clearTimeout(this.retryTimer);
         this.retryTimer = null;
+      }
+      if (this.retainCount === 0 && this.snapshot$.peek().status === "error") {
+        resources.delete(this.cacheKey);
+        this.dispose();
+        return;
       }
       if (this.retainCount === 0 && this.cancelWhenUnobserved) {
         resources.delete(this.cacheKey);
@@ -78,10 +91,17 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
     return this.retainCount > 0;
   }
 
+  /** Shares the model-owned request with a dependent progressive resource. */
+  read(): Promise<T> {
+    if (this.promise === null) throw new Error("Resource request was not initialized");
+    return this.promise;
+  }
+
   dispose(): void {
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.controller.abort();
+    this.loader = null;
     residentResourceBytes -= this.weight;
     this.weight = 0;
   }
@@ -97,37 +117,51 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
   }
 
   private load(): void {
-    if (this.loading || this.controller.signal.aborted) return;
+    const loader = this.loader;
+    if (loader === null || this.loading || this.controller.signal.aborted) return;
     this.loading = true;
     const previous = this.snapshot$.peek();
     if (previous.status === "error") {
       this.update({ status: "loading", value: previous.value, error: null });
     }
-    const operation = Promise.resolve().then(() => this.loader((value) => {
+    const operation = Promise.resolve().then(() => loader((value) => {
       if (!this.controller.signal.aborted) this.update({ status: "loading", value, error: null });
     }, this.controller.signal));
+    this.promise = operation;
     void operation.then((value) => {
       if (this.controller.signal.aborted) return;
       this.loading = false;
       this.retryAttempt = 0;
+      this.retryable = true;
+      // A ready revision is immutable. Retain its result, not the loader's
+      // captured source (which may contain an entire base64 image or thread).
+      this.loader = null;
       this.update({ status: "ready", value, error: null });
     }).catch((cause: unknown) => {
       if (this.controller.signal.aborted) return;
       this.loading = false;
+      this.retryable = isRetryableResourceFailure(cause);
       const current = this.snapshot$.peek();
       this.update({
         status: "error",
         value: current.value,
         error: cause instanceof Error ? cause.message : "Resource unavailable",
       });
-      this.scheduleRetry(false);
+      this.scheduleRetry();
     });
   }
 
-  private scheduleRetry(immediate: boolean): void {
-    if (this.retryTimer !== null || this.loading || this.controller.signal.aborted || this.retainCount === 0) return;
-    const delay = immediate ? 0 : Math.min(250 * (2 ** this.retryAttempt), 5_000);
-    if (!immediate) this.retryAttempt += 1;
+  private scheduleRetry(): void {
+    if (
+      !this.retryable
+      || this.retryAttempt >= MAX_AUTO_RETRY_ATTEMPTS
+      || this.retryTimer !== null
+      || this.loading
+      || this.controller.signal.aborted
+      || this.retainCount === 0
+    ) return;
+    const delay = AUTO_RETRY_BASE_MS * (2 ** this.retryAttempt);
+    this.retryAttempt += 1;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
       if (this.retainCount > 0) this.load();
@@ -159,8 +193,9 @@ export function useEphemeralAsyncResource<T>(
   revision: string | number,
   loader: Loader<T>,
   estimateWeight: (value: T) => number = defaultResourceWeight,
+  preservePrevious = false,
 ): AsyncResourceSnapshot<T> {
-  return useAsyncResourceLifetime(key, revision, loader, estimateWeight, true);
+  return useAsyncResourceLifetime(key, revision, loader, estimateWeight, true, preservePrevious);
 }
 
 function useAsyncResourceLifetime<T>(
@@ -169,8 +204,9 @@ function useAsyncResourceLifetime<T>(
   loader: Loader<T>,
   estimateWeight: (value: T) => number,
   cancelWhenUnobserved: boolean,
+  preservePrevious = false,
 ): AsyncResourceSnapshot<T> {
-  const resource = key === null ? null : getAsyncResource<T>(key, revision, loader, estimateWeight, cancelWhenUnobserved);
+  const resource = key === null ? null : getAsyncResource<T>(key, revision, loader, estimateWeight, cancelWhenUnobserved, preservePrevious);
   useEffect(() => {
     if (resource === null) return;
     return resource.retain();
@@ -184,11 +220,22 @@ export function getAsyncResource<T>(
   loader: Loader<T>,
   estimateWeight: (value: T) => number,
   cancelWhenUnobserved: boolean,
+  preservePrevious = false,
 ): AsyncResourceHandle<T> {
   const cacheKey = asyncResourceCacheKey(key, revision);
   const current = resources.get(cacheKey);
   if (current !== undefined) return current as unknown as AsyncResource<T>;
-  const resource = new AsyncResource<T>(key, cacheKey, revision, loader, estimateWeight, cancelWhenUnobserved);
+  let initialValue: T | null = null;
+  if (preservePrevious) {
+    for (const previous of resources.values()) {
+      if (previous.key !== key) continue;
+      // WHY: the caller-owned resource key has one value contract across its
+      // revisions; the heterogeneous cache necessarily erases that type.
+      const snapshot = previous.snapshot$.peek() as AsyncResourceSnapshot<T>;
+      if (snapshot.value !== null) initialValue = snapshot.value;
+    }
+  }
+  const resource = new AsyncResource<T>(key, cacheKey, revision, loader, estimateWeight, cancelWhenUnobserved, initialValue);
   resources.set(cacheKey, resource as unknown as AsyncResource<unknown>);
   pruneResources(cacheKey);
   return resource;
@@ -206,6 +253,25 @@ function pruneResources(protectedCacheKey: string | null = null): void {
 
 function defaultResourceWeight(): number {
   return DEFAULT_RESOURCE_BYTES;
+}
+
+function isRetryableResourceFailure(cause: unknown): boolean {
+  if (!(cause instanceof Error) || cause.name === "AbortError") return false;
+  const explicitStatus = Reflect.get(cause, "status");
+  const status = typeof explicitStatus === "number" && Number.isInteger(explicitStatus)
+    ? explicitStatus
+    : httpStatusFromMessage(cause.message);
+  if (status !== null) {
+    return status === 408 || status === 425 || status === 429 || status >= 500;
+  }
+  return !/content[_ ]not[_ ]found|\bnot found\b/iu.test(cause.message);
+}
+
+function httpStatusFromMessage(message: string): number | null {
+  const match = /\((\d{3})\)/u.exec(message);
+  if (match === null) return null;
+  const status = Number(match[1]);
+  return status >= 100 && status <= 599 ? status : null;
 }
 
 function getEmptySnapshot<T>(): AsyncResourceSnapshot<T> {

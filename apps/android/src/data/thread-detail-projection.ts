@@ -2,6 +2,10 @@ import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { projectedOutputFootprint, projectedTurnMetadata, reconcileTurnItems, sumOutputFootprints, type ProjectedTurnMetadata, type RemoteFileAttachment } from "@codewide/sync-client";
 
 import { cloneProtocolValue } from "./clone-protocol-value";
+import { compactTurnArtifactReferences } from "./turn-artifacts";
+import type { ThreadCurrentUsage } from "./thread-current-usage";
+import type { ThreadCurrentOutcome } from "./thread-current-outcome";
+import type { CommandReceipt } from "./command-receipt-evidence";
 
 import { deduplicateThreadTurns } from "./thread-partitions";
 import {
@@ -24,6 +28,14 @@ export type ThreadDetailRow = {
    * an authoritative history window; null means the server proved it complete.
    */
   historyCursor?: string | null;
+  /** Opaque server source checkpoint, passed back when reading adjacent history. */
+  historySourceWitness?: string;
+  /** Durable replay cursor already represented by the authoritative thread snapshot. */
+  projectionCursor?: number;
+  /** Current tail usage; historical page imports must preserve this checkpoint. */
+  currentUsage?: ThreadCurrentUsage | null;
+  /** Current tail outcome; history navigation must not replace the error banner. */
+  currentOutcome?: ThreadCurrentOutcome | null;
   /**
    * Monotonic proof that this thread has had authoritative turn history.
    * `false` is written only for a server-proven empty history. `true` survives
@@ -146,13 +158,15 @@ export type PendingTimelineEntry = {
   workspaceRequestId?: string | null;
   text: string;
   attachments: RemoteFileAttachment[];
-  state: PendingDeliveryState;
   attempts: number;
   lastError: string | null;
   createdAt: number;
   updatedAt: number;
   order: number;
-};
+} & (
+  | { state: PendingDeliveryState; confirmation?: undefined }
+  | { state: "appServerAccepted"; confirmation: CommandReceipt }
+);
 
 export type PendingTimelineMutation = {
   upserts: readonly ThreadDetailRow[];
@@ -198,6 +212,8 @@ export function mergePendingTimelineEntry(
   previous: PendingTimelineEntry,
   incoming: PendingTimelineEntry,
 ): PendingTimelineEntry {
+  if (previous.confirmation !== undefined) return previous;
+  if (incoming.confirmation !== undefined) return mergePendingAttachments(previous, incoming);
   const previousState = normalizePendingDeliveryState(previous.state);
   const incomingState = normalizePendingDeliveryState(incoming.state);
   if (previousState === "appServerAccepted") return { ...previous, state: previousState };
@@ -390,22 +406,31 @@ export function materializePendingTimeline(rows: Iterable<ThreadDetailRow>): Pen
 }
 
 /**
- * Kotlin owns the durable direct-delivery ledger. A direct-delivery projection
- * which is no longer present in that ledger is stale: delivered receipts are
- * retired only after the authoritative user item was observed, while unresolved
- * commands remain in `activeCommandIds`. The resident chat range must not keep
- * an independent optimistic lifetime or wait for the matching turn to scroll
- * into view.
+ * A ledger read can predate enqueue, and queue handoffs need not have a direct
+ * native command at all. Absence from that ledger cannot retire authored text.
+ * Only a canonical user item in this projection proves the replacement exists.
+ * This also cleans up steered messages whose client id is not the turn's first
+ * user id (and therefore does not own its storage key).
  */
 export function planPendingDeliveryProjectionCleanup(
   rows: Iterable<ThreadDetailRow>,
   activeCommandIds: ReadonlySet<string>,
 ): PendingTimelineMutation {
   const values = [...rows];
+  const canonicalRows = new Set<string>();
+  for (const row of values) {
+    if (row.kind !== "turn" || row.turn === null) continue;
+    for (const item of row.turn.items) {
+      if (item.type === "userMessage" && typeof item.clientId === "string" && item.clientId.length > 0) {
+        canonicalRows.add(pendingTimelineRowId(row.connectionId, row.remoteThreadId, item.clientId));
+      }
+    }
+  }
   const deletes = values.flatMap((row) => (
     row.kind === "pending"
       && row.pending?.presentation === "delivery"
       && !activeCommandIds.has(row.pending.commandId)
+      && canonicalRows.has(pendingTimelineRowId(row.connectionId, row.remoteThreadId, row.pending.commandId))
       ? [row.id]
       : []
   ));
@@ -456,6 +481,7 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
   const kinds = turn.items.flatMap((item, index) => item.type === "userMessage" || index === finalAgentIndex ? [] : [item.type]);
   if (kinds.length === 0) return turn;
   const metadata = projectedTurnMetadata(turn) ?? {};
+  const artifacts = compactTurnArtifactReferences(turn);
   const outputFootprint = sumOutputFootprints(turn.items.map((item) => {
     const value = item as unknown as Record<string, unknown>;
     return projectedOutputFootprint(value.codewideOutputFootprint);
@@ -466,6 +492,7 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
     itemsView: "summary",
     codewide: {
       ...metadata,
+      ...(artifacts.length === 0 ? {} : { artifacts }),
       activity: {
         ...metadata.activity,
         count: kinds.length,
@@ -513,7 +540,11 @@ export function reconcileAuthoritativeThreadDetailRow(
 
 /** Only a mutable row, or the same turn in a new history generation, is writable. */
 export function shouldWriteAuthoritativeThreadDetailRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
-  if (previous?.kind === "turn" && previous.sealed && next.kind === "turn" && previous.historyEpoch === next.historyEpoch) return false;
+  // Sealing protects content inside a chain, not membership in a new chain.
+  // Persistence reuses the content revision when only epoch/position changed.
+  if (previous?.kind === "turn" && previous.sealed && next.kind === "turn") {
+    return previous.historyEpoch !== next.historyEpoch;
+  }
   return shouldWriteThreadDetailRow(previous, next);
 }
 

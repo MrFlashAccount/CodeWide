@@ -15,6 +15,11 @@ type TelemetryEvent = TelemetryEventInput & {
   occurredAtUnixMs: number;
 };
 
+type QueuedTelemetryEvent = {
+  event: TelemetryEvent;
+  operational: boolean;
+};
+
 export type TelemetryBatch = {
   version: 1;
   batchId: string;
@@ -31,7 +36,7 @@ const MAX_BATCH_EVENTS = 64;
 const FLUSH_INTERVAL_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
 const clientSessionId = `client-${createId()}`;
-const queues = new Map<string, TelemetryEvent[]>();
+const queues = new Map<string, QueuedTelemetryEvent[]>();
 const retryAttempts = new Map<string, number>();
 const inFlight = new Set<string>();
 let enabled = false;
@@ -41,7 +46,7 @@ let flushTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function configureTelemetryTransport(next: TelemetryTransport | null): void {
   transport = next;
-  if (next !== null && enabled && queues.size > 0) scheduleFlush(0);
+  if (next !== null && queues.size > 0) scheduleFlush(0);
 }
 
 export function configureTelemetryAppVersion(next: string | null | undefined): void {
@@ -51,23 +56,42 @@ export function configureTelemetryAppVersion(next: string | null | undefined): v
 export function setTelemetryEnabled(next: boolean): void {
   enabled = next;
   if (!next) {
-    queues.clear();
+    for (const [connectionId, queue] of queues) {
+      const retained = queue.filter((queued) => queued.operational);
+      if (retained.length === 0) queues.delete(connectionId);
+      else queues.set(connectionId, retained);
+    }
     retryAttempts.clear();
-    if (flushTimer !== undefined) clearTimeout(flushTimer);
-    flushTimer = undefined;
+    if (queues.size === 0) {
+      if (flushTimer !== undefined) clearTimeout(flushTimer);
+      flushTimer = undefined;
+    }
   }
 }
 
 export function recordTelemetryEvent(connectionId: string, input: TelemetryEventInput): void {
-  if (!enabled || !validIdentifier(connectionId) || !validName(input.name)) return;
+  if (!enabled) return;
+  enqueueTelemetryEvent(connectionId, input, false);
+}
+
+/** Records low-volume transport and synchronization health even when performance diagnostics are off. */
+export function recordOperationalTelemetryEvent(connectionId: string, input: TelemetryEventInput): void {
+  enqueueTelemetryEvent(connectionId, input, true);
+}
+
+function enqueueTelemetryEvent(connectionId: string, input: TelemetryEventInput, operational: boolean): void {
+  if (!validIdentifier(connectionId) || !validName(input.name)) return;
   const event = sanitizeEvent(input);
   if (event === null) return;
   const queue = queues.get(connectionId) ?? [];
   queue.push({
-    ...event,
-    connectionId,
-    eventId: `event-${createId()}`,
-    occurredAtUnixMs: Date.now(),
+    operational,
+    event: {
+      ...event,
+      connectionId,
+      eventId: `event-${createId()}`,
+      occurredAtUnixMs: Date.now(),
+    },
   });
   if (queue.length > MAX_QUEUE_EVENTS) queue.splice(0, queue.length - MAX_QUEUE_EVENTS);
   queues.set(connectionId, queue);
@@ -75,16 +99,16 @@ export function recordTelemetryEvent(connectionId: string, input: TelemetryEvent
 }
 
 export async function flushTelemetry(): Promise<void> {
-  if (!enabled || transport === null) return;
+  if (transport === null) return;
   const connections = [...queues.keys()].filter((connectionId) => !inFlight.has(connectionId));
   await Promise.all(connections.map(flushConnection));
 }
 
 async function flushConnection(connectionId: string): Promise<void> {
-  if (!enabled || transport === null || inFlight.has(connectionId)) return;
+  if (transport === null || inFlight.has(connectionId)) return;
   const queue = queues.get(connectionId);
   if (queue === undefined || queue.length === 0) return;
-  const events = queue.splice(0, MAX_BATCH_EVENTS);
+  const queuedEvents = queue.splice(0, MAX_BATCH_EVENTS);
   if (queue.length === 0) queues.delete(connectionId);
   const batch: TelemetryBatch = {
     version: 1,
@@ -92,7 +116,7 @@ async function flushConnection(connectionId: string): Promise<void> {
     sentAtUnixMs: Date.now(),
     clientSessionId,
     ...(appVersion === undefined ? {} : { appVersion }),
-    events,
+    events: queuedEvents.map((queued) => queued.event),
   };
   inFlight.add(connectionId);
   try {
@@ -101,7 +125,7 @@ async function flushConnection(connectionId: string): Promise<void> {
     if ((queues.get(connectionId)?.length ?? 0) > 0) scheduleFlush(0);
   } catch {
     const current = queues.get(connectionId) ?? [];
-    current.unshift(...events);
+    current.unshift(...queuedEvents);
     if (current.length > MAX_QUEUE_EVENTS) current.splice(MAX_QUEUE_EVENTS);
     queues.set(connectionId, current);
     const attempt = (retryAttempts.get(connectionId) ?? 0) + 1;
@@ -113,7 +137,7 @@ async function flushConnection(connectionId: string): Promise<void> {
 }
 
 function scheduleFlush(delayMs: number): void {
-  if (!enabled || transport === null) return;
+  if (transport === null) return;
   if (flushTimer !== undefined) {
     if (delayMs !== 0) return;
     clearTimeout(flushTimer);
@@ -168,6 +192,7 @@ function createId(): string {
 
 export function resetTelemetryForTests(): void {
   setTelemetryEnabled(false);
+  queues.clear();
   transport = null;
   appVersion = undefined;
   inFlight.clear();

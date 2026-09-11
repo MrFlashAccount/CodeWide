@@ -34,7 +34,7 @@ describe("composer delivery mode", () => {
 
   it("finishes active voice input before applying a long-press delivery choice", () => {
     expect(screen).toContain('if (voicePhase !== "idle") void finishVoice(true, id);');
-    expect(screen).toContain("voiceController?.finish(sendAfter, (text) => send(text, preference))");
+    expect(screen).toContain("voiceController?.finish(composerScope, sendAfter, (text) => send(text, preference))");
   });
 
   it("loads the latest range before asking LegendList to reveal a new turn", () => {

@@ -2,7 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.147.0/v2";
 import { Pressable, StyleSheet, type PressableStateCallbackType, type StyleProp, type ViewStyle } from "react-native";
 
-import { colors, radii, spacing } from "../theme";
+import { colors, radii, spacing, typeScale, typeWeight, iconSize, controlSize } from "../theme";
 import { AppText as Text } from "./Typography";
 
 interface ThreadGoalChipProps {
@@ -12,23 +12,32 @@ interface ThreadGoalChipProps {
 
 export function ThreadGoalChip(props: ThreadGoalChipProps): React.JSX.Element {
   const { goal, onPress } = props;
+  const status = threadGoalStatusLabel(goal.status);
+  const duration = formatThreadGoalDuration(goal.timeUsedSeconds);
   return (
     <Pressable
-      accessibilityHint="Shows goal details"
-      accessibilityLabel={`Goal, ${threadGoalStatusLabel(goal.status)}, ${goal.objective}`}
+      accessibilityHint="Opens the goal editor"
+      accessibilityLabel={`Goal, ${status}, ${duration}`}
       accessibilityRole="button"
       onPress={onPress}
       style={goalChipStyle}
       testID="thread-goal-chip"
     >
-      <Ionicons color={colors.textMuted} name="flag-outline" size={15} />
-      <Text style={styles.title}>Goal</Text>
+      <Ionicons color={colors.textMuted} name="flag-outline" size={iconSize.inline} />
+      <Text style={styles.status}>{status}</Text>
       <Text style={styles.divider}>·</Text>
-      <Text ellipsizeMode="tail" numberOfLines={1} style={styles.objective}>
-        {goal.objective}
-      </Text>
+      <Text style={styles.duration}>{duration}</Text>
     </Pressable>
   );
+}
+
+function formatThreadGoalDuration(seconds: number): string {
+  if (seconds < 60) return `${String(seconds)}s`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  if (hours > 0) return `${String(hours)}h ${String(minutes)}m ${String(remainder)}s`;
+  return `${String(minutes)}m ${String(remainder)}s`;
 }
 
 export function threadGoalStatusLabel(status: ThreadGoalStatus): string {
@@ -53,10 +62,10 @@ function goalChipStyle(state: PressableStateCallbackType): StyleProp<ViewStyle> 
 }
 
 const styles = StyleSheet.create({
-  divider: { color: colors.textDim, flexShrink: 0, fontSize: 11, lineHeight: 15 },
-  objective: { color: colors.textMuted, flexShrink: 1, fontSize: 11, lineHeight: 15, minWidth: 0 },
+  divider: { color: colors.textDim, flexShrink: 0, ...typeScale.label, },
+  duration: { color: colors.textMuted, flexShrink: 0, ...typeScale.label },
   pressed: { opacity: 0.72 },
-  title: { color: colors.text, flexShrink: 0, fontSize: 11, fontWeight: "700", lineHeight: 15 },
+  status: { color: colors.text, flexShrink: 0, ...typeScale.label, fontWeight: typeWeight.semibold },
   trigger: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainerHigh,
@@ -66,9 +75,9 @@ const styles = StyleSheet.create({
     elevation: 4,
     flexDirection: "row",
     flexShrink: 1,
-    gap: 5,
+    gap: spacing.xxs,
     maxWidth: "92%",
-    minHeight: 34,
+    minHeight: controlSize.compact,
     paddingHorizontal: spacing.sm,
   },
 });

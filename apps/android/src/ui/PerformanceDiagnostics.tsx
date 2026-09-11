@@ -1,13 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
+import { resetRichMarkdownCache, richMarkdownCacheEstimatedBytes, richMarkdownCacheStats } from "@codewide/rendering-core";
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Switch, View } from "react-native";
 import Svg, { Polyline } from "react-native-svg";
 
 import {
+  captureMemoryCheckpoint,
+  captureMemoryReport,
+  clearImageMemoryCache,
+  clearNativeCodeMemoryCache,
+  collectHermesGarbage,
+  collectJavaGarbage,
   getPerformanceMetricsSnapshot,
+  getWindowFrameReport,
+  memoryReclamationExperimentAvailable,
+  purgeNativeAllocator,
   setPerformanceMonitoringEnabled,
   usePerformanceMetrics,
+  type MemoryCheckpoint,
+  type MemoryReclamationActionResult,
   type PerformanceMetricPoint,
 } from "../native/performance-metrics";
 import {
@@ -22,7 +34,8 @@ import {
   usePerformanceExperiments,
   type PerformanceExperimentId,
 } from "../data/performance-experiments";
-import { colors, radii, spacing, typeScale } from "../theme";
+import { colors, radii, spacing, typeScale, typeWeight, iconSize, layoutSize, controlSize } from "../theme";
+import { useEvent } from "../react/useEvent";
 import { AppText as Text } from "./Typography";
 
 export function PerformanceDiagnostics() {
@@ -33,6 +46,12 @@ export function PerformanceDiagnostics() {
   const [runningExperiment, setRunningExperiment] = useState<PerformanceExperimentId | null>(null);
   const [experimentResult, setExperimentResult] = useState<ExperimentResult | null>(null);
   const [snapshotCopied, setSnapshotCopied] = useState(false);
+  const [copyPending, setCopyPending] = useState(false);
+  const [memoryReportCopyState, setMemoryReportCopyState] = useState<"idle" | "collecting" | "copied">("idle");
+  const [memoryExperimentState, setMemoryExperimentState] = useState<"idle" | "running" | "copied">("idle");
+  const copyInFlight = useRef(false);
+  const memoryReportInFlight = useRef(false);
+  const memoryExperimentInFlight = useRef(false);
   const runGeneration = useRef(0);
   const runningRestore = useRef<{ id: PerformanceExperimentId; enabled: boolean } | null>(null);
   const current = metrics.current;
@@ -47,6 +66,8 @@ export function PerformanceDiagnostics() {
     if (restore !== null) setPerformanceExperiment(restore.id, restore.enabled);
   }, []);
   const operational = operationalMetricsSnapshot();
+  const resetMemoryReportCopyState = useEvent(() => setMemoryReportCopyState("idle"));
+  const resetMemoryExperimentState = useEvent(() => setMemoryExperimentState("idle"));
   const toggle = async (enabled: boolean) => {
     setError(null);
     if (!enabled && runningRestore.current !== null) {
@@ -84,6 +105,9 @@ export function PerformanceDiagnostics() {
     }
   };
   const copySnapshot = async () => {
+    if (copyInFlight.current) return;
+    copyInFlight.current = true;
+    setCopyPending(true);
     setError(null);
     try {
       await Clipboard.setStringAsync(JSON.stringify({
@@ -102,18 +126,96 @@ export function PerformanceDiagnostics() {
         },
         streaming: operationalMetricsSnapshot(),
         experiments: performanceExperimentSnapshot(),
+        frameReport: await getWindowFrameReport(),
       }, null, 2));
       setSnapshotCopied(true);
       setTimeout(() => setSnapshotCopied(false), 2_000);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not copy diagnostics");
     }
+    // Both outcomes reach cleanup; React Compiler cannot lower a finally clause here.
+    copyInFlight.current = false;
+    setCopyPending(false);
+  };
+  const copyMemoryReport = async () => {
+    if (memoryReportInFlight.current) return;
+    memoryReportInFlight.current = true;
+    setMemoryReportCopyState("collecting");
+    setError(null);
+    try {
+      await Clipboard.setStringAsync(await captureMemoryReport());
+      setMemoryReportCopyState("copied");
+      setTimeout(resetMemoryReportCopyState, 2_000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not copy memory report");
+      setMemoryReportCopyState("idle");
+    }
+    memoryReportInFlight.current = false;
+  };
+  const runMemoryExperiment = async () => {
+    if (memoryExperimentInFlight.current) return;
+    memoryExperimentInFlight.current = true;
+    setMemoryExperimentState("running");
+    setError(null);
+    try {
+      const stages: MemoryReclamationStage[] = [];
+      stages.push({ id: "baseline", action: null, checkpoint: await captureMemoryCheckpoint() });
+
+      const markdownBefore = {
+        ...richMarkdownCacheStats(),
+        estimatedBytes: richMarkdownCacheEstimatedBytes(),
+      };
+      const markdownStartedAt = performance.now();
+      resetRichMarkdownCache();
+      const markdownDurationMs = performance.now() - markdownStartedAt;
+      await delay(MEMORY_RECLAMATION_SETTLE_MS);
+      stages.push({
+        id: "markdown-cache",
+        action: { performed: markdownBefore.entries > 0, durationMs: markdownDurationMs },
+        checkpoint: await captureMemoryCheckpoint(),
+      });
+      stages.push(await collectMemoryReclamationStage("native-code-cache", clearNativeCodeMemoryCache));
+      stages.push(await collectMemoryReclamationStage("fresco-image-cache", clearImageMemoryCache));
+      stages.push(await collectMemoryReclamationStage("art-gc", collectJavaGarbage));
+      stages.push(await collectMemoryReclamationStage("hermes-gc", collectHermesGarbage));
+      stages.push(await collectMemoryReclamationStage("allocator-purge", () => purgeNativeAllocator(false)));
+      const finalReclamationStage = await collectMemoryReclamationStage("allocator-purge-all", () =>
+        purgeNativeAllocator(true),
+      );
+      stages.push(finalReclamationStage);
+
+      const fullReportEncoded = await captureMemoryReport();
+      const fullReport: unknown = JSON.parse(fullReportEncoded);
+      await delay(MEMORY_RECLAMATION_SETTLE_MS);
+      const afterFullReport = await captureMemoryCheckpoint();
+      const beforeFullReport = finalReclamationStage.checkpoint;
+      await Clipboard.setStringAsync(JSON.stringify({
+        version: 1,
+        collectedAtMs: Date.now(),
+        settleMs: MEMORY_RECLAMATION_SETTLE_MS,
+        markdownCacheBefore: markdownBefore,
+        stages,
+        stageDeltas: memoryStageDeltas(stages),
+        fullReport,
+        fullReportProbe: {
+          before: beforeFullReport,
+          after: afterFullReport,
+          delta: memoryCheckpointDelta(afterFullReport, beforeFullReport),
+        },
+      }, null, 2));
+      setMemoryExperimentState("copied");
+      setTimeout(resetMemoryExperimentState, 2_000);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Memory experiment failed");
+      setMemoryExperimentState("idle");
+    }
+    memoryExperimentInFlight.current = false;
   };
   return (
     <View style={styles.section}>
       <View style={styles.toggleRow}>
         <View style={styles.iconShell}>
-          <Ionicons name="pulse-outline" size={20} color={colors.text} />
+          <Ionicons name="pulse-outline" size={iconSize.action} color={colors.text} />
         </View>
         <View style={styles.toggleCopy}>
           <Text style={styles.title}>Data for geeks</Text>
@@ -128,6 +230,44 @@ export function PerformanceDiagnostics() {
       </View>
 
       {!metrics.available && <Text style={styles.notice}>Available in the Android app.</Text>}
+      {metrics.available && <View style={styles.diagnosticsButtonRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Copy scroll report"
+          disabled={copyPending}
+          onPress={() => void copySnapshot()}
+          style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+        >
+          <Text style={styles.smallButtonText}>{copyPending ? "Collecting…" : snapshotCopied ? "Copied" : "Copy scroll report"}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Copy memory report"
+          disabled={memoryReportCopyState === "collecting"}
+          onPress={() => void copyMemoryReport()}
+          style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
+        >
+          <Text style={styles.smallButtonText}>
+            {memoryReportCopyState === "collecting" ? "Collecting…" : memoryReportCopyState === "copied" ? "Copied" : "Copy memory report"}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Run memory reclamation experiment"
+          disabled={!memoryReclamationExperimentAvailable() || memoryExperimentState === "running"}
+          onPress={() => void runMemoryExperiment()}
+          style={({ pressed }) => [
+            styles.smallButton,
+            (!memoryReclamationExperimentAvailable() || memoryExperimentState === "running") && styles.buttonDisabled,
+            pressed && styles.smallButtonPressed,
+          ]}
+        >
+          <Text style={styles.smallButtonText}>
+            {memoryExperimentState === "running" ? "Reclaiming…" : memoryExperimentState === "copied" ? "Copied" : "Run reclaim test"}
+          </Text>
+        </Pressable>
+      </View>}
+      {metrics.available && <Text style={styles.chartSubtitle}>The reclaim test evicts render caches once and copies every stage to the clipboard.</Text>}
       {error !== null && <Text selectable style={styles.error}>{error}</Text>}
       {metrics.enabled && current === null && (
         <View style={styles.collecting}>
@@ -189,6 +329,7 @@ export function PerformanceDiagnostics() {
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => void copySnapshot()}
+                  disabled={copyPending}
                   style={({ pressed }) => [styles.smallButton, pressed && styles.smallButtonPressed]}
                 >
                   <Text style={styles.smallButtonText}>{snapshotCopied ? "Copied" : "Copy snapshot"}</Text>
@@ -244,6 +385,7 @@ export function PerformanceDiagnostics() {
 }
 
 const EXPERIMENT_PHASE_MS = 7_000;
+const MEMORY_RECLAMATION_SETTLE_MS = 400;
 const STAGE_METRICS: ReadonlyArray<{ id: TimingMetric; label: string }> = [
   { id: "live_event_ingress_ms", label: "Native callback → JS" },
   { id: "live_ingress_gap_ms", label: "Socket delta gap" },
@@ -269,6 +411,26 @@ type ExperimentWindow = {
   cpuPercent: number;
   pssBytes: number;
   stages: Partial<Record<TimingMetric, number>>;
+};
+
+type MemoryReclamationStage = {
+  id: string;
+  action: MemoryReclamationActionResult | null;
+  checkpoint: MemoryCheckpoint;
+};
+
+type MemoryCheckpointDelta = {
+  totalPssBytes: number;
+  procRssBytes: number | null;
+  smapsPssBytes: number | null;
+  javaUsedBytes: number;
+  nativeAllocatedBytes: number;
+  nativeCommittedBytes: number;
+  nativeFreeBytes: number;
+  javaHeapPssBytes: number;
+  nativeHeapPssBytes: number;
+  graphicsPssBytes: number;
+  privateOtherPssBytes: number;
 };
 
 type ExperimentResult = {
@@ -375,6 +537,47 @@ async function collectExperiment(id: PerformanceExperimentId, isCurrent: () => b
   return { id, baseline, variant };
 }
 
+async function collectMemoryReclamationStage(
+  id: string,
+  action: () => Promise<MemoryReclamationActionResult>,
+): Promise<MemoryReclamationStage> {
+  const result = await action();
+  await delay(MEMORY_RECLAMATION_SETTLE_MS);
+  return { id, action: result, checkpoint: await captureMemoryCheckpoint() };
+}
+
+function memoryStageDeltas(stages: MemoryReclamationStage[]) {
+  const baseline = stages[0]?.checkpoint;
+  return stages.map((stage, index) => {
+    const previous = stages[index - 1];
+    return {
+      id: stage.id,
+      fromPrevious: previous === undefined ? null : memoryCheckpointDelta(stage.checkpoint, previous.checkpoint),
+      fromBaseline: baseline === undefined ? null : memoryCheckpointDelta(stage.checkpoint, baseline),
+    };
+  });
+}
+
+function memoryCheckpointDelta(current: MemoryCheckpoint, previous: MemoryCheckpoint): MemoryCheckpointDelta {
+  return {
+    totalPssBytes: current.totalPssBytes - previous.totalPssBytes,
+    procRssBytes: nullableDelta(current.procRssBytes, previous.procRssBytes),
+    smapsPssBytes: nullableDelta(current.smapsPssBytes, previous.smapsPssBytes),
+    javaUsedBytes: current.javaUsedBytes - previous.javaUsedBytes,
+    nativeAllocatedBytes: current.nativeAllocatedBytes - previous.nativeAllocatedBytes,
+    nativeCommittedBytes: current.nativeCommittedBytes - previous.nativeCommittedBytes,
+    nativeFreeBytes: current.nativeFreeBytes - previous.nativeFreeBytes,
+    javaHeapPssBytes: current.javaHeapPssBytes - previous.javaHeapPssBytes,
+    nativeHeapPssBytes: current.nativeHeapPssBytes - previous.nativeHeapPssBytes,
+    graphicsPssBytes: current.graphicsPssBytes - previous.graphicsPssBytes,
+    privateOtherPssBytes: current.privateOtherPssBytes - previous.privateOtherPssBytes,
+  };
+}
+
+function nullableDelta(current: number | null, previous: number | null): number | null {
+  return current === null || previous === null ? null : current - previous;
+}
+
 function currentPerformanceSampleAt(): number {
   const current = getPerformanceMetricsSnapshot().current;
   return current === null ? 0 : current.sampledAtMs;
@@ -471,52 +674,53 @@ function duration(valueMs: number): string {
 
 const styles = StyleSheet.create({
   section: { marginTop: spacing.md, paddingTop: spacing.sm, gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.borderSoft },
-  toggleRow: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  iconShell: { width: 40, height: 40, borderRadius: radii.medium, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceRaised },
+  toggleRow: { minHeight: layoutSize.row, flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  iconShell: { width: controlSize.regular, height: controlSize.regular, borderRadius: radii.medium, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceRaised },
   toggleCopy: { flex: 1, minWidth: 0 },
-  title: { color: colors.text, ...typeScale.titleMedium },
-  subtitle: { marginTop: 2, color: colors.textMuted, ...typeScale.labelMedium },
-  notice: { color: colors.textMuted, ...typeScale.bodyMedium },
-  error: { color: colors.red, ...typeScale.bodyMedium },
-  collecting: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  title: { color: colors.text, ...typeScale.title },
+  subtitle: { marginTop: spacing.optical, color: colors.textMuted, ...typeScale.label },
+  notice: { color: colors.textMuted, ...typeScale.body },
+  error: { color: colors.red, ...typeScale.body },
+  collecting: { minHeight: controlSize.touch, flexDirection: "row", alignItems: "center", gap: spacing.sm },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
-  metricTile: { width: "48%", flexGrow: 1, minWidth: 130, padding: spacing.sm, gap: 2, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerLow },
-  metricLabel: { color: colors.textMuted, ...typeScale.labelMedium },
-  metricValue: { color: colors.text, fontSize: 22, lineHeight: 28, fontWeight: "600", fontVariant: ["tabular-nums"] },
-  metricDetail: { color: colors.textDim, fontSize: 11, lineHeight: 15, fontVariant: ["tabular-nums"] },
+  metricTile: { width: "48%", flexGrow: 1, minWidth: 130, padding: spacing.sm, gap: spacing.optical, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerLow },
+  metricLabel: { color: colors.textMuted, ...typeScale.label },
+  metricValue: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold, fontVariant: ["tabular-nums"] },
+  metricDetail: { color: colors.textDim, ...typeScale.label, fontVariant: ["tabular-nums"] },
   chartCard: { padding: spacing.sm, gap: spacing.sm, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerLow },
   chartHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm },
-  chartTitle: { color: colors.text, ...typeScale.titleMedium },
-  chartSubtitle: { marginTop: 2, color: colors.textDim, fontSize: 10, lineHeight: 14 },
+  chartTitle: { color: colors.text, ...typeScale.title },
+  chartSubtitle: { marginTop: spacing.optical, color: colors.textDim, ...typeScale.caption, },
   legend: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: spacing.xs },
-  legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  legendDot: { width: 7, height: 7, borderRadius: 4 },
-  legendLabel: { color: colors.textMuted, fontSize: 10, lineHeight: 14 },
-  sparkline: { height: 62, overflow: "hidden" },
-  chartEmpty: { color: colors.textDim, ...typeScale.labelMedium },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  legendDot: { width: 7, height: 7, borderRadius: radii.pill },
+  legendLabel: { color: colors.textMuted, ...typeScale.caption, },
+  sparkline: { height: layoutSize.row, overflow: "hidden" },
+  chartEmpty: { color: colors.textDim, ...typeScale.label },
   memoryRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   memoryBreakdown: { gap: spacing.xs },
-  memoryLabel: { color: colors.textMuted, fontSize: 11, lineHeight: 15, fontVariant: ["tabular-nums"] },
+  memoryLabel: { color: colors.textMuted, ...typeScale.label, fontVariant: ["tabular-nums"] },
   experimentCard: { padding: spacing.sm, gap: spacing.sm, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerLow },
   experimentHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
   experimentHeaderCopy: { flex: 1, minWidth: 0 },
+  diagnosticsButtonRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: spacing.xs },
   diagnosticActionRow: { alignItems: "flex-end", gap: spacing.xs },
-  experimentRow: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: spacing.xs },
+  experimentRow: { minHeight: layoutSize.row, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: spacing.xs },
   experimentCopy: { flex: 1, minWidth: 0 },
-  experimentTitle: { color: colors.text, ...typeScale.bodyMedium, fontWeight: "600" },
-  experimentDescription: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-  smallButton: { minHeight: 34, justifyContent: "center", paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radii.medium },
+  experimentTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
+  experimentDescription: { color: colors.textMuted, ...typeScale.label, },
+  smallButton: { minHeight: controlSize.compact, justifyContent: "center", paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radii.medium },
   smallButtonPressed: { opacity: 0.72 },
-  smallButtonText: { color: colors.text, ...typeScale.labelMedium },
-  abButton: { minWidth: 66, minHeight: 34, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xs, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerHigh },
-  abButtonText: { color: colors.text, fontSize: 11, lineHeight: 15, fontWeight: "600" },
+  smallButtonText: { color: colors.text, ...typeScale.label },
+  abButton: { minWidth: controlSize.compact, minHeight: controlSize.compact, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xs, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerHigh },
+  abButtonText: { color: colors.text, ...typeScale.label, fontWeight: typeWeight.semibold },
   buttonDisabled: { opacity: 0.5 },
   stageRow: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: spacing.sm },
-  stageLabel: { flex: 1, color: colors.textMuted, ...typeScale.labelMedium },
-  stageValue: { color: colors.text, fontSize: 11, lineHeight: 15, fontVariant: ["tabular-nums"] },
+  stageLabel: { flex: 1, color: colors.textMuted, ...typeScale.label },
+  stageValue: { color: colors.text, ...typeScale.label, fontVariant: ["tabular-nums"] },
   counterWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  counterText: { color: colors.textDim, fontSize: 10, lineHeight: 14, fontVariant: ["tabular-nums"] },
+  counterText: { color: colors.textDim, ...typeScale.caption, fontVariant: ["tabular-nums"] },
   resultCard: { padding: spacing.sm, gap: spacing.xs, borderRadius: radii.medium, borderWidth: 1, borderColor: colors.amber, backgroundColor: colors.surfaceContainerLow },
-  resultHeadline: { color: colors.text, fontSize: 18, lineHeight: 24, fontWeight: "600", fontVariant: ["tabular-nums"] },
-  footnote: { color: colors.textDim, fontSize: 10, lineHeight: 15 },
+  resultHeadline: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold, fontVariant: ["tabular-nums"] },
+  footnote: { color: colors.textDim, ...typeScale.caption, },
 });

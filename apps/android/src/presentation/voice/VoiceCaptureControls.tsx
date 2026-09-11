@@ -1,3 +1,4 @@
+import { spacing, typeWeight, radii } from "../../theme";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useEvent } from "../../react/useEvent";
@@ -92,32 +93,32 @@ export function VoiceCaptureControls(props: VoiceCaptureControlsProps): React.JS
 const styles = StyleSheet.create({
   cancel: {
     backgroundColor: "#3f3f46",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    borderRadius: radii.medium,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   disabled: { opacity: 0.5 },
   error: { color: "#ff8b8b" },
   finish: {
     backgroundColor: "#0369a1",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    borderRadius: radii.medium,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
-  label: { color: "#fafafa", fontWeight: "700" },
+  label: { color: "#fafafa", fontWeight: typeWeight.semibold },
   root: {
     alignItems: "flex-start",
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.xs,
   },
   start: {
     backgroundColor: "#14532d",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    borderRadius: radii.medium,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   status: { color: "#e4e4e7", flexBasis: "100%" },
 });

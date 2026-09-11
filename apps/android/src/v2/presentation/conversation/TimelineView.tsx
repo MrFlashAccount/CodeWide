@@ -16,7 +16,11 @@ import { TimelineEmptyView } from "./timelineEmptyView";
 import { TimelineEdgeStateView } from "./timelineEdgeStateView";
 import { TimelineNavigationView } from "./timelineNavigationView";
 import { renderTimelineItem, TimelineRowProvider } from "./timelineRow";
-import { timelineDateSeparatorLabel } from "./timelineDateSeparator";
+import {
+  TimelineDateSequence,
+  type TimelineTurnDateLabels,
+} from "../../../presentation/conversation/timelineDates";
+import { ProductText } from "../text/ProductText";
 import type {
   TimelineActivityActions,
   TimelineDisplayResponseRow,
@@ -42,6 +46,7 @@ export interface TimelineViewProps {
   actionsForTurn?: TimelineTurnActionsResolver;
   canLoadNewer?: boolean;
   canLoadOlder?: boolean;
+  includesBeginning?: boolean;
   onLoadNewer?(): Promise<void>;
   onLoadOlder?(): Promise<void>;
   onLoadActivity?(turnId: string): Promise<TimelineDisplayResponseRow[]>;
@@ -64,6 +69,7 @@ export function TimelineView(props: TimelineViewProps): React.JSX.Element {
     actionsForTurn,
     canLoadNewer = false,
     canLoadOlder = false,
+    includesBeginning = !canLoadOlder,
     onLoadNewer,
     onLoadOlder,
     onLoadActivity,
@@ -129,7 +135,7 @@ export function TimelineView(props: TimelineViewProps): React.JSX.Element {
   );
   const anchorIndex =
     initialAnchorTurnId === null ? -1 : turns.findIndex((turn) => turn.id === initialAnchorTurnId);
-  const dateLabels = timelineDateLabels(turns);
+  const dateLabels = timelineDateLabels(turns, includesBeginning);
 
   return (
     <TimelineRowProvider
@@ -176,12 +182,19 @@ export function TimelineView(props: TimelineViewProps): React.JSX.Element {
             />
           }
           ListHeaderComponent={
-            <TimelineEdgeStateView
-              edge="older"
-              failed={viewport.loadError === "older"}
-              loading={viewport.loadingEdge === "older"}
-              onRetry={viewport.loadOlder}
-            />
+            <>
+              {includesBeginning && turns.length > 0 ? (
+                <ProductText testID="history-beginning" tone="dim" style={styles.beginning}>
+                  You’re at the beginning of this conversation
+                </ProductText>
+              ) : null}
+              <TimelineEdgeStateView
+                edge="older"
+                failed={viewport.loadError === "older"}
+                loading={viewport.loadingEdge === "older"}
+                onRetry={viewport.loadOlder}
+              />
+            </>
           }
           measurementRevision={`${dimensions.width}:${dimensions.height}:${dimensions.scale}:${dimensions.fontScale}`}
           onContentSizeChange={handleContentSizeChange}
@@ -216,20 +229,26 @@ function turnKey(turn: TimelineDisplayTurn): string {
   return turn.id;
 }
 
-function timelineDateLabels(turns: TimelineDisplayTurn[]): ReadonlyMap<string, string> {
-  const labels = new Map<string, string>();
-  let previousTimestamp: string | null = null;
+function timelineDateLabels(
+  turns: TimelineDisplayTurn[],
+  includesBeginning: boolean,
+): ReadonlyMap<string, TimelineTurnDateLabels> {
+  const labels = new Map<string, TimelineTurnDateLabels>();
+  const dates = new TimelineDateSequence(includesBeginning);
   for (const turn of turns) {
-    const label = timelineDateSeparatorLabel(turn.createdAt, previousTimestamp);
-    if (label !== null) labels.set(turn.id, label);
-    if (turn.createdAt !== null && Number.isFinite(Date.parse(turn.createdAt))) {
-      previousTimestamp = turn.createdAt;
-    }
+    const before =
+      turn.userInput.length === 0
+        ? null
+        : dates.next(turn.createdAt === null ? null : Date.parse(turn.createdAt));
+    const responseTimestamp = turn.completedAt ?? turn.createdAt;
+    const agent = dates.next(responseTimestamp === null ? null : Date.parse(responseTimestamp));
+    if (before !== null || agent !== null) labels.set(turn.id, { before, agent });
   }
   return labels;
 }
 
 const styles = StyleSheet.create({
+  beginning: { textAlign: "center", paddingVertical: spacing.md },
   container: { flex: 1, position: "relative" },
   list: {
     flexGrow: 1,

@@ -72,14 +72,6 @@ export function QueueSheetView(props: QueueSheetViewProps): React.JSX.Element {
               {queueSubtitle(items.length, paging.status !== "complete")}
             </ProductText>
           </View>
-          <Pressable
-            accessibilityLabel="Close queued prompts"
-            accessibilityRole="button"
-            onPress={onClose}
-            style={styles.close}
-          >
-            <PresentationIcon color={colors.text} name="close" size={21} />
-          </Pressable>
         </View>
         <PresentationSheetScrollView
           contentContainerStyle={styles.content}
@@ -168,6 +160,7 @@ const COMPLETE_PAGING: QueuePagingModel = {
 };
 
 const SHEET_PROPS: PresentationSheetContentProps = {
+  dismissLabel: "Close queued prompts",
   contentContainerClassName: "h-full",
   enableDynamicSizing: false,
   enableOverDrag: false,
@@ -176,12 +169,6 @@ const SHEET_PROPS: PresentationSheetContentProps = {
 };
 
 const styles = StyleSheet.create({
-  close: {
-    alignItems: "center",
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
   content: { paddingBottom: spacing.xl, paddingHorizontal: spacing.md },
   empty: { alignItems: "center", gap: spacing.sm, justifyContent: "center", minHeight: 180 },
   header: {

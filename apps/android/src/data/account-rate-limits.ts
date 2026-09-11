@@ -83,23 +83,40 @@ export function mergeAccountPoolRateLimits(
 
 export function selectWeeklyRateLimit(response: GetAccountRateLimitsResponse | null): WeeklyRateLimit | null {
   if (response === null) return null;
-  const snapshots = [
-    ...Object.values(response.rateLimitsByLimitId ?? {}).filter((value): value is RateLimitSnapshot => value !== undefined),
-    response.rateLimits,
-  ];
-  for (const snapshot of snapshots) {
-    for (const window of [snapshot.primary, snapshot.secondary]) {
-      if (window === null || window.windowDurationMins === null) continue;
-      if (window.windowDurationMins === 7 * 24 * 60) {
-        return { snapshot, window, remainingPercent: remainingPercent(window.usedPercent) };
-      }
+  const canonical = weeklyRateLimit(response.rateLimits);
+  if (canonical !== null) return canonical;
+
+  const canonicalLimitId = response.rateLimits.limitId;
+  if (canonicalLimitId !== null) {
+    const canonicalBucket = response.rateLimitsByLimitId?.[canonicalLimitId];
+    if (canonicalBucket !== undefined) {
+      const matching = weeklyRateLimit(canonicalBucket);
+      if (matching !== null) return matching;
+    }
+  }
+
+  if (canonicalLimitId !== "codex") {
+    const codexBucket = response.rateLimitsByLimitId?.codex;
+    if (codexBucket !== undefined) return weeklyRateLimit(codexBucket);
+  }
+  return null;
+}
+
+function weeklyRateLimit(snapshot: RateLimitSnapshot): WeeklyRateLimit | null {
+  for (const window of [snapshot.primary, snapshot.secondary]) {
+    if (window === null || window.windowDurationMins === null) continue;
+    if (window.windowDurationMins === 7 * 24 * 60) {
+      return { snapshot, window, remainingPercent: remainingPercent(window.usedPercent) };
     }
   }
   return null;
 }
 
 export function currentThreadContextUsage(thread: Thread | null | undefined): ContextUsage | null {
-  const usage = currentThreadUsageProjection(thread);
+  return contextUsageFromProjection(currentThreadUsageProjection(thread));
+}
+
+export function contextUsageFromProjection(usage: TurnUsageProjection | null): ContextUsage | null {
   const totalTokens = usage?.modelContextWindow ?? 0;
   if (usage === null || totalTokens <= 0) return null;
   const usedTokens = Math.max(0, usage.latestRequest.totalTokens);
@@ -149,8 +166,8 @@ export function relativeResetTime(resetsAt: number | null, now = Date.now()): st
   const days = Math.floor(totalMinutes / (24 * 60));
   const hours = Math.floor(totalMinutes % (24 * 60) / 60);
   const minutes = totalMinutes % 60;
-  if (days > 0) return `in ${days}d ${hours}h`;
-  if (hours > 0) return `in ${hours}h ${minutes}m`;
+  if (days > 0) return `in ${days}d${hours > 0 ? ` ${hours}h` : ""}`;
+  if (hours > 0) return `in ${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
   return `in ${minutes}m`;
 }
 

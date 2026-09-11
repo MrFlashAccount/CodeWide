@@ -1,5 +1,6 @@
 package dev.codewide.app.remote
 
+import android.os.SystemClock
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -17,6 +18,10 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import javax.net.SocketFactory
 import javax.net.ssl.SSLSocket
+import okhttp3.Call
+import okhttp3.Dns
+import okhttp3.EventListener
+import okhttp3.Handshake
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -31,15 +36,43 @@ internal object InnerTlsTransport {
   const val DATA_TUNNEL_PATH = "/v1/e2ee-tunnel"
   const val BOOTSTRAP_TUNNEL_PATH = "/v1/e2ee-bootstrap-tunnel"
 
-  fun client(base: OkHttpClient, saved: StoredNativeSession): OkHttpClient {
-    val carrier = PinnedTls.client(base, saved.endpoint, null)
-    return PinnedTls.innerTlsClient(
+  fun client(
+    base: OkHttpClient,
+    saved: StoredNativeSession,
+    purpose: String = "operation",
+    telemetry: NativeTelemetryRecorder = NativeTelemetryRecorder.NONE,
+  ): OkHttpClient {
+    val carrier = PinnedTls.client(base, saved.endpoint, null).newBuilder()
+      .dns(object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+          val startedAt = SystemClock.elapsedRealtimeNanos()
+          var outcome = "completed"
+          return try {
+            base.dns.lookup(hostname)
+          } catch (error: IOException) {
+            outcome = "failed"
+            throw error
+          } finally {
+            telemetry.record(NativeTelemetryMetric(
+              "connection.carrier_dns",
+              values = mapOf("durationMs" to elapsedMilliseconds(startedAt)),
+              tags = mapOf("purpose" to purpose, "outcome" to outcome),
+            ))
+          }
+        }
+      })
+      .build()
+    val inner = PinnedTls.innerTlsClient(
       base,
       saved.endpoint,
       saved.innerTlsPinSha256,
-      TunnelSocketFactory(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH)),
+      TunnelSocketFactory(carrier, tunnelUrl(saved.endpoint, DATA_TUNNEL_PATH), purpose, telemetry),
       DeviceKeyStore.clientKeyManager(saved.id),
     )
+    if (telemetry === NativeTelemetryRecorder.NONE) return inner
+    return inner.newBuilder()
+      .eventListenerFactory { InnerTlsEventListener(purpose, telemetry) }
+      .build()
   }
 
   fun bootstrapClient(base: OkHttpClient, endpoint: String, pin: String): OkHttpClient {
@@ -97,8 +130,10 @@ internal object InnerTlsTransport {
 private class TunnelSocketFactory(
   private val carrier: OkHttpClient,
   private val tunnelUrl: String,
+  private val purpose: String = "operation",
+  private val telemetry: NativeTelemetryRecorder = NativeTelemetryRecorder.NONE,
 ) : SocketFactory() {
-  override fun createSocket(): Socket = TunnelSocket(carrier, tunnelUrl)
+  override fun createSocket(): Socket = TunnelSocket(carrier, tunnelUrl, purpose, telemetry)
   override fun createSocket(host: String, port: Int): Socket = createSocket().apply { connect(InetSocketAddress(host, port)) }
   override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
     createSocket(host, port)
@@ -189,6 +224,8 @@ internal class TunnelInboundQueue(
 private class TunnelSocket(
   private val carrier: OkHttpClient,
   private val tunnelUrl: String,
+  private val purpose: String = "operation",
+  private val telemetry: NativeTelemetryRecorder = NativeTelemetryRecorder.NONE,
 ) : Socket() {
   private val opened = CountDownLatch(1)
   private val incoming = TunnelInboundQueue(MAX_INBOUND_QUEUED_BYTES)
@@ -205,10 +242,23 @@ private class TunnelSocket(
   override fun connect(endpoint: SocketAddress?, timeout: Int) {
     if (connected) return
     if (closed.get()) throw SocketException("Tunnel socket is closed")
+    val carrierStartedAt = SystemClock.elapsedRealtimeNanos()
+    telemetry.record(NativeTelemetryMetric(
+      "connection.outer_carrier",
+      tags = mapOf("phase" to "started", "purpose" to purpose),
+    ))
     val request = Request.Builder().url(tunnelUrl).build()
     webSocket = carrier.newWebSocket(request, object : WebSocketListener() {
       override fun onOpen(webSocket: WebSocket, response: Response) {
         connected = true
+        telemetry.record(NativeTelemetryMetric(
+          "connection.outer_carrier",
+          values = mapOf(
+            "durationMs" to elapsedMilliseconds(carrierStartedAt),
+            "httpStatus" to response.code,
+          ),
+          tags = mapOf("phase" to "completed", "purpose" to purpose),
+        ))
         opened.countDown()
       }
 
@@ -230,11 +280,28 @@ private class TunnelSocket(
       }
 
       override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+        telemetry.record(NativeTelemetryMetric(
+          "connection.outer_carrier",
+          values = mapOf(
+            "durationMs" to elapsedMilliseconds(carrierStartedAt),
+            "httpStatus" to (response?.code ?: 0),
+          ),
+          tags = mapOf(
+            "phase" to "failed",
+            "purpose" to purpose,
+            "failureKind" to t.javaClass.simpleName,
+          ),
+        ))
         fail(IOException("Secure tunnel failed${response?.let { " (${it.code})" }.orEmpty()}", t))
       }
     })
     val effectiveTimeout = if (timeout > 0) timeout else DEFAULT_CONNECT_TIMEOUT_MS
     if (!opened.await(effectiveTimeout.toLong(), TimeUnit.MILLISECONDS)) {
+      telemetry.record(NativeTelemetryMetric(
+        "connection.outer_carrier",
+        values = mapOf("durationMs" to elapsedMilliseconds(carrierStartedAt)),
+        tags = mapOf("phase" to "failed", "purpose" to purpose, "failureKind" to "timeout"),
+      ))
       close()
       throw SocketException("Secure tunnel connection timed out")
     }
@@ -339,5 +406,44 @@ private class TunnelSocket(
     private const val MAX_FRAME_BYTES = 64 * 1024
     private const val MAX_QUEUED_BYTES = 4L * 1024 * 1024
     private const val MAX_INBOUND_QUEUED_BYTES = 4 * 1024 * 1024
+  }
+}
+
+private class InnerTlsEventListener(
+  private val purpose: String,
+  private val telemetry: NativeTelemetryRecorder,
+) : EventListener() {
+  private var handshakeStartedAtNanos: Long? = null
+
+  override fun secureConnectStart(call: Call) {
+    handshakeStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+    telemetry.record(NativeTelemetryMetric(
+      "connection.inner_tls",
+      tags = mapOf("phase" to "started", "purpose" to purpose),
+    ))
+  }
+
+  override fun secureConnectEnd(call: Call, handshake: Handshake?) {
+    val startedAt = handshakeStartedAtNanos ?: return
+    handshakeStartedAtNanos = null
+    telemetry.record(NativeTelemetryMetric(
+      "connection.inner_tls",
+      values = mapOf("durationMs" to elapsedMilliseconds(startedAt)),
+      tags = mapOf("phase" to "completed", "purpose" to purpose),
+    ))
+  }
+
+  override fun callFailed(call: Call, ioe: IOException) {
+    val startedAt = handshakeStartedAtNanos ?: return
+    handshakeStartedAtNanos = null
+    telemetry.record(NativeTelemetryMetric(
+      "connection.inner_tls",
+      values = mapOf("durationMs" to elapsedMilliseconds(startedAt)),
+      tags = mapOf(
+        "phase" to "failed",
+        "purpose" to purpose,
+        "failureKind" to ioe.javaClass.simpleName,
+      ),
+    ))
   }
 }

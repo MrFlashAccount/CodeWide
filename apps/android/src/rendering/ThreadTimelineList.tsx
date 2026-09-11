@@ -123,6 +123,8 @@ function ThreadTimelineListInner<ItemT>(
       keyboardOffset={keyboardOffset}
       {...(contentInsetEndAdjustment === undefined ? {} : { contentInsetEndAdjustment })}
       {...props}
+      showsHorizontalScrollIndicator={false}
+      showsVerticalScrollIndicator={false}
       {...legendInitialPositionProps(initialPosition)}
       dataKey={renderRevision}
       alignItemsAtEnd

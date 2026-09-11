@@ -1,6 +1,6 @@
 import { NativeModules, Platform } from "react-native";
 
-import { formatTimeForDevice, type DeviceTimePreferences } from "./device-time-format";
+import { formatDateTimeForDevice, formatTimeForDevice, type DeviceTimePreferences } from "./device-time-format";
 
 type NativeTimeConfiguration = {
   localeTag?: unknown;
@@ -9,6 +9,10 @@ type NativeTimeConfiguration = {
 
 export function formatDeviceTime(timestampSeconds: number, preferences = readDeviceTimePreferences()): string {
   return formatTimeForDevice(timestampSeconds, preferences);
+}
+
+export function formatDeviceDateTime(timestampSeconds: number, preferences = readDeviceTimePreferences()): string {
+  return formatDateTimeForDevice(timestampSeconds, preferences);
 }
 
 export function readDeviceTimePreferences(): DeviceTimePreferences {

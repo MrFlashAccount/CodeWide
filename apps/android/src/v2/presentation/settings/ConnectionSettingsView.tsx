@@ -89,6 +89,7 @@ export function ConnectionSettingsView(props: ConnectionSettingsViewProps): Reac
   return (
     <PresentationSheetView
       contentProps={{
+        dismissLabel: "Close server settings",
         enableDynamicSizing: false,
         enableOverDrag: false,
         index: 0,
@@ -101,9 +102,6 @@ export function ConnectionSettingsView(props: ConnectionSettingsViewProps): Reac
         <ProductText style={styles.title} weight="semibold">
           Settings
         </ProductText>
-        <Pressable accessibilityLabel="Close server settings" onPress={onClose} style={iconStyle}>
-          <PresentationIcon color={colors.text} name="close" size={21} />
-        </Pressable>
       </View>
       <PresentationSheetScrollView
         contentContainerStyle={styles.scrollContent}

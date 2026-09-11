@@ -6,11 +6,15 @@ import type { ThreadSummaryModel, ThreadSummaryViewRequest, ThreadSummaryViewRes
 
 export type ThreadSummaryDatabase = {
   readonly model: ThreadSummaryModel;
+  readonly projectUnread: import("./project-unread-model").ProjectUnreadModel;
   prepare(): Promise<void>;
   viewResource(request: ThreadSummaryViewRequest): ThreadSummaryViewResource;
   loadView(request: ThreadSummaryViewRequest): Promise<void>;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   replaceCatalog(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
+  beginCatalogRead(connectionId: string): import("./thread-catalog-read").ThreadCatalogRead;
+  applyCatalogPage(connectionId: string, threads: SyncSnapshotThread[], archived: boolean, prefixIds: ReadonlySet<string>, read: import("./thread-catalog-read").ThreadCatalogRead, replaceHead: boolean, projectCwd?: string): Promise<void>;
+  setCatalogLoader(loader: (request: ThreadSummaryViewRequest) => Promise<void>): void;
   replaceSubagentCatalog(connectionId: string, rootThreadId: string, threads: SyncSnapshotThread[]): Promise<void>;
   mergeSnapshots(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;

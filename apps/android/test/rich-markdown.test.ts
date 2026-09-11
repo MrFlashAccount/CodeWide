@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   isSafeLink,
+  MAX_MARKDOWN_CACHE_ESTIMATED_BYTES,
   MAX_MARKDOWN_CACHE_SOURCE_CHARS,
   MAX_MARKDOWN_SOURCE_CHARS,
   parseRichMarkdown,
   plainRichMarkdownText,
   resetRichMarkdownCache,
   richMarkdownBlockIndexAtLine,
+  richMarkdownCacheEstimatedBytes,
   richMarkdownCacheStats,
 } from "@codewide/rendering-core";
 
@@ -139,6 +141,18 @@ flowchart LR
     const stats = richMarkdownCacheStats();
     expect(stats.entries).toBeLessThan(12);
     expect(stats.sourceChars).toBeLessThanOrEqual(MAX_MARKDOWN_CACHE_SOURCE_CHARS);
+  });
+
+  it("evicts node-dense Markdown before its source-length budget is exhausted", () => {
+    resetRichMarkdownCache();
+    for (let index = 0; index < 48; index += 1) {
+      const source = Array.from({ length: 400 }, (_, row) => `- item ${index}-${row}`).join("\n");
+      parseRichMarkdown(source);
+    }
+    const stats = richMarkdownCacheStats();
+    expect(stats.sourceChars).toBeLessThan(MAX_MARKDOWN_CACHE_SOURCE_CHARS);
+    expect(stats.entries).toBeLessThan(48);
+    expect(richMarkdownCacheEstimatedBytes()).toBeLessThanOrEqual(MAX_MARKDOWN_CACHE_ESTIMATED_BYTES);
   });
 
   it("parses 1,000 deterministic mixed Markdown messages", () => {

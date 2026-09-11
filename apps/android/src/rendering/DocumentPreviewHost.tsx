@@ -1,4 +1,4 @@
-import { isSafeLink, projectCompleteMarkdown } from "@codewide/rendering-core";
+import { projectCompleteMarkdown } from "@codewide/rendering-core";
 import { Ionicons } from "@expo/vector-icons";
 import { Toast, useToast } from "heroui-native/toast";
 import {
@@ -10,10 +10,10 @@ import {
   useRef,
   useState,
 } from "react";
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
 
-import { colors, spacing } from "../theme";
+import { colors, spacing, typeScale, typeWeight, iconSize, controlSize, layoutSize, radii } from "../theme";
 import { privateAssetCacheKey, readPrivateAssetText, type GetTransferAccess, type PrivateAssetSource } from "../data/private-transfer";
 import { documentReadingWidth, type DocumentLayoutMode } from "../data/user-preferences";
 import { openDownloadedFile, pickDownloadDirectory, startDownload, startPreviewDownload, type RunningTransfer, type SelectedDirectory } from "../native/file-transfer";
@@ -25,7 +25,7 @@ import { useAppDialog } from "../ui/AppDialog";
 import { AppText as Text } from "../ui/Typography";
 import {
   documentPreviewSurface,
-  isolatedHtmlDocument,
+  interactiveHtmlDocument,
   markdownLineTarget,
   remoteDocumentDirectory,
   resolvePreviewableDocumentLink,
@@ -40,6 +40,10 @@ import { ContentReviewComments, ContentReviewComposer } from "./ContentReviewHos
 import { RichContentWidthProvider } from "./RichContentLayout";
 import { useEphemeralAsyncResource } from "./async-resource-store";
 import { useDocumentViewerPreferences } from "./use-document-viewer-preferences";
+import {
+  DiagramPreviewViewportProvider,
+  useDiagramPreviewViewportController,
+} from "./DiagramPreviewViewport";
 
 export type DocumentPreviewRequest = {
   kind: DocumentPreviewKind;
@@ -80,7 +84,7 @@ const DocumentPreviewContext = createContext<DocumentPreviewController | null>(n
 async function runDocumentDownload(
   request: DocumentPreviewRequest,
   onComplete: (request: DocumentPreviewRequest, completed: CompletedTransfer) => void,
-  onFailure: (message: string, retry: () => void) => void,
+  onFailure: (cause: unknown, retry: () => void) => void,
 ): Promise<void> {
   try {
     const directory = await pickDownloadDirectory();
@@ -90,7 +94,7 @@ async function runDocumentDownload(
   } catch (cause) {
     if (isPickerCancellation(cause)) return;
     onFailure(
-      cause instanceof Error ? cause.message : "Could not download file",
+      cause,
       () => void runDocumentDownload(request, onComplete, onFailure),
     );
   }
@@ -100,7 +104,7 @@ function loadImagePreviewWithRetry(
   request: DocumentPreviewRequest,
   isCurrent: () => boolean,
   onReady: (uri: string) => void,
-  onFailure: (message: string, retry: () => void) => void,
+  onFailure: (cause: unknown, retry: () => void) => void,
 ): void {
   if (!isCurrent()) return;
   void materializePrivateAsset(
@@ -113,7 +117,7 @@ function loadImagePreviewWithRetry(
     (cause: unknown) => {
       if (!isCurrent()) return;
       onFailure(
-        cause instanceof Error ? cause.message : "Image preview failed",
+        cause,
         () => loadImagePreviewWithRetry(request, isCurrent, onReady, onFailure),
       );
     },
@@ -176,7 +180,7 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
       label: "File saved",
       description: request.name,
       duration: 6000,
-      icon: <Ionicons name="checkmark-circle" size={22} color={colors.green} />,
+      icon: <Ionicons name="checkmark-circle" size={iconSize.navigation} color={colors.green} />,
     };
     if (completed.uri === undefined) {
       toast.show(common);
@@ -213,10 +217,10 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
   const downloadFile = useEvent((request: DocumentPreviewRequest): Promise<void> => runDocumentDownload(
     request,
     showDownloadComplete,
-    (message, retryDownload) => {
-      dialog.alert(
+    (cause, retryDownload) => {
+      dialog.error(
         "Download failed",
-        message,
+        cause,
         [
           { text: "Cancel", style: "cancel" },
           { text: "Retry", onPress: retryDownload },
@@ -244,8 +248,8 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
           reference: request.path,
           download: () => downloadFile(request),
         }, fullscreen),
-      (message, retryImagePreview) => {
-        dialog.alert("Image preview failed", message, [
+      (cause, retryImagePreview) => {
+        dialog.error("Image preview failed", cause, [
           { text: "Cancel", style: "cancel" },
           { text: "Retry", onPress: retryImagePreview },
         ]);
@@ -291,7 +295,7 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
     <View style={styles.center}>
       <Text selectable style={styles.error}>{result.message}</Text>
       <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
-        <Ionicons name="refresh" size={18} color={colors.onPrimary} />
+        <Ionicons name="refresh" size={iconSize.action} color={colors.onPrimary} />
         <Text style={styles.retryText}>Retry</Text>
       </Pressable>
     </View>
@@ -316,7 +320,9 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
           close={close}
           {...(preview === null ? {} : { onDownload: () => void downloadFile(preview) })}
         />
-        {previewBody ?? (result.phase === "ready" && (
+        {previewBody ?? (result.phase === "ready" && (preview?.kind === "html" ? (
+            <HtmlDocumentPreview source={result.source} />
+          ) : (
             <AppSheetScrollView
               style={styles.scroll}
               contentContainerStyle={styles.document}
@@ -325,7 +331,7 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
               <Text selectable style={styles.textPreview}>{result.source}</Text>
               {result.truncated && <Text style={styles.secondary}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text>}
             </AppSheetScrollView>
-        ))}
+        )))}
       </AppSheet>
 
     </DocumentPreviewContext.Provider>
@@ -353,6 +359,7 @@ function FullscreenDocumentPreview({
     setLayoutMode,
   } = useDocumentViewerPreferences();
   const markdownScrollRef = useRef<ScrollView | null>(null);
+  const diagramViewport = useDiagramPreviewViewportController();
   const scrolledMarkdownRevisionRef = useRef<number | null>(null);
   const source = request.source ?? { kind: "path" as const, path: request.path };
   const previewResource = useEphemeralAsyncResource<Extract<DocumentPreviewResult, { phase: "ready" }>>(
@@ -421,68 +428,58 @@ function FullscreenDocumentPreview({
           <Pressable accessibilityRole="button" onPress={() => {
             setRevision((current) => current + 1);
           }} style={styles.retryButton}>
-            <Ionicons name="refresh" size={18} color={colors.onPrimary} />
+            <Ionicons name="refresh" size={iconSize.action} color={colors.onPrimary} />
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
         </View>
       )}
       {result.phase === "ready" && request.kind === "html" && (
-        <WebView
-          testID="html-document-preview"
-          source={{ html: isolatedHtmlDocument(result.source), baseUrl: "about:blank" }}
-          style={styles.webView}
-          javaScriptEnabled={false}
-          domStorageEnabled={false}
-          allowFileAccess={false}
-          allowUniversalAccessFromFileURLs={false}
-          mixedContentMode="never"
-          setSupportMultipleWindows={false}
-          onShouldStartLoadWithRequest={({ url }) => {
-            if (url === "about:blank") return true;
-            if (isSafeLink(url)) void Linking.openURL(url);
-            return false;
-          }}
-        />
+        <HtmlDocumentPreview source={result.source} />
       )}
       {result.phase === "ready" && request.kind !== "html" && (
-        <ScrollView
-          key={`markdown:${revision}`}
-          ref={markdownScrollRef}
-          style={styles.scroll}
-          contentContainerStyle={styles.documentScrollContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View
-            style={[
-              styles.document,
-              layoutMode === "reading" && styles.documentReading,
-              layoutMode === "reading" && { maxWidth: documentReadingWidth(textScale) },
-            ]}
-            onLayout={({ nativeEvent }) => {
-              const nextWidth = Math.max(0, Math.floor(nativeEvent.layout.width - spacing.md * 2));
-              setDocumentViewportWidth((current) => current === nextWidth ? current : nextWidth);
-            }}
+        <DiagramPreviewViewportProvider controller={diagramViewport}>
+          <ScrollView
+            key={`markdown:${revision}`}
+            ref={markdownScrollRef}
+            style={styles.scroll}
+            contentContainerStyle={styles.documentScrollContent}
+            keyboardShouldPersistTaps="handled"
+            onScroll={diagramViewport.schedule}
+            scrollEventThrottle={96}
           >
-            <RichMarkdownTextScaleProvider scale={textScale}>
-              <RichContentWidthProvider width={documentViewportWidth > 0 ? documentViewportWidth : null}>
-                <MarkdownLocalLinkProvider onOpen={openNestedDocument}>
-                  {result.segments.map((segment, index) => (
-                    <MarkdownPreviewSegment
-                      key={`${revision}:${index}`}
-                      source={segment}
-                      {...(markdownReviewTarget === undefined ? {} : { reviewTarget: markdownReviewTarget, reviewPathPrefix: `segment-${index}` })}
-                      {...(markdownTarget?.segmentIndex === index ? {
-                        targetLine: markdownTarget.line,
-                        onTargetLayout: scrollToMarkdownTarget,
-                      } : {})}
-                    />
-                  ))}
-                </MarkdownLocalLinkProvider>
-              </RichContentWidthProvider>
-              {result.truncated && <Text style={styles.secondary}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text>}
-            </RichMarkdownTextScaleProvider>
-          </View>
-        </ScrollView>
+            <View
+              style={[
+                styles.document,
+                layoutMode === "reading" && styles.documentReading,
+                layoutMode === "reading" && { maxWidth: documentReadingWidth(textScale) },
+              ]}
+              onLayout={({ nativeEvent }) => {
+                const nextWidth = Math.max(0, Math.floor(nativeEvent.layout.width - spacing.md * 2));
+                setDocumentViewportWidth((current) => current === nextWidth ? current : nextWidth);
+                diagramViewport.schedule();
+              }}
+            >
+              <RichMarkdownTextScaleProvider scale={textScale}>
+                <RichContentWidthProvider width={documentViewportWidth > 0 ? documentViewportWidth : null}>
+                  <MarkdownLocalLinkProvider onOpen={openNestedDocument}>
+                    {result.segments.map((segment, index) => (
+                      <MarkdownPreviewSegment
+                        key={`${revision}:${index}`}
+                        source={segment}
+                        {...(markdownReviewTarget === undefined ? {} : { reviewTarget: markdownReviewTarget, reviewPathPrefix: `segment-${index}` })}
+                        {...(markdownTarget?.segmentIndex === index ? {
+                          targetLine: markdownTarget.line,
+                          onTargetLayout: scrollToMarkdownTarget,
+                        } : {})}
+                      />
+                    ))}
+                  </MarkdownLocalLinkProvider>
+                </RichContentWidthProvider>
+                {result.truncated && <Text style={styles.secondary}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text>}
+              </RichMarkdownTextScaleProvider>
+            </View>
+          </ScrollView>
+        </DiagramPreviewViewportProvider>
       )}
       {markdownReviewTarget !== undefined && (
         <>
@@ -584,9 +581,9 @@ function DocumentHeader({
   return (
     <View style={styles.header}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back from document preview" onPress={close} style={styles.iconButton}>
-        <Ionicons name="arrow-back" size={21} color={colors.text} />
+        <Ionicons name="arrow-back" size={iconSize.action} color={colors.text} />
       </Pressable>
-      <Ionicons name={icon} size={20} color={colors.textMuted} />
+      <Ionicons name={icon} size={iconSize.action} color={colors.textMuted} />
       <Text numberOfLines={1} ellipsizeMode="middle" style={styles.title}>{title}</Text>
       {actions.length > 0 && (
         <ActionMenu
@@ -595,7 +592,7 @@ function DocumentHeader({
           onSelect={onSelect}
         >
           <Pressable accessibilityRole="button" accessibilityLabel={`Document actions for ${title}`} style={styles.iconButton}>
-            <Ionicons name="ellipsis-vertical" size={21} color={colors.text} />
+            <Ionicons name="ellipsis-vertical" size={iconSize.action} color={colors.text} />
           </Pressable>
         </ActionMenu>
       )}
@@ -618,6 +615,27 @@ export function useDocumentDownload(): (request: DocumentPreviewRequest) => Prom
   const controller = useContext(DocumentPreviewContext);
   if (controller === null) throw new Error("useDocumentDownload must be used inside DocumentPreviewHost");
   return controller.download;
+}
+
+type HtmlDocumentPreviewProps = { source: string; testID?: string };
+
+export function HtmlDocumentPreview(props: HtmlDocumentPreviewProps) {
+  return (
+    <WebView
+      testID={props.testID ?? "html-document-preview"}
+      source={{ html: interactiveHtmlDocument(props.source), baseUrl: "about:blank" }}
+      style={styles.webView}
+      javaScriptEnabled
+      javaScriptCanOpenWindowsAutomatically
+      domStorageEnabled
+      allowFileAccess
+      allowFileAccessFromFileURLs
+      allowUniversalAccessFromFileURLs
+      mixedContentMode="always"
+      setSupportMultipleWindows
+      originWhitelist={["*"]}
+    />
+  );
 }
 
 function previewIcon(kind: DocumentPreviewKind | undefined): "document-text-outline" | "globe-outline" | "image-outline" | "download-outline" {
@@ -646,22 +664,22 @@ export async function loadDocumentPreview(request: DocumentPreviewRequest, signa
 
 const styles = StyleSheet.create({
   downloadToastContent: { flex: 1, minWidth: 0 },
-  downloadToastAction: { backgroundColor: colors.primary },
+  downloadToastAction: { minHeight: controlSize.regular, backgroundColor: colors.primary },
   browser: { flex: 1, minHeight: 0, backgroundColor: colors.background },
-  header: { width: "100%", minWidth: 0, minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
-  title: { minWidth: 0, flex: 1, color: colors.text, fontSize: 17, lineHeight: 22, fontWeight: "700" },
-  iconButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  header: { width: "100%", minWidth: 0, minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
+  title: { minWidth: 0, flex: 1, color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
+  iconButton: { width: controlSize.regular, height: controlSize.regular, alignItems: "center", justifyContent: "center" },
   center: { flex: 1, minHeight: 180, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   secondary: { color: colors.textMuted },
   error: { maxWidth: 480, color: colors.red, textAlign: "center" },
-  retryButton: { minHeight: 42, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: 21, backgroundColor: colors.accent, paddingHorizontal: spacing.md },
-  retryText: { color: colors.onPrimary, fontWeight: "700" },
+  retryButton: { minHeight: controlSize.regular, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.large, backgroundColor: colors.accent, paddingHorizontal: spacing.md },
+  retryText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
   scroll: { flex: 1, minHeight: 0, width: "100%" },
   documentScrollContent: { width: "100%", minWidth: 0, alignItems: "center" },
   document: { width: "100%", minWidth: 0, alignSelf: "center", paddingHorizontal: spacing.md, paddingBottom: spacing.sm, gap: spacing.sm },
   documentReading: { width: "100%" },
-  textPreview: { width: "100%", color: colors.text, fontFamily: "monospace", fontSize: 12, lineHeight: 17 },
-  webView: { flex: 1, minHeight: 0, backgroundColor: colors.background },
+  textPreview: { width: "100%", color: colors.text, ...typeScale.code, fontFamily: "monospace",  },
+  webView: { flex: 1, minHeight: 0, width: "100%", backgroundColor: colors.background },
 });
 
 function isPickerCancellation(cause: unknown): boolean {

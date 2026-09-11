@@ -1,8 +1,8 @@
 import { Component, createContext, type ErrorInfo, type ReactNode, useContext, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 
-import { colors, radii, spacing } from "../theme";
-import { AppText as Text } from "./Typography";
+import { colors, radii, spacing, typeScale, controlSize } from "../theme";
+import { AppText as Text } from "./AppText";
 import type { RecoverableRenderFailure, RecoverableRenderScope } from "./render-recovery-prompt";
 
 type RecoveryHandler = (failure: RecoverableRenderFailure) => Promise<void>;
@@ -155,18 +155,18 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontFamily: "RobotoFlex-SemiBold",
-    fontSize: 14,
-    lineHeight: 19,
+    ...typeScale.body,
+
   },
   message: {
     color: colors.textMuted,
-    fontSize: 12,
-    lineHeight: 17,
+    ...typeScale.label,
+
   },
   fixError: {
     color: colors.red,
-    fontSize: 12,
-    lineHeight: 17,
+    ...typeScale.label,
+
   },
   actions: {
     flexDirection: "row",
@@ -179,32 +179,32 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderRadius: radii.large,
     justifyContent: "center",
-    minHeight: 38,
-    minWidth: 126,
+    minHeight: controlSize.touch,
+    minWidth: controlSize.touch,
     paddingHorizontal: spacing.md,
   },
   primaryLabel: {
     color: colors.onPrimary,
     fontFamily: "RobotoFlex-SemiBold",
-    fontSize: 13,
+    ...typeScale.body,
   },
   secondaryButton: {
     alignItems: "center",
     backgroundColor: colors.surfaceContainerHighest,
     borderRadius: radii.large,
     justifyContent: "center",
-    minHeight: 38,
+    minHeight: controlSize.regular,
     paddingHorizontal: spacing.md,
   },
   closeButton: {
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 38,
+    minHeight: controlSize.regular,
     paddingHorizontal: spacing.sm,
   },
   secondaryLabel: {
     color: colors.text,
     fontFamily: "RobotoFlex-Medium",
-    fontSize: 13,
+    ...typeScale.body,
   },
 });

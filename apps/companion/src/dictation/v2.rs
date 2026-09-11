@@ -36,7 +36,7 @@ impl DictationService {
             .map(|(id, session)| (id.clone(), session.clone()))
             .collect::<Vec<_>>();
         for (id, session) in candidates {
-            if session.lock().await.client_id == audience {
+            if session.client_id == audience {
                 self.v2_cancel(audience, &id).await?;
             }
         }
@@ -101,14 +101,11 @@ impl DictationService {
         let Some(candidate) = candidate else {
             return Err(DictationError::Missing);
         };
-        let directory = {
-            let session = candidate.lock().await;
-            if session.client_id != audience {
-                return Err(DictationError::Missing);
-            }
-            session.directory.clone()
-        };
-        fs::remove_dir_all(&directory)
+        if candidate.client_id != audience {
+            return Err(DictationError::Missing);
+        }
+        candidate.cancellation.cancel();
+        fs::remove_dir_all(&candidate.directory)
             .await
             .map_err(|_| DictationError::Storage)?;
         let mut sessions = self.sessions.lock().await;

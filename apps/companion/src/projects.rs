@@ -79,7 +79,10 @@ impl ProjectService {
 
     #[must_use]
     pub fn handles(method: &str) -> bool {
-        matches!(method, "companion/project/list" | "companion/project/add")
+        matches!(
+            method,
+            "companion/project/list" | "companion/project/add" | "companion/project/home"
+        )
     }
 
     /// Handles one project-registry RPC.
@@ -90,6 +93,10 @@ impl ProjectService {
     pub async fn handle(&self, method: &str, params: &Value) -> Result<Value, ProjectError> {
         match method {
             "companion/project/list" => Ok(json!({ "data": self.list().await })),
+            "companion/project/home" => {
+                let home = std::env::var_os("HOME").map(PathBuf::from);
+                Ok(json!({ "path": project_browser_home(home.as_deref()).await? }))
+            }
             "companion/project/add" => {
                 let path = params
                     .get("path")
@@ -310,6 +317,21 @@ async fn persist_registry(path: &Path, registry: &ProjectRegistry) -> Result<(),
     Ok(())
 }
 
+async fn project_browser_home(home: Option<&Path>) -> Result<String, ProjectError> {
+    let home = home.filter(|path| path.is_absolute()).ok_or_else(|| {
+        ProjectError::InvalidRequest("server home directory is unavailable".into())
+    })?;
+    let path = fs::canonicalize(home).await?;
+    if !fs::metadata(&path).await?.is_dir() {
+        return Err(ProjectError::InvalidRequest(
+            "server home is not a directory".into(),
+        ));
+    }
+    path.into_os_string().into_string().map_err(|_| {
+        ProjectError::InvalidRequest("server home directory is not valid UTF-8".into())
+    })
+}
+
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -321,6 +343,34 @@ fn unix_time_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn browser_home_is_an_existing_absolute_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let home = temp.path().join("user");
+        fs::create_dir(&home).await?;
+        assert_eq!(
+            project_browser_home(Some(&home)).await?,
+            fs::canonicalize(&home).await?.to_string_lossy()
+        );
+        assert!(project_browser_home(None).await.is_err());
+        assert!(
+            project_browser_home(Some(Path::new("relative")))
+                .await
+                .is_err()
+        );
+        assert!(
+            project_browser_home(Some(&home.join("deleted")))
+                .await
+                .is_err()
+        );
+        let file = home.join("file");
+        fs::write(&file, b"file").await?;
+        assert!(project_browser_home(Some(&file)).await.is_err());
+        assert!(ProjectService::handles("companion/project/home"));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn adds_deduplicates_and_persists_projects() -> Result<(), Box<dyn std::error::Error>> {

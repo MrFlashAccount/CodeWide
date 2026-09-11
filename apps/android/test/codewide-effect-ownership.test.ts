@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+import { compactSource } from "./source-contract";
+
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const timelineList = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
 const commitProbe = readFileSync(new URL("../src/ui/CommitProbe.tsx", import.meta.url), "utf8");
 const projectCatalog = readFileSync(new URL("../src/data/use-remote-project-catalog.ts", import.meta.url), "utf8");
@@ -29,8 +31,10 @@ describe("CodeWide effect ownership", () => {
   });
 
   it("resets conversation-local state by identity instead of an effect cascade", () => {
-    expect(screen).toContain("<ConversationPane\n        key={navigationKey}");
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
+    expect(screen).not.toContain("<ConversationPane\n        key={navigationKey}");
+    expect(screen).toContain("useConversationCleanup(composerScope,");
+    expect(screen).toContain("useConversationState(composerScope,");
+    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
     expect(screen).toContain("function MainConversationDetail(");
     expect(screen).toContain("function ConversationDestination(");
     expect(screen).not.toContain("advanceConversationPresentation(");
@@ -43,9 +47,12 @@ describe("CodeWide effect ownership", () => {
   it("synchronizes unread acknowledgement and release telemetry at commit boundaries", () => {
     expect(screen).toContain("revision={latestUnreadReceiptKey}");
     expect(screen).toContain("acknowledgedUnreadReceiptKeyRef.current = null");
+    expect(screen).toContain('scope={`main-presentation:${navigationKey}`}');
+    expect(screen).toContain("onCommit={() => chatDatabase.chat.finishPresentation(connectionId, threadId)}");
+    expect(screen).not.toContain("onTimelineFirstDraw");
     expect(screen).toContain("activeThreadNavigationIdFor(connectionId, threadId)");
     expect(screen).toContain("cancelAnimationFrame(nextFrameRef.current)");
-    expect(screen).toContain("}, navigationId);");
+    expect(screen).toContain('"conversation_destination_hidden_or_unmounted", {}, navigationId');
   });
 
   it("keeps the one layout synchronization at the LegendList cache boundary", () => {
@@ -65,14 +72,14 @@ describe("CodeWide effect ownership", () => {
     expect(documentPreview).not.toMatch(/\buse(?:Layout)?Effect\s*\(/u);
     const codeReviewEffects = codeReview.match(/useEffect\s*\([\s\S]*?\n\s*\}, \[[^\]]*\]\);/gu) ?? [];
     expect(codeReviewEffects).toHaveLength(1);
-    expect(codeReviewEffects[0]).toContain("voiceController?.unbind(voiceScope)");
+    expect(codeReviewEffects[0]).toContain("voiceController?.unbind(scope)");
     expect(codeReviewEffects[0]).not.toMatch(/\b(?:load|read|fetch|refresh)[A-Z_a-z]*\s*\(/u);
   });
 
   it("does not fetch every server project catalog while painting the all-servers thread list", () => {
-    expect(screen).toContain("const projectCatalogConnections = newThreadVisible");
+    expect(screen).toContain("const projectCatalogConnections = newThreadVisible || searchVisible || activeServerId === ALL_SERVERS_ID");
     expect(screen).toContain('activeConnectionId === ""');
-    expect(screen).toContain("useRemoteProjectCatalog(remote.native, projectCatalogConnections, remote.listProjects)");
+    expect(screen).toContain("useRemoteProjectCatalog( remote.native, projectCatalogConnections, remote.listProjects,");
   });
 
   it("keeps chat-adjacent resources in granular owners while voice capture stays global", () => {
@@ -87,7 +94,7 @@ describe("CodeWide effect ownership", () => {
     expect(workspace).not.toContain("useNativePortForwarding(");
     expect(workspace).not.toContain("new SubagentListProjection");
     expect(workspace).toContain("const activeVoiceQuery = useLiveQuery(");
-    expect(workspace).toContain("const activeReviewVoiceQuery = useLiveQuery(");
+    expect(codeReview).toContain("useVoiceInputResource(voiceRuntime, voiceScope)");
     expect(workspace).toContain("const voiceInputsQuery = useLiveQuery(");
     expect(screen).toContain("function ComposerControlChips(");
     expect(screen).toContain("const resource = useTurnControlsRow(resources, resourceId);");

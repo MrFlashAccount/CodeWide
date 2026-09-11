@@ -44,6 +44,10 @@ export default {
   eslint: false,
   expo: false,
   metro: false,
+  // WHY: The standalone diagram-preview node --test command makes Knip's Node
+  // plugin add every legacy test as a runtime root. This gate audits the explicit
+  // Expo/V2 roots below; diagram tests run separately and are not V2 entrypoints.
+  node: false,
   typescript: false,
   ignoreUnresolved: [
     "^\\.\\./native/performance-metrics$",

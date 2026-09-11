@@ -12,9 +12,11 @@ def releaseKeyAlias = System.getenv("CODEWIDE_RELEASE_KEY_ALIAS")
 def releaseKeyPassword = System.getenv("CODEWIDE_RELEASE_KEY_PASSWORD")
 def codeWideUpdateUrl = System.getenv("CODEWIDE_UPDATE_URL") ?: "https://updates.example.invalid/api/updates"
 def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword].every { it != null && !it.isBlank() }
-def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "125").toInteger()
-def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.112"
+def codewideVersionCode = (project.findProperty("codewideVersionCode") ?: "158").toInteger()
+def codewideVersionName = project.findProperty("codewideVersionName") ?: "0.2.145"
 def nativeCodeAssetsDir = file("$buildDir/generated/nativeCodeAssets")
+def iconFontAssetsDir = file("$buildDir/generated/iconFontAssets")
+def iconFontSourceDir = file("$projectRoot/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts")
 def textMateGrammarDir = file("$projectRoot/node_modules/tm-grammars/grammars")
 def nativeCodeLanguageManifest = file("$projectRoot/src/rendering/native-code-languages.json")
 def nativeCodeLanguages = new JsonSlurper().parse(nativeCodeLanguageManifest)
@@ -215,6 +217,25 @@ android {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
     sourceSets.main.assets.srcDir(nativeCodeAssetsDir)
+    sourceSets.main.assets.srcDir(iconFontAssetsDir)
+}
+
+// Expo Font and ReactFontManager discover assets/fonts by family name.
+// UI fonts must exist before JS mounts, independent of the cache/OTA state.
+tasks.register("prepareIconFontAssets", Sync) {
+    into(iconFontAssetsDir)
+    from(iconFontSourceDir) {
+        include "Ionicons.ttf", "MaterialIcons.ttf"
+        into "fonts"
+        rename { name -> name == "Ionicons.ttf" ? "ionicons.ttf" : "material.ttf" }
+    }
+    doFirst {
+        ["Ionicons.ttf", "MaterialIcons.ttf"].each { name ->
+            if (!new File(iconFontSourceDir, name).isFile()) {
+                throw new GradleException("Required UI icon font is missing: $name")
+            }
+        }
+    }
 }
 
 tasks.register("prepareNativeCodeAssets", Sync) {
@@ -234,6 +255,7 @@ tasks.register("prepareNativeCodeAssets", Sync) {
 
 tasks.named("preBuild").configure {
     dependsOn("prepareNativeCodeAssets")
+    dependsOn("prepareIconFontAssets")
 }
 
 gradle.taskGraph.whenReady { graph ->
@@ -266,9 +288,14 @@ gradle.taskGraph.whenReady { graph ->
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // Public DialogWindowProvider is the window boundary used by Expo's Compose sheets.
+    implementation("androidx.compose.ui:ui-android:1.10.6")
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     baselineProfile project(":baselineprofile")
     testImplementation("junit:junit:4.13.2")
+    // Paste regressions need real Android spans and InputConnection delegation;
+    // android.jar stubs cannot execute these contracts in local JVM tests.
+    testImplementation("org.robolectric:robolectric:4.16.1")
     // Android's framework JSONObject is a non-functional stub in local JVM
     // tests. Exercise the real durable-command projection without pulling in
     // Robolectric or changing the production APK.

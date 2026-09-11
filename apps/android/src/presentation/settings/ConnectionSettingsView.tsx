@@ -9,7 +9,17 @@ import {
 } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  iconSize,
+  typeWeight,
+  controlSize,
+  layoutSize,
+} from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 import {
@@ -85,6 +95,7 @@ export function ConnectionSettingsView(props: ConnectionSettingsViewProps): Reac
   return (
     <PresentationSheetView
       contentProps={{
+        dismissLabel: "Close server settings",
         enableDynamicSizing: false,
         enableOverDrag: false,
         index: 0,
@@ -97,9 +108,6 @@ export function ConnectionSettingsView(props: ConnectionSettingsViewProps): Reac
         <ProductText style={styles.title} weight="semibold">
           Settings
         </ProductText>
-        <Pressable accessibilityLabel="Close server settings" onPress={onClose} style={iconStyle}>
-          <PresentationIcon color={colors.text} name="close" size={21} />
-        </Pressable>
       </View>
       <PresentationSheetScrollView
         contentContainerStyle={styles.scrollContent}
@@ -173,7 +181,7 @@ function SettingsControlRow(props: SettingsControlRowProps): React.JSX.Element {
   return (
     <View style={styles.controlRow}>
       <View style={styles.controlIcon}>
-        <PresentationIcon color={colors.textMuted} name={icon} size={21} />
+        <PresentationIcon color={colors.textMuted} name={icon} size={iconSize.action} />
       </View>
       <View style={styles.copy}>
         <ProductText style={styles.controlTitle}>{title}</ProductText>
@@ -234,7 +242,7 @@ function SettingsServerRow(props: SettingsServerRowProps): React.JSX.Element {
           style={styles.menuAnchor}
         >
           <Pressable accessibilityLabel={`Actions for ${row.label}`} style={iconStyle}>
-            <PresentationIcon color={colors.textMuted} name="more" size={20} />
+            <PresentationIcon color={colors.textMuted} name="more" size={iconSize.action} />
           </Pressable>
         </ActionMenu>
       </View>
@@ -272,29 +280,29 @@ function iconStyle(state: PressableStateCallbackType) {
 }
 
 const styles = StyleSheet.create({
-  controlDetail: { fontSize: 12, lineHeight: 16, marginTop: 2 },
+  controlDetail: { ...typeScale.label, marginTop: spacing.optical },
   controlIcon: {
     alignItems: "center",
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.medium,
-    height: 40,
+    height: controlSize.regular,
     justifyContent: "center",
-    width: 40,
+    width: controlSize.regular,
   },
   controlRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 64,
+    minHeight: layoutSize.row,
   },
-  controlTitle: typeScale.titleMedium,
+  controlTitle: typeScale.title,
   copy: { flex: 1, minWidth: 0 },
   empty: { paddingVertical: spacing.md },
-  error: { color: colors.red, fontSize: 13, lineHeight: 18, paddingVertical: spacing.sm },
+  error: { color: colors.red, ...typeScale.body, paddingVertical: spacing.sm },
   header: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 6,
+    gap: spacing.compact,
     minHeight: touchTarget,
     paddingBottom: spacing.xs,
   },
@@ -315,35 +323,35 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.sm,
   },
   sectionTitle: {
-    fontSize: 12,
-    lineHeight: 16,
+    ...typeScale.label,
+
     paddingBottom: spacing.xs,
     paddingTop: spacing.xs,
     textTransform: "uppercase",
   },
   serverEditor: { borderBottomColor: colors.borderSoft, borderBottomWidth: 1 },
-  serverEmoji: { fontSize: 22, lineHeight: 28 },
+  serverEmoji: { ...typeScale.emoji },
   serverRow: {
     alignItems: "center",
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 72,
+    minHeight: layoutSize.row,
     paddingVertical: spacing.xs,
   },
-  stateDot: { borderRadius: 4, height: 7, width: 7 },
+  stateDot: { borderRadius: radii.pill, height: 7, width: 7 },
   stateRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 6,
-    marginTop: 3,
+    gap: spacing.compact,
+    marginTop: spacing.xxs,
     minHeight: 18,
     minWidth: 0,
   },
-  stateText: { flexShrink: 1, fontSize: 11, fontWeight: "600", lineHeight: 15 },
-  title: { flex: 1, minWidth: 0, ...typeScale.titleLarge },
+  stateText: { flexShrink: 1, ...typeScale.label, fontWeight: typeWeight.semibold },
+  title: { flex: 1, minWidth: 0, ...typeScale.heading },
   version: {
-    fontSize: 11,
-    lineHeight: 15,
+    ...typeScale.label,
+
     paddingBottom: spacing.sm,
     paddingTop: spacing.lg,
     textAlign: "center",

@@ -18,11 +18,11 @@ describe("native action-menu icons", () => {
     expect(nativeMenu).not.toContain("assets/menu-icons");
   });
 
-  it("renders real Ionicons inside the native Compose menu slots", () => {
-    expect(codeWideMenu).toContain('import Ionicons from "@expo/vector-icons/Ionicons"');
-    expect(codeWideMenu).toContain("<RNHostView matchContents>");
+  it("keeps menu glyphs on the RN Ionicons renderer after the menu-only rollback", () => {
     expect(codeWideMenu).toContain("<Ionicons color={color} name={icon} size={size} />");
-    expect(codeWideMenu).toContain('<MenuIcon icon="checkmark" size={18} color={colors.text} />');
+    expect(codeWideMenu).not.toContain("ComposeNamedIcon");
+    expect(codeWideMenu).not.toContain("isComposeIconName");
+    expect(codeWideMenu).toContain("<RNHostView matchContents>{children}</RNHostView>");
     expect(codeWideMenu).not.toContain("assets/menu-icons");
   });
 

@@ -1,15 +1,41 @@
 import type { ComponentType } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
+
+// WHY: Interpolation is pure math; dialog render tests use the real implementation without the native runtime.
+export { Extrapolation, interpolate } from "react-native-reanimated/src/interpolation";
 
 interface SharedValue<Value> {
+  value: Value;
   get(): Value;
   set(value: Value): void;
 }
 
 export const Easing = {
   cubic: (value: number): number => value,
+  ease: (value: number): number => value,
+  in: <Value>(value: Value): Value => value,
+  inOut: <Value>(value: Value): Value => value,
   out: <Value>(value: Value): Value => value,
 };
+
+// WHY: HeroUI constructs native layout keyframes at import time; Node renders final layout only.
+export class Keyframe {
+  constructor(_definitions: unknown) {}
+  duration(_milliseconds: number): this { return this; }
+  easing(_easing: unknown): this { return this; }
+  springify(): this { return this; }
+  damping(_value: number): this { return this; }
+  stiffness(_value: number): this { return this; }
+  mass(_value: number): this { return this; }
+}
+export const LinearTransition = new Keyframe({});
+export const FadeIn = new Keyframe({});
+export const FadeOut = new Keyframe({});
+
+export function useReducedMotion(): boolean { return true; }
+export function useDerivedValue<Value>(factory: () => Value): SharedValue<Value> {
+  return useSharedValue(factory());
+}
 
 export function runOnJS<Arguments extends unknown[], Result>(
   callback: (...arguments_: Arguments) => Result,
@@ -28,6 +54,8 @@ export function useEvent<Handler>(handler: Handler): Handler {
 export function useSharedValue<Value>(initial: Value): SharedValue<Value> {
   let value = initial;
   return {
+    get value() { return value; },
+    set value(next: Value) { value = next; },
     get: () => value,
     set: (next) => {
       value = next;
@@ -44,8 +72,13 @@ export function withTiming<Value>(
   return value;
 }
 
+// Native animation timing is unavailable in Node; settle at the requested value.
+export function withSpring<Value>(value: Value, _configuration?: unknown): Value {
+  return value;
+}
+
 function createAnimatedComponent<Props>(component: ComponentType<Props>): ComponentType<Props> {
   return component;
 }
 
-export default { View, createAnimatedComponent };
+export default { Text, View, createAnimatedComponent };

@@ -8,6 +8,7 @@ import {
   type ThreadChatWindowRequest,
 } from "../src/data/thread-chat-model";
 import type { ThreadDetailRow } from "../src/data/thread-detail-projection";
+import { ThreadWindowIntentController } from "../src/data/thread-window-intent";
 
 const request: ThreadChatWindowRequest = {
   connectionId: "connection",
@@ -55,6 +56,261 @@ function loaded(
 }
 
 describe("Legend thread chat model", () => {
+  it("preserves an expanded latest range across a page metadata refresh without importing lookup islands", () => {
+    const model = createThreadChatModel();
+    const resident = Array.from({ length: 20 }, (_, index) => row(`turn-${40 - index}`, 40 - index));
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, {
+      ...loaded(resident), latestSealedOrdinal: 40, residentTurnLimit: 15,
+    });
+    const before = model.window$("connection", "thread").peek();
+    model.refreshThread("connection", "thread", [row("far-newer", 100), ...resident, row("older-page", 20)]);
+    const after = model.window$("connection", "thread").peek();
+    expect(after.turnRowIds).toEqual(before.turnRowIds);
+    expect(after.turnRowIds).toHaveLength(20);
+    expect(after.latestSealedOrdinal).toBe(100);
+  });
+
+  it("bounds rolling live completions at the committed expanded capacity", () => {
+    const model = createThreadChatModel();
+    let resident = Array.from({ length: 20 }, (_, index) => row(`turn-${40 - index}`, 40 - index));
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, {
+      ...loaded(resident), latestSealedOrdinal: 40, residentTurnLimit: 15,
+    });
+    for (let ordinal = 41; ordinal <= 65; ordinal += 1) {
+      model.refreshThread("connection", "thread", [row(`turn-${ordinal}`, ordinal), ...resident]);
+      const snapshot = model.window$("connection", "thread").peek();
+      resident = model.readRows(snapshot.turnRowIds);
+      expect(resident).toHaveLength(20);
+      expect(resident[0]?.ordinal).toBe(ordinal);
+    }
+    expect(resident.at(-1)?.ordinal).toBe(46);
+  });
+
+  it("does not jump a historical range to a distant live completion", () => {
+    const model = createThreadChatModel();
+    const resident = [row("old-2", 2), row("old-1", 1)];
+    const live = row("live", 101, { sealed: false });
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, {
+      ...loaded(resident), latestSealedOrdinal: 100, liveRowIds: [live.id], rows: [...resident, live],
+    });
+    model.refreshThread("connection", "thread", [...resident, { ...live, sealed: true }]);
+    expect(model.window$("connection", "thread").peek().turnRowIds).toEqual(["old-2", "old-1"]);
+  });
+
+  it("bounds a replacement epoch independently of the previous expanded range", () => {
+    const model = createThreadChatModel();
+    const oldRows = Array.from({ length: 20 }, (_, index) => row(`old-${index}`, index));
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, { ...loaded(oldRows), latestSealedOrdinal: 19, residentTurnLimit: 15 });
+    const nextRows = Array.from({ length: 30 }, (_, index) => row(`new-${index}`, index, { historyEpoch: 1 }));
+    model.refreshThread("connection", "thread", [
+      row("meta", 0, { kind: "thread", sealed: false, historyEpoch: 1 }), ...nextRows,
+    ]);
+    const next = model.window$("connection", "thread").peek();
+    expect(next.historyEpoch).toBe(1);
+    expect(next.turnRowIds).toHaveLength(15);
+    expect(model.readRows(next.turnRowIds).map(turn => turn.ordinal)).toEqual(
+      Array.from({ length: 15 }, (_, index) => 29 - index),
+    );
+  });
+
+  it("reveals a cached live chat while its reopening refresh is still blocked", async () => {
+    const model = createThreadChatModel();
+    const first = model.resource(request, async () => {
+      const generation = model.startWindow(request);
+      model.commitWindow(request, generation, {
+        ...loaded([]),
+        rows: [row("live", 1, { sealed: false })],
+        liveRowIds: ["live"],
+      });
+    });
+    await first.ready$.peek();
+    const other = { ...request, threadId: "other" };
+    await model.resource(other, async () => {
+      const generation = model.startWindow(other);
+      model.commitWindow(other, generation, loaded([], other));
+    }).ready$.peek();
+    const reopened = { ...request, openGeneration: 1 };
+    const refresh = Promise.withResolvers<void>();
+    const result = model.resource(reopened, async () => {
+      const generation = model.startWindow(reopened);
+      await refresh.promise;
+      model.commitWindow(reopened, generation, loaded([row("live", 1)], reopened));
+    });
+    expect(result.window$).toBe(first.window$);
+    expect(model.readRows(result.window$.peek().liveRowIds).map((item) => item.id)).toEqual(["live"]);
+    await Promise.resolve();
+    expect(result.window$.peek().status).toBe("loading-history");
+    refresh.resolve();
+    await vi.waitFor(() => expect(result.window$.peek().turnRowIds).toEqual(["live"]));
+    model.close();
+  });
+
+  it("evicts the least recently selected inactive window, not the one receiving events", async () => {
+    const evicted: string[] = [];
+    const model = createThreadChatModel({ onEvictWindow: (_connectionId, threadId) => { evicted.push(threadId); } });
+    async function open(threadId: string, openGeneration = 0) {
+      const target = { ...request, threadId, openGeneration };
+      const resource = model.resource(target, async () => {
+        const generation = model.startWindow(target);
+        model.commitWindow(target, generation, loaded([row(threadId, 1, { remoteThreadId: threadId })], target));
+      });
+      await resource.ready$.peek();
+      return resource;
+    }
+    await open("a");
+    await open("b");
+    await open("c");
+    await open("d");
+    expect(evicted).toEqual([]);
+    await open("a", 1);
+    model.refreshThread("connection", "b", [row("b", 2, { remoteThreadId: "b" })]);
+    const background = model.window$("connection", "b").peek();
+    expect(model.readRows(background.turnRowIds)[0]?.ordinal).toBe(2);
+    await open("e");
+    expect(evicted).toEqual(["b"]);
+    expect(model.residentRowCount()).toBe(4);
+    model.close();
+    expect(model.residentRowCount()).toBe(0);
+  });
+
+  it("keeps cached messages readable when revalidation fails after returning", async () => {
+    const model = createThreadChatModel();
+    const initial = model.resource(request, async () => {
+      const generation = model.startWindow(request);
+      model.commitWindow(request, generation, loaded([row("cached", 1)]));
+    });
+    await initial.ready$.peek();
+    const other = { ...request, threadId: "other" };
+    await model.resource(other, async () => {
+      const generation = model.startWindow(other);
+      model.commitWindow(other, generation, loaded([], other));
+    }).ready$.peek();
+    const reopened = { ...request, openGeneration: 1 };
+    const result = model.resource(reopened, async () => {
+      const generation = model.startWindow(reopened);
+      const error = new Error("offline");
+      model.failWindow(reopened, generation, error);
+      throw error;
+    });
+    await vi.waitFor(() => expect(result.window$.peek().status).toBe("background-retrying"));
+    expect(result.window$.peek().error).toBe("offline");
+    expect(model.readRows(result.window$.peek().turnRowIds).map((item) => item.id)).toEqual(["cached"]);
+    model.close();
+  });
+
+  it("publishes hydrated messages after an empty cache without waiting for a nonexistent first draw", () => {
+    const model = createThreadChatModel();
+    model.beginPresentation(request.connectionId, request.threadId);
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, loaded([]));
+    model.commitWindow(request, generation, loaded([row("hydrated", 1)]));
+    expect(model.readRows(model.window$(request.connectionId, request.threadId).peek().turnRowIds)
+      .map((value) => value.id)).toEqual(["hydrated"]);
+    model.close();
+  });
+
+  it("does not hold a reopened empty cache behind the first-draw barrier", () => {
+    const model = createThreadChatModel();
+    const generation = model.startWindow(request);
+    model.commitWindow(request, generation, loaded([]));
+    model.beginPresentation(request.connectionId, request.threadId);
+    model.commitWindow(request, generation, loaded([row("hydrated", 1)]));
+    expect(model.window$(request.connectionId, request.threadId).peek().turnRowIds).toEqual(["hydrated"]);
+    model.close();
+  });
+
+  it.each([false, true])("retries an interrupted preload even after live data arrives: %s", async (liveUpdate) => {
+    const model = createThreadChatModel();
+    const intents = new ThreadWindowIntentController();
+    const lease = intents.begin("connection-thread", "opening", () => () => undefined);
+    const gate = Promise.withResolvers<void>();
+    const preloaded = model.resource(request, async () => {
+      model.startWindow(request);
+      if (liveUpdate) model.refreshThread("connection", "thread", [row("active", 3, { sealed: false })]);
+      await gate.promise;
+      if (!intents.isCurrent(lease.token)) return;
+      throw new Error("The cancelled preload must not publish history");
+    });
+    await Promise.resolve();
+    intents.cancel(lease);
+    gate.resolve();
+    await expect(preloaded.ready$.peek()).resolves.toBe(false);
+    const loader = vi.fn(async () => {
+      const generation = model.startWindow(request);
+      model.commitWindow(request, generation, loaded([row("older", 1), row("latest", 2)]));
+    });
+    const selected = model.resource(request, loader);
+    await expect(selected.ready$.peek()).resolves.toBe(true);
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(model.readRows(selected.window$.peek().turnRowIds).map((value) => value.id)).toEqual(["older", "latest"]);
+    model.close();
+  });
+  it("retains the previous window as data when another destination takes ownership", async () => {
+    const model = createThreadChatModel();
+    const resource = model.resource(request, async () => {
+      const generation = model.startWindow(request);
+      model.commitWindow(request, generation, loaded([row("turn-1", 1)]));
+    });
+    await resource.ready$.peek();
+    expect(model.residentRowCount()).toBe(1);
+    const next = { ...request, threadId: "next" };
+    const nextResource = model.resource(next, async () => {
+      const generation = model.startWindow(next);
+      model.commitWindow(next, generation, loaded([], next));
+    });
+    await nextResource.ready$.peek();
+    expect(model.residentRowCount()).toBe(1);
+    expect(model.readRows(resource.window$.peek().turnRowIds).map((item) => item.id)).toEqual(["turn-1"]);
+    expect(nextResource.window$.peek().status).toBe("ready");
+    model.close();
+  });
+  it("does not mistake an older committed window for a completed new opening", async () => {
+    const model = createThreadChatModel();
+    const initial = model.resource(request, async () => {
+      const generation = model.startWindow(request);
+      model.commitWindow(request, generation, loaded([row("cached", 1)]));
+    });
+    await initial.ready$.peek();
+    const next = { ...request, openGeneration: 1 };
+    const interrupted = Promise.withResolvers<void>();
+    model.resource(next, async () => {
+      model.startWindow(next);
+      await interrupted.promise;
+      // A cancelled load returns without committing, even with a cached window.
+    });
+    interrupted.resolve();
+    await vi.waitFor(() => {
+      const selected = model.resource(next, async () => {
+        const generation = model.startWindow(next);
+        model.commitWindow(next, generation, loaded([row("cached", 1), row("fresh", 2)], next));
+      });
+      expect(model.readRows(selected.window$.peek().turnRowIds).map((value) => value.id)).toEqual(["cached", "fresh"]);
+    });
+    model.close();
+  });
+  it("keeps the displayed window through a deferred responsive remount", async () => {
+    const model = createThreadChatModel();
+    const release = model.retainWindow(request.connectionId, request.threadId);
+    const resource = model.resource(request, async () => {
+      const generation = model.startWindow(request);
+      model.commitWindow(request, generation, loaded([row("turn-1", 1)]));
+    });
+    await resource.ready$.peek();
+    const window = resource.window$;
+    release();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const releaseReplacement = model.retainWindow(request.connectionId, request.threadId);
+    expect(model.window$(request.connectionId, request.threadId) === window).toBe(true);
+    expect(window.peek().status).toBe("ready");
+    expect(model.readRows(window.peek().turnRowIds).map((item) => item.id)).toEqual(["turn-1"]);
+    releaseReplacement();
+    model.close();
+    expect(model.residentRowCount()).toBe(0);
+  });
   it("owns and deduplicates the initial SQLite window Promise", async () => {
     const model = createThreadChatModel();
     let loads = 0;
@@ -101,20 +357,20 @@ describe("Legend thread chat model", () => {
     expect(reopened.window$.peek().requestKey).toBe(threadChatRequestKey(secondRequest));
   });
 
-  it("does not let a superseded backend refresh clear the active opening indicator", () => {
+  it("keeps the backend refresh indicator until every overlapping recovery settles", () => {
     const model = createThreadChatModel();
     const firstRequest = { ...request, openGeneration: 1 };
-    const firstGeneration = model.startWindow(firstRequest);
-    model.setBackendRefreshing(firstRequest, firstGeneration, true);
+    model.startWindow(firstRequest);
+    const finishFirst = model.beginBackendRefresh(request.connectionId, request.threadId);
     expect(model.window$(request.connectionId, request.threadId).peek().backendRefreshing).toBe(true);
 
     const secondRequest = { ...request, openGeneration: 2 };
-    const secondGeneration = model.startWindow(secondRequest);
-    model.setBackendRefreshing(secondRequest, secondGeneration, true);
-    model.setBackendRefreshing(firstRequest, firstGeneration, false);
+    model.startWindow(secondRequest);
+    const finishSecond = model.beginBackendRefresh(request.connectionId, request.threadId);
+    finishFirst();
     expect(model.window$(request.connectionId, request.threadId).peek().backendRefreshing).toBe(true);
 
-    model.setBackendRefreshing(secondRequest, secondGeneration, false);
+    finishSecond();
     expect(model.window$(request.connectionId, request.threadId).peek().backendRefreshing).toBe(false);
     model.close();
   });
@@ -181,7 +437,10 @@ describe("Legend thread chat model", () => {
     expect(failedLoader).toHaveBeenCalledTimes(1);
 
     const reopenedRequest = { ...request, openGeneration: 1 };
-    const reopenedLoader = vi.fn(async () => undefined);
+    const reopenedLoader = vi.fn(async () => {
+      const generation = model.startWindow(reopenedRequest);
+      model.commitWindow(reopenedRequest, generation, loaded([], reopenedRequest));
+    });
     const reopened = model.resource(reopenedRequest, reopenedLoader);
     const reopenedPromise = reopened.ready$.peek();
     await expect(reopenedPromise).resolves.toBe(true);
@@ -389,7 +648,7 @@ describe("Legend thread chat model", () => {
     expect(snapshot.turnRowIds).toEqual(["turn-1"]);
   });
 
-  it("evicts an unowned window as soon as another conversation starts", () => {
+  it("evicts an unowned window only after the inactive budget is exceeded", () => {
     const evicted: string[] = [];
     const model = createThreadChatModel({
       onEvictWindow: (connectionId, threadId) => evicted.push(`${connectionId}/${threadId}`),
@@ -397,11 +656,15 @@ describe("Legend thread chat model", () => {
 
     model.startWindow({ ...request, threadId: "thread-0" });
     model.startWindow({ ...request, threadId: "thread-1" });
-
+    model.startWindow({ ...request, threadId: "thread-2" });
+    model.startWindow({ ...request, threadId: "thread-3" });
+    expect(evicted).toEqual([]);
+    model.startWindow({ ...request, threadId: "thread-4" });
     expect(evicted).toEqual(["connection/thread-0"]);
+    model.close();
   });
 
-  it("keeps mounted consumers and evicts each window after release settles", async () => {
+  it("protects mounted consumers from budget pressure until their release settles", async () => {
     const evicted: string[] = [];
     const model = createThreadChatModel({
       onEvictWindow: (connectionId, threadId) => evicted.push(`${connectionId}/${threadId}`),
@@ -412,12 +675,21 @@ describe("Legend thread chat model", () => {
     model.startWindow({ ...request, threadId: "thread-1" });
 
     expect(evicted).toEqual([]);
+    for (let index = 2; index <= 6; index += 1) {
+      const target = { ...request, threadId: `thread-${index}` };
+      await model.resource(target, async () => {
+        const generation = model.startWindow(target);
+        model.commitWindow(target, generation, loaded([], target));
+      }).ready$.peek();
+    }
+    expect(evicted).toEqual(["connection/thread-2"]);
     releaseFirst();
     await Promise.resolve();
-    expect(evicted).toEqual(["connection/thread-0"]);
+    expect(evicted).toEqual(["connection/thread-2", "connection/thread-0"]);
     releaseSecond();
     await Promise.resolve();
-    expect(evicted).toEqual(["connection/thread-0", "connection/thread-1"]);
+    expect(evicted).toEqual(["connection/thread-2", "connection/thread-0", "connection/thread-1"]);
+    model.close();
   });
 
   it("preserves one window across a same-thread responsive owner handoff", async () => {
@@ -440,7 +712,9 @@ describe("Legend thread chat model", () => {
 
     releaseDesktop();
     await Promise.resolve();
-    expect(evicted).toEqual(["connection/thread"]);
+    expect(evicted).toEqual([]);
+    expect(model.readRows(window.peek().turnRowIds).map((item) => item.id)).toEqual(["turn-1"]);
+    model.close();
   });
 
   it("does not evict a newly observed conversation while releasing the previous one", async () => {
@@ -455,11 +729,12 @@ describe("Legend thread chat model", () => {
     releasePrevious();
     await Promise.resolve();
 
-    expect(evicted).toEqual(["connection/thread-0"]);
+    expect(evicted).toEqual([]);
     expect(model.window$("connection", "thread-1")).toBe(nextWindow);
+    model.close();
   });
 
-  it("drops resident row objects when the last consumer release settles", async () => {
+  it("drops cached row objects after eviction, not merely after leaving the chat", async () => {
     const model = createThreadChatModel();
     const release = model.retainWindow(request.connectionId, request.threadId);
     const rows = [row("turn-1", 1), row("turn-2", 2)];
@@ -469,6 +744,9 @@ describe("Legend thread chat model", () => {
     expect(model.residentRowCount()).toBe(2);
     release();
     await Promise.resolve();
+    expect(model.residentRowCount()).toBe(2);
+    for (let index = 0; index < 4; index += 1) model.startWindow({ ...request, threadId: `other-${index}` });
     expect(model.residentRowCount()).toBe(0);
+    model.close();
   });
 });

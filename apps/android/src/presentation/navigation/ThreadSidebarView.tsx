@@ -7,7 +7,16 @@ import {
   View,
 } from "react-native";
 
-import { colors, radii, spacing, touchTarget } from "../../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  touchTarget,
+  iconSize,
+  typeScale,
+  typeWeight,
+  layoutSize,
+} from "../../theme";
 import type { UsageAccountViewModel } from "../usage/UsagePopoverView";
 import { UsagePopoverView } from "../usage/UsagePopoverView";
 import { PresentationIcon } from "../icons/PresentationIcon";
@@ -99,7 +108,7 @@ export function ThreadSidebarView(props: ThreadSidebarViewProps): React.JSX.Elem
               triggerAccessibilityLabel="Thread list menu"
               triggerStyle={headerActionStyle}
             >
-              <PresentationIcon color={colors.text} name="more" size={21} />
+              <PresentationIcon color={colors.text} name="more" size={iconSize.action} />
             </UsagePopoverView>
           </>
         )}
@@ -126,7 +135,7 @@ function HeaderAction(props: HeaderActionProps): React.JSX.Element {
       onPress={onPress}
       style={headerActionStyle}
     >
-      <PresentationIcon color={colors.text} name={name} size={21} />
+      <PresentationIcon color={colors.text} name={name} size={iconSize.action} />
     </Pressable>
   );
 }
@@ -147,15 +156,15 @@ const styles = StyleSheet.create({
   header: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 2,
-    minHeight: 56,
+    gap: spacing.optical,
+    minHeight: layoutSize.header,
     paddingLeft: spacing.sm,
     paddingRight: spacing.sm,
     transform: [{ translateY: spacing.xxs }],
   },
   pressed: { opacity: 0.68 },
   root: { backgroundColor: colors.surface, flex: 1, minHeight: 0 },
-  title: { color: colors.text, fontSize: 18, fontWeight: "700", lineHeight: 24 },
-  subtitle: { color: colors.textMuted, fontSize: 12, lineHeight: 16 },
+  title: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold },
+  subtitle: { color: colors.textMuted, ...typeScale.label },
   titleSlot: { flex: 1, minWidth: 0, transform: [{ translateY: -0.5 }] },
 });

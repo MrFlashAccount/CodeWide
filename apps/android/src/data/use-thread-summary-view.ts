@@ -7,10 +7,12 @@ import type { ThreadSummaryViewRequest, ThreadSummaryViewSnapshot } from "./thre
 export function useThreadSummaryView(
   database: ThreadSummaryDatabase | null,
   request: ThreadSummaryViewRequest | null,
+  suspendUntilReady = true,
 ): ThreadSummaryViewSnapshot | null {
   const enabled = request !== null;
   const viewId = request?.viewId;
   const connectionId = request?.connectionId ?? null;
+  const projectCwd = request?.projectCwd;
   const recentLimit = request?.recentLimit ?? 0;
   const archivedLimit = request?.archivedLimit ?? 0;
   const selectedConnectionId = request?.selectedConnectionId ?? null;
@@ -20,6 +22,7 @@ export function useThreadSummaryView(
   const resource = database === null || !enabled ? null : database.viewResource({
     ...(viewId === undefined ? {} : { viewId }),
     connectionId,
+    ...(projectCwd === undefined ? {} : { projectCwd }),
     recentLimit,
     archivedLimit,
     selectedConnectionId,
@@ -39,5 +42,5 @@ export function useThreadSummaryView(
     if (resource === null) return null;
     resource.ready$.get();
     return resource.view$.get();
-  }, { suspense: true });
+  }, { suspense: suspendUntilReady });
 }

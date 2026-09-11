@@ -6,7 +6,7 @@ import {
   View,
 } from "react-native";
 
-import { colors, radii, spacing, touchTarget } from "../../theme";
+import { colors, radii, spacing, touchTarget, typeScale, controlSize } from "../../theme";
 import { ProductText } from "../text/ProductText";
 
 interface ActionButtonViewProps {
@@ -64,12 +64,12 @@ const styles = StyleSheet.create({
     borderRadius: radii.large,
     justifyContent: "center",
     minHeight: touchTarget,
-    minWidth: 96,
+    minWidth: controlSize.regular,
     paddingHorizontal: spacing.md,
   },
   disabled: { opacity: 0.45 },
-  error: { fontSize: 12, lineHeight: 17, marginTop: spacing.xxs },
-  label: { color: colors.onPrimary, fontSize: 13, lineHeight: 18 },
+  error: { ...typeScale.label, marginTop: spacing.xxs },
+  label: { color: colors.onPrimary, ...typeScale.body },
   pressed: { backgroundColor: colors.primaryPressed },
   root: { alignSelf: "flex-start" },
 });

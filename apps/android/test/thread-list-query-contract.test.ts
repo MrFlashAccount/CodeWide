@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+import { compactSource } from "./source-contract";
+
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const database = readFileSync(new URL("../src/data/thread-summary-sqlite.native.ts", import.meta.url), "utf8");
 
 describe("thread list query contract", () => {
@@ -10,7 +12,8 @@ describe("thread list query contract", () => {
     const pinnedQuery = database.slice(database.indexOf("const pinned ="), database.indexOf("const recent ="));
     expect(pinnedQuery).not.toContain("LIMIT");
     expect(database).toContain("archived = 0 AND pinned = 0${connectionClause} ORDER BY recency_at DESC NULLS LAST, __key ASC LIMIT ?");
-    expect(screen).toContain(": recentThreadSummaryRows.length;");
+    // The remote page includes pinned roots even though SQLite renders them separately.
+    expect(screen).toContain(": recentThreadSummaryRows.length + pinnedThreadSummaryRows.length;");
   });
 
   it("indexes every persisted field used to select the bounded root windows", () => {
@@ -41,7 +44,7 @@ describe("thread list query contract", () => {
     expect(screen).toContain('scope="desktop-default-thread"');
     expect(screen).toContain("revision={defaultDesktopThreadId}");
     expect(screen).toContain("onCommit={commitDefaultDesktopThread}");
-    expect(screen).toContain("? selectedThread\n    : null;");
+    expect(screen).toContain("? selectedThread : null;");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
   });
 });

@@ -1,10 +1,17 @@
-import type { ReactNode } from "react";
+import { createContext, type ReactNode, useContext } from "react";
 import { StyleSheet, View } from "react-native";
 
-import { colors, radii } from "../theme";
+import { colors, radii, spacing } from "../theme";
 import { RecoverableRenderBoundary } from "../ui/RecoverableRenderBoundary";
+import { FluidLayoutFrame } from "./FluidLayoutFrame";
 
 export type BubbleVariant = "agent" | "user";
+
+const InsideBubbleSurfaceContext = createContext(false);
+
+export function useInsideBubbleSurface(): boolean {
+  return useContext(InsideBubbleSurfaceContext);
+}
 
 /**
  * A purely declarative bubble surface. Yoga owns both axes; this component
@@ -13,24 +20,27 @@ export type BubbleVariant = "agent" | "user";
 export function Bubble({
   variant,
   fill = false,
+  animateLayout = false,
   testID,
   errorLabel,
   errorContext,
   errorResetKey,
+  footer,
   children,
 }: {
   variant: BubbleVariant;
   fill?: boolean;
+  animateLayout?: boolean;
   testID?: string;
   errorLabel?: string;
   errorContext?: string;
   errorResetKey?: string;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   const surfaceStyle = [
     styles.surface,
     variant === "agent" ? styles.agentSurface : styles.userSurface,
-    variant === "agent" && fill ? styles.agentSurfaceFill : null,
   ];
   return (
     <RecoverableRenderBoundary
@@ -39,13 +49,22 @@ export function Bubble({
       {...(errorContext === undefined ? {} : { context: errorContext })}
       resetKey={errorResetKey ?? `${variant}:${testID ?? "bubble"}`}
     >
-      <View testID={testID} style={surfaceStyle}>{children}</View>
+      {variant === "agent" ? (
+        <View testID="agent-bubble-frame" style={[styles.agentFrame, fill && styles.agentFrameFill, footer != null && styles.agentFrameWithFooter]}>
+          <FluidLayoutFrame animate={animateLayout} testID={testID} style={surfaceStyle}>{children}</FluidLayoutFrame>
+          {footer != null && <FluidLayoutFrame animate={animateLayout}>{footer}</FluidLayoutFrame>}
+        </View>
+      ) : <View testID={testID} style={surfaceStyle}>{children}</View>}
     </RecoverableRenderBoundary>
   );
 }
 
 export function BubbleContent({ children }: { children: ReactNode }) {
-  return <View style={styles.content}>{children}</View>;
+  return (
+    <InsideBubbleSurfaceContext.Provider value>
+      <View style={styles.content}>{children}</View>
+    </InsideBubbleSurfaceContext.Provider>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -53,26 +72,35 @@ const styles = StyleSheet.create({
     minWidth: 0,
     borderRadius: radii.selected,
   },
-  agentSurface: {
-    maxWidth: "88%",
+  // The body and footer share one intrinsic width; rich content may fill its cap.
+  agentFrame: {
+    minWidth: 0,
+    maxWidth: "100%",
     flexShrink: 1,
     alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingTop: 7,
-    paddingBottom: 8,
-    backgroundColor: colors.surface,
+    gap: spacing.optical,
   },
-  agentSurfaceFill: {
-    width: "88%",
-    flexShrink: 0,
+  agentFrameWithFooter: {
+    marginBottom: spacing.xs,
+  },
+  agentFrameFill: {
+    flexGrow: 1,
+    flexBasis: 0,
+  },
+  agentSurface: {
+    alignSelf: "stretch",
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+    backgroundColor: colors.messageSurface,
   },
   userSurface: {
     maxWidth: "82%",
     alignSelf: "flex-end",
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 9,
-    backgroundColor: colors.surfaceRaised,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+    backgroundColor: colors.messageSurface,
   },
   content: { minWidth: 0 },
 });

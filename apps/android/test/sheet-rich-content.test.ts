@@ -17,24 +17,23 @@ describe("document preview surfaces", () => {
     expect(documentPreviewSurface("text")).toBe("sheet");
   });
 
-  it("keeps responsive sheet geometry on the native Expo UI sheet", () => {
+  it("leaves sheet chrome to Material while retaining responsive content and lifecycle", () => {
     const appSheet = readSource("../src/ui/AppSheet.android.tsx");
 
     expect(appSheet).toContain('from "@expo/ui/jetpack-compose"');
     expect(appSheet).toContain('<Host colorScheme="dark"');
-    expect(appSheet).toContain("containerColor={colors.surfaceContainerHigh}");
-    expect(appSheet).toContain("contentColor={colors.text}");
-    expect(appSheet).toContain("scrimColor={colors.scrim}");
+    expect(appSheet).not.toContain("containerColor=");
+    expect(appSheet).not.toContain("contentColor=");
+    expect(appSheet).not.toContain("scrimColor=");
+    expect(appSheet).toContain("showDragHandle={contentProps.enablePanDownToClose ?? true}");
     expect(appSheet).toContain("<RNHostView matchContents={fitToContents}");
     expect(appSheet).toContain("!fitToContents && styles.fixedHostContent");
     expect(appSheet).toContain("fixedHostContent: { flexGrow: 1, height: 0 }");
-    expect(appSheet).toContain("<ScrollView nestedScrollEnabled={nestedScrollEnabled}");
-    expect(appSheet).toContain("const SHEET_MAX_WIDTH = 580");
-    expect(appSheet).toContain("const detached = contentProps.detached ?? true");
+    expect(appSheet).toContain('<ScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />');
     expect(appSheet).toContain("useWindowDimensions");
-    expect(appSheet).toContain("maxWidth: SHEET_MAX_WIDTH");
-    expect(appSheet).toContain("borderRadius: radii.composer");
-    expect(appSheet).toContain("backgroundColor: colors.surfaceContainerHigh");
+    expect(appSheet).not.toContain("maxWidth:");
+    expect(appSheet).not.toContain("borderRadius:");
+    expect(appSheet).not.toContain("backgroundColor:");
     expect(appSheet).toContain("sheetRef.current");
     expect(appSheet).toContain("sheetRef.current?.hide()");
     expect(appSheet).toContain("onOpenChange(false)");
@@ -47,7 +46,7 @@ describe("document preview surfaces", () => {
     const editor = readSource("../src/rendering/CodeReviewEditor.native.tsx");
 
     expect(editor).not.toContain("showInitialLoading");
-    expect(editor).not.toContain("<ActivityIndicator");
+    expect(editor).toContain("loading && document === null && !sidebarOpen");
     expect(editor).not.toContain("visibleNotice");
     expect(editor).not.toContain("styles.notice");
     expect(editor).not.toContain("renderedRevision");

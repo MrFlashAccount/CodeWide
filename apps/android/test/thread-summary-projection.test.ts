@@ -91,6 +91,35 @@ describe("thread summary projection", () => {
     });
   });
 
+  it("projects active rollout progress without turning it into a detail invalidation", () => {
+    const current = summary("Stale partial answer");
+    const mutation = projectThreadSummaryEvent("server", {
+      method: "companion/thread/progress",
+      params: { threadId: "thread", archived: false, turnActive: true },
+      codewideThreadPatch: {
+        version: 1,
+        threadId: "thread",
+        operation: {
+          kind: "threadProgress",
+          summary: {
+            activity: true,
+            conversationMessage: true,
+            finalAgentResponse: false,
+            previewText: "Fresh partial answer",
+          },
+        },
+      },
+    }, () => current, 42, 8);
+
+    expect(mutation?.value).toMatchObject({
+      preview: "Fresh partial answer",
+      updatedAt: 42,
+      recencyAt: 42,
+      latestActivityCursor: 8,
+      unread: 0,
+    });
+  });
+
   it("uses companion summary semantics instead of reinterpreting the raw method", () => {
     const current = summary();
     const mutation = projectThreadSummaryEvent("server", {

@@ -5,13 +5,11 @@ import { WebView, type WebViewMessageEvent, type WebViewNavigation } from "react
 
 import {
   startNativeBrowserDevToolsBridge,
-  startNativeBrowserTracing,
   stopNativeBrowserDevToolsBridge,
-  stopNativeBrowserTracing,
   type NativeBrowserDevToolsBridge,
 } from "../native/native-transport";
 import { useEvent } from "../react/useEvent";
-import { colors, spacing, touchTarget, typeScale } from "../theme";
+import { colors, spacing, touchTarget, typeScale, iconSize, radii, controlSize } from "../theme";
 import {
   createDevToolsFailure,
   DevToolsErrorBoundary,
@@ -20,6 +18,14 @@ import {
   type DevToolsFailureKind,
 } from "./DevToolsErrorBoundary";
 import { AppText as Text } from "./Typography";
+import { BROWSER_FEEDBACK_BOOTSTRAP, parseBrowserElementReport, type BrowserFeedbackCapability, type BrowserFeedbackDraft } from "../browser/feedback";
+import { BrowserFeedbackDialog } from "../browser/BrowserFeedbackDialog";
+import { captureBrowserScreenshot } from "../browser/capture-screenshot";
+import { useBrowserFeedback } from "../browser/BrowserFeedbackContext";
+import { useAppFullscreenOverlay } from "./AppFullscreenOverlay";
+import { AppVoiceInputProvider, useAppVoiceInputRuntime } from "./VoiceInputRuntime";
+import { BrowserAddressBar } from "../browser/BrowserAddressBar";
+import { browserAddressKeepsOrigin } from "../browser/browser-address";
 
 type DevToolsTarget = {
   id: string;
@@ -34,7 +40,6 @@ type InternalBrowserHeader = {
   title: string;
   closeLabel: string;
   onClose(): void;
-  closeIcon?: "arrow-back" | "close";
   status?: string;
 };
 
@@ -45,6 +50,7 @@ export function InternalBrowser({
   originWhitelist = ["http://*", "https://*"],
   onHttpError,
   onError,
+  feedback: suppliedFeedback,
 }: {
   url: string;
   headers?: Record<string, string>;
@@ -52,18 +58,46 @@ export function InternalBrowser({
   originWhitelist?: string[];
   onHttpError?(statusCode: number): void;
   onError?(description: string): void;
+  feedback?: BrowserFeedbackCapability;
 }) {
+  const inheritedFeedback = useBrowserFeedback();
+  const feedback = suppliedFeedback ?? inheritedFeedback ?? undefined;
+  const feedbackOverlay = useAppFullscreenOverlay();
+  const feedbackVoiceRuntime = useAppVoiceInputRuntime();
   const webView = useRef<WebView>(null);
   const devToolsWebView = useRef<WebView>(null);
   const mounted = useRef(true);
   const bridgeStarted = useRef(false);
+  const feedbackArmed = useRef(false);
+  const [feedbackSelecting, setFeedbackSelecting] = useState(false);
+  const [feedbackCapturing, setFeedbackCapturing] = useState(false);
   const [targetPaneFraction, setTargetPaneFraction] = useState(0.5);
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [navigation, setNavigation] = useState<Pick<WebViewNavigation, "url" | "title" | "canGoBack" | "canGoForward">>({
+  const [addressSource, setAddressSource] = useState({ initialUrl: url, uri: url });
+  const [navigation, setNavigation] = useState<Pick<WebViewNavigation, "url" | "title" | "canGoBack" | "canGoForward" | "loading">>({
     url,
     title: "",
     canGoBack: false,
     canGoForward: false,
+    loading: false,
+  });
+  // An explicit caller destination change supersedes the previous address draft.
+  // Ordinary redirects/back/forward keep the same WebView and native history.
+  if (addressSource.initialUrl !== url) {
+    setAddressSource({ initialUrl: url, uri: url });
+    setNavigation({ url, title: "", canGoBack: false, canGoForward: false, loading: false });
+  }
+  const navigateAddress = useEvent((target: string) => {
+    if (target === navigation.url) { webView.current?.reload(); return; }
+    setAddressSource({ initialUrl: url, uri: target });
+    setNavigation({ ...navigation, url: target, loading: true });
+  });
+  const updateNavigation = useEvent((event: WebViewNavigation) => {
+    setNavigation({ url: event.url, title: event.title, canGoBack: event.canGoBack, canGoForward: event.canGoForward, loading: event.loading });
+    // On Android setSource is a no-op for the WebView's current URL. Synchronize
+    // only settled pages so re-entering a URL after Back is a new load, without
+    // restarting in-flight redirects or recreating the WebView/history.
+    if (!event.loading && /^https?:\/\//iu.test(event.url)) setAddressSource({ initialUrl: url, uri: event.url });
   });
   const [devToolsUrl, setDevToolsUrl] = useState<string | null>(null);
   const [devToolsLoading, setDevToolsLoading] = useState(false);
@@ -71,9 +105,51 @@ export function InternalBrowser({
   const [devToolsFailure, setDevToolsFailure] = useState<DevToolsFailure | null>(null);
   const [devToolsRevision, setDevToolsRevision] = useState(0);
   const [devToolsDockSide, setDevToolsDockSide] = useState<DevToolsDockSide>("bottom");
-  const [traceRunning, setTraceRunning] = useState(false);
-  const [traceStatus, setTraceStatus] = useState<string | null>(null);
+  const [addressEditing, setAddressEditing] = useState(false);
   const [bridge, setBridge] = useState<NativeBrowserDevToolsBridge | null>(null);
+
+  const selectFeedbackElement = useEvent(() => {
+    feedbackArmed.current = !feedbackArmed.current;
+    setFeedbackSelecting(feedbackArmed.current);
+    webView.current?.injectJavaScript(`${BROWSER_FEEDBACK_BOOTSTRAP}\nwindow.__codewideFeedback?.${feedbackArmed.current ? "start" : "clear"}(); true;`);
+  });
+  const closeFeedback = useEvent(() => {
+    webView.current?.injectJavaScript("window.__codewideFeedback?.clear(); true;");
+  });
+  const captureFeedback = useEvent(async (event: WebViewMessageEvent) => {
+    if (!feedbackArmed.current || feedback === undefined) return;
+    let report;
+    try { report = parseBrowserElementReport(JSON.parse(event.nativeEvent.data)); }
+    catch { return; }
+    if (report === null) return;
+    feedbackArmed.current = false;
+    setFeedbackSelecting(false);
+    setFeedbackCapturing(true);
+    let screenshot: string | null = null;
+    let screenshotError: string | null = null;
+    try {
+      let endpoint = bridge;
+      if (endpoint === null) endpoint = await startNativeBrowserDevToolsBridge();
+      if (!mounted.current) {
+        if (bridge === null) stopNativeBrowserDevToolsBridge();
+        return;
+      }
+      bridgeStarted.current = true;
+      setBridge(endpoint);
+      const marker = markInspectablePage(webView.current);
+      marker.apply();
+      const target = await findInspectablePage(endpoint, navigation.url, marker).finally(marker.restore);
+      screenshot = await captureBrowserScreenshot(proxiedWebSocketUrl(endpoint, target));
+    } catch (cause) { screenshotError = cause instanceof Error ? cause.message : "Capture failed"; }
+    if (mounted.current) {
+      const draft: BrowserFeedbackDraft = { report, screenshot, screenshotError };
+      feedbackOverlay.present((controls) => {
+        const content = <BrowserFeedbackDialog draft={draft} capability={feedback} onClose={() => { closeFeedback(); controls.close(); }} />;
+        return feedbackVoiceRuntime === null ? content : <AppVoiceInputProvider runtime={feedbackVoiceRuntime}>{content}</AppVoiceInputProvider>;
+      });
+      setFeedbackCapturing(false);
+    }
+  });
 
   useEffect(() => {
     mounted.current = true;
@@ -107,7 +183,6 @@ export function InternalBrowser({
     setDevToolsLoading(true);
     setDevToolsDocumentLoading(true);
     setDevToolsFailure(null);
-    setTraceStatus(null);
     try {
       const endpoint = await startNativeBrowserDevToolsBridge();
       bridgeStarted.current = true;
@@ -139,10 +214,6 @@ export function InternalBrowser({
   });
 
   const closeDevTools = useEvent(() => {
-    if (traceRunning) {
-      void stopNativeBrowserTracing().catch(() => undefined);
-      setTraceRunning(false);
-    }
     if (bridgeStarted.current) {
       bridgeStarted.current = false;
       stopNativeBrowserDevToolsBridge();
@@ -152,7 +223,6 @@ export function InternalBrowser({
     setDevToolsDocumentLoading(false);
     setDevToolsFailure(null);
     setDevToolsDockSide("bottom");
-    setTraceStatus(null);
   });
 
   useEffect(() => {
@@ -199,23 +269,6 @@ export function InternalBrowser({
     setDevToolsRevision((revision) => revision + 1);
   });
 
-  const toggleTrace = useEvent(async () => {
-    try {
-      if (!traceRunning) {
-        await startNativeBrowserTracing();
-        setTraceRunning(true);
-        setTraceStatus("Recording native WebView trace");
-      } else {
-        const result = await stopNativeBrowserTracing();
-        setTraceRunning(false);
-        setTraceStatus(`Trace captured · ${formatBytes(result.size)}`);
-      }
-    } catch (cause) {
-      setTraceRunning(false);
-      reportError(cause, "Could not capture WebView performance trace");
-    }
-  });
-
   const dividerPanResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: (_event, gesture) => {
@@ -251,45 +304,33 @@ export function InternalBrowser({
     : styles.targetPaneClosed;
   return (
     <View style={styles.root}>
-      <View style={styles.toolbar}>
-        {header !== undefined && (
+      <View style={[styles.toolbar, addressEditing && styles.toolbarEditing]}>
+        {!addressEditing && header !== undefined && (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={header.closeLabel}
             onPress={header.onClose}
             style={({ pressed }) => [styles.button, pressed && styles.pressed]}
           >
-            <Ionicons name={header.closeIcon ?? "close"} size={23} color={colors.text} />
+            <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
           </Pressable>
         )}
-        <BrowserButton label="Back" icon="chevron-back" disabled={!navigation.canGoBack} onPress={() => webView.current?.goBack()} />
-        <BrowserButton label="Forward" icon="chevron-forward" disabled={!navigation.canGoForward} onPress={() => webView.current?.goForward()} />
-        <BrowserButton label="Reload" icon="refresh" onPress={() => webView.current?.reload()} />
-        <View style={styles.location}>
-          {header !== undefined && (
-            <View style={styles.locationTitleRow}>
-              <Text numberOfLines={1} style={styles.locationTitle}>{header.title}</Text>
-              {header.status !== undefined && (
-                <View style={styles.headerStatus}><Text style={styles.headerStatusText}>{header.status}</Text></View>
-              )}
-            </View>
-          )}
-          <Text numberOfLines={1} ellipsizeMode="middle" style={[styles.locationText, header === undefined && styles.locationTextCentered]}>
-            {browserLocation(navigation.url)}
-          </Text>
-        </View>
-        {devToolsOpen && bridge?.tracingSupported === true && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={traceRunning ? "Stop native browser performance trace" : "Start native browser performance trace"}
-            accessibilityState={{ selected: traceRunning }}
-            onPress={() => void toggleTrace()}
-            style={({ pressed }) => [styles.button, traceRunning && styles.traceButton, pressed && styles.pressed]}
-          >
-            <Ionicons name={traceRunning ? "stop-circle" : "pulse"} size={20} color={traceRunning ? colors.red : colors.textMuted} />
-          </Pressable>
-        )}
-        <Pressable
+        {!addressEditing && <BrowserButton label="Back" icon="chevron-back" disabled={!navigation.canGoBack} onPress={() => webView.current?.goBack()} />}
+        {!addressEditing && <BrowserButton label="Forward" icon="chevron-forward" disabled={!navigation.canGoForward} onPress={() => webView.current?.goForward()} />}
+        {!addressEditing && (navigation.loading
+          ? <BrowserButton label="Stop loading" icon="close" onPress={() => webView.current?.stopLoading()} />
+          : <BrowserButton label="Reload" icon="refresh" onPress={() => webView.current?.reload()} />)}
+        <BrowserAddressBar
+          key={url}
+          url={navigation.url}
+          onEditingChange={setAddressEditing}
+          onNavigate={navigateAddress}
+        />
+        {!addressEditing && feedback !== undefined && <Pressable accessibilityRole="button" accessibilityLabel={feedbackSelecting ? "Cancel element selection" : "Select element to fix"}
+          disabled={feedbackCapturing} onPress={selectFeedbackElement} style={styles.button}>
+          {feedbackCapturing ? <ActivityIndicator size="small" color={colors.text} /> : <Ionicons name="locate-outline" size={iconSize.action} color={feedbackSelecting ? colors.success : colors.textMuted} />}
+        </Pressable>}
+        {!addressEditing && <Pressable
           accessibilityRole="button"
           accessibilityLabel={devToolsOpen ? "Close Chromium DevTools" : "Open Chromium DevTools"}
           accessibilityState={{ selected: devToolsOpen, busy: devToolsLoading || devToolsDocumentLoading }}
@@ -299,10 +340,10 @@ export function InternalBrowser({
         >
           {devToolsLoading
             ? <ActivityIndicator size="small" color={colors.text} />
-            : <Ionicons name="code-slash" size={20} color={devToolsOpen ? colors.accent : colors.textMuted} />}
-        </Pressable>
+            : <Ionicons name="code-slash" size={iconSize.action} color={devToolsOpen ? colors.accent : colors.textMuted} />}
+        </Pressable>}
       </View>
-      {traceStatus !== null && <Text numberOfLines={1} style={styles.traceStatus}>{traceStatus}</Text>}
+      {feedbackSelecting && <Text style={styles.browserNotice}>Tap an element to describe what should change</Text>}
       <View
         style={[
           styles.content,
@@ -314,15 +355,16 @@ export function InternalBrowser({
           <WebView
             ref={webView}
             style={styles.webView}
-            source={{ uri: url, ...(headers === undefined ? {} : { headers }) }}
+            source={{ uri: addressSource.uri, ...(headers === undefined || !browserAddressKeepsOrigin(url, addressSource.uri) ? {} : { headers }) }}
             originWhitelist={originWhitelist}
             sharedCookiesEnabled
             thirdPartyCookiesEnabled={false}
             javaScriptEnabled
             domStorageEnabled
+            {...(feedback === undefined ? {} : { injectedJavaScriptBeforeContentLoaded: BROWSER_FEEDBACK_BOOTSTRAP, onMessage: captureFeedback })}
             startInLoadingState
             renderLoading={() => <ActivityIndicator style={styles.loading} color={colors.accent} />}
-            onNavigationStateChange={(event) => setNavigation(event)}
+            onNavigationStateChange={updateNavigation}
             onHttpError={(event) => onHttpError?.(event.nativeEvent.statusCode)}
             onError={(event) => onError?.(event.nativeEvent.description)}
           />
@@ -421,7 +463,7 @@ function BrowserButton({ label, icon, disabled = false, onPress }: {
       onPress={onPress}
       style={({ pressed }) => [styles.button, disabled && styles.disabled, pressed && styles.pressed]}
     >
-      <Ionicons name={icon} size={20} color={colors.textMuted} />
+      <Ionicons name={icon} size={iconSize.action} color={colors.textMuted} />
     </Pressable>
   );
 }
@@ -717,8 +759,6 @@ function samePageUrl(left: string, right: string): boolean {
 function normalizePath(path: string): string { return path.length > 1 ? path.replace(/\/$/u, "") : path; }
 function delay(milliseconds: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, milliseconds)); }
 function clamp(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, value)); }
-function formatBytes(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`; }
-
 function browserLocation(url: string): string {
   try {
     const parsed = new URL(url);
@@ -730,18 +770,11 @@ function browserLocation(url: string): string {
 
 const styles = StyleSheet.create({
   root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
-  toolbar: { minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: 2, paddingHorizontal: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft, backgroundColor: colors.surface },
-  location: { flex: 1, minWidth: 0, justifyContent: "center", paddingHorizontal: spacing.xs },
-  locationTitleRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  locationTitle: { flexShrink: 1, color: colors.text, ...typeScale.labelMedium },
-  locationText: { color: colors.textMuted, ...typeScale.labelMedium },
-  locationTextCentered: { textAlign: "center" },
-  headerStatus: { flexShrink: 0, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 999, backgroundColor: colors.successContainer },
-  headerStatusText: { color: colors.green, fontSize: 9, lineHeight: 12, fontWeight: "700" },
-  button: { width: 38, height: 38, alignItems: "center", justifyContent: "center", borderRadius: 10 },
+  toolbar: { minHeight: touchTarget, zIndex: 2, flexDirection: "row", alignItems: "center", gap: spacing.optical, paddingHorizontal: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderSoft, backgroundColor: colors.surface },
+  toolbarEditing: { paddingHorizontal: spacing.xs },
+  button: { width: controlSize.regular, height: controlSize.regular, alignItems: "center", justifyContent: "center", borderRadius: radii.small },
   activeButton: { backgroundColor: colors.surfaceRaised },
-  traceButton: { backgroundColor: colors.surfaceRaised },
-  traceStatus: { minHeight: 22, paddingHorizontal: spacing.sm, paddingVertical: 3, color: colors.textMuted, backgroundColor: colors.surface, ...typeScale.labelMedium },
+  browserNotice: { minHeight: 22, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, color: colors.textMuted, backgroundColor: colors.surface, ...typeScale.label },
   disabled: { opacity: 0.35 },
   pressed: { opacity: 0.7 },
   content: { flex: 1, minHeight: 0 },
@@ -754,14 +787,14 @@ const styles = StyleSheet.create({
   dividerHorizontal: { width: "100%", height: 10 },
   dividerVertical: { width: 10, height: "100%" },
   dividerHidden: { display: "none" },
-  dividerHandle: { borderRadius: 1, backgroundColor: colors.border },
+  dividerHandle: { borderRadius: radii.compact, backgroundColor: colors.border },
   dividerHandleHorizontal: { width: 48, height: 2 },
-  dividerHandleVertical: { width: 2, height: 48 },
+  dividerHandleVertical: { width: 2, height: controlSize.touch },
   webView: { flex: 1, backgroundColor: colors.background },
   devToolsPane: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "#202124" },
   devTools: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "#202124" },
   devToolsLoading: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: "#202124" },
   devToolsError: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg, backgroundColor: "#202124" },
-  devToolsStatus: { color: colors.textMuted, textAlign: "center", ...typeScale.bodyMedium },
+  devToolsStatus: { color: colors.textMuted, textAlign: "center", ...typeScale.body },
   loading: { position: "absolute", inset: 0 },
 });

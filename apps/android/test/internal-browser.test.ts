@@ -27,7 +27,7 @@ describe("internal browser", () => {
     expect(browser).toContain("else header.onClose()");
     expect(browser).toContain("if (bridgeStarted.current)");
     expect(browser).toContain('testID="chromium-devtools-webview"');
-    expect(browser).toContain("startNativeBrowserTracing()");
+    expect(browser).not.toContain("startNativeBrowserTracing()");
     expect(browser).not.toContain("webviewDebuggingEnabled");
     expect(browser).not.toContain("TunnelPreview");
     expect(browser).not.toContain("localhost");
@@ -48,15 +48,19 @@ describe("internal browser", () => {
     expect(portForwarding).not.toContain("Linking.openURL");
     expect(screen).toContain('testID="forwarded-loopback-browser"');
     expect(screen).toContain("setLoopbackBrowser({");
-    expect(screen).toContain('header={{ title, closeLabel: "Back to conversation", closeIcon: "arrow-back", onClose }}');
+    expect(screen).toContain('header={{ title, closeLabel: "Close browser", onClose }}');
     expect(screen).not.toContain("Linking.openURL(forwardedLoopbackUrl");
   });
 
   it("merges fullscreen identity and browser navigation into one toolbar", () => {
     expect(browser).toContain("header?: InternalBrowserHeader");
     expect(browser).toContain("accessibilityLabel={header.closeLabel}");
+    expect(browser).toContain('<Ionicons name="close"');
     expect(browser).toContain("<BrowserButton label=\"Back\"");
     expect(browser).toContain("<BrowserButton label=\"Reload\"");
+    expect(browser).toContain("<BrowserAddressBar");
+    expect(browser).toContain("onEditingChange={setAddressEditing}");
+    expect(browser).not.toContain("locationTitle");
     const forwardedBrowser = screen.slice(screen.indexOf("function ForwardedLoopbackBrowser"), screen.indexOf("type ConnectionActivity"));
     expect(forwardedBrowser).not.toContain("styles.previewHeader");
   });

@@ -1,4 +1,6 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { TurnUsageProjection } from "@codewide/sync-client";
+import type { ThreadCurrentOutcome } from "./thread-current-outcome";
 
 import type { QueuedPrompt } from "./use-remote-workspace";
 import { measureThreadNavigationWork } from "./thread-navigation-metrics";
@@ -24,6 +26,8 @@ export type { ProjectedThreadChatDelivery, ProjectedThreadChatTimelineEntry } fr
 
 export type ProjectedThreadChatWindow = {
   remoteThread: Thread | null;
+  currentUsage: TurnUsageProjection | null;
+  currentOutcome: ThreadCurrentOutcome | null;
   remoteSealedTurns: Thread["turns"];
   remoteLiveTurns: Thread["turns"];
   timeline: ProjectedThreadChatTimelineEntry[];
@@ -108,6 +112,8 @@ export function projectThreadChatWindow(
   if (liveSnapshot?.connectionId !== connectionId || liveSnapshot.thread.id !== threadId) {
     return {
       remoteThread: null,
+      currentUsage: null,
+      currentOutcome: null,
       remoteSealedTurns: [],
       remoteLiveTurns: [],
       timeline: projectResidentThreadTimeline([], pendingDeliveries, { includesEarliest: true, includesLatest: true }),
@@ -143,6 +149,8 @@ export function projectThreadChatWindow(
   });
   return {
     remoteThread: projectedThread,
+    currentUsage: view.liveRows.find((row) => row.kind === "thread")?.currentUsage?.usage ?? null,
+    currentOutcome: view.liveRows.find((row) => row.kind === "thread")?.currentOutcome ?? null,
     remoteSealedTurns: partitions.sealed,
     remoteLiveTurns: partitions.live,
     timeline,

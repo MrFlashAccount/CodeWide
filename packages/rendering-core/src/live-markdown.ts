@@ -41,10 +41,13 @@ export function projectLiveMarkdownTail(source: string, complete = false): LiveM
 }
 
 function stableTokenPrefix(token: Token, terminated: boolean): number {
+  // A later block closes this interpretation. Literal brackets/backticks and
+  // completed tables must never hold every subsequent block until turn completion.
+  if (terminated) return token.raw.length;
   if (token.type === "code") {
     const code = token as Tokens.Code;
     if (codeLanguage(code) === "mermaid") return hasClosingFence(code.raw) ? code.raw.length : 0;
-    return completedLineBoundary(code.raw);
+    return hasClosingFence(code.raw) ? code.raw.length : completedLineBoundary(code.raw);
   }
   if (token.type === "table") return stableTablePrefix(token.raw);
   if (token.type === "def") return token.raw.length;
@@ -59,11 +62,11 @@ function stableTokenPrefix(token: Token, terminated: boolean): number {
 
 function stableInlinePrefix(token: Token, terminated: boolean): number {
   const children = "tokens" in token && Array.isArray(token.tokens) ? token.tokens : [];
-  if (children.length === 0) return completedWordBoundary(token.raw);
+  if (children.length === 0) return token.raw.length;
 
   const inlineRaw = children.map((child) => child.raw).join("");
   const bodyStart = token.raw.indexOf(inlineRaw);
-  if (bodyStart < 0) return completedWordBoundary(token.raw);
+  if (bodyStart < 0) return token.raw.length;
 
   let consumed = 0;
   for (const child of children) {
@@ -80,7 +83,7 @@ function stableInlinePrefix(token: Token, terminated: boolean): number {
   if (terminated) return token.raw.length;
   const last = children.at(-1)!;
   if (last.type !== "text") return bodyStart + consumed;
-  const stableLast = completedWordBoundary(last.raw);
+  const stableLast = last.raw.length;
   const prefix = consumed - last.raw.length + stableLast;
   return prefix === 0 ? 0 : bodyStart + prefix;
 }
@@ -121,17 +124,6 @@ function completedLineBoundary(raw: string): number {
   if (raw.endsWith("\n")) return raw.length;
   const newline = raw.lastIndexOf("\n");
   return newline < 0 ? 0 : newline + 1;
-}
-
-function completedWordBoundary(raw: string): number {
-  if (/\s$/u.test(raw)) return raw.length;
-  // Sentence punctuation makes the final word a stable semantic unit, so a
-  // batching caller need not wait for a later whitespace delta. Stream
-  // completion remains the authoritative final flush for unfinished words and
-  // Markdown syntax.
-  if (/[.!?…]["')\]}»”’]*$/u.test(raw)) return raw.length;
-  const match = /\s+\S*$/u.exec(raw);
-  return match === null ? 0 : match.index + match[0].search(/\S/u);
 }
 
 function escapeRegExp(value: string): string {

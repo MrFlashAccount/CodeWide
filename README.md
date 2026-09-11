@@ -298,10 +298,12 @@ emulators rather than advertising a 32-bit terminal that cannot load.
 ## Phone-local port forwarding
 
 The Android foreground service can expose a remote-machine loopback service as
-`127.0.0.1:<phone-port>` on the phone. Each saved profile maps one remote
+`127.0.0.1:<phone-port>` on the phone. Each current forward maps one remote
 `127.0.0.1:<remote-port>` to an automatically selected or explicitly preferred
-phone port. Profiles survive JS runtime recreation and reconnect after the
-foreground service is restored; React only renders the native projection.
+phone port. Current forwards survive JS runtime recreation, but are never
+restored from saved profiles. The native service polls current listeners while
+the connection is enabled and reconstructs forwards from discovery after restart.
+Only explicit include/exclude policies persist; React renders the native projection.
 
 The companion lazily inventories listeners when the selected server is active.
 It applies the same conservative recognition policy as Doma for Docker Compose,
@@ -332,9 +334,10 @@ browser-origin upgrades, expires streams with their session, and never accepts
 an arbitrary target host. The older bounded path-based preview endpoint remains
 available for compatibility.
 
-A phone listener is not enough to claim that a forward is usable. Discovery
-marks a saved mapping `Unavailable` when its remote listener has disappeared;
-that row opens the editor rather than a dead URL. Confirmed-live HTTP services
+A successful discovery removes a vanished service and closes its phone listener
+and active streams. An explicit exclusion remains a policy, not a stale row;
+it applies again if the service returns. Failed scans do not masquerade as an
+empty inventory. There is no `Saved ports` group. Confirmed-live HTTP services
 open in CodeWide's built-in browser, including its bundled developer tools.
 
 The phone listener is loopback-only, but another local app that discovers its

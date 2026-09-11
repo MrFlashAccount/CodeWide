@@ -5,12 +5,13 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensio
 
 import type { ThreadChangeDiffValue, VoiceTranscriptionEvent, VoiceTranscriptionOptions, VoiceTranscriptionSession } from "../data/use-remote-workspace";
 import type { ThreadChangeResource, ThreadChangeScope, ThreadResourcesValue } from "../data/workspace-resource-database";
-import type { GetTransferAccess } from "../data/private-transfer";
-import { colors, radii, spacing } from "../theme";
+import { privateAssetCacheKey, type GetTransferAccess, type PrivateAssetSource } from "../data/private-transfer";
+import { colors, radii, spacing, typeScale, typeWeight, iconSize, layoutSize, controlSize } from "../theme";
 import { AppText as Text } from "../ui/Typography";
 import { useAppDialog } from "../ui/AppDialog";
+import { useMicrophoneAccess } from "../ui/use-microphone-access";
 import { ActionMenu } from "../ui/ActionMenu";
-import { reviewVoiceInputScope, useVoiceInputResource, type AppVoiceInputRuntime } from "../ui/VoiceInputRuntime";
+import { useVoiceInputResource, type AppVoiceInputRuntime } from "../ui/VoiceInputRuntime";
 import { changedFileDisplayPath } from "./changed-file-path";
 import { changeScopeTitle, codeReviewMenuActions } from "./change-menu";
 import { CodeReviewEditor } from "./CodeReviewEditor";
@@ -23,7 +24,7 @@ import {
   type CodeReviewViewMode,
 } from "./code-review-bridge";
 import type { CodeReviewFileResource } from "./code-review-files";
-import { type CodeReviewComment, type CodeReviewLineReference } from "./code-review";
+import { codeReviewCommentKey, codeReviewVoiceInputScope, type CodeReviewComment, type CodeReviewLineReference } from "./code-review";
 import { loadDocumentPreview } from "./DocumentPreviewHost";
 
 type VoiceStarter = (listener: (event: VoiceTranscriptionEvent) => void, options?: VoiceTranscriptionOptions) => Promise<VoiceTranscriptionSession>;
@@ -32,6 +33,7 @@ export function CodeReviewWorkspace({
   changes: initialChanges,
   changeScope: initialChangeScope = "session",
   changeScopes: initialChangeScopes = ["session", "lastTurn"],
+  scopeLabel,
   initialMode = "unified",
   initialWrapLines = false,
   initialPath,
@@ -42,6 +44,7 @@ export function CodeReviewWorkspace({
   voiceRuntime,
   getTransferAccess,
   sourceOverrides,
+  sourceAssets,
   onLoadDiff,
   onInitialLoad,
   onLoadScope,
@@ -53,6 +56,7 @@ export function CodeReviewWorkspace({
   changes: readonly CodeReviewFileResource[];
   changeScope?: ThreadChangeScope;
   changeScopes?: readonly ThreadChangeScope[];
+  scopeLabel?: string;
   initialMode?: CodeReviewViewMode;
   initialWrapLines?: boolean;
   initialPath?: string;
@@ -63,6 +67,8 @@ export function CodeReviewWorkspace({
   voiceRuntime: AppVoiceInputRuntime | null;
   getTransferAccess: GetTransferAccess;
   sourceOverrides?: Readonly<Record<string, string>>;
+  /** Retain scoped/content identity; an attachment name is not a host filesystem path. */
+  sourceAssets?: Readonly<Record<string, PrivateAssetSource>>;
   onLoadDiff?(path: string, scope?: ThreadChangeScope): Promise<ThreadChangeDiffValue>;
   onInitialLoad?(): Promise<ThreadResourcesValue>;
   onLoadScope?(scope: ThreadChangeScope): Promise<ThreadResourcesValue>;
@@ -73,13 +79,12 @@ export function CodeReviewWorkspace({
 }) {
   const dialog = useAppDialog();
   const window = useWindowDimensions();
-  const voiceScope = voiceRuntime === null ? null : reviewVoiceInputScope(voiceRuntime);
-  const voiceResource = useVoiceInputResource(voiceRuntime, voiceScope);
   const voiceController = voiceRuntime?.controller ?? null;
+  const microphoneAccess = useMicrophoneAccess();
   const onStartVoiceTranscription: VoiceStarter | undefined = voiceRuntime?.startRemote;
   const selectionRef = useRef({ start: 0, end: 0 });
-  const commentDraftRef = useRef("");
   const resourceOwnerId = useId();
+  const recordingScopeRef = useRef<string | null>(null);
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [requestedScope, setRequestedScope] = useState(initialChangeScope);
   const [scopeRevision, setScopeRevision] = useState(0);
@@ -92,7 +97,12 @@ export function CodeReviewWorkspace({
   const [mode, setMode] = useState<CodeReviewViewMode>(initialLine === undefined ? initialMode : "source");
   const [wrapLines, setWrapLines] = useState(initialWrapLines);
   const [selectedReference, setSelectedReference] = useState<CodeReviewLineReference | null>(null);
-  const [commentDraft, setCommentDraft] = useState("");
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const commentKey = selectedReference === null ? null : codeReviewCommentKey(selectedReference);
+  const commentDraft = commentKey === null ? "" : commentDrafts[commentKey] ?? "";
+  const voiceScope = voiceRuntime === null || selectedReference === null ? null
+    : codeReviewVoiceInputScope(voiceRuntime.scopePrefix, resourceOwnerId, selectedReference);
+  const voiceResource = useVoiceInputResource(voiceRuntime, voiceScope);
   const [comments, setComments] = useState<CodeReviewComment[]>([]);
   const [attaching, setAttaching] = useState(false);
   const shouldLoadInitialScope = requestedScope === initialChangeScope && onInitialLoad !== undefined;
@@ -128,15 +138,16 @@ export function CodeReviewWorkspace({
   const sidebarOpen = sidebarPreference ?? !compact;
   const selectedChange = changes.find((change) => change.path === selectedPath) ?? changes[0] ?? null;
   const effectiveSelectedPath = selectedChange?.path ?? null;
+  const sourceAsset = selectedChange === null ? undefined : sourceAssets?.[selectedChange.path];
   const documentRevision = selectedChange === null
     ? "none"
     : `${changeScope}:${selectedChange.turnId}:${selectedChange.itemId}:${selectedChange.additions}:${selectedChange.deletions}:${selectedChange.availability}:${selectedChange.sourceOnly === true ? "source" : "diff"}:${sourceOverrides?.[selectedChange.path] ?? "remote"}`;
   const documentResource = useEphemeralAsyncResource<CodeReviewResourceValue>(
     selectedChange === null ? null : `code-review:${resourceOwnerId}:${thread?.id ?? "none"}:${selectedChange.path}`,
-    documentRevision,
+    `${documentRevision}:${sourceAsset === undefined ? "host-path" : privateAssetCacheKey(sourceAsset)}`,
     async (publish, signal) => {
       if (selectedChange === null) throw new Error("No changed file selected");
-      return await loadCodeReviewResource(selectedChange, changeScope, getTransferAccess, onLoadDiff, signal, sourceOverrides, publish);
+      return await loadCodeReviewResource(selectedChange, changeScope, getTransferAccess, onLoadDiff, signal, sourceOverrides, publish, sourceAsset);
     },
     estimateCodeReviewResourceWeight,
   );
@@ -178,30 +189,35 @@ export function CodeReviewWorkspace({
   const selectLine = (reference: CodeReviewLineReference) => {
     const sameLine = selectedReference !== null && sameLineReference(selectedReference, reference);
     if (!sameLine) {
-      commentDraftRef.current = "";
-      setCommentDraft("");
       selectionRef.current = { start: 0, end: 0 };
     }
     setSelectedReference(reference);
   };
   const updateCommentDraft = (value: string) => {
-    commentDraftRef.current = value;
-    setCommentDraft(value);
+    // A pending transcript belongs to this line even after another line opens.
+    if (commentKey !== null) setCommentDrafts((current) => ({ ...current, [commentKey]: value }));
   };
-  const addComment = (reference: CodeReviewLineReference, draft: string) => {
+  const commitComment = (reference: CodeReviewLineReference, draft: string) => {
     const body = draft.trim();
     if (body === "") return;
+    const committedCommentKey = codeReviewCommentKey(reference);
     setComments((current) => [...current, { ...reference, id: `review-${Date.now().toString(36)}-${current.length}`, body, createdAt: Date.now() }]);
-    commentDraftRef.current = "";
-    setCommentDraft("");
-    setSelectedReference(null);
-    selectionRef.current = { start: 0, end: 0 };
+    setCommentDrafts((current) => ({ ...current, [committedCommentKey]: "" }));
+    setSelectedReference((current) => current !== null && sameLineReference(current, reference) ? null : current);
   };
-  const bindVoice = () => {
+  const addComment = (reference: CodeReviewLineReference, draft: string) => {
+    const scope = voiceRuntime === null ? null
+      : codeReviewVoiceInputScope(voiceRuntime.scopePrefix, resourceOwnerId, reference);
+    const phase = scope === null ? "idle" : voiceRuntime?.resources?.voiceInputs.get(scope)?.phase ?? "idle";
+    if (scope !== null && phase !== "idle") {
+      void voiceController?.finish(scope, true, (text) => commitComment(reference, text));
+    } else commitComment(reference, draft);
+  };
+  const bindVoice = (draft: string) => {
     if (voiceController === null || voiceScope === null) return;
     voiceController.bind({
       scope: voiceScope,
-      source: () => commentDraftRef.current,
+      source: () => draft,
       selection: () => selectionRef.current,
       thread,
       updateDraft: updateCommentDraft,
@@ -211,24 +227,28 @@ export function CodeReviewWorkspace({
   };
   const pressVoice = async (draft: string, selection: { start: number; end: number }) => {
     if (voiceController === null || voiceScope === null) return;
+    if ((voiceResource?.phase === undefined || voiceResource.phase === "idle") && !voiceResource?.retryAvailable && !microphoneAccess.allowCapture()) return;
     updateCommentDraft(draft);
     selectionRef.current = selection;
-    bindVoice();
-    if (voiceResource?.retryAvailable === true) await voiceController.retry();
-    else if (voiceResource?.phase === undefined || voiceResource.phase === "idle") await voiceController.toggle();
-    else if (voiceResource.phase !== "finishing") await voiceController.finish(false);
+    bindVoice(draft);
+    if (voiceResource?.retryAvailable === true) await voiceController.retry(voiceScope);
+    else if (voiceResource?.phase === undefined || voiceResource.phase === "idle") {
+      const starting = voiceController.toggle(voiceScope);
+      if (voiceRuntime?.resources?.voiceInputs.get(voiceScope)?.phase === "starting") recordingScopeRef.current = voiceScope;
+      await starting;
+    } else if (voiceResource.phase !== "finishing") await voiceController.finish(voiceScope, false);
   };
   const close = () => {
-    if (voiceResource?.phase !== "idle") void voiceController?.finish(false);
+    if (recordingScopeRef.current !== null) void voiceController?.finish(recordingScopeRef.current, false);
     if (voiceScope !== null) voiceController?.unbind(voiceScope);
     onClose();
   };
   useEffect(() => () => {
-    if (voiceScope === null) return;
-    const current = voiceRuntime?.resources?.voiceInputs.get(voiceScope) ?? null;
-    if (current?.phase !== undefined && current.phase !== "idle") void voiceController?.finish(false);
-    voiceController?.unbind(voiceScope);
-  }, [voiceController, voiceRuntime?.resources, voiceScope]);
+    const scope = recordingScopeRef.current;
+    if (scope === null) return;
+    void voiceController?.finish(scope, false);
+    voiceController?.unbind(scope);
+  }, [voiceController]);
   const attach = async () => {
     if (comments.length === 0 || attaching) return;
     setAttaching(true);
@@ -279,22 +299,22 @@ export function CodeReviewWorkspace({
       onLayout={({ nativeEvent }) => setWorkspaceWidth(Math.floor(nativeEvent.layout.width))}
     >
       <View style={styles.header}>
-        <Pressable accessibilityLabel="Close code review" onPress={close} style={styles.iconButton}><Ionicons name="close" size={22} color={colors.text} /></Pressable>
-        <Pressable accessibilityLabel="Toggle files" onPress={() => setSidebarPreference(!sidebarOpen)} style={styles.iconButton}><Ionicons name="folder-open-outline" size={21} color={colors.text} /></Pressable>
+        <Pressable accessibilityLabel="Close code review" onPress={close} style={styles.iconButton}><Ionicons name="close" size={iconSize.navigation} color={colors.text} /></Pressable>
+        <Pressable accessibilityLabel="Toggle files" onPress={() => setSidebarPreference(!sidebarOpen)} style={styles.iconButton}><Ionicons name="folder-open-outline" size={iconSize.action} color={colors.text} /></Pressable>
         <View style={styles.headerTitle}>
           <Text numberOfLines={1} ellipsizeMode="middle" style={styles.title}>{effectiveSelectedPath === null ? "Code review" : changedFileDisplayPath(effectiveSelectedPath, cwd, 72)}</Text>
           <View style={styles.subtitleRow}>
-            <Text numberOfLines={1} style={styles.subtitle}>{changeScopeTitle(changeScope)} · {changes.length} files · {comments.length} comments</Text>
+            <Text numberOfLines={1} style={styles.subtitle}>{scopeLabel ?? changeScopeTitle(changeScope)} · {changes.length} files · {comments.length} comments</Text>
             {documentStatus !== null && <Text accessibilityLabel={`File status: ${documentStatus}`} numberOfLines={1} style={styles.documentStatus}>· {documentStatus}</Text>}
           </View>
         </View>
         <ActionMenu accessibilityLabel="Changes options" actions={menuActions} placement="bottom" align="end" onSelect={selectMenuAction}>
           <Pressable accessibilityLabel="Changes options" disabled={scopeLoading} style={styles.iconButton}>
-            {scopeLoading ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name="ellipsis-vertical" size={21} color={colors.text} />}
+            {scopeLoading ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name="ellipsis-vertical" size={iconSize.action} color={colors.text} />}
           </Pressable>
         </ActionMenu>
         <Pressable accessibilityLabel="Attach review" disabled={attachDisabled} onPress={() => void attach()} style={[styles.attachButton, !attachDisabled && styles.attachButtonReady, compact && styles.attachButtonCompact, attachDisabled && styles.disabled]}>
-          {attaching ? <ActivityIndicator size="small" color={colors.text} /> : <Ionicons name="attach" size={18} color={attachDisabled ? colors.textDim : colors.text} />}
+          {attaching ? <ActivityIndicator size="small" color={colors.text} /> : <Ionicons name="attach" size={iconSize.action} color={attachDisabled ? colors.textDim : colors.text} />}
           {!compact && <Text style={styles.attachButtonText}>Attach {comments.length || ""}</Text>}
         </Pressable>
       </View>
@@ -317,6 +337,7 @@ export function CodeReviewWorkspace({
             revealReference={selectedReference === null ? revealReference : null}
             commentDraft={commentDraft}
             voicePhase={voiceResource?.phase ?? "idle"}
+            voicePermissionGranted={microphoneAccess.granted}
             voiceRetryAvailable={voiceResource?.retryAvailable ?? false}
             voiceError={voiceResource?.error ?? null}
             onLinePress={selectLine}
@@ -336,7 +357,7 @@ export function CodeReviewWorkspace({
                   <Text numberOfLines={1} style={styles.commentChipLocation}>{shortPath(comment.path)}:{comment.line}</Text>
                   <Text numberOfLines={1} style={styles.commentChipBody}>{comment.body}</Text>
                   <Pressable accessibilityLabel="Delete comment" hitSlop={8} onPress={() => setComments((current) => current.filter((candidate) => candidate.id !== comment.id))}>
-                    <Ionicons name="close-circle" size={17} color={colors.textDim} />
+                    <Ionicons name="close-circle" size={iconSize.inline} color={colors.textDim} />
                   </Pressable>
                 </View>
               ))}
@@ -362,13 +383,14 @@ async function loadCodeReviewResource(
   signal: AbortSignal,
   sourceOverrides: Readonly<Record<string, string>> | undefined,
   publish: (value: CodeReviewResourceValue) => void,
+  sourceAsset: PrivateAssetSource | undefined,
 ): Promise<CodeReviewResourceValue> {
   const name = change.path.split("/").at(-1) ?? change.path;
   const sourceOverride = sourceOverrides?.[change.path];
   const sourcePromise = sourceOverride !== undefined
     ? Promise.resolve(sourceOverride)
     : change.availability === "available" || change.availability === "unknown"
-    ? loadDocumentPreview({ kind: "text", name, path: change.path, getTransferAccess }, signal)
+    ? loadDocumentPreview({ kind: "text", name, path: change.path, getTransferAccess, ...(sourceAsset === undefined ? {} : { source: sourceAsset }) }, signal)
         .then((loaded) => loaded.source)
         .catch((cause: unknown) => {
           if (signal.aborted) throw cause;
@@ -450,36 +472,36 @@ function sameLineReference(left: CodeReviewLineReference, right: CodeReviewLineR
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0, backgroundColor: "#0B0C0E" },
-  header: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.xs, backgroundColor: "#111214" },
-  iconButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center", borderRadius: 14, backgroundColor: colors.surfaceContainer },
+  root: { flex: 1, minHeight: 0, backgroundColor: colors.background },
+  header: { minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", gap: spacing.compact, paddingHorizontal: spacing.xs, backgroundColor: colors.surface },
+  iconButton: { width: controlSize.regular, height: controlSize.regular, alignItems: "center", justifyContent: "center", borderRadius: radii.medium, backgroundColor: colors.surfaceContainer },
   headerTitle: { flex: 1, minWidth: 80 },
-  title: { color: colors.text, fontSize: 15, fontWeight: "700", letterSpacing: -0.15 },
-  subtitleRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: 3 },
-  subtitle: { flexShrink: 1, color: colors.textMuted, fontSize: 12 },
-  documentStatus: { flexShrink: 1, color: colors.textDim, fontSize: 11 },
-  reviewToolbar: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.sm, paddingBottom: 4, backgroundColor: "#111214" },
-  modeSwitch: { flexDirection: "row", backgroundColor: "#090A0C", borderRadius: radii.pill, padding: 3 },
-  modeButton: { minWidth: 68, minHeight: 31, paddingVertical: 5, alignItems: "center", justifyContent: "center", borderRadius: radii.pill },
+  title: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
+  subtitleRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  subtitle: { flexShrink: 1, color: colors.textMuted, ...typeScale.label },
+  documentStatus: { flexShrink: 1, color: colors.textDim, ...typeScale.label },
+  reviewToolbar: { minHeight: controlSize.touch, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.sm, paddingBottom: spacing.xxs, backgroundColor: "#111214" },
+  modeSwitch: { flexDirection: "row", backgroundColor: "#090A0C", borderRadius: radii.pill, padding: spacing.xxs },
+  modeButton: { minWidth: controlSize.compact, minHeight: controlSize.compact, paddingVertical: spacing.xxs, paddingHorizontal: spacing.sm, alignItems: "center", justifyContent: "center", borderRadius: radii.pill },
   modeButtonSelected: { backgroundColor: "#26292E" },
-  modeButtonText: { color: colors.textMuted, fontSize: 12 },
-  modeButtonTextSelected: { color: colors.text, fontWeight: "700" },
-  wrapButton: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: radii.pill, backgroundColor: "#17191C" },
+  modeButtonText: { color: colors.textMuted, ...typeScale.label },
+  modeButtonTextSelected: { color: colors.text, fontWeight: typeWeight.semibold },
+  wrapButton: { minHeight: controlSize.compact, flexDirection: "row", alignItems: "center", gap: spacing.xxs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, borderRadius: radii.pill, backgroundColor: "#17191C" },
   wrapButtonSelected: { backgroundColor: "#242A33" },
-  wrapButtonText: { color: colors.textMuted, fontSize: 12 },
-  wrapButtonTextSelected: { color: colors.text, fontWeight: "600" },
-  attachButton: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surfaceContainer },
+  wrapButtonText: { color: colors.textMuted, ...typeScale.label },
+  wrapButtonTextSelected: { color: colors.text, fontWeight: typeWeight.semibold },
+  attachButton: { minHeight: controlSize.regular, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radii.medium, backgroundColor: colors.surfaceContainer },
   attachButtonReady: { backgroundColor: colors.surfaceContainerHigh },
-  attachButtonCompact: { width: 38, paddingHorizontal: 0, justifyContent: "center" },
-  attachButtonText: { color: colors.text, fontSize: 13, fontWeight: "700" },
+  attachButtonCompact: { minHeight: controlSize.regular, width: controlSize.regular, paddingHorizontal: 0, justifyContent: "center" },
+  attachButtonText: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
   workspace: { flex: 1, minHeight: 0, flexDirection: "row", position: "relative" },
   editorPane: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "#0B0C0E" },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   muted: { color: colors.textMuted },
   commentStrip: { flexGrow: 0, maxHeight: 48, backgroundColor: "#111214" },
-  commentStripContent: { alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 5 },
-  commentChip: { maxWidth: 300, minHeight: 38, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 5, backgroundColor: colors.surfaceContainerHighest, borderRadius: radii.pill },
-  commentChipLocation: { color: colors.accent, fontSize: 11, fontWeight: "700" },
-  commentChipBody: { flexShrink: 1, color: colors.text, fontSize: 12 },
+  commentStripContent: { alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs },
+  commentChip: { maxWidth: "100%", minHeight: controlSize.compact, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, backgroundColor: colors.surfaceContainerHighest, borderRadius: radii.pill },
+  commentChipLocation: { color: colors.accent, ...typeScale.label, fontWeight: typeWeight.semibold },
+  commentChipBody: { flexShrink: 1, color: colors.text, ...typeScale.label },
   disabled: { opacity: 0.38 },
 });

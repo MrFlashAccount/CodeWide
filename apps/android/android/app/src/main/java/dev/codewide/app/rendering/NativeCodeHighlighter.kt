@@ -31,7 +31,7 @@ internal object NativeCodeHighlighter {
 
   private val cache = object : LruCache<String, NativeCodeHighlight>(CACHE_BYTES) {
     override fun sizeOf(key: String, value: NativeCodeHighlight): Int =
-      value.code.length * 2 + (value.gutter?.length ?: 0) * 2 + 192
+      estimatedSpannedBytes(value.code) + (value.gutter?.let(::estimatedSpannedBytes) ?: 0) + 192
   }
 
   private val grammarLock = Any()
@@ -50,6 +50,15 @@ internal object NativeCodeHighlighter {
     }
     return highlighted
   }
+
+  fun trimMemory() {
+    synchronized(cache) {
+      cache.evictAll()
+    }
+  }
+
+  private fun estimatedSpannedBytes(value: SpannedString): Int =
+    value.length * 2 + value.getSpans(0, value.length, Any::class.java).size * 96
 
   private fun buildHighlighted(context: Context, source: String, language: String, variant: String): NativeCodeHighlight {
     if (variant == "terminal") return NativeAnsiRenderer.render(source)

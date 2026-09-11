@@ -6,7 +6,7 @@ import {
   View,
 } from "react-native";
 
-import { colors, radii, spacing, touchTarget } from "../../theme";
+import { colors, radii, spacing, touchTarget, iconSize, typeScale, layoutSize } from "../../theme";
 import { PresentationIcon } from "../icons/PresentationIcon";
 import { ProductText } from "../text/ProductText";
 import type { ServerRailRow } from "./ServerRailView";
@@ -36,7 +36,7 @@ export function ServerPickerView(props: ServerPickerViewProps): React.JSX.Elemen
         onPress={onAdd}
         style={addButtonStyle}
       >
-        <PresentationIcon color={colors.text} name="add" size={22} />
+        <PresentationIcon color={colors.text} name="add" size={iconSize.navigation} />
         <ProductText weight="semibold">Add server</ProductText>
       </Pressable>
     </ScrollView>
@@ -100,10 +100,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: touchTarget,
   },
-  chevron: { fontSize: 28, lineHeight: 30 },
-  copy: { flex: 1, gap: 2, minWidth: 0 },
-  emoji: { fontSize: 22, lineHeight: 28 },
-  label: { fontSize: 16, lineHeight: 22 },
+  chevron: { ...typeScale.heading },
+  copy: { flex: 1, gap: spacing.optical, minWidth: 0 },
+  emoji: { ...typeScale.emoji },
+  label: { ...typeScale.title },
   list: { gap: spacing.xs, padding: spacing.md },
   pressed: { opacity: 0.68 },
   row: {
@@ -112,7 +112,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.selected,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 68,
-    padding: 10,
+    minHeight: layoutSize.row,
+    padding: spacing.inputInset,
   },
 });

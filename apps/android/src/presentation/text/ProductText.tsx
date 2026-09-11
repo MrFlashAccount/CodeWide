@@ -1,3 +1,4 @@
+import { colors, typeWeight, typeScale } from "../../theme";
 import type { ComponentProps } from "react";
 import { StyleSheet, Text as NativeText, type StyleProp, type TextStyle } from "react-native";
 
@@ -67,20 +68,20 @@ function presentationFontStyle(style: StyleProp<TextStyle>): TextStyle | null {
 }
 
 const tones = StyleSheet.create<Record<ProductTextTone, TextStyle>>({
-  danger: { color: "#F05D65" },
-  default: { color: "#F2F2F2" },
-  dim: { color: "#858585" },
-  muted: { color: "#B8B8B8" },
-  success: { color: "#35C778" },
-  warning: { color: "#E9872C" },
+  danger: { color: colors.red },
+  default: { color: colors.text },
+  dim: { color: colors.textDim },
+  muted: { color: colors.textMuted },
+  success: { color: colors.green },
+  warning: { color: colors.amber },
 });
 
 const weights = StyleSheet.create<Record<ProductTextWeight, TextStyle>>({
-  medium: { fontWeight: "600" },
-  regular: { fontWeight: "400" },
-  semibold: { fontWeight: "700" },
+  medium: { fontWeight: typeWeight.medium },
+  regular: { fontWeight: typeWeight.regular },
+  semibold: { fontWeight: typeWeight.semibold },
 });
 
 const styles = StyleSheet.create({
-  base: { fontSize: 14, lineHeight: 20 },
+  base: { ...typeScale.body },
 });

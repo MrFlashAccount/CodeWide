@@ -1,7 +1,7 @@
 import { useId } from "react";
 import { Image, StyleSheet, View } from "react-native";
 
-import { colors, radii } from "../theme";
+import { colors, radii, spacing, typeScale } from "../theme";
 import { AppText as Text } from "../ui/Typography";
 import { useAsyncResource } from "./async-resource-store";
 import { themedAsciiDiagramSvg } from "./ascii-diagram";
@@ -78,7 +78,7 @@ export function AsciiDiagram({ source }: { source: string }) {
 const styles = StyleSheet.create({
   image: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", maxHeight: 440, borderRadius: radii.medium, backgroundColor: colors.surfaceRaised },
   loading: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", minHeight: 96, alignItems: "center", justifyContent: "center", borderRadius: radii.medium, backgroundColor: colors.surfaceRaised },
-  fallback: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", borderRadius: radii.medium, backgroundColor: colors.surfaceRaised, padding: 8 },
-  secondary: { color: colors.textMuted, fontSize: 11 },
-  error: { color: colors.textMuted, fontFamily: "monospace", fontSize: 10, lineHeight: 15 },
+  fallback: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", borderRadius: radii.medium, backgroundColor: colors.surfaceRaised, padding: spacing.xs },
+  secondary: { color: colors.textMuted, ...typeScale.label },
+  error: { color: colors.textMuted, ...typeScale.code, fontFamily: "monospace",  },
 });

@@ -1,6 +1,6 @@
-import { useId, useLayoutEffect, useRef } from "react";
+import { useId, useLayoutEffect } from "react";
 
-import { useEvent } from "../react/useEvent";
+import { useConversationRef, useConversationState } from "./use-conversation-scope";
 
 export type ConversationOwnerToken = { scope: string; ownerId: string; generation: number };
 
@@ -40,18 +40,19 @@ export type ConversationOwner = {
  */
 export function useConversationOwner(scope: string): ConversationOwner {
   const ownerId = useId();
-  const tokenRef = useRef<ConversationOwnerToken | null>(null);
+  const tokenRef = useConversationRef<ConversationOwnerToken | null>(scope, () => null);
   useLayoutEffect(() => {
     const token = ownerRegistry.acquire(scope, ownerId);
     tokenRef.current = token;
     return () => {
       ownerRegistry.release(token);
     };
-  }, [ownerId, scope]);
-  const isCurrent = useEvent(() => tokenRef.current !== null && ownerRegistry.isCurrent(tokenRef.current));
-  const hasReplacement = useEvent(() => tokenRef.current !== null && ownerRegistry.hasReplacement(tokenRef.current));
-  return {
-    isCurrent,
-    hasReplacement,
-  };
+  }, [ownerId, scope, tokenRef]);
+  // These capabilities retain this activation's token. Reading the latest
+  // token through useEvent would let an old request mutate a different chat.
+  const [owner] = useConversationState(scope, () => ({
+    isCurrent: () => tokenRef.current !== null && ownerRegistry.isCurrent(tokenRef.current),
+    hasReplacement: () => tokenRef.current !== null && ownerRegistry.hasReplacement(tokenRef.current),
+  }));
+  return owner;
 }

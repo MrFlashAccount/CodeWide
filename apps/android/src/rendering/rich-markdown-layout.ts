@@ -8,6 +8,7 @@ export type RichMarkdownLayout = "intrinsic" | "fill";
  * that need a concrete viewport opt into the available bubble width instead.
  */
 export function richMarkdownLayout(source: string): RichMarkdownLayout {
+  if (/\$\$|\\\[/u.test(source)) return "fill";
   return parseRichMarkdown(source).root.children.some(blockNeedsAvailableWidth)
     ? "fill"
     : "intrinsic";
@@ -26,9 +27,9 @@ function blockNeedsAvailableWidth(node: RootContent): boolean {
     case "code":
     case "table":
     case "thematicBreak":
+    case "html":
       return true;
     case "definition":
-    case "html":
     case "yaml":
       return false;
     default:
@@ -44,6 +45,7 @@ function inlineNeedsAvailableWidth(node: PhrasingContent): boolean {
   switch (node.type) {
     case "image":
     case "imageReference":
+    case "html":
       return true;
     case "delete":
     case "emphasis":

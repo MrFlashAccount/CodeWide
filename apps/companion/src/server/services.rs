@@ -588,7 +588,7 @@ pub(crate) fn resolve_terminal_spawn_query(
             .ok_or(terminal::TerminalError::ThreadNotFound)?;
         let rollout = catalog.resolve(thread_id).map_err(|error| match error {
             CatalogError::NotFound(_) => terminal::TerminalError::ThreadNotFound,
-            CatalogError::Poisoned => terminal::TerminalError::thread_resolution_failed(error),
+            CatalogError::Poisoned | CatalogError::Authority(_) => terminal::TerminalError::thread_resolution_failed(error),
         })?;
         let metadata = read_rollout_metadata(&rollout)
             .map_err(terminal::TerminalError::thread_resolution_failed)?

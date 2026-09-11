@@ -2,7 +2,16 @@ import { useState } from "react";
 import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, radii, spacing, touchTarget, typeScale } from "../../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  iconSize,
+  controlSize,
+  layoutSize,
+} from "../../theme";
 import { PresentationIcon, type PresentationIconName } from "../icons/PresentationIcon";
 import { PresentationSheetView } from "../surfaces/PresentationSheetView";
 import { ProductText } from "../text/ProductText";
@@ -88,7 +97,7 @@ export function ServerSelectorView(props: ServerSelectorViewProps): React.JSX.El
             </ProductText>
           )}
         </View>
-        <PresentationIcon color={colors.textMuted} name="chevronDown" size={17} />
+        <PresentationIcon color={colors.textMuted} name="chevronDown" size={iconSize.inline} />
       </Pressable>
       <PresentationSheetView
         contentProps={{ enableDynamicSizing: true, index: 0 }}
@@ -111,7 +120,7 @@ export function ServerSelectorView(props: ServerSelectorViewProps): React.JSX.El
           <PresentationIcon
             color={activeId === undefined ? colors.accent : colors.textDim}
             name={activeId === undefined ? "checkCircle" : "radio"}
-            size={20}
+            size={iconSize.action}
           />
         </Pressable>
         {rows.map((row) => (
@@ -153,7 +162,7 @@ function ServerSelectorRow(props: ServerSelectorRowProps): React.JSX.Element {
       <PresentationIcon
         color={selected ? colors.accent : colors.textDim}
         name={selected ? "checkCircle" : "radio"}
-        size={20}
+        size={iconSize.action}
       />
     </Pressable>
   );
@@ -164,7 +173,7 @@ function SelectorAction(props: SelectorActionProps): React.JSX.Element {
   return (
     <Pressable accessibilityLabel={label} onPress={onPress} style={actionStyle}>
       <View style={styles.actionIcon}>
-        <PresentationIcon color={colors.textMuted} name={icon} size={21} />
+        <PresentationIcon color={colors.textMuted} name={icon} size={iconSize.action} />
       </View>
       <View style={styles.actionCopy}>
         <ProductText numberOfLines={1} style={styles.actionTitle}>
@@ -174,7 +183,7 @@ function SelectorAction(props: SelectorActionProps): React.JSX.Element {
           {detail}
         </ProductText>
       </View>
-      <PresentationIcon color={colors.textDim} name="forward" size={18} />
+      <PresentationIcon color={colors.textDim} name="forward" size={iconSize.action} />
     </Pressable>
   );
 }
@@ -206,32 +215,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 64,
+    minHeight: controlSize.touch,
   },
   actionCopy: { flex: 1, minWidth: 0 },
-  actionDetail: { fontSize: 12, lineHeight: 16, marginTop: 2 },
+  actionDetail: { ...typeScale.label, marginTop: spacing.optical },
   actionIcon: {
     alignItems: "center",
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.medium,
-    height: 40,
+    height: controlSize.regular,
     justifyContent: "center",
-    width: 40,
+    width: controlSize.regular,
   },
-  actionTitle: typeScale.titleMedium,
-  emoji: { fontSize: 22, lineHeight: 28 },
+  actionTitle: typeScale.title,
+  emoji: { ...typeScale.emoji },
   option: {
     alignItems: "center",
     borderRadius: radii.selected,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 56,
+    minHeight: layoutSize.header,
     paddingHorizontal: spacing.sm,
   },
   optionCopy: { flex: 1, minWidth: 0 },
-  optionDetail: { fontSize: 12, lineHeight: 16, marginTop: 2 },
+  optionDetail: { ...typeScale.label, marginTop: spacing.optical },
   optionSelected: { backgroundColor: colors.primaryContainer },
-  optionTitle: { flex: 1, ...typeScale.titleMedium },
+  optionTitle: { flex: 1, ...typeScale.title },
   pressed: { opacity: 0.68 },
   selector: {
     alignItems: "center",
@@ -244,8 +253,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.medium,
   },
   selectorCopy: { flex: 1, minWidth: 0 },
-  selectorDetail: { fontSize: 12, lineHeight: 16 },
-  selectorHeading: { fontSize: 22, lineHeight: 28 },
-  selectorLabel: { flexShrink: 1, fontSize: 12, lineHeight: 16 },
-  sheetTitle: { flexShrink: 1, minWidth: 0, ...typeScale.titleLarge },
+  selectorDetail: { ...typeScale.label },
+  selectorHeading: { ...typeScale.heading },
+  selectorLabel: { flexShrink: 1, ...typeScale.label },
+  sheetTitle: { flexShrink: 1, minWidth: 0, ...typeScale.heading },
 });

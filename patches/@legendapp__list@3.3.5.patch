@@ -1,0 +1,194 @@
+diff --git a/react-native.js b/react-native.js
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..5b2aa762d96bd38391f67625039c06ab032b8daf 100644
+--- a/react-native.js
++++ b/react-native.js
+@@ -1550,7 +1550,7 @@ function doScrollTo(ctx, params) {
+ }
+ 
+ // src/core/doMaintainScrollAtEnd.ts
+-function doMaintainScrollAtEnd(ctx) {
++function doMaintainScrollAtEnd(ctx, options) {
+   const state = ctx.state;
+   const {
+     didContainersLayout,
+@@ -1560,6 +1560,8 @@ function doMaintainScrollAtEnd(ctx) {
+   } = state;
+   const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
+   const shouldMaintainScrollAtEnd = !!(isWithinMaintainScrollAtEndThreshold && maintainScrollAtEnd && didContainersLayout);
++  const animated = options?.animated ?? maintainScrollAtEnd?.animated;
++  const immediate = options?.immediate === true;
+   if (pendingNativeMVCPAdjust) {
+     state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
+     return false;
+@@ -1571,11 +1573,11 @@ function doMaintainScrollAtEnd(ctx) {
+       state.scroll = 0;
+     }
+     if (!state.maintainingScrollAtEnd) {
+-      const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
+-      const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
++      const pendingState = animated ? "pending-animated" : "pending-instant";
++      const activeState = animated ? "animated" : "instant";
+       const scrollAtRequest = state.scroll;
+       state.maintainingScrollAtEnd = pendingState;
+-      requestAnimationFrame(() => {
++      const maintain = () => {
+         const isStillWithinThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
+         const didScrollSinceRequest = state.scroll !== scrollAtRequest;
+         if (isStillWithinThreshold || !didScrollSinceRequest) {
+@@ -1586,13 +1588,13 @@ function doMaintainScrollAtEnd(ctx) {
+             const logicalEndOffset = getLogicalHorizontalMaxOffset(state, currentContentSize);
+             const nativeOffset = toNativeHorizontalOffset(state, logicalEndOffset, currentContentSize);
+             scroller == null ? void 0 : scroller.scrollTo({
+-              animated: maintainScrollAtEnd.animated,
++              animated,
+               x: nativeOffset,
+               y: 0
+             });
+           } else {
+             scroller == null ? void 0 : scroller.scrollToEnd({
+-              animated: maintainScrollAtEnd.animated
++              animated
+             });
+           }
+           setTimeout(
+@@ -1600,17 +1602,22 @@ function doMaintainScrollAtEnd(ctx) {
+               if (state.maintainingScrollAtEnd === activeState) {
+                 state.maintainingScrollAtEnd = void 0;
+                 if (state.pendingMaintainScrollAtEnd) {
+-                  doMaintainScrollAtEnd(ctx);
++                  doMaintainScrollAtEnd(ctx, options);
+                 }
+               }
+             },
+-            maintainScrollAtEnd.animated ? 500 : 0
++            animated ? 500 : 0
+           );
+         } else if (state.maintainingScrollAtEnd === pendingState) {
+           state.maintainingScrollAtEnd = void 0;
+           state.pendingMaintainScrollAtEnd = false;
+         }
+-      });
++      };
++      if (immediate) {
++        maintain();
++      } else {
++        requestAnimationFrame(maintain);
++      }
+     } else {
+       state.pendingMaintainScrollAtEnd = true;
+     }
+@@ -4772,7 +4779,7 @@ function flushItemSizeUpdates(ctx, result) {
+     maybeUpdateAnchoredEndSpace(ctx);
+   }
+   if (result.didChange && result.shouldMaintainScrollAtEnd) {
+-    doMaintainScrollAtEnd(ctx);
++    doMaintainScrollAtEnd(ctx, { animated: false, immediate: true });
+   }
+ }
+ function updateItemSizes(ctx, measurement) {
+@@ -4850,7 +4857,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+     if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
+       needsRecalculate = true;
+     }
+-    if (prevSizeKnown === void 0 || Math.abs(prevSizeKnown - size) > 5) {
++    if (prevSizeKnown === void 0 || !isNativeLayoutNoise(prevSizeKnown - size)) {
+       shouldMaintainScrollAtEnd = true;
+     }
+     onItemSizeChanged == null ? void 0 : onItemSizeChanged({
+diff --git a/react-native.mjs b/react-native.mjs
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..eb1d7ae21ebac62b220fb223a87722d184dc4a41 100644
+--- a/react-native.mjs
++++ b/react-native.mjs
+@@ -1529,7 +1529,7 @@ function doScrollTo(ctx, params) {
+ }
+ 
+ // src/core/doMaintainScrollAtEnd.ts
+-function doMaintainScrollAtEnd(ctx) {
++function doMaintainScrollAtEnd(ctx, options) {
+   const state = ctx.state;
+   const {
+     didContainersLayout,
+@@ -1539,6 +1539,8 @@ function doMaintainScrollAtEnd(ctx) {
+   } = state;
+   const isWithinMaintainScrollAtEndThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
+   const shouldMaintainScrollAtEnd = !!(isWithinMaintainScrollAtEndThreshold && maintainScrollAtEnd && didContainersLayout);
++  const animated = options?.animated ?? maintainScrollAtEnd?.animated;
++  const immediate = options?.immediate === true;
+   if (pendingNativeMVCPAdjust) {
+     state.pendingMaintainScrollAtEnd = shouldMaintainScrollAtEnd;
+     return false;
+@@ -1550,11 +1552,11 @@ function doMaintainScrollAtEnd(ctx) {
+       state.scroll = 0;
+     }
+     if (!state.maintainingScrollAtEnd) {
+-      const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
+-      const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
++      const pendingState = animated ? "pending-animated" : "pending-instant";
++      const activeState = animated ? "animated" : "instant";
+       const scrollAtRequest = state.scroll;
+       state.maintainingScrollAtEnd = pendingState;
+-      requestAnimationFrame(() => {
++      const maintain = () => {
+         const isStillWithinThreshold = peek$(ctx, "isWithinMaintainScrollAtEndThreshold");
+         const didScrollSinceRequest = state.scroll !== scrollAtRequest;
+         if (isStillWithinThreshold || !didScrollSinceRequest) {
+@@ -1565,13 +1567,13 @@ function doMaintainScrollAtEnd(ctx) {
+             const logicalEndOffset = getLogicalHorizontalMaxOffset(state, currentContentSize);
+             const nativeOffset = toNativeHorizontalOffset(state, logicalEndOffset, currentContentSize);
+             scroller == null ? void 0 : scroller.scrollTo({
+-              animated: maintainScrollAtEnd.animated,
++              animated,
+               x: nativeOffset,
+               y: 0
+             });
+           } else {
+             scroller == null ? void 0 : scroller.scrollToEnd({
+-              animated: maintainScrollAtEnd.animated
++              animated
+             });
+           }
+           setTimeout(
+@@ -1579,17 +1581,22 @@ function doMaintainScrollAtEnd(ctx) {
+               if (state.maintainingScrollAtEnd === activeState) {
+                 state.maintainingScrollAtEnd = void 0;
+                 if (state.pendingMaintainScrollAtEnd) {
+-                  doMaintainScrollAtEnd(ctx);
++                  doMaintainScrollAtEnd(ctx, options);
+                 }
+               }
+             },
+-            maintainScrollAtEnd.animated ? 500 : 0
++            animated ? 500 : 0
+           );
+         } else if (state.maintainingScrollAtEnd === pendingState) {
+           state.maintainingScrollAtEnd = void 0;
+           state.pendingMaintainScrollAtEnd = false;
+         }
+-      });
++      };
++      if (immediate) {
++        maintain();
++      } else {
++        requestAnimationFrame(maintain);
++      }
+     } else {
+       state.pendingMaintainScrollAtEnd = true;
+     }
+@@ -4751,7 +4758,7 @@ function flushItemSizeUpdates(ctx, result) {
+     maybeUpdateAnchoredEndSpace(ctx);
+   }
+   if (result.didChange && result.shouldMaintainScrollAtEnd) {
+-    doMaintainScrollAtEnd(ctx);
++    doMaintainScrollAtEnd(ctx, { animated: false, immediate: true });
+   }
+ }
+ function updateItemSizes(ctx, measurement) {
+@@ -4829,7 +4836,7 @@ function applyItemSize(ctx, itemKey, sizeObj, resolvedMeasurementItem) {
+     if (!needsRecalculate && state.containerItemKeys.has(itemKey)) {
+       needsRecalculate = true;
+     }
+-    if (prevSizeKnown === void 0 || Math.abs(prevSizeKnown - size) > 5) {
++    if (prevSizeKnown === void 0 || !isNativeLayoutNoise(prevSizeKnown - size)) {
+       shouldMaintainScrollAtEnd = true;
+     }
+     onItemSizeChanged == null ? void 0 : onItemSizeChanged({

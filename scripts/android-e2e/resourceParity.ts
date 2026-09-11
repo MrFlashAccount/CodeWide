@@ -317,7 +317,6 @@ export async function captureDiscoveredPortParity(input: ResourceParityInput): P
   await clickAccessibility(driver, "Composer menu", timeoutMs);
   await clickVisibleText(driver, "Port forward", timeoutMs);
   await clickTextStartingWith(driver, "Available", timeoutMs);
-  await clickAccessibility(driver, "Refresh open ports", timeoutMs);
   const forward = await driver.$(
     `android=new UiSelector().descriptionMatches("^Forward .+ port ${String(fixture.localhost.port)}$")`,
   );
@@ -366,7 +365,7 @@ async function captureAttachmentStates(input: ResourceParityInput): Promise<void
       if (generation === "v2") {
         await waitForVisibleText(driver, "Refreshing Attachments…", timeoutMs);
       } else {
-        await assertAccessibilityDisabled(driver, "Refresh session resources", timeoutMs);
+        await assertAccessibilityHidden(driver, "Refresh session resources", timeoutMs);
         await waitForAnyProgress(driver, timeoutMs);
       }
     });
@@ -377,12 +376,12 @@ async function captureAttachmentStates(input: ResourceParityInput): Promise<void
 
   const refreshFault = await armSurfaceFault(fixture, "resourceRefresh", { kind: "hold" });
   try {
-    await clickAccessibility(driver, "Refresh session resources", timeoutMs);
+    await restartConnectionService(input);
     await waitForSurfaceFault(fixture, refreshFault.faultId, "intercepted", timeoutMs);
     await capture("ATT-04", `${layout}-attachments-refreshing`, async () => {
       await waitForSurfaceFault(fixture, refreshFault.faultId, "intercepted", timeoutMs);
       await waitForAccessibility(driver, `Open attachment ${fixture.image.name}`, timeoutMs);
-      await assertAccessibilityDisabled(driver, "Refresh session resources", timeoutMs);
+      await assertAccessibilityHidden(driver, "Refresh session resources", timeoutMs);
       if (generation === "v2")
         await waitForVisibleText(driver, "Refreshing Attachments…", timeoutMs);
       else await waitForAnyProgress(driver, timeoutMs);
@@ -721,7 +720,7 @@ export async function capturePortLoadingAndErrorParity(input: ResourceParityInpu
       await capture("PORT-01", `${layout}-ports-loading`, async () => {
         await waitForVisibleText(driver, "Looking for open ports…", timeoutMs);
         await waitForVisibleText(driver, "Reading localhost listeners", timeoutMs);
-        await assertAccessibilityDisabled(driver, "Refresh open ports", timeoutMs);
+        await assertAccessibilityHidden(driver, "Refresh open ports", timeoutMs);
       });
     } finally {
       await releaseSurfaceFault(fixture, loading.faultId);
@@ -744,22 +743,20 @@ export async function capturePortLoadingAndErrorParity(input: ResourceParityInpu
     await capture("PORT-08", `${layout}-ports-error`, async () => {
       await waitForVisibleText(driver, errorMarker, timeoutMs);
       await waitForVisibleText(driver, "Could not scan ports", timeoutMs);
-      await assertAccessibilityEnabled(driver, "Refresh open ports", timeoutMs);
+      await assertAccessibilityHidden(driver, "Refresh open ports", timeoutMs);
     });
-    await clickAccessibility(driver, "Refresh open ports", timeoutMs);
   } else {
     await stopConnectionService(input);
     await openPortsAvailable(driver, timeoutMs);
     await capture("PORT-08", `${layout}-ports-error`, async () => {
       await waitForVisibleText(driver, "Could not scan ports", timeoutMs);
-      await assertAccessibilityEnabled(driver, "Refresh open ports", timeoutMs);
+      await assertAccessibilityHidden(driver, "Refresh open ports", timeoutMs);
     });
     await startConnectionService(input);
-    await clickAccessibility(driver, "Refresh open ports", timeoutMs);
     await capture("PORT-01", `${layout}-ports-loading`, async () => {
       await waitForVisibleText(driver, "Looking for open ports…", timeoutMs);
       await waitForVisibleText(driver, "Reading localhost listeners", timeoutMs);
-      await assertAccessibilityDisabled(driver, "Refresh open ports", timeoutMs);
+      await assertAccessibilityHidden(driver, "Refresh open ports", timeoutMs);
     });
   }
   await waitForAccessibilityContaining(driver, `port ${String(fixture.localhost.port)}`, timeoutMs);
@@ -949,7 +946,6 @@ async function createAndVerifyV1NativeForwarding(
   const available = await driver.$('android=new UiSelector().textStartsWith("Available ")');
   await available.waitForDisplayed({ interval: 200, timeout: timeoutMs });
   await available.click();
-  await clickAccessibility(driver, "Refresh open ports", timeoutMs);
   const forward = await driver.$(
     `android=new UiSelector().descriptionMatches("^Forward .+ port ${String(fixture.localhost.port)}$")`,
   );

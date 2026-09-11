@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
-import { colors, spacing } from "../theme";
+import { colors, spacing, typeScale, typeWeight, radii, controlSize } from "../theme";
 import { AppText as Text } from "../ui/Typography";
 import type {
   CodeReviewClientEvent,
@@ -14,6 +14,7 @@ import type {
 } from "./code-review-bridge";
 import { CODE_REVIEW_BRIDGE_VERSION } from "./code-review-bridge";
 import type { CodeReviewComment, CodeReviewLineReference } from "./code-review";
+import { matchesCodeReviewInput } from "./code-review";
 
 const EDITOR_URI = "file:///android_asset/code-review-editor.html";
 
@@ -26,6 +27,7 @@ type CodeReviewHostMessage = WithoutBridgeEnvelope<CodeReviewHostCommand>;
 
 export function CodeReviewEditor({
   document,
+  loading,
   loadError,
   files,
   workspaceRevision,
@@ -39,6 +41,7 @@ export function CodeReviewEditor({
   revealReference,
   commentDraft,
   voicePhase,
+  voicePermissionGranted,
   voiceRetryAvailable,
   voiceError,
   onLinePress,
@@ -63,6 +66,7 @@ export function CodeReviewEditor({
   revealReference: CodeReviewLineReference | null;
   commentDraft: string;
   voicePhase: VoicePhase;
+  voicePermissionGranted: boolean;
   voiceRetryAvailable: boolean;
   voiceError: string | null;
   onLinePress(reference: CodeReviewLineReference): void;
@@ -116,11 +120,12 @@ export function CodeReviewEditor({
       reference: selectedReference,
       draft: commentDraft,
       voicePhase,
+      voicePermissionGranted,
       voiceRetryAvailable,
       voiceError,
     };
     send({ command: "composer", payload });
-  }, [ready, selectedReference, commentDraft, voicePhase, voiceRetryAvailable, voiceError]);
+  }, [ready, selectedReference, commentDraft, voicePhase, voicePermissionGranted, voiceRetryAvailable, voiceError]);
 
   useEffect(() => {
     if (!ready || revealReference === null) return;
@@ -145,11 +150,13 @@ export function CodeReviewEditor({
     } else if (message.type === "lineTap") {
       onLinePress(message.reference);
     } else if (message.type === "draftChanged") {
+      if (!matchesCodeReviewInput(selectedReference, message.reference)) return;
       onCommentDraftChange(message.draft);
       onCommentSelectionChange({ start: message.selectionStart, end: message.selectionEnd });
     } else if (message.type === "commentSubmit") {
       onCommentSubmit(message.reference, message.draft);
     } else if (message.type === "voiceAction") {
+      if (!matchesCodeReviewInput(selectedReference, message.reference)) return;
       onVoicePress(message.draft, { start: message.selectionStart, end: message.selectionEnd });
     } else if (message.type === "error") {
       setError({ revision: document?.revision ?? null, message: message.message });
@@ -184,6 +191,12 @@ export function CodeReviewEditor({
         }}
         onShouldStartLoadWithRequest={({ url }) => url.startsWith("file:///android_asset/")}
       />
+      {visibleError === null && selectedPath !== null && (!ready || loading && document === null && !sidebarOpen) && (
+        <View pointerEvents="none" accessibilityLiveRegion="polite" style={styles.loading}>
+          <ActivityIndicator color={colors.accent} />
+          <Text style={styles.loadingText}>Loading file…</Text>
+        </View>
+      )}
       {visibleError !== null && (
         <View style={styles.error}>
           <Text selectable style={styles.errorTitle}>Code preview failed</Text>
@@ -211,9 +224,11 @@ function parseClientEvent(value: string): CodeReviewClientEvent | null {
 const styles = StyleSheet.create({
   root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
   webView: { flex: 1, backgroundColor: colors.background },
-  error: { position: "absolute", inset: spacing.md, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg, borderRadius: 18, backgroundColor: colors.surfaceContainer },
-  errorTitle: { color: colors.text, fontSize: 16, fontWeight: "700" },
+  loading: { position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.background },
+  loadingText: { color: colors.textMuted, ...typeScale.body },
+  error: { position: "absolute", inset: spacing.md, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg, borderRadius: radii.selected, backgroundColor: colors.surfaceContainer },
+  errorTitle: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
   errorMessage: { maxWidth: 520, color: colors.textMuted, textAlign: "center" },
-  retryButton: { minWidth: 96, minHeight: 40, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: 20, backgroundColor: colors.accent },
-  retryText: { color: colors.onPrimary, fontWeight: "700" },
+  retryButton: { minWidth: controlSize.regular, minHeight: controlSize.regular, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.medium, backgroundColor: colors.accent },
+  retryText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
 });

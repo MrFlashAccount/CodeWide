@@ -1,3 +1,4 @@
+import { LegendList, type LegendListRenderItemProps } from "@legendapp/list/react-native";
 import { Pressable, type PressableStateCallbackType, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
@@ -10,6 +11,8 @@ import {
 } from "../surfaces/PresentationSheetView";
 import { ProductText } from "../text/ProductText";
 import { ShimmerText } from "../text/ShimmerText";
+
+const SKILL_ROW_HEIGHT = 72;
 
 interface SkillsSheetViewProps {
   actionable: boolean;
@@ -32,9 +35,16 @@ export function SkillsSheetView(props: SkillsSheetViewProps): React.JSX.Element 
   const handleOpenChange = useEvent((isOpen: boolean) => {
     if (!isOpen) onClose();
   });
+  const rows = skills.map((skill) => ({ actionable, onSelect, skill }));
   return (
     <PresentationSheetView
-      contentProps={{ enableDynamicSizing: true, index: 0 }}
+      contentProps={{
+        dismissLabel: "Close skills",
+        performanceSurface: "skills",
+        enableDynamicSizing: false,
+        snapPoints: ["60%", "90%"],
+        index: 0,
+      }}
       isOpen
       onOpenChange={handleOpenChange}
     >
@@ -47,14 +57,6 @@ export function SkillsSheetView(props: SkillsSheetViewProps): React.JSX.Element 
             {workspaceLabel}
           </ProductText>
         </View>
-        <Pressable
-          accessibilityLabel="Close skills"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={closeButtonStyle}
-        >
-          <PresentationIcon color={colors.text} name="close" size={22} />
-        </Pressable>
       </View>
       {loading ? (
         <View style={styles.notice}>
@@ -71,13 +73,30 @@ export function SkillsSheetView(props: SkillsSheetViewProps): React.JSX.Element 
           No skills returned for this workspace.
         </ProductText>
       ) : null}
-      <PresentationSheetScrollView contentContainerStyle={styles.content}>
-        {skills.map((skill) => (
-          <SkillRow actionable={actionable} key={skill.path} onSelect={onSelect} skill={skill} />
-        ))}
-      </PresentationSheetScrollView>
+      <LegendList
+        data={rows}
+        keyExtractor={skillKey}
+        getFixedItemSize={skillRowHeight}
+        recycleItems
+        style={styles.list}
+        contentContainerStyle={styles.content}
+        renderScrollComponent={PresentationSheetScrollView}
+        renderItem={renderSkill}
+      />
     </PresentationSheetView>
   );
+}
+
+function renderSkill(value: LegendListRenderItemProps<SkillRowProps>): React.JSX.Element {
+  return <SkillRow {...value.item} />;
+}
+
+function skillKey(row: SkillRowProps): string {
+  return row.skill.path;
+}
+
+function skillRowHeight(): number {
+  return SKILL_ROW_HEIGHT;
 }
 
 function SkillRow(props: SkillRowProps): React.JSX.Element {
@@ -96,20 +115,16 @@ function SkillRow(props: SkillRowProps): React.JSX.Element {
         <PresentationIcon color={colors.text} name="sparkles" size={20} />
       </View>
       <View style={styles.skillCopy}>
-        <ProductText numberOfLines={2} weight="semibold">
+        <ProductText numberOfLines={1} weight="semibold">
           {skill.name}
         </ProductText>
-        <ProductText numberOfLines={3} style={styles.description} tone="muted">
+        <ProductText numberOfLines={1} style={styles.description} tone="muted">
           {skill.description}
         </ProductText>
       </View>
       <PresentationIcon color={colors.textDim} name="chevronForward" size={18} />
     </Pressable>
   );
-}
-
-function closeButtonStyle(state: PressableStateCallbackType) {
-  return [styles.close, state.pressed && styles.pressed];
 }
 
 function skillRowStyle(state: PressableStateCallbackType) {
@@ -121,14 +136,8 @@ function disabledSkillRowStyle(state: PressableStateCallbackType) {
 }
 
 const styles = StyleSheet.create({
-  close: {
-    alignItems: "center",
-    borderRadius: radii.large,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
-  content: { gap: spacing.xxs, paddingBottom: spacing.lg },
+  content: { paddingBottom: spacing.lg },
+  list: { flex: 1, minHeight: 0 },
   description: { ...typeScale.label, marginTop: spacing.optical },
   disabled: { opacity: 0.45 },
   header: { alignItems: "center", flexDirection: "row", minHeight: 64 },
@@ -148,7 +157,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.selected,
     flexDirection: "row",
     gap: spacing.sm,
-    minHeight: 64,
+    height: SKILL_ROW_HEIGHT,
     paddingHorizontal: spacing.xs,
     paddingVertical: spacing.xs,
   },

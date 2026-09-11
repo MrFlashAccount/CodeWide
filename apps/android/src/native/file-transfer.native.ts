@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { Directory, File, FileMode, Paths } from "expo-file-system";
 import { Linking, NativeModules } from "react-native";
+import { recordTiming } from "../data/operational-metrics";
 
 import {
   fetchPrivateAsset,
@@ -9,15 +10,43 @@ import {
   type PrivateAssetSource,
 } from "../data/private-transfer";
 
-export type TransferProgress = { transferred: number; total: number; phase: "hashing" | "transferring" | "verifying" };
+export type TransferProgress = {
+  transferred: number;
+  total: number;
+  phase: "hashing" | "transferring" | "verifying";
+};
 export type SelectedUpload = { name: string; size: number; mimeType: string; native: File };
 export type SelectedDirectory = { name: string; native: Directory };
-export type RunningTransfer = { promise: Promise<{ bytes: number; sha256: string; uri?: string; mimeType?: string }>; cancel(): void };
+export function selectedUploadUri(upload: SelectedUpload): string | null {
+  return upload.native.uri;
+}
+
+/** A local card never reads the whole file to display its excerpt. */
+export async function selectedUploadText(upload: SelectedUpload): Promise<string | null> {
+  if (
+    !upload.mimeType.startsWith("text/") &&
+    !/\.(?:md|txt|json|csv|tsx?|jsx?|rs|py|sh|ya?ml|toml|log)$/iu.test(upload.name)
+  )
+    return null;
+  const handle = upload.native.open();
+  try {
+    return new TextDecoder().decode(handle.readBytes(Math.min(upload.size, 2048))).slice(0, 512);
+  } finally {
+    handle.close();
+  }
+}
+export type RunningTransfer = {
+  promise: Promise<{ bytes: number; sha256: string; uri?: string; mimeType?: string }>;
+  cancel(): void;
+};
 
 type FileTransferBridge = {
   openDocument?(uri: string, mimeType: string | null): Promise<void>;
   hashContentDocument?(uri: string): Promise<{ bytes: number; sha256: string }>;
-  copyContentDocument?(sourceUri: string, targetUri: string): Promise<{ bytes: number; sha256: string }>;
+  copyContentDocument?(
+    sourceUri: string,
+    targetUri: string,
+  ): Promise<{ bytes: number; sha256: string }>;
 };
 
 const fileTransferBridge = NativeModules.CodeWideNative as FileTransferBridge | undefined;
@@ -34,7 +63,12 @@ export async function openDownloadedFile(uri: string, mimeType?: string): Promis
 export async function pickUploadFile(): Promise<SelectedUpload | null> {
   const picked = await File.pickFileAsync({ mimeTypes: "*/*" });
   if (picked.canceled) return null;
-  return { name: picked.result.name, size: picked.result.size, mimeType: picked.result.type || "application/octet-stream", native: picked.result };
+  return {
+    name: picked.result.name,
+    size: picked.result.size,
+    mimeType: picked.result.type || "application/octet-stream",
+    native: picked.result,
+  };
 }
 
 export function createTextUpload(name: string, mimeType: string, source: string): SelectedUpload {
@@ -45,7 +79,11 @@ export function createTextUpload(name: string, mimeType: string, source: string)
   return { name: safeName, size: file.size, mimeType, native: file };
 }
 
-export function createBinaryUpload(name: string, mimeType: string, source: Uint8Array): SelectedUpload {
+export function createBinaryUpload(
+  name: string,
+  mimeType: string,
+  source: Uint8Array,
+): SelectedUpload {
   const safeName = safeUploadName(name, "attachment.bin");
   const file = new File(Paths.cache, `codewide-${Date.now().toString(36)}-${safeName}`);
   file.create({ overwrite: true, intermediates: true });
@@ -72,8 +110,18 @@ export function startUpload(
 ): RunningTransfer {
   let cancelled = false;
   let activeRequest: AbortController | null = null;
+  const uploadStartedAt = performance.now();
+  let transferStartedAt: number | null = null;
   const promise = (async () => {
-    const hash = await hashFile(file.native, (transferred) => onProgress({ transferred, total: file.size, phase: "hashing" }), () => cancelled);
+    // Publish the local attachment before hashing can occupy the JS thread.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const hash = await hashFile(
+      file.native,
+      (transferred) => onProgress({ transferred, total: file.size, phase: "hashing" }),
+      () => cancelled,
+    );
+    transferStartedAt = performance.now();
+    recordTiming("attachment_hash_ms", transferStartedAt - uploadStartedAt);
     if (cancelled) throw new Error("Transfer cancelled");
     const uploadId = `sha256-${hash}`;
     const commonHeaders = {
@@ -109,8 +157,15 @@ export function startUpload(
           } catch (cause) {
             if (cancelled) throw new Error("Transfer cancelled");
             if (attempt === 3) throw cause;
-            await delay(150 * (2 ** attempt));
-            status = await uploadStatus(getAccess, rootId, remotePath, commonHeaders, file.size, hash);
+            await delay(150 * 2 ** attempt);
+            status = await uploadStatus(
+              getAccess,
+              rootId,
+              remotePath,
+              commonHeaders,
+              file.size,
+              hash,
+            );
             if (status.complete) return { bytes: file.size, sha256: hash };
             if (status.offset !== start) {
               offset = status.offset;
@@ -124,19 +179,27 @@ export function startUpload(
         if (offset !== start) continue;
         if (response === null) throw new Error("Upload request did not complete");
         const acknowledged = Number(response.headers.get("x-upload-offset") ?? end + 1);
-        if (response.status === 409 && Number.isSafeInteger(acknowledged) && acknowledged >= 0 && acknowledged <= file.size && acknowledged !== start) {
+        if (
+          response.status === 409 &&
+          Number.isSafeInteger(acknowledged) &&
+          acknowledged >= 0 &&
+          acknowledged <= file.size &&
+          acknowledged !== start
+        ) {
           offset = acknowledged;
           handle.offset = offset;
           continue;
         }
         if (response.status === 308) {
-          if (acknowledged !== end + 1) throw new Error("Host acknowledged an invalid upload offset");
+          if (acknowledged !== end + 1)
+            throw new Error("Host acknowledged an invalid upload offset");
           offset = acknowledged;
           onProgress({ transferred: offset, total: file.size, phase: "transferring" });
           continue;
         }
         const bodyText = await response.text();
-        if (!response.ok) throw new Error(`Upload failed (${response.status}): ${bodyText.slice(0, 200)}`);
+        if (!response.ok)
+          throw new Error(`Upload failed (${response.status}): ${bodyText.slice(0, 200)}`);
         finalBody = JSON.parse(bodyText) as { bytes: number; sha256: string };
         offset = file.size;
         onProgress({ transferred: offset, total: file.size, phase: "transferring" });
@@ -150,9 +213,15 @@ export function startUpload(
       finalBody = { bytes: file.size, sha256: hash };
     }
     const body = finalBody;
-    if (body.sha256 !== hash || body.bytes !== file.size) throw new Error("Upload integrity response did not match the local file");
+    if (body.sha256 !== hash || body.bytes !== file.size)
+      throw new Error("Upload integrity response did not match the local file");
     return { bytes: body.bytes, sha256: body.sha256 };
-  })();
+  })().finally(() => {
+    const finishedAt = performance.now();
+    recordTiming("attachment_upload_ms", finishedAt - uploadStartedAt);
+    if (transferStartedAt !== null)
+      recordTiming("attachment_transfer_ms", finishedAt - transferStartedAt);
+  });
   return {
     promise,
     cancel() {
@@ -170,14 +239,19 @@ async function uploadStatus(
   total: number,
   sha256Hex: string,
 ): Promise<{ offset: number; complete: boolean }> {
-  const response = await fetchScopedUpload(rootId, remotePath, getAccess, { method: "HEAD", headers });
+  const response = await fetchScopedUpload(rootId, remotePath, getAccess, {
+    method: "HEAD",
+    headers,
+  });
   const offset = Number(response.headers.get("x-upload-offset") ?? "0");
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > total) throw new Error("Host returned an invalid upload offset");
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > total)
+    throw new Error("Host returned an invalid upload offset");
   const complete = response.headers.get("x-upload-complete") === "true";
   if (complete && (offset !== total || response.headers.get("x-content-sha256") !== sha256Hex)) {
     throw new Error("Host returned invalid completed-upload metadata");
   }
-  if (!complete && response.status !== 204 && response.status !== 404) throw new Error(`Upload resume check failed (${response.status})`);
+  if (!complete && response.status !== 204 && response.status !== 404)
+    throw new Error(`Upload resume check failed (${response.status})`);
   return { offset, complete };
 }
 
@@ -207,8 +281,15 @@ export function startPreviewDownload(
   absolutePath: string,
   onProgress: (progress: TransferProgress) => void,
 ): RunningTransfer {
-  if (!absolutePath.startsWith("/") || absolutePath.includes("\0")) throw new Error("Preview download path must be absolute");
-  return startDownloadFromUrl(getAccess, directory, { kind: "path", path: absolutePath }, absolutePath, onProgress);
+  if (!absolutePath.startsWith("/") || absolutePath.includes("\0"))
+    throw new Error("Preview download path must be absolute");
+  return startDownloadFromUrl(
+    getAccess,
+    directory,
+    { kind: "path", path: absolutePath },
+    absolutePath,
+    onProgress,
+  );
 }
 
 function startDownloadFromUrl(
@@ -226,54 +307,67 @@ function startDownloadFromUrl(
     if (!head.ok) throw new Error(`Download metadata failed (${head.status})`);
     const expectedHash = head.headers.get("x-content-sha256");
     const expectedBytes = Number(head.headers.get("content-length"));
-    if (expectedHash === null || !/^[a-f0-9]{64}$/.test(expectedHash) || !Number.isSafeInteger(expectedBytes)) throw new Error("Server did not provide valid integrity metadata");
+    if (
+      expectedHash === null ||
+      !/^[a-f0-9]{64}$/.test(expectedHash) ||
+      !Number.isSafeInteger(expectedBytes)
+    )
+      throw new Error("Server did not provide valid integrity metadata");
     const filename = safeFilename(remotePath);
     const partialName = `.codex-part-${expectedHash.slice(0, 16)}-${filename}`;
-    const listedPartial = directory.native.list().find((entry): entry is File => entry instanceof File && entry.name === partialName);
-    destination = listedPartial ?? directory.native.createFile(partialName, head.headers.get("content-type"));
+    const listedPartial = directory.native
+      .list()
+      .find((entry): entry is File => entry instanceof File && entry.name === partialName);
+    destination =
+      listedPartial ?? directory.native.createFile(partialName, head.headers.get("content-type"));
     if (destination.size > expectedBytes) {
       destination.delete();
       destination = directory.native.createFile(partialName, head.headers.get("content-type"));
     }
     let offset = destination.size;
-    const handle = destination.open(FileMode.Append);
-    try {
-      while (offset < expectedBytes) {
-        if (cancelled) throw new Error("Transfer cancelled");
-        const end = Math.min(expectedBytes - 1, offset + 4 * 1024 * 1024 - 1);
-        let response: Response | null = null;
-        for (let attempt = 0; attempt < 4 && response === null; attempt += 1) {
-          activeRequest = new AbortController();
-          try {
-            response = await fetchPrivateAsset(source, getAccess, {
-              headers: { range: `bytes=${offset}-${end}` },
-              signal: activeRequest.signal,
-            });
-          } catch (cause) {
-            if (cancelled) throw new Error("Transfer cancelled");
-            if (attempt === 3) throw cause;
-            await delay(150 * (2 ** attempt));
-          } finally {
-            activeRequest = null;
-          }
+    while (offset < expectedBytes) {
+      if (cancelled) throw new Error("Transfer cancelled");
+      const end = Math.min(expectedBytes - 1, offset + 4 * 1024 * 1024 - 1);
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 4 && response === null; attempt += 1) {
+        activeRequest = new AbortController();
+        try {
+          response = await fetchPrivateAsset(source, getAccess, {
+            headers: { range: `bytes=${offset}-${end}` },
+            signal: activeRequest.signal,
+          });
+        } catch (cause) {
+          if (cancelled) throw new Error("Transfer cancelled");
+          if (attempt === 3) throw cause;
+          await delay(150 * 2 ** attempt);
+        } finally {
+          activeRequest = null;
         }
-        if (response === null) throw new Error("Download request did not complete");
-        if (response.status !== 206) throw new Error(`Download range failed (${response.status})`);
-        if (response.headers.get("x-content-sha256") !== expectedHash) throw new Error("Remote file changed during download");
-        const expectedRange = `bytes ${offset}-${end}/${expectedBytes}`;
-        if (response.headers.get("content-range") !== expectedRange) throw new Error("Host returned an invalid download range");
-        const chunk = new Uint8Array(await response.arrayBuffer());
-        if (chunk.length !== end - offset + 1) throw new Error("Host returned an incomplete download range");
-        handle.writeBytes(chunk);
-        offset += chunk.length;
-        onProgress({ transferred: offset, total: expectedBytes, phase: "transferring" });
       }
-    } finally {
-      handle.close();
+      if (response === null) throw new Error("Download request did not complete");
+      if (response.status !== 206) throw new Error(`Download range failed (${response.status})`);
+      if (response.headers.get("x-content-sha256") !== expectedHash)
+        throw new Error("Remote file changed during download");
+      const expectedRange = `bytes ${offset}-${end}/${expectedBytes}`;
+      if (response.headers.get("content-range") !== expectedRange)
+        throw new Error("Host returned an invalid download range");
+      const chunk = new Uint8Array(await response.arrayBuffer());
+      if (chunk.length !== end - offset + 1)
+        throw new Error("Host returned an incomplete download range");
+      if (cancelled) throw new Error("Transfer cancelled");
+      // SAF writes use ContentResolver.openOutputStream("wa") and close within
+      // this call. Do not retain an Expo FileChannel across network awaits.
+      destination.write(chunk, { append: true });
+      offset += chunk.length;
+      onProgress({ transferred: offset, total: expectedBytes, phase: "transferring" });
     }
     if (cancelled) throw new Error("Transfer cancelled");
     onProgress({ transferred: 0, total: expectedBytes, phase: "verifying" });
-    const actualHash = await hashFile(destination, (transferred) => onProgress({ transferred, total: expectedBytes, phase: "verifying" }), () => cancelled);
+    const actualHash = await hashFile(
+      destination,
+      (transferred) => onProgress({ transferred, total: expectedBytes, phase: "verifying" }),
+      () => cancelled,
+    );
     if (actualHash !== expectedHash || destination.size !== expectedBytes) {
       destination.delete();
       throw new Error("Downloaded file failed SHA-256 integrity verification");
@@ -368,7 +462,9 @@ async function copyFileContents(
 ): Promise<void> {
   if (source.uri.startsWith("content://") || target.uri.startsWith("content://")) {
     if (!source.uri.startsWith("content://") || !target.uri.startsWith("content://")) {
-      throw new Error("Saving between app-private and selected storage is not supported by this runtime");
+      throw new Error(
+        "Saving between app-private and selected storage is not supported by this runtime",
+      );
     }
     if (cancelled()) throw new Error("Transfer cancelled");
     const copyContentDocument = fileTransferBridge?.copyContentDocument;
@@ -412,7 +508,11 @@ function deleteBestEffort(file: File): void {
   }
 }
 
-async function hashFile(file: File, progress: (bytes: number) => void, cancelled: () => boolean): Promise<string> {
+async function hashFile(
+  file: File,
+  progress: (bytes: number) => void,
+  cancelled: () => boolean,
+): Promise<string> {
   if (file.uri.startsWith("content://")) {
     if (cancelled()) throw new Error("Transfer cancelled");
     const hashContentDocument = fileTransferBridge?.hashContentDocument;
@@ -447,7 +547,8 @@ async function hashFile(file: File, progress: (bytes: number) => void, cancelled
 
 function safeFilename(remotePath: string): string {
   const filename = remotePath.split("/").filter(Boolean).at(-1) ?? "download";
-  if (filename === "." || filename === ".." || filename.includes("\0")) throw new Error("Invalid remote filename");
+  if (filename === "." || filename === ".." || filename.includes("\0"))
+    throw new Error("Invalid remote filename");
   return filename;
 }
 

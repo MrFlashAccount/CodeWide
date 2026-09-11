@@ -24,7 +24,12 @@ const REVERSE_SCAN_BLOCK_BYTES: usize = 1024 * 1024;
 const TAIL_BOOTSTRAP_FULL_SCAN_BYTES: u64 = 8 * 1024 * 1024;
 const TAIL_BOOTSTRAP_TURNS: usize = 1;
 const PREFIX_BACKFILL_TURNS: usize = 1;
-const TASK_STARTED_NEEDLE: &[u8] = b"\"payload\":{\"type\":\"task_started\"";
+const TASK_BOUNDARY_NEEDLES: [&[u8]; 4] = [
+    b"\"type\":\"task_started\"",
+    b"\"type\":\"task_complete\"",
+    b"\"type\":\"turn_aborted\"",
+    b"\"type\":\"thread_rolled_back\"",
+];
 type ActiveSummary = (u64, String, SummaryProjectionState);
 
 #[derive(Debug, Serialize)]
@@ -54,6 +59,66 @@ pub struct TailScanReport {
 pub(crate) struct IndexedTurnPage {
     pub turns: Vec<TurnRef>,
     pub has_more: bool,
+}
+
+/// Source witness for derived history reads. Appends retain cursor validity;
+/// replacements, truncation, same-length rewrites, and appended rollbacks invalidate it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub(crate) struct RolloutWitness {
+    device: u64,
+    inode: u64,
+    pub durable_bytes: u64,
+    tail_hash: [u8; 32],
+    modified_nanos: u128,
+    observed_bytes: u64,
+}
+
+pub(crate) fn rollout_witness_from_file(
+    file: &File,
+    file_bytes: u64,
+) -> Result<RolloutWitness, IndexError> {
+    let metadata = file.metadata()?;
+    let (device, inode) = file_identity(&metadata);
+    let durable_bytes = durable_end(file, file_bytes)?;
+    Ok(RolloutWitness {
+        device,
+        inode,
+        durable_bytes,
+        tail_hash: tail_hash(file, durable_bytes)?,
+        modified_nanos: metadata
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |time| time.as_nanos()),
+        observed_bytes: metadata.len(),
+    })
+}
+
+pub(crate) fn rollout_witness_matches(
+    file: &File,
+    file_bytes: u64,
+    witness: &RolloutWitness,
+) -> Result<bool, IndexError> {
+    let current = rollout_witness_from_file(file, file_bytes)?;
+    if current.device != witness.device
+        || current.inode != witness.inode
+        || current.durable_bytes < witness.durable_bytes
+        || tail_hash(file, witness.durable_bytes)? != witness.tail_hash
+        || (current.observed_bytes == witness.observed_bytes
+            && current.modified_nanos != witness.modified_nanos)
+    {
+        return Ok(false);
+    }
+    let mut unchanged = true;
+    visit_task_boundaries_reverse(
+        file,
+        current.durable_bytes,
+        witness.durable_bytes,
+        |_, _, boundary| {
+            unchanged = !matches!(boundary, TaskBoundary::Rollback(_));
+            unchanged
+        },
+    )?;
+    Ok(unchanged)
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +212,7 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
     };
     if state.indexed_bytes == durable_bytes {
         if checkpoint_dirty {
+            state.modified_nanos = modified_nanos(&metadata);
             state.tail_hash = tail_hash(&file, state.indexed_bytes)?;
             store.commit_batch(&file_id, &[], &[], &[], state)?;
         }
@@ -157,6 +223,7 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         state = FileState::tail(device, inode, indexed_from);
         checkpoint_dirty = true;
     }
+    state.modified_nanos = modified_nanos(&metadata);
     let mut reader = BufReader::with_capacity(1024 * 1024, file);
     reader.seek(SeekFrom::Start(state.indexed_bytes))?;
     let mut offset = state.indexed_bytes;
@@ -168,6 +235,7 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
     let (mut active_turn, mut active_summary) =
         active_projection(store, &file_id, reader.get_ref(), state.indexed_bytes)?;
     let mut summary_batch = Vec::new();
+    let mut removed_turns = Vec::new();
     let modified_at = modified_seconds(&metadata);
 
     loop {
@@ -188,6 +256,12 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         }
         batch.push((key, value));
         let boundary = task_boundary(&line, offset)?;
+        collect_rollback_removals(
+            reader.get_ref(),
+            offset,
+            boundary.as_ref(),
+            &mut removed_turns,
+        )?;
         update_summary_index(
             boundary.as_ref(),
             offset,
@@ -209,10 +283,18 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
             state.records = sequence;
             state.tail_hash = tail_hash(reader.get_ref(), offset)?;
             remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
-            store.commit_batch(&file_id, &batch, &turn_batch, &summary_batch, state)?;
+            store.commit_rollout_batch(
+                &file_id,
+                &batch,
+                &turn_batch,
+                &summary_batch,
+                &removed_turns,
+                state,
+            )?;
             batch.clear();
             turn_batch.clear();
             summary_batch.clear();
+            removed_turns.clear();
         }
     }
     if !batch.is_empty() {
@@ -220,7 +302,14 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         state.records = sequence;
         state.tail_hash = tail_hash(reader.get_ref(), offset)?;
         remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
-        store.commit_batch(&file_id, &batch, &turn_batch, &summary_batch, state)?;
+        store.commit_rollout_batch(
+            &file_id,
+            &batch,
+            &turn_batch,
+            &summary_batch,
+            &removed_turns,
+            state,
+        )?;
         checkpoint_dirty = false;
     }
     if checkpoint_dirty {
@@ -228,7 +317,14 @@ pub fn index_rollout(store: &IndexStore, path: &Path) -> Result<IndexReport, Ind
         state.records = sequence;
         state.tail_hash = tail_hash(reader.get_ref(), offset)?;
         remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
-        store.commit_batch(&file_id, &batch, &turn_batch, &summary_batch, state)?;
+        store.commit_rollout_batch(
+            &file_id,
+            &batch,
+            &turn_batch,
+            &summary_batch,
+            &removed_turns,
+            state,
+        )?;
     }
 
     let indexed_records = sequence - initial_records;
@@ -299,19 +395,97 @@ pub fn backfill_rollout_prefix(store: &IndexStore, path: &Path) -> Result<IndexR
     }
 
     let previous_from = state.indexed_from;
-    let scan = scan_tail_turns_from_file(
-        &file,
-        file_bytes,
-        Some(previous_from),
-        PREFIX_BACKFILL_TURNS,
-    )?;
-    let indexed_from = if scan.bytes_scanned >= previous_from {
-        0
-    } else {
-        scan.turns.last().map_or(0, |turn| turn.start_offset)
-    };
+    // Backfill replays rollback records atomically with their tombstones, so
+    // discovery needs only the adjacent physical range, not the whole tail.
+    let mut indexed_from = 0;
+    let mut remaining = PREFIX_BACKFILL_TURNS;
+    visit_task_boundaries_reverse(&file, previous_from, 0, |offset, _, boundary| {
+        if matches!(boundary, TaskBoundary::Started(_)) {
+            indexed_from = offset;
+            remaining -= 1;
+        }
+        remaining > 0
+    })?;
     if indexed_from >= previous_from {
         return Err(StoreError::CorruptedIndex("prefix backfill made no progress".into()).into());
+    }
+    let indexed_records = index_prefix_range(
+        store,
+        path,
+        &file,
+        &metadata,
+        &file_id,
+        &mut state,
+        indexed_from,
+        previous_from,
+    )?;
+    finish_index_report(store, &file_id, started, file_bytes, indexed_records, state)
+}
+
+/// Advances durable coverage through a semantic anchor and its requested older
+/// neighbors. The index lane coalesces concurrent recovery; proven absence
+/// completes coverage so later misses never repeat a full source scan.
+pub(crate) fn index_rollout_through_anchor(
+    store: &IndexStore,
+    path: &Path,
+    anchor_id: &str,
+    older_limit: usize,
+) -> Result<IndexReport, IndexError> {
+    let started = Instant::now();
+    let hot = index_rollout(store, path)?;
+    if hot.complete {
+        return Ok(hot);
+    }
+    let file_id = rollout_file_id(path);
+    let lane = store.rollout_index_lock(file_id);
+    let guard = lane
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    let file_bytes = metadata.len();
+    let Some(mut state) = current_indexed_coverage_from_file(store, path, &file, file_bytes)?
+    else {
+        drop(guard);
+        return index_rollout(store, path);
+    };
+    if state.is_complete() {
+        return finish_index_report(store, &file_id, started, file_bytes, 0, state);
+    }
+    if let Some(anchor) = store.turn_by_id(&file_id, anchor_id)?
+        && anchor.start_offset >= state.indexed_from
+    {
+        let older = store.turns_desc(&file_id, Some(anchor.start_offset), older_limit)?;
+        if older.len() == older_limit
+            && older
+                .iter()
+                .all(|turn| turn.start_offset >= state.indexed_from)
+        {
+            return finish_index_report(store, &file_id, started, file_bytes, 0, state);
+        }
+    }
+    let mut found = false;
+    let mut remaining = older_limit;
+    let mut indexed_from = 0;
+    visit_logical_turns_reverse(&file, state.indexed_bytes, |turn| {
+        if turn.id == anchor_id {
+            found = true;
+            if remaining == 0 {
+                indexed_from = turn.start_offset;
+                return false;
+            }
+        } else if found && turn.end_offset != 0 {
+            remaining -= 1;
+            if remaining == 0 {
+                indexed_from = turn.start_offset;
+                return false;
+            }
+        }
+        true
+    })?;
+    let previous_from = state.indexed_from;
+    if indexed_from >= previous_from {
+        return finish_index_report(store, &file_id, started, file_bytes, 0, state);
     }
     let indexed_records = index_prefix_range(
         store,
@@ -357,6 +531,8 @@ fn file_state_matches(
         && state.inode == inode
         && state.indexed_from <= state.indexed_bytes
         && state.indexed_bytes <= durable_bytes
+        && (state.indexed_bytes != durable_bytes
+            || state.modified_nanos == modified_nanos(&file.metadata()?))
         && tail_hash(file, state.indexed_bytes)? == state.tail_hash)
 }
 
@@ -396,6 +572,7 @@ fn index_prefix_range(
     let mut active_turn = None;
     let mut summary_batch = Vec::new();
     let mut active_summary = None;
+    let mut removed_turns = Vec::new();
     let modified_at = modified_seconds(metadata);
 
     while offset < previous_from {
@@ -423,6 +600,7 @@ fn index_prefix_range(
             record_value(offset, length, classify_record(&line)),
         ));
         let boundary = task_boundary(&line, offset)?;
+        collect_rollback_removals(file, offset, boundary.as_ref(), &mut removed_turns)?;
         update_summary_index(
             boundary.as_ref(),
             offset,
@@ -443,10 +621,18 @@ fn index_prefix_range(
             remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
             // Keep the old coverage checkpoint until the entire adjacent range
             // is durable. Rows written before it remain invisible after a crash.
-            store.commit_batch(file_id, &batch, &turn_batch, &summary_batch, *state)?;
+            store.commit_rollout_batch(
+                file_id,
+                &batch,
+                &turn_batch,
+                &summary_batch,
+                &removed_turns,
+                *state,
+            )?;
             batch.clear();
             turn_batch.clear();
             summary_batch.clear();
+            removed_turns.clear();
         }
     }
     if offset != previous_from {
@@ -461,7 +647,14 @@ fn index_prefix_range(
     remember_active_summary(active_summary.as_ref(), &mut summary_batch)?;
     state.indexed_from = indexed_from;
     state.records = state.records.saturating_add(indexed_records);
-    store.commit_batch(file_id, &batch, &turn_batch, &summary_batch, *state)?;
+    store.commit_rollout_batch(
+        file_id,
+        &batch,
+        &turn_batch,
+        &summary_batch,
+        &removed_turns,
+        *state,
+    )?;
     Ok(indexed_records)
 }
 
@@ -598,7 +791,10 @@ fn update_turn_index(
                 }
             }
         }
-        None => {}
+        Some(TaskBoundary::Rollback(count)) if *count > 0 => {
+            *active_turn = None;
+        }
+        Some(TaskBoundary::Rollback(_)) | None => {}
     }
 }
 
@@ -609,6 +805,10 @@ fn update_summary_index(
     active: &mut Option<ActiveSummary>,
     batch: &mut Vec<(u64, Vec<u8>)>,
 ) -> Result<(), IndexError> {
+    if matches!(boundary, Some(TaskBoundary::Rollback(count)) if *count > 0) {
+        *active = None;
+        return Ok(());
+    }
     if let Some(TaskBoundary::Started(turn_id)) = boundary {
         remember_active_summary(active.as_ref(), batch)?;
         *active = Some((
@@ -693,6 +893,14 @@ fn modified_seconds(metadata: &std::fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+fn modified_nanos(metadata: &std::fs::Metadata) -> u128 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |value| value.as_nanos())
+}
+
 #[must_use]
 pub fn rollout_file_id(path: &Path) -> [u8; 32] {
     *blake3::hash(path.as_os_str().as_encoded_bytes()).as_bytes()
@@ -701,14 +909,10 @@ pub fn rollout_file_id(path: &Path) -> [u8; 32] {
 /// Reads a descending turn page only when the persisted contiguous index
 /// exactly matches the durable tail of this already-open rollout handle.
 ///
-/// An open mutable turn is stored with `end_offset == 0`; for a read snapshot,
-/// its effective end is the current durable JSONL boundary. A missing or stale
+/// An open mutable turn retains `end_offset == 0`; projection owns clipping it
+/// to the read's durable JSONL boundary. A missing or stale
 /// checkpoint returns `None` so the caller can use the bounded cold tail scan
 /// while an incremental rebuild runs in the background.
-#[expect(
-    clippy::suspicious_operation_groupings,
-    reason = "turn offsets are checked against both index coverage and their own span"
-)]
 pub(crate) fn current_indexed_turns_from_file(
     store: &IndexStore,
     path: &Path,
@@ -728,6 +932,7 @@ pub(crate) fn current_indexed_turns_from_file(
         || state.inode != inode
         || state.indexed_from > state.indexed_bytes
         || state.indexed_bytes != durable_bytes
+        || state.modified_nanos != modified_nanos(&metadata)
         || tail_hash(file, state.indexed_bytes)? != state.tail_hash
     {
         return Ok(None);
@@ -743,12 +948,9 @@ pub(crate) fn current_indexed_turns_from_file(
     if turns.is_empty() && !state.is_complete() {
         return Ok(None);
     }
-    for turn in &mut turns {
-        if turn.end_offset == 0 {
-            turn.end_offset = durable_bytes;
-        }
+    for turn in &turns {
         if turn.start_offset < state.indexed_from
-            || turn.start_offset >= turn.end_offset
+            || (turn.end_offset != 0 && turn.start_offset >= turn.end_offset)
             || turn.end_offset > durable_bytes
         {
             return Ok(None);
@@ -758,6 +960,49 @@ pub(crate) fn current_indexed_turns_from_file(
         has_more: !state.is_complete() && turns.len() < limit,
         turns,
     }))
+}
+
+/// Resolves a semantic anchor only inside a checkpoint validated against this
+/// open source handle. The caller holds the per-rollout index lane while using it.
+pub(crate) fn current_indexed_anchor_from_file(
+    store: &IndexStore,
+    path: &Path,
+    file: &File,
+    file_bytes: u64,
+    turn_id: &str,
+) -> Result<Option<TurnRef>, IndexError> {
+    let file_id = rollout_file_id(path);
+    let Some(state) = current_indexed_coverage_from_file(store, path, file, file_bytes)? else {
+        return Ok(None);
+    };
+    let durable_bytes = state.indexed_bytes;
+    let anchor = store.turn_by_id(&file_id, turn_id)?.filter(|turn| {
+        turn.start_offset >= state.indexed_from
+            && turn.start_offset < durable_bytes
+            && turn.end_offset <= durable_bytes
+    });
+    if store.file_state(&file_id)? != Some(state) {
+        return Ok(None);
+    }
+    Ok(anchor)
+}
+
+/// Validates contiguous index coverage against an already-open source snapshot.
+/// Complete coverage distinguishes a proven missing anchor from a cold prefix.
+pub(crate) fn current_indexed_coverage_from_file(
+    store: &IndexStore,
+    path: &Path,
+    file: &File,
+    file_bytes: u64,
+) -> Result<Option<FileState>, IndexError> {
+    let Some(state) = store.file_state(&rollout_file_id(path))? else {
+        return Ok(None);
+    };
+    let (device, inode) = file_identity(&file.metadata()?);
+    let durable_bytes = durable_end(file, file_bytes)?;
+    Ok((state.indexed_bytes == durable_bytes
+        && file_state_matches(file, state, device, inode, durable_bytes)?)
+    .then_some(state))
 }
 
 /// Discovers the newest turn spans directly from the durable JSONL tail.
@@ -802,36 +1047,126 @@ pub(crate) fn scan_tail_turns_from_file(
         });
     }
 
-    let (matches, bytes_scanned) = find_previous_needles(file, search_end, limit)?;
-    let mut starts = Vec::with_capacity(matches.len());
-    for boundary_offset in matches {
-        let (line_start, line) = read_line_at(file, boundary_offset, durable_bytes)?;
-        let Some(TaskBoundary::Started(id)) = task_boundary(&line, line_start)? else {
-            continue;
-        };
-        starts.push((line_start, id));
-    }
-
-    let mut turns = Vec::with_capacity(starts.len());
-    let mut newer_start = search_end;
-    for (start_offset, id) in starts {
-        turns.push(
-            TurnRef {
-                id,
-                start_offset,
-                end_offset: newer_start,
-                completed: false,
-            }
-            .into(),
-        );
-        newer_start = start_offset;
-    }
+    let mut turns = Vec::with_capacity(limit);
+    let bytes_scanned = visit_logical_turns_reverse(file, durable_bytes, |turn| {
+        if turn.start_offset < search_end {
+            turns.push(turn.into());
+        }
+        turns.len() < limit
+    })?;
     Ok(TailScanReport {
         file_bytes,
         durable_bytes,
         bytes_scanned,
         elapsed_ms: started.elapsed().as_millis(),
         turns,
+    })
+}
+
+/// Recovers the nearest ascending page after an unindexed semantic anchor in
+/// one reverse traversal. Resident memory is limited to the requested page.
+pub(crate) fn scan_turns_after_from_file(
+    file: &File,
+    file_bytes: u64,
+    anchor_id: &str,
+    limit: usize,
+) -> Result<Option<Vec<TurnRef>>, IndexError> {
+    let mut found = false;
+    let mut newer = std::collections::VecDeque::with_capacity(limit);
+    visit_logical_turns_reverse(file, durable_end(file, file_bytes)?, |turn| {
+        if turn.id == anchor_id {
+            found = turn.end_offset != 0;
+            return false;
+        }
+        if turn.end_offset != 0 && limit > 0 {
+            if newer.len() == limit {
+                newer.pop_front();
+            }
+            newer.push_back(turn);
+        }
+        true
+    })?;
+    Ok(found.then(|| newer.into_iter().rev().collect()))
+}
+
+/// Recovers a descending page strictly before a surviving semantic anchor.
+pub(crate) fn scan_turns_before_from_file(
+    file: &File,
+    file_bytes: u64,
+    anchor_id: &str,
+    limit: usize,
+) -> Result<Option<Vec<TurnRef>>, IndexError> {
+    let mut found = false;
+    let mut turns = Vec::with_capacity(limit);
+    visit_logical_turns_reverse(file, durable_end(file, file_bytes)?, |turn| {
+        if turn.id == anchor_id {
+            found = turn.end_offset != 0;
+            return found && limit > 0;
+        }
+        if found && turn.end_offset != 0 {
+            turns.push(turn);
+        }
+        !found || turns.len() < limit
+    })?;
+    Ok(found.then_some(turns))
+}
+
+fn collect_rollback_removals(
+    file: &File,
+    offset: u64,
+    boundary: Option<&TaskBoundary>,
+    removed: &mut Vec<u64>,
+) -> Result<(), IndexError> {
+    let Some(TaskBoundary::Rollback(count)) = boundary else {
+        return Ok(());
+    };
+    let mut remaining = *count;
+    if remaining == 0 {
+        return Ok(());
+    }
+    visit_logical_turns_reverse(file, offset, |turn| {
+        removed.push(turn.start_offset);
+        remaining -= 1;
+        remaining > 0
+    })?;
+    Ok(())
+}
+
+fn visit_logical_turns_reverse(
+    file: &File,
+    durable_bytes: u64,
+    mut visit: impl FnMut(TurnRef) -> bool,
+) -> Result<u64, IndexError> {
+    let mut skipped = 0_u64;
+    let mut next_start = 0;
+    let mut terminal: Option<(String, u64, bool)> = None;
+    visit_task_boundaries_reverse(file, durable_bytes, 0, |offset, end, boundary| {
+        match boundary {
+            TaskBoundary::Rollback(count) => {
+                skipped = skipped.saturating_add(count);
+            }
+            TaskBoundary::Terminal { turn_id, completed } => {
+                terminal = Some((turn_id, end, completed));
+            }
+            TaskBoundary::Started(id) => {
+                let (end_offset, completed) = terminal
+                    .take()
+                    .filter(|(turn_id, _, _)| turn_id == &id)
+                    .map_or((next_start, false), |(_, end, completed)| (end, completed));
+                next_start = offset;
+                if skipped > 0 {
+                    skipped -= 1;
+                } else if !visit(TurnRef {
+                    id,
+                    start_offset: offset,
+                    end_offset,
+                    completed,
+                }) {
+                    return false;
+                }
+            }
+        }
+        true
     })
 }
 
@@ -916,6 +1251,7 @@ fn classify_record(line: &[u8]) -> u8 {
 enum TaskBoundary {
     Started(String),
     Terminal { turn_id: String, completed: bool },
+    Rollback(u64),
 }
 
 #[derive(Deserialize)]
@@ -924,35 +1260,41 @@ struct BoundaryEnvelope {
 }
 
 #[derive(Deserialize)]
-struct BoundaryPayload {
-    #[serde(rename = "type")]
-    kind: String,
-    turn_id: String,
+#[serde(tag = "type")]
+enum BoundaryPayload {
+    #[serde(rename = "task_started")]
+    Started { turn_id: String },
+    #[serde(rename = "task_complete")]
+    Completed { turn_id: String },
+    #[serde(rename = "turn_aborted")]
+    Aborted { turn_id: String },
+    #[serde(rename = "thread_rolled_back")]
+    Rollback { num_turns: u64 },
+    #[serde(other)]
+    Other,
 }
 
 fn task_boundary(line: &[u8], offset: u64) -> Result<Option<TaskBoundary>, IndexError> {
-    let kind = if memchr::memmem::find(line, b"\"type\":\"task_started\"").is_some() {
-        1
-    } else if memchr::memmem::find(line, b"\"type\":\"task_complete\"").is_some() {
-        2
-    } else if memchr::memmem::find(line, b"\"type\":\"turn_aborted\"").is_some() {
-        3
-    } else {
+    if !TASK_BOUNDARY_NEEDLES
+        .iter()
+        .any(|needle| memchr::memmem::find(line, needle).is_some())
+    {
         return Ok(None);
-    };
+    }
     let parsed: BoundaryEnvelope = serde_json::from_slice(line)
         .map_err(|source| IndexError::InvalidTaskBoundary { offset, source })?;
-    match (kind, parsed.payload.kind.as_str()) {
-        (1, "task_started") => Ok(Some(TaskBoundary::Started(parsed.payload.turn_id))),
-        (2, "task_complete") => Ok(Some(TaskBoundary::Terminal {
-            turn_id: parsed.payload.turn_id,
+    match parsed.payload {
+        BoundaryPayload::Started { turn_id } => Ok(Some(TaskBoundary::Started(turn_id))),
+        BoundaryPayload::Completed { turn_id } => Ok(Some(TaskBoundary::Terminal {
+            turn_id,
             completed: true,
         })),
-        (3, "turn_aborted") => Ok(Some(TaskBoundary::Terminal {
-            turn_id: parsed.payload.turn_id,
+        BoundaryPayload::Aborted { turn_id } => Ok(Some(TaskBoundary::Terminal {
+            turn_id,
             completed: false,
         })),
-        _ => Ok(None),
+        BoundaryPayload::Rollback { num_turns } => Ok(Some(TaskBoundary::Rollback(num_turns))),
+        BoundaryPayload::Other => Ok(None),
     }
 }
 
@@ -974,36 +1316,50 @@ fn durable_end(file: &File, file_bytes: u64) -> Result<u64, std::io::Error> {
     Ok(0)
 }
 
-fn find_previous_needles(
+fn visit_task_boundaries_reverse(
     file: &File,
     search_end: u64,
-    limit: usize,
-) -> Result<(Vec<u64>, u64), std::io::Error> {
-    let overlap = TASK_STARTED_NEEDLE.len().saturating_sub(1) as u64;
+    stop_offset: u64,
+    mut visit: impl FnMut(u64, u64, TaskBoundary) -> bool,
+) -> Result<u64, IndexError> {
+    let overlap = TASK_BOUNDARY_NEEDLES
+        .iter()
+        .map(|needle| needle.len())
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(1) as u64;
     let mut position = search_end;
-    let mut matches = Vec::with_capacity(limit);
     let mut bytes_scanned = 0_u64;
-    while position > 0 && matches.len() < limit {
-        let core_start = position.saturating_sub(REVERSE_SCAN_BLOCK_BYTES as u64);
+    while position > stop_offset {
+        let core_start = position
+            .saturating_sub(REVERSE_SCAN_BLOCK_BYTES as u64)
+            .max(stop_offset);
         let read_end = search_end.min(position.saturating_add(overlap));
         let read_size = usize::try_from(read_end - core_start).map_err(std::io::Error::other)?;
         let mut buffer = vec![0_u8; read_size];
         read_exact_at(file, &mut buffer, core_start)?;
         bytes_scanned = bytes_scanned.saturating_add(position - core_start);
-        let mut block_matches: Vec<u64> = memchr::memmem::find_iter(&buffer, TASK_STARTED_NEEDLE)
+        let mut block_matches: Vec<u64> = TASK_BOUNDARY_NEEDLES
+            .iter()
+            .flat_map(|needle| memchr::memmem::find_iter(&buffer, needle))
             .map(|index| core_start + index as u64)
             .filter(|offset| *offset >= core_start && *offset < position)
             .collect();
-        block_matches.reverse();
+        block_matches.sort_unstable_by(|left, right| right.cmp(left));
         for offset in block_matches {
-            matches.push(offset);
-            if matches.len() == limit {
-                break;
+            let (line_start, line) = read_line_at(file, offset, search_end)?;
+            if line_start < stop_offset {
+                continue;
+            }
+            if let Some(boundary) = task_boundary(&line, line_start)?
+                && !visit(line_start, line_start + line.len() as u64, boundary)
+            {
+                return Ok(bytes_scanned);
             }
         }
         position = core_start;
     }
-    Ok((matches, bytes_scanned))
+    Ok(bytes_scanned)
 }
 
 fn read_line_at(
@@ -1082,7 +1438,9 @@ mod tests {
 
     use super::{
         TaskBoundary, classify_record, current_indexed_turns_from_file, index_rollout,
-        index_rollout_metadata, task_boundary,
+        index_rollout_metadata, index_rollout_through_anchor, rollout_file_id,
+        rollout_witness_from_file, rollout_witness_matches, scan_turns_after_from_file,
+        scan_turns_before_from_file, task_boundary,
     };
     use crate::store::IndexStore;
 
@@ -1115,7 +1473,7 @@ mod tests {
     }
 
     #[test]
-    fn indexed_page_materializes_mutable_head_only_at_current_checkpoint()
+    fn indexed_page_preserves_mutable_head_only_at_current_checkpoint()
     -> Result<(), Box<dyn std::error::Error>> {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("rollout.jsonl");
@@ -1133,7 +1491,7 @@ mod tests {
         let page = current_indexed_turns_from_file(&store, &path, &file, file_bytes, None, 1)?
             .ok_or("current index was not used")?;
         assert_eq!(page.turns.len(), 1);
-        assert_eq!(page.turns[0].end_offset, file_bytes);
+        assert_eq!(page.turns[0].end_offset, 0);
         assert!(!page.turns[0].completed);
 
         writeln!(
@@ -1145,6 +1503,158 @@ mod tests {
         let file_bytes = file.metadata()?.len();
         assert!(
             current_indexed_turns_from_file(&store, &path, &file, file_bytes, None, 1)?.is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cold_semantic_pages_preserve_nearest_neighbors_and_exclude_rollback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut writer = std::fs::File::create(&path)?;
+        for id in ["a", "removed"] {
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"{id}"}}}}"#
+            )?;
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"{id}"}}}}"#
+            )?;
+        }
+        writeln!(
+            writer,
+            r#"{{"type":"event_msg","payload":{{"type":"thread_rolled_back","num_turns":1}}}}"#
+        )?;
+        for id in ["b", "c", "d", "e"] {
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"{id}"}}}}"#
+            )?;
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"{id}"}}}}"#
+            )?;
+        }
+        writer.sync_all()?;
+        let file = std::fs::File::open(&path)?;
+        let bytes = file.metadata()?.len();
+        let after = scan_turns_after_from_file(&file, bytes, "a", 2)?.ok_or("anchor missing")?;
+        assert_eq!(
+            after
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            ["b", "c"]
+        );
+        let before = scan_turns_before_from_file(&file, bytes, "d", 2)?.ok_or("anchor missing")?;
+        assert_eq!(
+            before
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            ["c", "b"]
+        );
+        assert!(scan_turns_after_from_file(&file, bytes, "removed", 2)?.is_none());
+        assert!(
+            scan_turns_after_from_file(&file, bytes, "e", 2)?
+                .ok_or("head missing")?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_witness_survives_append_but_expires_on_rollback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut writer = std::fs::File::create(&path)?;
+        writeln!(
+            writer,
+            r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"a"}}}}"#
+        )?;
+        writeln!(
+            writer,
+            r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"a"}}}}"#
+        )?;
+        writer.sync_all()?;
+        let file = std::fs::File::open(&path)?;
+        let witness = rollout_witness_from_file(&file, file.metadata()?.len())?;
+        write!(writer, r#"{{"type":"turn_context","payload":{{}}}}"#)?;
+        writer.sync_all()?;
+        assert!(rollout_witness_matches(
+            &file,
+            file.metadata()?.len(),
+            &witness
+        )?);
+        writeln!(writer)?;
+        writeln!(
+            writer,
+            r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"b"}}}}"#
+        )?;
+        writer.sync_all()?;
+        assert!(rollout_witness_matches(
+            &file,
+            file.metadata()?.len(),
+            &witness
+        )?);
+        writeln!(
+            writer,
+            r#"{{"type":"event_msg","payload":{{"type":"thread_rolled_back","num_turns":1}}}}"#
+        )?;
+        writer.sync_all()?;
+        assert!(!rollout_witness_matches(
+            &file,
+            file.metadata()?.len(),
+            &witness
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_anchor_recovery_persists_coverage_and_proven_absence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("rollout.jsonl");
+        let mut writer = std::fs::File::create(&path)?;
+        writeln!(
+            writer,
+            "{{\"type\":\"compacted\",\"payload\":{{\"padding\":\"{}\"}}}}",
+            "x".repeat(9 * 1024 * 1024)
+        )?;
+        for id in ["a", "b", "c", "d"] {
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_started","turn_id":"{id}"}}}}"#
+            )?;
+            writeln!(
+                writer,
+                r#"{{"type":"event_msg","payload":{{"type":"task_complete","turn_id":"{id}"}}}}"#
+            )?;
+        }
+        writer.sync_all()?;
+        let store = IndexStore::open(directory.path().join("index.redb"))?;
+        let cold = index_rollout(&store, &path)?;
+        let recovered = index_rollout_through_anchor(&store, &path, "b", 1)?;
+        assert!(recovered.coverage_start < cold.coverage_start);
+        let turns = store.turns_desc(&rollout_file_id(&path), None, 10)?;
+        assert_eq!(
+            turns
+                .iter()
+                .map(|turn| turn.id.as_str())
+                .collect::<Vec<_>>(),
+            ["d", "c", "b", "a"]
+        );
+        assert_eq!(
+            index_rollout_through_anchor(&store, &path, "b", 1)?.indexed_records,
+            0
+        );
+        assert!(index_rollout_through_anchor(&store, &path, "missing", 0)?.complete);
+        assert_eq!(
+            index_rollout_through_anchor(&store, &path, "missing", 0)?.indexed_records,
+            0
         );
         Ok(())
     }

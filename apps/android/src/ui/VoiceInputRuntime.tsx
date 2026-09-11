@@ -22,20 +22,21 @@ export function useAppVoiceInputRuntime(): AppVoiceInputRuntime | null {
   return useContext(VoiceInputRuntimeContext);
 }
 
-export function reviewVoiceInputScope(runtime: AppVoiceInputRuntime): string {
-  return `${runtime.scopePrefix}\u0000review`;
+export function useVoiceInputResource(runtime: AppVoiceInputRuntime | null, scope: string | null): VoiceInputRow | null {
+  return useScopedVoiceInputResource(runtime?.resources ?? null, scope);
 }
 
-export function useVoiceInputResource(runtime: AppVoiceInputRuntime | null, scope: string | null): VoiceInputRow | null {
+/** Observe only the recording owned by one input, never the global microphone. */
+export function useScopedVoiceInputResource(resources: WorkspaceResourceDatabase | null, scope: string | null): VoiceInputRow | null {
   return useSyncExternalStore(
     (notify) => {
-      if (runtime?.resources === null || runtime?.resources === undefined || scope === null) return () => {};
-      const subscription = runtime.resources.voiceInputs.subscribeChanges((changes) => {
+      if (resources === null || scope === null) return () => {};
+      const subscription = resources.voiceInputs.subscribeChanges((changes) => {
         if (changes.some((change) => String(change.key) === scope)) notify();
       }, { includeInitialState: false });
       return () => subscription.unsubscribe();
     },
-    () => runtime?.resources?.voiceInputs.get(scope ?? "") ?? null,
+    () => resources?.voiceInputs.get(scope ?? "") ?? null,
     () => null,
   );
 }

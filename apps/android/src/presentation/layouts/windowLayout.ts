@@ -10,5 +10,5 @@ export function isDesktopWindow(window: WindowSize): boolean {
 }
 
 export function desktopThreadSidebarWidth(viewportWidth: number): number {
-  return Math.max(280, Math.min(480, Math.floor(viewportWidth * 0.32)));
+  return Math.max(320, Math.min(480, Math.floor(viewportWidth * 0.34)));
 }

@@ -221,7 +221,16 @@ impl AccountPoolService {
 
     #[must_use]
     pub fn handles(method: &str) -> bool {
-        method.starts_with("companion/accountPool/")
+        matches!(
+            method,
+            "companion/accountPool/list"
+                | "companion/accountPool/refresh"
+                | "companion/accountPool/add/start"
+                | "companion/accountPool/add/cancel"
+                | "companion/accountPool/profile/activate"
+                | "companion/accountPool/profile/update"
+                | "companion/accountPool/profile/remove"
+        )
     }
 
     /// Handles one account-pool RPC without exposing credential material.

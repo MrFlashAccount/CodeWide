@@ -8,6 +8,8 @@ export type ThreadSummaryViewRequest = {
   /** Independent presentation owner; list and detail ranges must not replace each other. */
   viewId?: string;
   connectionId: string | null;
+  /** Exact Companion project directory; omitted for the global catalog. */
+  projectCwd?: string;
   recentLimit: number;
   archivedLimit: number;
   selectedConnectionId: string | null;
@@ -297,7 +299,8 @@ export function projectThreadSummaryView(
   request: ThreadSummaryViewRequest,
 ): LoadedThreadSummaryView {
   const inConnection = (row: StoredThreadSummary): boolean => request.connectionId === null || row.connectionId === request.connectionId;
-  const root = (row: StoredThreadSummary): boolean => row.parentThreadId === null && row.deleteCommandId === null && inConnection(row);
+  const root = (row: StoredThreadSummary): boolean => row.parentThreadId === null && row.deleteCommandId === null && inConnection(row)
+    && (request.projectCwd === undefined || row.cwd === request.projectCwd);
   const pinned = rows.filter((row) => root(row) && !row.archived && row.pinned).sort(compareRecency);
   const recent = rows.filter((row) => root(row) && !row.archived && !row.pinned).sort(compareRecency).slice(0, request.recentLimit);
   const archived = rows.filter((row) => root(row) && row.archived).sort(compareArchived).slice(0, request.archivedLimit);
@@ -321,6 +324,7 @@ export function threadSummaryViewRequestKey(request: ThreadSummaryViewRequest): 
   return [
     request.viewId ?? "default",
     request.connectionId ?? "*",
+    request.projectCwd ?? "",
     request.recentLimit,
     request.archivedLimit,
     request.selectedConnectionId ?? "",

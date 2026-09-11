@@ -1,6 +1,5 @@
 use codewide_companion::{
     build_shelf::PUBLIC_BUILD_SHELF_PATHS,
-    sync::contract_rpc_is_exposed,
     thread_patch::{THREAD_PATCH_FIELD, compile_thread_patch},
     thread_view::READ_MODEL_VERSION,
 };
@@ -14,7 +13,7 @@ struct V1Contract {
     thread_read_model_version: u64,
     web_socket_paths: Vec<String>,
     http_routes: Vec<String>,
-    rpc_methods: Vec<String>,
+    rpc_policy: RpcPolicy,
     public_build_shelf_paths: Vec<String>,
     thread_projection_patch: ThreadProjectionPatchContract,
 }
@@ -25,6 +24,14 @@ struct ThreadProjectionPatchContract {
     field: String,
     version: u32,
     operations: Vec<ThreadProjectionOperation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RpcPolicy {
+    method_filter: String,
+    unknown_method_handling: String,
+    passive_mode: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,31 +81,11 @@ fn companion_implements_the_frozen_v1_contract() -> Result<(), Box<dyn std::erro
         );
     }
     assert_eq!(contract.http_routes.len(), 20);
-    for method in &contract.rpc_methods {
-        if matches!(method.as_str(), "initialize" | "initialized") {
-            continue;
-        }
-        assert!(
-            contract_rpc_is_exposed(method),
-            "frozen V1 RPC is missing from companion policy: {method}"
-        );
-    }
-    for removed_method in [
-        "companion/thread/observe",
-        "companion/threadWindow/read",
-        "thread/resume",
-    ] {
-        assert!(
-            !contract
-                .rpc_methods
-                .iter()
-                .any(|method| method == removed_method),
-            "removed V1 RPC remains in the public contract: {removed_method}"
-        );
-        assert!(
-            !contract_rpc_is_exposed(removed_method),
-            "removed V1 RPC remains exposed: {removed_method}"
-        );
-    }
+    assert_eq!(contract.rpc_policy.method_filter, "none");
+    assert_eq!(
+        contract.rpc_policy.unknown_method_handling,
+        "forwardToAppServer"
+    );
+    assert_eq!(contract.rpc_policy.passive_mode, "noRpc");
     Ok(())
 }

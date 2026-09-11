@@ -26,7 +26,6 @@ const readEmptyPortForwardingSnapshot = (): NativePortForwardingSnapshot => EMPT
 
 class PortForwardScope {
   readonly connectionId: string;
-  private readonly onDiscovered: (ports: readonly NativeDiscoveredPort[]) => Promise<void>;
   #listeners = new Set<Listener>();
   #snapshot: NativePortForwardingSnapshot = { profiles: [], discoveredPorts: [], discoveryStatus: "idle", discoveryError: null };
   #loaded = false;
@@ -35,12 +34,8 @@ class PortForwardScope {
   #discoveredAt = 0;
   #pollTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(
-    connectionId: string,
-    onDiscovered: (ports: readonly NativeDiscoveredPort[]) => Promise<void>,
-  ) {
+  constructor(connectionId: string) {
     this.connectionId = connectionId;
-    this.onDiscovered = onDiscovered;
   }
 
   readonly subscribe = (listener: Listener): (() => void) => {
@@ -78,8 +73,10 @@ class PortForwardScope {
     this.#discoveryLoading = discoverNativePorts(this.connectionId)
       .then(async ({ ports, scannedAt }) => {
         this.#discoveredAt = scannedAt;
-        this.#replace({ ...this.#snapshot, discoveredPorts: ports, discoveryStatus: "ready", discoveryError: null });
-        await this.onDiscovered(ports);
+        // Discovery reconciles the native inventory before returning. Reload
+        // current forwards so missed bridge events cannot retain dead profiles.
+        const profiles = await listNativePortForwards(this.connectionId);
+        this.#replace({ ...this.#snapshot, profiles, discoveredPorts: ports, discoveryStatus: "ready", discoveryError: null });
       })
       .catch((cause: unknown) => {
         this.#replace({
@@ -173,7 +170,6 @@ const DISCOVERY_POLL_MS = 5_000;
 class NativePortForwardingStore {
   #scopes = new Map<string, PortForwardScope>();
   #starting = new Map<string, Promise<NativePortForwardProfile>>();
-  #reconciling = new Map<string, Promise<void>>();
 
   constructor() {
     subscribeNativePortForwards((event) => {
@@ -185,7 +181,7 @@ class NativePortForwardingStore {
   scope(connectionId: string): PortForwardScope {
     let scope = this.#scopes.get(connectionId);
     if (scope === undefined) {
-      scope = new PortForwardScope(connectionId, async (ports) => await this.#reconcileDiscovered(connectionId, ports));
+      scope = new PortForwardScope(connectionId);
       this.#scopes.set(connectionId, scope);
     }
     return scope;
@@ -208,8 +204,8 @@ class NativePortForwardingStore {
     });
     this.scope(input.connectionId).apply(profile);
     const next = input.startImmediately
-      ? await startNativePortForward(input.profileId)
-      : await stopNativePortForward(input.profileId);
+      ? await startNativePortForward(profile.id)
+      : await stopNativePortForward(profile.id);
     this.scope(input.connectionId).apply(next);
     return next;
   }
@@ -224,13 +220,27 @@ class NativePortForwardingStore {
   }
 
   async reconnect(connectionId: string, profileId: string): Promise<void> {
-    this.scope(connectionId).apply(await stopNativePortForward(profileId));
-    this.scope(connectionId).apply(await startNativePortForward(profileId));
+    const scope = this.scope(connectionId);
+    const profile = scope.getSnapshot().profiles.find((candidate) => candidate.id === profileId);
+    if (profile === undefined) throw new Error("Port forward not found");
+    scope.apply(await stopNativePortForward(profileId));
+    // Reconnect must not turn an automatic forward into a persistent inclusion.
+    const restored = await upsertNativePortForward({
+      connectionId,
+      profileId,
+      label: profile.label,
+      remotePort: profile.remotePort,
+      preferredLocalPort: profile.preferredLocalPort,
+      serviceKey: profile.serviceKey,
+      preference: profile.preference === "excluded" ? "included" : profile.preference,
+    });
+    scope.apply(restored);
+    scope.applyStartResult(await startNativePortForward(restored.id));
   }
 
   async remove(connectionId: string, profileId: string): Promise<void> {
     await removeNativePortForward(profileId);
-    this.scope(connectionId).remove(profileId);
+    await this.scope(connectionId).load(true);
   }
 
   async refreshDiscovery(connectionId: string): Promise<void> {
@@ -269,14 +279,17 @@ class NativePortForwardingStore {
     label: string;
   }): Promise<NativePortForwardProfile> {
     const scope = this.scope(input.connectionId);
-    await scope.load();
+    await scope.refreshDiscovery();
+    if (!scope.getSnapshot().discoveredPorts.some((port) => port.port === input.remotePort)) {
+      throw new Error("Port is not present in the current inventory");
+    }
     const existing = scope.getSnapshot().profiles
       .filter((profile) => profile.remotePort === input.remotePort)
       .sort((left, right) => Number(right.status === "live") - Number(left.status === "live") || right.updatedAt - left.updatedAt)[0];
     if (existing?.status === "live" && existing.localPort !== null) return existing;
     if (existing?.status === "connecting") return await scope.waitUntilLive(existing.id);
 
-    const profileId = existing?.id ?? createNativePortForwardId();
+    let profileId = existing?.id ?? createNativePortForwardId();
     if (existing === undefined) {
       const saved = await upsertNativePortForward({
         connectionId: input.connectionId,
@@ -288,6 +301,7 @@ class NativePortForwardingStore {
         preference: "included",
       });
       scope.apply(saved);
+      profileId = saved.id;
     }
     const started = await startNativePortForward(profileId);
     const projected = scope.applyStartResult(started);
@@ -296,52 +310,6 @@ class NativePortForwardingStore {
     return await scope.waitUntilLive(profileId);
   }
 
-  async #reconcileDiscovered(connectionId: string, ports: readonly NativeDiscoveredPort[]): Promise<void> {
-    const running = this.#reconciling.get(connectionId);
-    if (running !== undefined) return await running;
-    const task = this.#reconcileDiscoveredInner(connectionId, ports)
-      .finally(() => this.#reconciling.delete(connectionId));
-    this.#reconciling.set(connectionId, task);
-    await task;
-  }
-
-  async #reconcileDiscoveredInner(connectionId: string, ports: readonly NativeDiscoveredPort[]): Promise<void> {
-    const scope = this.scope(connectionId);
-    await scope.load();
-    for (const candidate of ports) {
-      const profiles = scope.getSnapshot().profiles;
-      const existing = profiles.find((profile) => profile.serviceKey === candidate.forwardingKey);
-      if (existing === undefined) {
-        if (!candidate.defaultForwardingEnabled) continue;
-        await this.upsert({
-          connectionId,
-          profileId: automaticProfileId(candidate.forwardingKey),
-          label: candidate.name,
-          remotePort: candidate.port,
-          preferredLocalPort: null,
-          serviceKey: candidate.forwardingKey,
-          preference: "automatic",
-          startImmediately: true,
-        });
-        continue;
-      }
-      if (existing.preference === "excluded") continue;
-      if (existing.serviceKey !== null && (existing.remotePort !== candidate.port || (existing.preference === "automatic" && existing.label !== candidate.name))) {
-        await this.upsert({
-          connectionId,
-          profileId: existing.id,
-          label: existing.preference === "automatic" ? candidate.name : existing.label,
-          remotePort: candidate.port,
-          preferredLocalPort: existing.preferredLocalPort,
-          serviceKey: candidate.forwardingKey,
-          preference: existing.preference,
-          startImmediately: existing.enabled || existing.preference === "automatic",
-        });
-      } else if (existing.preference === "automatic" && !existing.enabled) {
-        await this.start(connectionId, existing.id);
-      }
-    }
-  }
 }
 
 export const nativePortForwardingStore = new NativePortForwardingStore();
@@ -362,8 +330,4 @@ export function useNativePortForwarding(connectionId: string | null): NativePort
 
 export function createNativePortForwardId(): string {
   return `forward-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function automaticProfileId(forwardingKey: string): string {
-  return `auto-${forwardingKey.slice(0, 40)}`;
 }

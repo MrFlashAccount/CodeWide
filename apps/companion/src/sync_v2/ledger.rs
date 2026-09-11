@@ -135,7 +135,7 @@ impl OperationLedger {
         path: impl AsRef<Path>,
         installation_identity: &str,
     ) -> Result<Self, LedgerError> {
-        let database = Database::create(path)?;
+        let database = crate::database::open(path, "operations")?;
         let write = database.begin_write()?;
         {
             let mut operations = write.open_table(OPERATIONS)?;
@@ -190,7 +190,7 @@ impl OperationLedger {
         }
         write.commit()?;
         let ledger = Self {
-            database: Arc::new(database),
+            database,
             retention_changed: Arc::new(tokio::sync::Notify::new()),
         };
         ledger.expire_old_terminal_payloads()?;

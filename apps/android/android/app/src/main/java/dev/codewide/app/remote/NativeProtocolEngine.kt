@@ -23,9 +23,11 @@ internal class NativeProtocolEngine(
   private val sendFrame: (String) -> Boolean,
   private val resetTransport: (String) -> Unit,
   private val onLive: () -> Unit,
+  private val telemetry: NativeTelemetryRecorder,
 ) {
   private data class PendingRpc(
     val method: String,
+    val startedAtNanos: Long,
     val timeout: Runnable,
     val completion: (Result<Any?>) -> Unit,
   )
@@ -56,6 +58,14 @@ internal class NativeProtocolEngine(
   private var journalFlushAtMs: Long? = null
   private var keepaliveRunnable: Runnable? = null
   private var keepaliveNonce = 0L
+  private var catchUpStartedAtNanos: Long? = null
+  private var catchUpEventCount = 0
+  private var catchUpBytes = 0L
+  private var ingressWindowStartedAtNanos: Long? = null
+  private var ingressWindowFirstCursor = 0L
+  private var ingressWindowLastCursor = 0L
+  private var ingressWindowEvents = 0
+  private var ingressWindowBytes = 0L
 
   @Synchronized
   fun onSocketOpen() {
@@ -70,7 +80,15 @@ internal class NativeProtocolEngine(
       .put("type", "hello")
       .put("protocolVersion", 1)
       .put("cursor", frameStore.syncCursor(connectionId) ?: JSONObject.NULL)
-    if (!sendFrame(hello.toString())) {
+    val helloText = hello.toString()
+    telemetry.record(NativeTelemetryMetric(
+      "sync.hello_sent",
+      values = mapOf(
+        "requestBytes" to helloText.toByteArray(Charsets.UTF_8).size,
+        "storedCursor" to maximumObservedCursor,
+      ),
+    ))
+    if (!sendFrame(helloText)) {
       resetTransport("native_hello_failed")
       return
     }
@@ -80,6 +98,7 @@ internal class NativeProtocolEngine(
   @Synchronized
   fun onSocketClosed(message: String = "Connection interrupted") {
     stopKeepalive()
+    flushIngressTelemetry()
     flushJournalFrames()
     upstreamLive = false
     snapshotLoading = false
@@ -123,12 +142,13 @@ internal class NativeProtocolEngine(
       resetTransport("invalid_json")
       return
     }
+    val frameBytes = text.toByteArray(Charsets.UTF_8).size
     when (envelope.optString("type")) {
-      "status" -> handleStatus(envelope)
-      "hello" -> handleHello(envelope)
-      "rpc" -> resolveRpc(envelope.optJSONObject("response"))
-      "event" -> handleEvent(envelope, text)
-      "caughtUp" -> handleCaughtUp(envelope)
+      "status" -> handleStatus(envelope, frameBytes)
+      "hello" -> handleHello(envelope, frameBytes)
+      "rpc" -> resolveRpc(envelope.optJSONObject("response"), frameBytes)
+      "event" -> handleEvent(envelope, text, frameBytes)
+      "caughtUp" -> handleCaughtUp(envelope, frameBytes)
       "serverResponseAccepted" -> resolveServerResponse(envelope, true)
       "serverResponseRejected" -> resolveServerResponse(envelope, false)
       "pong" -> Unit
@@ -160,13 +180,25 @@ internal class NativeProtocolEngine(
     val timeout = Runnable {
       synchronized(this@NativeProtocolEngine) {
         val pending = pendingRpcs.remove(id) ?: return@synchronized
+        telemetry.record(NativeTelemetryMetric(
+          "sync.rpc_response",
+          values = mapOf("durationMs" to elapsedMilliseconds(pending.startedAtNanos)),
+          tags = mapOf("method" to pending.method, "outcome" to "timeout"),
+        ))
         pending.completion(Result.failure(IllegalStateException("RPC timed out: ${pending.method}")))
       }
     }
-    pendingRpcs[id] = PendingRpc(method, timeout, completion)
+    val startedAtNanos = SystemClock.elapsedRealtimeNanos()
     handler.postDelayed(timeout, timeoutMs)
     val request = JSONObject().put("id", id).put("method", method).put("params", params ?: JSONObject.NULL)
-    if (!sendFrame(JSONObject().put("type", "rpc").put("request", request).toString())) {
+    val requestText = JSONObject().put("type", "rpc").put("request", request).toString()
+    pendingRpcs[id] = PendingRpc(method, startedAtNanos, timeout, completion)
+    telemetry.record(NativeTelemetryMetric(
+      "sync.rpc_request",
+      values = mapOf("requestBytes" to requestText.toByteArray(Charsets.UTF_8).size),
+      tags = mapOf("method" to method),
+    ))
+    if (!sendFrame(requestText)) {
       handler.removeCallbacks(timeout)
       pendingRpcs.remove(id)
       upstreamLive = false
@@ -218,7 +250,7 @@ internal class NativeProtocolEngine(
         pending.completion(Result.failure(IllegalStateException("Server request response timed out")))
       }
     }
-    pendingServerResponses[key] = PendingRpc("serverResponse", timeout, completion)
+    pendingServerResponses[key] = PendingRpc("serverResponse", SystemClock.elapsedRealtimeNanos(), timeout, completion)
     handler.postDelayed(timeout, RPC_TIMEOUT_MS)
     val response = JSONObject().put("id", requestId).put("result", result ?: JSONObject.NULL)
     if (!sendFrame(JSONObject().put("type", "serverResponse").put("response", response).toString())) {
@@ -230,8 +262,21 @@ internal class NativeProtocolEngine(
 
   @Synchronized
   fun attachRuntime() {
+    val flushStartedAt = SystemClock.elapsedRealtimeNanos()
     flushJournalFrames()
+    val flushMs = elapsedMilliseconds(flushStartedAt)
+    val checkpointStartedAt = SystemClock.elapsedRealtimeNanos()
     val checkpoint = frameStore.checkpoint(connectionId)
+    telemetry.record(NativeTelemetryMetric(
+      "sync.runtime_attached",
+      values = mapOf(
+        "snapshotCursor" to (checkpoint.snapshotCursor ?: 0L),
+        "journalHeadCursor" to (checkpoint.journalHeadCursor ?: 0L),
+        "journalFlushMs" to flushMs,
+        "checkpointReadMs" to elapsedMilliseconds(checkpointStartedAt),
+      ),
+      tags = mapOf("hasSnapshot" to (checkpoint.snapshotJson != null).toString()),
+    ))
     if (checkpoint.snapshotCursor != null && checkpoint.snapshotJson != null) {
       CodeWideModule.emitEngineEvent(
         connectionId,
@@ -246,9 +291,14 @@ internal class NativeProtocolEngine(
     emitState(state, diagnostic)
   }
 
-  private fun handleStatus(envelope: JSONObject) {
+  private fun handleStatus(envelope: JSONObject, frameBytes: Int) {
     val next = envelope.optString("status")
     val error = envelope.optString("error").takeIf { it.isNotBlank() }?.take(1_000)
+    telemetry.record(NativeTelemetryMetric(
+      "sync.status_received",
+      values = mapOf("responseBytes" to frameBytes),
+      tags = mapOf("status" to next),
+    ))
     if (next == "live") {
       upstreamLive = true
       if (snapshotHead != null || catchUpHead != null) emitState("syncing") else emitState("live")
@@ -270,7 +320,7 @@ internal class NativeProtocolEngine(
     }
   }
 
-  private fun handleHello(envelope: JSONObject) {
+  private fun handleHello(envelope: JSONObject, frameBytes: Int) {
     if (!envelope.has("headCursor")) {
       resetTransport("invalid_head_cursor")
       return
@@ -282,21 +332,39 @@ internal class NativeProtocolEngine(
     }
     maximumObservedCursor = head
     val pending = envelope.optJSONArray("pendingRequests") ?: JSONArray()
+    val storedCursor = frameStore.syncCursor(connectionId) ?: 0L
+    telemetry.record(NativeTelemetryMetric(
+      "sync.hello_received",
+      values = mapOf(
+        "responseBytes" to frameBytes,
+        "storedCursor" to storedCursor,
+        "headCursor" to head,
+        "cursorGap" to maxOf(0L, head - storedCursor),
+        "pendingRequests" to pending.length(),
+      ),
+      tags = mapOf("snapshotRequired" to envelope.optBoolean("snapshotRequired", false).toString()),
+    ))
     frameStore.storePendingRequests(connectionId, pending.toString())
     CodeWideModule.emitEngineEvent(connectionId, "pendingRequests", pending.toString(), null)
     if (envelope.optBoolean("snapshotRequired", false)) {
+      catchUpStartedAtNanos = null
+      catchUpEventCount = 0
+      catchUpBytes = 0L
       snapshotHead = head
       catchUpHead = null
       emitState("syncing")
       if (upstreamLive) loadSnapshot(head)
     } else {
+      catchUpStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+      catchUpEventCount = 0
+      catchUpBytes = 0L
       snapshotHead = null
       catchUpHead = head
       emitState("syncing")
     }
   }
 
-  private fun handleEvent(envelope: JSONObject, text: String) {
+  private fun handleEvent(envelope: JSONObject, text: String, frameBytes: Int) {
     val cursor = envelope.optLong("cursor", -1L)
     val payload = envelope.optJSONObject("payload")
     if (cursor < 0L || payload == null) {
@@ -304,15 +372,21 @@ internal class NativeProtocolEngine(
       return
     }
     maximumObservedCursor = maxOf(maximumObservedCursor, cursor)
+    recordIngress(cursor, frameBytes)
+    if (catchUpHead != null) {
+      catchUpEventCount += 1
+      catchUpBytes += frameBytes
+    }
     val method = payload.optString("method")
     queueJournalFrame(
       IncomingJournalFrame(cursor, text, payload.takeIf(NativeFrameStore::changesPendingRequests)),
+      frameBytes,
       ProjectionBatchPolicy.shouldFlushImmediately(method),
       ProjectionBatchPolicy.flushDelayMs(method),
     )
   }
 
-  private fun handleCaughtUp(envelope: JSONObject) {
+  private fun handleCaughtUp(envelope: JSONObject, frameBytes: Int) {
     val cursor = envelope.optLong("cursor", -1L)
     if (cursor < 0L || catchUpHead != cursor) {
       resetTransport("invalid_caught_up_cursor")
@@ -320,6 +394,20 @@ internal class NativeProtocolEngine(
     }
     snapshotHead = null
     catchUpHead = null
+    telemetry.record(NativeTelemetryMetric(
+      "sync.catch_up_completed",
+      values = mapOf(
+        "durationMs" to (catchUpStartedAtNanos?.let(::elapsedMilliseconds) ?: 0.0),
+        "responseBytes" to frameBytes,
+        "eventCount" to catchUpEventCount,
+        "eventBytes" to catchUpBytes,
+        "cursor" to cursor,
+      ),
+    ))
+    catchUpStartedAtNanos = null
+    catchUpEventCount = 0
+    catchUpBytes = 0L
+    flushIngressTelemetry()
     flushJournalFrames()
     emitState(if (upstreamLive) "live" else "connecting")
   }
@@ -327,6 +415,11 @@ internal class NativeProtocolEngine(
   private fun loadSnapshot(head: Long) {
     if (!upstreamLive || snapshotHead != head || snapshotLoading) return
     snapshotLoading = true
+    val snapshotStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+    telemetry.record(NativeTelemetryMetric(
+      "sync.snapshot_started",
+      values = mapOf("headCursor" to head),
+    ))
     val active = JSONArray()
     val archived = JSONArray()
     var activeDone = false
@@ -337,7 +430,7 @@ internal class NativeProtocolEngine(
       val collected = JSONArray()
       for (index in 0 until active.length()) collected.put(active.get(index))
       for (index in 0 until archived.length()) collected.put(archived.get(index))
-      finishSnapshot(head, collected)
+      finishSnapshot(head, collected, snapshotStartedAtNanos)
     }
     fun fail(error: Throwable) {
       if (failed) return
@@ -388,6 +481,17 @@ internal class NativeProtocolEngine(
             collected.put(JSONObject().put("thread", thread).put("archived", archived))
           }
           val next = if (page.isNull("nextCursor")) null else page.optString("nextCursor").takeIf { it.isNotBlank() }
+          telemetry.record(NativeTelemetryMetric(
+            "sync.snapshot_page",
+            values = mapOf(
+              "rowCount" to data.length(),
+              "responseBytes" to page.toString().toByteArray(Charsets.UTF_8).size,
+            ),
+            tags = mapOf(
+              "archived" to archived.toString(),
+              "hasNext" to (next != null).toString(),
+            ),
+          ))
           if (next == null) completion(Result.success(Unit))
           else if (!seen.add(next)) completion(Result.failure(IllegalStateException("thread/list returned a repeated cursor")))
           else loadSnapshotPage(head, archived, next, seen, collected, completion)
@@ -397,10 +501,11 @@ internal class NativeProtocolEngine(
     }
   }
 
-  private fun finishSnapshot(head: Long, collected: JSONArray) {
+  private fun finishSnapshot(head: Long, collected: JSONArray, startedAtNanos: Long) {
     if (!upstreamLive || snapshotHead != head) return
     try {
-      frameStore.storeSnapshot(connectionId, head, collected.toString())
+      val snapshotJson = collected.toString()
+      frameStore.storeSnapshot(connectionId, head, snapshotJson)
       CodeWideModule.emitEngineEvent(
         connectionId,
         "snapshot",
@@ -409,6 +514,15 @@ internal class NativeProtocolEngine(
         head,
       )
       snapshotLoading = false
+      telemetry.record(NativeTelemetryMetric(
+        "sync.snapshot_completed",
+        values = mapOf(
+          "durationMs" to elapsedMilliseconds(startedAtNanos),
+          "headCursor" to head,
+          "threadCount" to collected.length(),
+          "snapshotBytes" to snapshotJson.toByteArray(Charsets.UTF_8).size,
+        ),
+      ))
       sendFrame(JSONObject().put("type", "snapshotApplied").put("cursor", head).toString())
     } catch (error: Throwable) {
       snapshotFailed(error)
@@ -418,16 +532,32 @@ internal class NativeProtocolEngine(
   private fun snapshotFailed(error: Throwable) {
     snapshotLoading = false
     upstreamLive = false
+    telemetry.record(NativeTelemetryMetric(
+      "sync.snapshot_failed",
+      tags = mapOf("failureKind" to error.javaClass.simpleName),
+    ))
     emitState("degraded", error.message ?: "Snapshot synchronization failed")
     resetTransport("snapshot_failed")
   }
 
-  private fun resolveRpc(response: JSONObject?) {
+  private fun resolveRpc(response: JSONObject?, frameBytes: Int) {
     if (response == null) return
     val id = response.optString("id")
     val pending = pendingRpcs.remove(id) ?: return
     handler.removeCallbacks(pending.timeout)
     val error = response.optJSONObject("error")
+    telemetry.record(NativeTelemetryMetric(
+      "sync.rpc_response",
+      values = mapOf(
+        "durationMs" to elapsedMilliseconds(pending.startedAtNanos),
+        "responseBytes" to frameBytes,
+        "errorCode" to (error?.optInt("code", 0) ?: 0),
+      ),
+      tags = mapOf(
+        "method" to pending.method,
+        "outcome" to if (error == null) "completed" else "failed",
+      ),
+    ))
     if (error != null) {
       pending.completion(Result.failure(NativeRpcException(error.optInt("code", -32_000), error.optString("message", "RPC failed"))))
     } else {
@@ -449,8 +579,7 @@ internal class NativeProtocolEngine(
   }
 
   @Synchronized
-  private fun queueJournalFrame(frame: IncomingJournalFrame, flushImmediately: Boolean, flushDelayMs: Long) {
-    val bytes = frame.payload.toByteArray(Charsets.UTF_8).size
+  private fun queueJournalFrame(frame: IncomingJournalFrame, bytes: Int, flushImmediately: Boolean, flushDelayMs: Long) {
     if (journalFrames.isNotEmpty() && (journalFrames.size >= MAX_JOURNAL_BATCH || journalBytes + bytes > MAX_JOURNAL_BYTES)) {
       flushJournalFrames()
     }
@@ -575,6 +704,37 @@ internal class NativeProtocolEngine(
     keepaliveRunnable = null
   }
 
+  private fun recordIngress(cursor: Long, bytes: Int) {
+    val startedAt = ingressWindowStartedAtNanos
+    if (startedAt == null) {
+      ingressWindowStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+      ingressWindowFirstCursor = cursor
+    }
+    ingressWindowLastCursor = cursor
+    ingressWindowEvents += 1
+    ingressWindowBytes += bytes
+    val activeStartedAt = ingressWindowStartedAtNanos ?: return
+    if (elapsedMilliseconds(activeStartedAt) >= INGRESS_TELEMETRY_INTERVAL_MS) flushIngressTelemetry()
+  }
+
+  private fun flushIngressTelemetry() {
+    val startedAt = ingressWindowStartedAtNanos ?: return
+    telemetry.record(NativeTelemetryMetric(
+      "sync.ingress_window",
+      values = mapOf(
+        "durationMs" to elapsedMilliseconds(startedAt),
+        "eventCount" to ingressWindowEvents,
+        "eventBytes" to ingressWindowBytes,
+        "firstCursor" to ingressWindowFirstCursor,
+        "lastCursor" to ingressWindowLastCursor,
+        "cursorDelta" to maxOf(0L, ingressWindowLastCursor - ingressWindowFirstCursor),
+      ),
+    ))
+    ingressWindowStartedAtNanos = null
+    ingressWindowEvents = 0
+    ingressWindowBytes = 0L
+  }
+
   private fun rejectInFlight(message: String) {
     val failure = Result.failure<Any?>(IllegalStateException(message))
     pendingRpcs.values.toList().forEach { pending ->
@@ -614,6 +774,7 @@ internal class NativeProtocolEngine(
     private const val MAX_DEFERRED_RPCS = 128
     private const val MAX_JOURNAL_BATCH = 128
     private const val MAX_JOURNAL_BYTES = 512 * 1024
+    private const val INGRESS_TELEMETRY_INTERVAL_MS = 1_000.0
     private val EPHEMERAL_CONTROL_METHODS = setOf("turn/interrupt")
   }
 }

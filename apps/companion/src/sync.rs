@@ -16,7 +16,7 @@ use tracing::{debug, info, warn};
 use crate::{
     account_pool::{AccountPoolError, AccountPoolService},
     auth::{AuthorizationChange, AuthorizationContext},
-    content::ContentProjector,
+    content::{ContentProjector, MAX_INLINE_TEXT_BYTES},
     dictation::DictationService,
     files::FileService,
     history_service::HistoryService,
@@ -28,7 +28,7 @@ use crate::{
         OutboxClaimResolutionOutcome, OutboxCommand, OutboxPresentation, OutboxState, ReplayPage,
     },
     thread_view::{ThreadActivity, ThreadViewService},
-    upstream::{ConnectionStatus, UpstreamError, UpstreamHandle},
+    upstream::{ConnectionStatus, OrderedUpstreamEvent, UpstreamError, UpstreamHandle},
     workspaces::{WorkspacePhase, WorkspaceService},
 };
 
@@ -37,7 +37,7 @@ const MAX_REPLAY_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_LIVE_SIGNALS: usize = 128;
 const MAX_REPLAY_BATCH_ENTRIES: usize = 256;
 const REPLAY_BATCH_DELAY: Duration = Duration::from_millis(16);
-const MAX_COALESCED_TEXT_DELTA_BYTES: usize = 64 * 1024;
+const MAX_COALESCED_TEXT_DELTA_BYTES: usize = MAX_INLINE_TEXT_BYTES;
 const MAX_STREAM_DIAGNOSTIC_TURNS: usize = 4_096;
 const MAX_PENDING_SERVER_REQUESTS: usize = 1_024;
 const MAX_PENDING_SERVER_REQUEST_BYTES: usize = 4 * 1024 * 1024;
@@ -96,6 +96,20 @@ enum MutationMode {
 enum DurableSignal {
     Committed(u64),
     Failed,
+}
+
+enum IngestInput {
+    Payload(Value),
+    Fence(tokio::sync::oneshot::Sender<Result<u64, UpstreamError>>),
+}
+
+struct IngestContext {
+    store: Arc<IndexStore>,
+    events: tokio::sync::broadcast::Sender<DurableSignal>,
+    server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
+    content_projector: Arc<std::sync::RwLock<Option<Arc<ContentProjector>>>>,
+    resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
+    usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
 }
 
 struct InitialSession {
@@ -383,13 +397,14 @@ fn spawn_live_replay_task(
 }
 
 impl SyncHub {
+    /// Creates a passive event/replay companion that does not execute client RPC.
     #[must_use]
     pub fn new(upstream: UpstreamHandle, store: Arc<IndexStore>, history: HistoryService) -> Self {
         Self::build(upstream, store, history, MutationMode::ReadOnlyShadow)
     }
 
-    /// Creates a companion whose explicitly exposed mutation methods are live.
-    /// This constructor must only be used by an intentional canary or cutover.
+    /// Creates an active companion with unrestricted authenticated RPC forwarding
+    /// and durable command delivery.
     #[must_use]
     pub fn with_mutations(
         upstream: UpstreamHandle,
@@ -412,6 +427,7 @@ impl SyncHub {
         // here would pin the last 2,048 events in RSS indefinitely.
         let (events, _) = tokio::sync::broadcast::channel(MAX_LIVE_SIGNALS);
         let (local_events, ingest_rx) = tokio::sync::mpsc::channel(MAX_REPLAY_ENTRIES);
+        let (ordered_ingest, ordered_ingest_rx) = tokio::sync::mpsc::channel(MAX_REPLAY_ENTRIES);
         let server_requests = Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default()));
         let recent_turn_starts = Arc::new(tokio::sync::Mutex::new(RecentTurnStarts::default()));
         let outbox_wakeup = Arc::new(tokio::sync::Notify::new());
@@ -429,11 +445,12 @@ impl SyncHub {
         ));
         let recent_upstream_threads = Arc::new(std::sync::Mutex::new(HashMap::new()));
         tokio::spawn(forward_upstream_events(
-            upstream.subscribe_events(),
-            local_events.clone(),
+            upstream.take_ordered_events(),
+            ordered_ingest.clone(),
             outbox_wakeup.clone(),
             recent_upstream_threads.clone(),
         ));
+        tokio::spawn(forward_local_events(ingest_rx, ordered_ingest));
         match history.spawn_rollout_monitor() {
             Ok(changes) => {
                 tokio::spawn(forward_rollout_changes(
@@ -447,7 +464,7 @@ impl SyncHub {
             Err(error) => warn!(%error, "canonical rollout monitor is unavailable"),
         }
         tokio::spawn(ingest_events(
-            ingest_rx,
+            ordered_ingest_rx,
             store.clone(),
             events.clone(),
             server_requests.clone(),
@@ -1098,8 +1115,14 @@ impl SyncHub {
             return send_rpc_error(socket, id, -32600, "Sync RPC requests require an id").await;
         }
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-        if !is_exposed_rpc(&method) {
-            return send_rpc_error(socket, id, -32601, "Method is not exposed by CodeWide").await;
+        if method.is_empty() {
+            return send_rpc_error(socket, id, -32600, "Sync RPC requests require a method").await;
+        }
+        // A passive shadow must never execute requests: unknown future methods
+        // cannot be classified as safe to read without recreating an allowlist.
+        if self.mutation_mode != MutationMode::Active {
+            return send_rpc_error(socket, id, -32010, "Passive companion does not execute RPC")
+                .await;
         }
         if matches!(
             method.as_str(),
@@ -1115,17 +1138,17 @@ impl SyncHub {
         {
             return Ok(());
         }
-        if method.starts_with("companion/queue/") {
-            if self.mutation_mode != MutationMode::Active && method != "companion/queue/list" {
-                return send_rpc_error(socket, id, -32010, "companion is read-only").await;
-            }
+        if matches!(
+            method.as_str(),
+            "companion/queue/steer"
+                | "companion/queue/put"
+                | "companion/queue/list"
+                | "companion/queue/edit"
+                | "companion/queue/cancel"
+                | "companion/queue/retry"
+                | "companion/queue/move"
+        ) {
             return self.handle_queue_rpc(socket, id, &method, &params).await;
-        }
-        if !is_read_only_method(&method) && self.mutation_mode != MutationMode::Active {
-            return send_rpc_error(socket, id, -32010, "companion is read-only").await;
-        }
-        if !is_read_only_method(&method) && !is_mutating_method(&method) {
-            return send_rpc_error(socket, id, -32601, "Method is not exposed by CodeWide").await;
         }
         if self
             .try_handle_thread_read_rpc(socket, &id, &method, &params)
@@ -1307,10 +1330,6 @@ impl SyncHub {
             return self.handle_resource_rpc(socket, id, method, params).await;
         }
         if ProjectService::handles(method) {
-            if self.mutation_mode != MutationMode::Active && method != "companion/project/list" {
-                send_rpc_error(socket, id.clone(), -32010, "companion is read-only").await?;
-                return Ok(true);
-            }
             let Some(projects) = self.projects() else {
                 send_rpc_error(
                     socket,
@@ -1334,10 +1353,6 @@ impl SyncHub {
         }
         if !AccountPoolService::handles(method) {
             return Ok(false);
-        }
-        if self.mutation_mode != MutationMode::Active && method != "companion/accountPool/list" {
-            send_rpc_error(socket, id.clone(), -32010, "companion is read-only").await?;
-            return Ok(true);
         }
         let Some(account_pool) = self.account_pool() else {
             send_rpc_error(socket, id.clone(), -32040, "Account pool is unavailable").await?;
@@ -1474,15 +1489,6 @@ impl SyncHub {
         method: &str,
         params: &Value,
     ) -> Result<bool, ()> {
-        if self.mutation_mode != MutationMode::Active
-            && !matches!(
-                method,
-                "companion/workspace/inspect" | "companion/workspace/read"
-            )
-        {
-            send_rpc_error(socket, id.clone(), -32010, "companion is read-only").await?;
-            return Ok(true);
-        }
         let Some(workspaces) = self.workspaces() else {
             send_rpc_error(
                 socket,
@@ -1595,6 +1601,38 @@ impl SyncHub {
         {
             return Ok(true);
         }
+        if matches!(
+            method,
+            "companion/search/context" | "companion/search/window"
+        ) {
+            let result = if method == "companion/search/window" {
+                self.history.search_window(params).await
+            } else {
+                self.history.search_context(params).await
+            };
+            match result {
+                Ok(result) => {
+                    self.send_projected_rpc_result(socket, id, method, result)
+                        .await?;
+                }
+                Err(error) => {
+                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
+                }
+            }
+            return Ok(true);
+        }
+        if method == "companion/search" {
+            match self.history.search_messages(params).await {
+                Ok(result) => {
+                    self.send_projected_rpc_result(socket, id, method, result)
+                        .await?;
+                }
+                Err(error) => {
+                    send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
+                }
+            }
+            return Ok(true);
+        }
         if method == "companion/thread/sync" {
             match self.thread_view.sync(params).await {
                 Ok(result) => {
@@ -1603,6 +1641,35 @@ impl SyncHub {
                 }
                 Err(error) => {
                     send_rpc_error(socket, id.clone(), -32020, &error.to_string()).await?;
+                }
+            }
+            return Ok(true);
+        }
+        if matches!(
+            method,
+            "companion/thread/history/after" | "companion/thread/history/before"
+        ) {
+            let page = if method == "companion/thread/history/after" {
+                self.history.turns_after(params).await
+            } else {
+                self.history.turns_before(params).await
+            };
+            match page {
+                Ok(result) => {
+                    self.send_projected_rpc_result(socket, id, method, result)
+                        .await?;
+                }
+                Err(error) => {
+                    let code = if matches!(
+                        error,
+                        crate::history_service::HistoryServiceError::HistorySourceChanged
+                            | crate::history_service::HistoryServiceError::InvalidCursor
+                    ) {
+                        -32021
+                    } else {
+                        -32020
+                    };
+                    send_rpc_error(socket, id.clone(), code, &error.to_string()).await?;
                 }
             }
             return Ok(true);
@@ -1630,9 +1697,10 @@ impl SyncHub {
     ) -> Result<bool, ()> {
         let target = match method {
             "companion/thread/sync" => Some(crate::sync_v2::E2ESurfaceFaultTarget::ThreadOpen),
-            "thread/turns/list" | "thread/items/list" => {
-                Some(crate::sync_v2::E2ESurfaceFaultTarget::HistoryPage)
-            }
+            "companion/thread/history/after"
+            | "companion/thread/history/before"
+            | "thread/turns/list"
+            | "thread/items/list" => Some(crate::sync_v2::E2ESurfaceFaultTarget::HistoryPage),
             _ => None,
         };
         let Some(target) = target else {
@@ -1937,28 +2005,44 @@ async fn send_live_replay_after(
 }
 
 async fn forward_upstream_events(
-    mut upstream: tokio::sync::broadcast::Receiver<Value>,
-    ingest: tokio::sync::mpsc::Sender<Value>,
+    mut upstream: tokio::sync::mpsc::Receiver<OrderedUpstreamEvent>,
+    ingest: tokio::sync::mpsc::Sender<IngestInput>,
     outbox_wakeup: Arc<tokio::sync::Notify>,
     recent_upstream_threads: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
 ) {
-    loop {
-        match upstream.recv().await {
-            Ok(payload) => {
+    while let Some(event) = upstream.recv().await {
+        match event {
+            OrderedUpstreamEvent::Notification(payload) => {
                 if let Some(thread_id) = event_thread_id(&payload) {
                     remember_upstream_thread(&recent_upstream_threads, thread_id);
                 }
                 if payload.get("method").and_then(Value::as_str) == Some("turn/completed") {
                     outbox_wakeup.notify_one();
                 }
-                if ingest.send(payload).await.is_err() {
+                if ingest.send(IngestInput::Payload(payload)).await.is_err() {
                     break;
                 }
             }
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                warn!(skipped, "central App Server event forwarder lagged");
+            OrderedUpstreamEvent::Fence(fence) => {
+                if let Err(error) = ingest.send(IngestInput::Fence(fence)).await {
+                    let IngestInput::Fence(fence) = error.0 else {
+                        unreachable!("only a fence is sent from this branch");
+                    };
+                    let _ = fence.send(Err(UpstreamError::Disconnected));
+                    break;
+                }
             }
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+async fn forward_local_events(
+    mut local: tokio::sync::mpsc::Receiver<Value>,
+    ingest: tokio::sync::mpsc::Sender<IngestInput>,
+) {
+    while let Some(payload) = local.recv().await {
+        if ingest.send(IngestInput::Payload(payload)).await.is_err() {
+            break;
         }
     }
 }
@@ -2134,7 +2218,7 @@ async fn forward_account_pool_events(
 }
 
 async fn ingest_events(
-    mut ingest: tokio::sync::mpsc::Receiver<Value>,
+    mut ingest: tokio::sync::mpsc::Receiver<IngestInput>,
     store: Arc<IndexStore>,
     events: tokio::sync::broadcast::Sender<DurableSignal>,
     server_requests: Arc<tokio::sync::Mutex<PendingServerRequests>>,
@@ -2142,9 +2226,25 @@ async fn ingest_events(
     resources: Arc<std::sync::RwLock<Option<Arc<ResourceService>>>>,
     usage_projector: Arc<std::sync::Mutex<crate::usage::LiveUsageProjector>>,
 ) {
+    let context = IngestContext {
+        store,
+        events,
+        server_requests,
+        content_projector,
+        resources,
+        usage_projector,
+    };
     let mut stream_diagnostics = AgentStreamDiagnostics::default();
     while let Some(first) = ingest.recv().await {
+        let IngestInput::Payload(first) = first else {
+            let IngestInput::Fence(fence) = first else {
+                unreachable!("ingest input has exactly two variants");
+            };
+            resolve_replay_fence(&context.store, fence).await;
+            continue;
+        };
         let mut payloads = vec![first];
+        let mut fence = None;
         let deadline = tokio::time::Instant::now() + REPLAY_BATCH_DELAY;
         while payloads.len() < MAX_REPLAY_BATCH_ENTRIES {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -2152,85 +2252,122 @@ async fn ingest_events(
                 break;
             }
             match tokio::time::timeout(remaining, ingest.recv()).await {
-                Ok(Some(payload)) => payloads.push(payload),
+                Ok(Some(IngestInput::Payload(payload))) => payloads.push(payload),
+                Ok(Some(IngestInput::Fence(completion))) => {
+                    fence = Some(completion);
+                    break;
+                }
                 Ok(None) | Err(_) => break,
             }
         }
-        if observe_server_requests(&server_requests, &payloads)
+        if ingest_payload_batch(&context, &mut stream_diagnostics, payloads)
             .await
             .is_err()
         {
-            warn!("pending App Server request limits exceeded");
-            let _ = events.send(DurableSignal::Failed);
             break;
         }
-        for payload in &payloads {
-            if let Err(error) = observe_subagent_metadata(&store, payload) {
-                warn!(%error, "live subagent metadata index update failed");
-            }
-        }
-        let resource_service = match resources.read() {
-            Ok(slot) => slot.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        };
-        if let Some(resource_service) = resource_service {
-            for payload in &payloads {
-                resource_service.observe(payload).await;
-            }
-        }
-        let projector = match content_projector.read() {
-            Ok(slot) => slot.clone(),
-            Err(poisoned) => poisoned.into_inner().clone(),
-        };
-        if let Some(projector) = projector {
-            payloads = payloads
-                .into_iter()
-                .map(|payload| projector.project_notification(payload))
-                .collect();
-        }
-        stream_diagnostics.observe_input_batch(&payloads);
-        payloads = coalesce_stream_text_deltas(payloads);
-        stream_diagnostics.observe_emitted_batch(&payloads);
-        let mut projected_payloads = Vec::with_capacity(payloads.len());
-        for payload in payloads {
-            let usage = match usage_projector.lock() {
-                Ok(mut projector) => projector.observe(&payload),
-                Err(poisoned) => poisoned.into_inner().observe(&payload),
-            };
-            let Ok(usage) = usage else {
-                warn!("usage projection persistence failed");
-                let _ = events.send(DurableSignal::Failed);
-                return;
-            };
-            projected_payloads.push(crate::thread_patch::attach_thread_patch_with_usage(
-                payload, usage,
-            ));
-        }
-        payloads = projected_payloads;
-        let Ok(encoded) = payloads
-            .iter()
-            .map(serde_json::to_vec)
-            .collect::<Result<Vec<Vec<u8>>, _>>()
-        else {
-            warn!("replay payload serialization failed");
-            let _ = events.send(DurableSignal::Failed);
-            break;
-        };
-        let durable_store = store.clone();
-        let committed = tokio::task::spawn_blocking(move || {
-            durable_store.append_replay_batch(&encoded, MAX_REPLAY_ENTRIES, MAX_REPLAY_BYTES)
-        })
-        .await;
-        let Ok(Ok(cursors)) = committed else {
-            warn!("durable replay journal failed");
-            let _ = events.send(DurableSignal::Failed);
-            break;
-        };
-        stream_diagnostics.finish_completed_turns(&payloads);
-        if let Some(cursor) = cursors.last().copied() {
-            let _ = events.send(DurableSignal::Committed(cursor));
+        if let Some(fence) = fence {
+            resolve_replay_fence(&context.store, fence).await;
         }
     }
+}
+
+async fn ingest_payload_batch(
+    context: &IngestContext,
+    stream_diagnostics: &mut AgentStreamDiagnostics,
+    mut payloads: Vec<Value>,
+) -> Result<(), ()> {
+    if observe_server_requests(&context.server_requests, &payloads)
+        .await
+        .is_err()
+    {
+        warn!("pending App Server request limits exceeded");
+        let _ = context.events.send(DurableSignal::Failed);
+        return Err(());
+    }
+    for payload in &payloads {
+        if let Err(error) = observe_subagent_metadata(&context.store, payload) {
+            warn!(%error, "live subagent metadata index update failed");
+        }
+    }
+    let resource_service = match context.resources.read() {
+        Ok(slot) => slot.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    if let Some(resource_service) = resource_service {
+        for payload in &payloads {
+            resource_service.observe(payload).await;
+        }
+    }
+    let projector = match context.content_projector.read() {
+        Ok(slot) => slot.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    // Coalesce bytes before externalizing them. Merging empty projected
+    // deltas can otherwise discard a repeated content reference.
+    stream_diagnostics.observe_input_batch(&payloads);
+    payloads = coalesce_stream_text_deltas(payloads);
+    if let Some(projector) = projector {
+        payloads = payloads
+            .into_iter()
+            .map(|payload| projector.project_notification(payload))
+            .collect();
+    }
+    stream_diagnostics.observe_emitted_batch(&payloads);
+    let mut projected_payloads = Vec::with_capacity(payloads.len());
+    for payload in payloads {
+        let usage = match context.usage_projector.lock() {
+            Ok(mut projector) => projector.observe(&payload),
+            Err(poisoned) => poisoned.into_inner().observe(&payload),
+        };
+        let Ok(usage) = usage else {
+            warn!("usage projection persistence failed");
+            let _ = context.events.send(DurableSignal::Failed);
+            return Err(());
+        };
+        projected_payloads.push(crate::thread_patch::attach_thread_patch_with_usage(
+            payload, usage,
+        ));
+    }
+    payloads = projected_payloads;
+    let Ok(encoded) = payloads
+        .iter()
+        .map(serde_json::to_vec)
+        .collect::<Result<Vec<Vec<u8>>, _>>()
+    else {
+        warn!("replay payload serialization failed");
+        let _ = context.events.send(DurableSignal::Failed);
+        return Err(());
+    };
+    let durable_store = context.store.clone();
+    let committed = tokio::task::spawn_blocking(move || {
+        durable_store.append_replay_batch(&encoded, MAX_REPLAY_ENTRIES, MAX_REPLAY_BYTES)
+    })
+    .await;
+    let Ok(Ok(cursors)) = committed else {
+        warn!("durable replay journal failed");
+        let _ = context.events.send(DurableSignal::Failed);
+        return Err(());
+    };
+    stream_diagnostics.finish_completed_turns(&payloads);
+    if let Some(cursor) = cursors.last().copied() {
+        let _ = context.events.send(DurableSignal::Committed(cursor));
+    }
+    Ok(())
+}
+
+async fn resolve_replay_fence(
+    store: &Arc<IndexStore>,
+    fence: tokio::sync::oneshot::Sender<Result<u64, UpstreamError>>,
+) {
+    let durable_store = store.clone();
+    let cursor = tokio::task::spawn_blocking(move || durable_store.replay_head()).await;
+    let result = match cursor {
+        Ok(Ok(cursor)) => Ok(cursor),
+        Ok(Err(error)) => Err(UpstreamError::Protocol(error.to_string())),
+        Err(error) => Err(UpstreamError::Protocol(error.to_string())),
+    };
+    let _ = fence.send(result);
 }
 
 fn observe_subagent_metadata(
@@ -2307,7 +2444,7 @@ fn observe_subagent_metadata(
 
 fn coalesce_stream_text_deltas(payloads: Vec<Value>) -> Vec<Value> {
     let mut coalesced = Vec::with_capacity(payloads.len());
-    for payload in payloads {
+    for payload in payloads.into_iter().flat_map(split_stream_text_delta) {
         if let Some(previous) = coalesced.last_mut()
             && merge_adjacent_stream_text_delta(previous, &payload)
         {
@@ -2316,6 +2453,47 @@ fn coalesce_stream_text_deltas(payloads: Vec<Value>) -> Vec<Value> {
         coalesced.push(payload);
     }
     coalesced
+}
+
+fn split_stream_text_delta(payload: Value) -> Vec<Value> {
+    let Some(delta) = payload
+        .get("params")
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("delta"))
+        .and_then(Value::as_str)
+        .filter(|delta| delta.len() > MAX_COALESCED_TEXT_DELTA_BYTES)
+    else {
+        return vec![payload];
+    };
+    if !payload
+        .get("method")
+        .and_then(Value::as_str)
+        .is_some_and(is_coalescible_text_delta_method)
+    {
+        return vec![payload];
+    }
+
+    let mut chunks = Vec::with_capacity(delta.len().div_ceil(MAX_COALESCED_TEXT_DELTA_BYTES));
+    let mut start = 0;
+    while start < delta.len() {
+        let mut end = start
+            .saturating_add(MAX_COALESCED_TEXT_DELTA_BYTES)
+            .min(delta.len());
+        while end > start && !delta.is_char_boundary(end) {
+            end -= 1;
+        }
+        let mut chunk = payload.clone();
+        if let Some(value) = chunk
+            .get_mut("params")
+            .and_then(Value::as_object_mut)
+            .and_then(|params| params.get_mut("delta"))
+        {
+            *value = Value::String(delta[start..end].to_owned());
+        }
+        chunks.push(chunk);
+        start = end;
+    }
+    chunks
 }
 
 fn merge_adjacent_stream_text_delta(previous: &mut Value, next: &Value) -> bool {
@@ -2401,6 +2579,7 @@ fn is_coalescible_text_delta_method(method: &str) -> bool {
     matches!(
         method,
         "item/agentMessage/delta"
+            | "item/commandExecution/outputDelta"
             | "item/plan/delta"
             | "item/reasoning/summaryTextDelta"
             | "item/reasoning/textDelta"
@@ -2581,7 +2760,7 @@ async fn forward_rpc_response(
     history: &HistoryService,
     observers: RpcResultObservers,
 ) -> Result<(), ()> {
-    if !is_read_only_method(method)
+    if !rpc_is_known_read(method)
         && let Some(error) = response.get("error")
     {
         let code = error.get("code").and_then(Value::as_i64);
@@ -3062,9 +3241,9 @@ async fn reconcile_outbox_command(
                 // Explicit queue means "the next turn", never an implicit
                 // steer into the current one. App Server accepts turn/start
                 // while another client owns the active turn. A system-error
-                // lifecycle is not evidence that dispatch is safe, so the
-                // durable Companion lane must hold the head until App Server
-                // authoritatively reports idle.
+                // lifecycle without explicit direct-input authority must also
+                // wait; ThreadViewService admits recoverable failures only
+                // when App Server explicitly permits input.
                 wait_outbox(
                     store,
                     local_events,
@@ -3698,11 +3877,19 @@ fn rpc_error_message(response: &Value) -> String {
     message.chars().take(500).collect()
 }
 
-fn is_read_only_method(method: &str) -> bool {
+// Scheduling and diagnostic hints only: unknown methods are forwarded too,
+// but conservatively share the ordered lane when they target a thread.
+fn rpc_is_known_read(method: &str) -> bool {
     matches!(
         method,
         "account/rateLimits/read"
+            | "companion/search"
+            | "companion/search/context"
+            | "companion/search/window"
+            | "companion/project/home"
             | "companion/thread/sync"
+            | "companion/thread/history/after"
+            | "companion/thread/history/before"
             | "companion/threadSubagents/read"
             | "config/read"
             | "fs/readDirectory"
@@ -3735,55 +3922,13 @@ fn is_read_only_method(method: &str) -> bool {
     )
 }
 
-fn is_exposed_rpc(method: &str) -> bool {
-    matches!(
-        method,
-        "companion/workspace/inspect"
-            | "companion/workspace/read"
-            | "companion/workspace/create"
-            | "companion/project/list"
-            | "companion/project/add"
-            | "companion/accountPool/list"
-            | "companion/accountPool/refresh"
-    ) || method.starts_with("companion/accountPool/")
-        || matches!(
-            method,
-            "companion/thread/sync"
-                | "companion/threadSubagents/read"
-                | "companion/threadResources/read"
-                | "companion/threadChanges/read"
-                | "companion/threadAttachments/read"
-                | "companion/threadChange/read"
-        )
-        || is_read_only_method(method)
-        || method.starts_with("companion/queue/")
-        || method.starts_with("companion/dictation/")
-        || method.starts_with("thread/realtime/")
-        || matches!(method, "turn/start" | "turn/interrupt" | "review/start")
-        || is_thread_write_method(method)
-        || method == "turn/steer"
-        || matches!(
-            method,
-            "thread/backgroundTerminals/clean" | "thread/backgroundTerminals/terminate"
-        )
-        || method == "mcpServer/tool/call"
-        || method == "thread/shellCommand"
-        || method.starts_with("command/exec")
-}
-
-/// Returns whether a V1 RPC method is exposed through the authenticated bridge.
-#[must_use]
-pub fn contract_rpc_is_exposed(method: &str) -> bool {
-    is_exposed_rpc(method)
-}
-
 fn rpc_requires_ordered_lane(method: &str) -> bool {
-    // Observer attachment does not mutate persisted thread data, so it keeps
-    // the read scope. It still has to precede a turn/start for the same thread:
+    // Observer attachment does not mutate persisted thread data, but it
+    // still has to precede a turn/start for the same thread:
     // otherwise the first live deltas can be emitted before Companion has
     // subscribed to that thread.
     method == "companion/thread/sync"
-        || (!is_read_only_method(method)
+        || (!rpc_is_known_read(method)
             && !matches!(
                 method,
                 "companion/accountPool/list"
@@ -3815,69 +3960,6 @@ fn rpc_thread_mutation_id(request: &Value) -> Option<&str> {
                 .and_then(|command| command.get("remoteThreadId"))
                 .and_then(Value::as_str)
         })
-}
-
-fn is_thread_write_method(method: &str) -> bool {
-    matches!(
-        method,
-        "thread/start"
-            | "thread/fork"
-            | "thread/archive"
-            | "thread/delete"
-            | "thread/unsubscribe"
-            | "thread/name/set"
-            | "thread/goal/set"
-            | "thread/goal/clear"
-            | "thread/metadata/update"
-            | "thread/section/move"
-            | "thread/settings/update"
-            | "thread/memoryMode/set"
-            | "thread/unarchive"
-            | "thread/compact/start"
-            | "thread/rollback"
-            | "threadSection/create"
-            | "threadSection/update"
-            | "threadSection/delete"
-    )
-}
-
-fn is_mutating_method(method: &str) -> bool {
-    matches!(
-        method,
-        "thread/start"
-            | "thread/fork"
-            | "thread/archive"
-            | "thread/delete"
-            | "thread/unsubscribe"
-            | "thread/name/set"
-            | "thread/goal/set"
-            | "thread/goal/clear"
-            | "thread/metadata/update"
-            | "thread/section/move"
-            | "thread/settings/update"
-            | "thread/memoryMode/set"
-            | "thread/unarchive"
-            | "thread/compact/start"
-            | "thread/rollback"
-            | "threadSection/create"
-            | "threadSection/update"
-            | "threadSection/delete"
-            | "turn/start"
-            | "turn/steer"
-            | "turn/interrupt"
-            | "thread/realtime/start"
-            | "thread/realtime/appendAudio"
-            | "thread/realtime/stop"
-            | "review/start"
-            | "mcpServer/tool/call"
-            | "thread/backgroundTerminals/clean"
-            | "thread/backgroundTerminals/terminate"
-            | "thread/shellCommand"
-            | "command/exec"
-            | "command/exec/write"
-            | "command/exec/terminate"
-            | "command/exec/resize"
-    )
 }
 
 async fn send_rpc_error(
@@ -3943,16 +4025,64 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test]
+    async fn durable_fence_resolves_after_every_preceding_payload_is_committed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let store = Arc::new(IndexStore::open(directory.path().join("fence.redb"))?);
+        let (ingest, receiver) = tokio::sync::mpsc::channel(4);
+        let (signals, _) = tokio::sync::broadcast::channel(4);
+        let (fence, resolved) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(ingest_events(
+            receiver,
+            store.clone(),
+            signals,
+            Arc::new(tokio::sync::Mutex::new(PendingServerRequests::default())),
+            Arc::new(std::sync::RwLock::new(None)),
+            Arc::new(std::sync::RwLock::new(None)),
+            Arc::new(std::sync::Mutex::new(
+                crate::usage::LiveUsageProjector::new(store.clone()),
+            )),
+        ));
+        ingest
+            .send(IngestInput::Payload(json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "threadId": "thread",
+                    "turnId": "turn",
+                    "itemId": "agent",
+                    "delta": "tail"
+                }
+            })))
+            .await?;
+        ingest.send(IngestInput::Fence(fence)).await?;
+
+        assert_eq!(resolved.await??, 1);
+        assert_eq!(store.replay_head()?, 1);
+        drop(ingest);
+        task.await?;
+        Ok(())
+    }
+
     #[test]
-    fn read_only_mode_refuses_mutations() {
-        assert!(is_read_only_method("thread/list"));
-        assert!(is_read_only_method("companion/threadSubagents/read"));
-        assert!(is_read_only_method("fs/readDirectory"));
-        assert!(is_read_only_method("config/read"));
-        assert!(is_exposed_rpc("config/read"));
-        assert!(is_exposed_rpc("companion/threadSubagents/read"));
-        assert!(!is_read_only_method("turn/start"));
-        assert!(!is_read_only_method("thread/delete"));
+    fn scheduling_distinguishes_known_reads_from_possible_writes() {
+        assert!(rpc_is_known_read("thread/list"));
+        assert!(rpc_is_known_read("companion/threadSubagents/read"));
+        assert!(rpc_is_known_read("fs/readDirectory"));
+        assert!(rpc_is_known_read("config/read"));
+        assert!(!rpc_is_known_read("turn/start"));
+        assert!(!rpc_is_known_read("thread/delete"));
+    }
+
+    #[test]
+    fn project_browser_home_does_not_require_the_ordered_lane() {
+        let method = "companion/project/home";
+        assert!(ProjectService::handles(method));
+        assert!(rpc_is_known_read(method));
+        assert!(!rpc_requires_ordered_lane(method));
+        assert!(rpc_requires_ordered_lane("companion/project/unknown"));
+        assert!(rpc_requires_ordered_lane("future/unknown"));
+        assert!(!rpc_is_known_read("companion/project/add"));
     }
 
     #[test]
@@ -4294,6 +4424,48 @@ mod tests {
         assert_eq!(payloads.len(), 2);
         assert_eq!(payloads[0]["params"]["delta"], "onetwo");
         assert_eq!(payloads[1]["params"]["delta"], "summary");
+    }
+
+    #[test]
+    fn splits_large_unicode_stream_deltas_before_content_projection() {
+        let source = "🦀".repeat(MAX_INLINE_TEXT_BYTES);
+        let payloads = coalesce_stream_text_deltas(vec![json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "threadId": "thread",
+                "turnId": "turn",
+                "itemId": "message",
+                "delta": source,
+            },
+        })]);
+
+        assert!(payloads.len() > 1);
+        assert!(payloads.iter().all(|payload| {
+            payload["params"]["delta"]
+                .as_str()
+                .is_some_and(|delta| delta.len() <= MAX_INLINE_TEXT_BYTES)
+        }));
+        assert_eq!(
+            payloads
+                .iter()
+                .filter_map(|payload| payload["params"]["delta"].as_str())
+                .collect::<String>(),
+            source,
+        );
+    }
+
+    #[test]
+    fn coalesces_repeated_command_output_before_private_content_projection() {
+        let delta = |item_id: &str| {
+            json!({
+                "method": "item/commandExecution/outputDelta",
+                "params": {"threadId": "thread", "turnId": "turn", "itemId": item_id, "delta": "same\n"}
+            })
+        };
+        let result = coalesce_stream_text_deltas(vec![delta("one"), delta("one"), delta("two")]);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0]["params"]["delta"], "same\nsame\n");
+        assert_eq!(result[1]["params"]["delta"], "same\n");
     }
 
     #[test]

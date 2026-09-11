@@ -1,9 +1,30 @@
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import { describe, expect, it } from "vitest";
+import { commandOutputReferences } from "../src/command-output";
 
-import { applyThreadEvent, applyThreadEventsImmutable, applyThreadProjectionPatchesImmutable, latestProjectedThreadExecutionSettings, MAX_LIVE_FIELD_CHARS, preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings, threadContainsClientMessage, threadProjectionNeedsAuthoritativeRepair, type TurnUsageProjection } from "../src/index.js";
+import { applyThreadEvent, applyThreadEventsImmutable, applyThreadProjectionPatchesImmutable, MAX_LIVE_FIELD_CHARS, preserveProjectedTurnMetadata, projectedThreadExecutionSettings, projectedTurnMetadata, seedThreadExecutionSettings, threadContainsClientMessage, threadProjectionNeedsAuthoritativeRepair, type TurnUsageProjection } from "../src/index.js";
 
 describe("thread event projection", () => {
+  it("keeps lazy output references in order, including repeated chunks, until the final item replaces them", () => {
+    const value = thread();
+    const reference = { id: "a".repeat(64), byteLength: 4, contentType: "text/plain; charset=utf-8", encoding: "utf-8" };
+    const delta = event("item/commandExecution/outputDelta", {
+      itemId: "command", delta: "",
+      codewideContent: { version: 1, fields: { "/delta": reference } },
+    });
+    const next = applyThreadEventsImmutable(value, [delta, delta]);
+    const command = next.turns[0]?.items.find((item) => item.id === "command");
+    expect(commandOutputReferences(command)).toEqual([reference, reference]);
+    expect(commandOutputReferences(value.turns[0]?.items.find((item) => item.id === "command"))).toEqual([]);
+    expect(command).toMatchObject({ aggregatedOutput: "a\n" });
+
+    const finalReference = { ...reference, id: "b".repeat(64), byteLength: 8 };
+    applyThreadEvent(next, event("item/completed", {
+      item: { ...command, aggregatedOutput: "", status: "completed", codewideOutputDeltas: undefined,
+        codewideContent: { version: 1, fields: { "/aggregatedOutput": finalReference } } },
+    }));
+    expect(commandOutputReferences(next.turns[0]?.items.find((item) => item.id === "command"))).toEqual([finalReference]);
+  });
   it("applies companion patches without interpreting the conflicting raw event", () => {
     const value = thread();
     const next = applyThreadProjectionPatchesImmutable(value, [{
@@ -14,7 +35,18 @@ describe("thread event projection", () => {
 
     expect(next.name).toBe("Companion name");
   });
-  it("bounds cumulative live text before it can grow quadratically in Hermes", () => {
+
+  it("does not report a missing delta prerequisite as projected", () => {
+    const value = thread();
+    const beforeUpdatedAt = value.updatedAt;
+
+    expect(applyThreadEvent(value, event("item/agentMessage/delta", {
+      itemId: "missing-agent",
+      delta: "lost",
+    }))).toBe(false);
+    expect(value.updatedAt).toBe(beforeUpdatedAt);
+  });
+  it("preserves the complete agent response while bounding hidden live output", () => {
     const value = thread();
     const hugeDelta = "x".repeat(MAX_LIVE_FIELD_CHARS);
     for (let index = 0; index < 20; index += 1) {
@@ -24,7 +56,7 @@ describe("thread event projection", () => {
     const command = value.turns[0]?.items.find((item) => item.type === "commandExecution");
     const agent = value.turns[0]?.items.find((item) => item.type === "agentMessage");
     expect(command?.type === "commandExecution" ? command.aggregatedOutput?.length : 0).toBeLessThanOrEqual(MAX_LIVE_FIELD_CHARS);
-    expect(agent?.type === "agentMessage" ? agent.text.length : 0).toBeLessThanOrEqual(MAX_LIVE_FIELD_CHARS);
+    expect(agent?.type === "agentMessage" ? agent.text : "").toBe(`hello${hugeDelta.repeat(20)}`);
   });
 
   it("streams agent, plan, command and reasoning deltas into the cached thread", () => {
@@ -277,24 +309,55 @@ describe("thread event projection", () => {
     expect(projectedTurnMetadata(merged.turns[0]!)?.diff).toBe("+live");
   });
 
-  it("uses the latest immutable turn settings while a cached thread refreshes", () => {
+  it("does not present historical turn execution as current thread settings", () => {
     const value = thread();
-    (value.turns[0] as typeof value.turns[0] & { codewide: object }).codewide = {
+    Object.assign(value.turns[0]!, { codewide: {
       execution: {
         model: "gpt-cached",
         effort: "high",
         permissions: ":workspace",
         modelSource: "settings",
       },
-    };
+    } });
+    expect(projectedThreadExecutionSettings(value)).toBeNull();
+  });
 
-    expect(latestProjectedThreadExecutionSettings(value)).toEqual({
-      model: "gpt-cached",
-      effort: "high",
-      permissions: ":workspace",
-      approvalPolicy: null,
-      sandboxPolicy: null,
-    });
+  it("reads current model and effort from the App Server thread, ahead of old projected settings", () => {
+    const value = seedThreadExecutionSettings(thread(), { model: "gpt-5.6-sol", effort: "medium", permissions: null });
+    Object.assign(value, { model: "gpt-6-astra", reasoningEffort: "high" });
+    expect(projectedThreadExecutionSettings(value)).toMatchObject({ model: "gpt-6-astra", effort: "high" });
+  });
+
+  it("does not replace a null or missing server effort with an old effort", () => {
+    const value = seedThreadExecutionSettings(thread(), { model: "gpt-5.6-sol", effort: "high", permissions: null });
+    Object.assign(value, { model: "gpt-6-astra", reasoningEffort: null });
+    expect(projectedThreadExecutionSettings(value)?.effort).toBeNull();
+    Reflect.deleteProperty(value, "reasoningEffort");
+    expect(projectedThreadExecutionSettings(value)?.effort).toBeNull();
+  });
+
+  it("rejects invalid direct model fields instead of falling back to an older model", () => {
+    const value = seedThreadExecutionSettings(thread(), { model: "gpt-5.6-sol", effort: "high", permissions: null });
+    for (const model of [null, undefined, "", 42, {}]) {
+      Object.assign(value, { model });
+      expect(projectedThreadExecutionSettings(value)).toBeNull();
+    }
+  });
+
+  it("updates direct settings when a newer App Server settings notification arrives", () => {
+    const value = Object.assign(thread(), { model: "gpt-5.6-sol", reasoningEffort: "medium" });
+    applyThreadEvent(value, event("thread/settings/updated", {
+      threadSettings: { model: "gpt-6-astra", effort: "high" },
+    }));
+    expect(projectedThreadExecutionSettings(value)).toMatchObject({ model: "gpt-6-astra", effort: "high" });
+  });
+
+  it("does not inherit old execution authority across authoritative snapshot replacement", () => {
+    const cached = seedThreadExecutionSettings(thread(), { model: "gpt-5.6-sol", effort: "high", permissions: null });
+    expect(projectedThreadExecutionSettings(preserveProjectedTurnMetadata(thread(), cached))).toBeNull();
+    const incoming = Object.assign(thread(), { model: "gpt-6-astra", reasoningEffort: "max" });
+    expect(projectedThreadExecutionSettings(preserveProjectedTurnMetadata(incoming, cached)))
+      .toMatchObject({ model: "gpt-6-astra", effort: "max" });
   });
 
   it("snapshots authoritative thread settings when a turn starts", () => {
@@ -431,12 +494,36 @@ describe("thread event projection", () => {
     }])).toBe(false);
   });
 
-  it("requires terminal reconciliation before acknowledging turn completion", () => {
+  it("does not require authoritative detail repair for thread-list progress", () => {
+    expect(threadProjectionNeedsAuthoritativeRepair(thread(), [{
+      version: 1,
+      threadId: "thread",
+      operation: {
+        kind: "threadProgress",
+        summary: {
+          activity: true,
+          conversationMessage: true,
+          finalAgentResponse: false,
+          previewText: "Partial answer",
+        },
+      },
+    }])).toBe(false);
+  });
+
+  it("accepts a self-contained full completion and repairs a sparse completion", () => {
     const value = thread();
-    expect(threadProjectionNeedsAuthoritativeRepair(value, [{
+    const full = {
       version: 1,
       threadId: "thread",
       operation: { kind: "turnCompleted", turn: { ...value.turns[0]!, status: "completed" } },
+    } as const;
+    expect(threadProjectionNeedsAuthoritativeRepair(value, [full])).toBe(false);
+    expect(threadProjectionNeedsAuthoritativeRepair(value, [{
+      ...full,
+      operation: {
+        kind: "turnCompleted",
+        turn: { ...value.turns[0]!, status: "completed", itemsView: "summary" },
+      },
     }])).toBe(true);
   });
 });

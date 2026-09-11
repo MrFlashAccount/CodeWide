@@ -2,6 +2,10 @@ export type { TransferAccess } from "../data/private-transfer";
 export type TransferProgress = { transferred: number; total: number; phase: "hashing" | "transferring" | "verifying" };
 export type SelectedUpload = { name: string; size: number; mimeType: string; native: unknown };
 export type SelectedDirectory = { name: string; native: unknown };
+export function selectedUploadUri(): string | null { return null; }
+export async function selectedUploadText(upload: SelectedUpload): Promise<string | null> {
+  return typeof upload.native === "string" ? upload.native.slice(0, 512) : null;
+}
 export type RunningTransfer = { promise: Promise<{ bytes: number; sha256: string; uri?: string; mimeType?: string }>; cancel(): void };
 
 export async function pickUploadFile(): Promise<SelectedUpload | null> { throw new Error("File transfer is available in the Android build"); }

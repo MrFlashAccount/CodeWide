@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, spacing } from "../../theme";
+import { colors, spacing, iconSize, typeScale, radii, controlSize } from "../../theme";
 import { TOKEN_SYMBOL } from "../../ui/token-display";
 import { formatEstimatedTurnCost } from "../../turn-cost";
 import { Bubble, BubbleContent } from "../../rendering/Bubble";
@@ -62,7 +62,7 @@ export function TimelineView(props: TimelineViewProps): React.JSX.Element {
   if (turns.length === 0) {
     return (
       <View style={styles.empty}>
-        <PresentationIcon color={colors.textDim} name="sparkles" size={26} />
+        <PresentationIcon color={colors.textDim} name="sparkles" size={iconSize.illustration} />
         <ProductText style={styles.emptyTitle} weight="semibold">
           Start by typing a message
         </ProductText>
@@ -107,7 +107,11 @@ function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
           {turn.lifecycle.map((row) => (
             <View key={row.id} style={styles.lifecycleRow}>
               <View style={styles.lifecycleIcon}>
-                <PresentationIcon color={colors.textMuted} name="checkCircle" size={14} />
+                <PresentationIcon
+                  color={colors.textMuted}
+                  name="checkCircle"
+                  size={iconSize.inline}
+                />
               </View>
               <ProductText
                 numberOfLines={1}
@@ -134,7 +138,11 @@ function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
                     style={styles.activityToggle}
                   >
                     <View style={styles.activityIconSlot}>
-                      <PresentationIcon color={colors.textMuted} name="construct" size={13} />
+                      <PresentationIcon
+                        color={colors.textMuted}
+                        name="construct"
+                        size={iconSize.inline}
+                      />
                     </View>
                     <ProductText
                       numberOfLines={1}
@@ -148,7 +156,7 @@ function TimelineTurn(props: TimelineTurnProps): React.JSX.Element {
                       <PresentationIcon
                         color={colors.textDim}
                         name={activityExpanded ? "chevronUp" : "chevronDown"}
-                        size={12}
+                        size={iconSize.indicator}
                       />
                     </View>
                   </Pressable>
@@ -261,7 +269,7 @@ function turnStateLabel(state: string): string {
 }
 
 const styles = StyleSheet.create({
-  activity: { alignSelf: "flex-start", marginTop: 1, maxWidth: "100%" },
+  activity: { alignSelf: "flex-start", marginTop: spacing.optical, maxWidth: "100%" },
   activityChevronSlot: {
     alignItems: "center",
     flexShrink: 0,
@@ -269,9 +277,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 14,
   },
-  activityDetail: { gap: 2 },
-  activityDetailText: { fontSize: 11, lineHeight: 16 },
-  activityDetailTitle: { fontSize: 11, lineHeight: 15 },
+  activityDetail: { gap: spacing.optical },
+  activityDetailText: { ...typeScale.label },
+  activityDetailTitle: { ...typeScale.label },
   activityExpanded: {
     alignSelf: "stretch",
     maxWidth: "100%",
@@ -285,35 +293,35 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 15,
   },
-  activityLabel: { flexShrink: 1, fontSize: 11, lineHeight: 15, minWidth: 0 },
+  activityLabel: { flexShrink: 1, ...typeScale.label, minWidth: 0 },
   activityList: {
-    gap: 5,
+    gap: spacing.xxs,
     maxWidth: "100%",
     minWidth: 0,
-    paddingBottom: 2,
-    paddingLeft: 18,
-    paddingRight: 1,
-    paddingTop: 2,
+    paddingBottom: spacing.optical,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.optical,
+    paddingTop: spacing.optical,
     width: "100%",
   },
   activityToggle: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 5,
-    minHeight: 25,
-    paddingHorizontal: 2,
+    gap: spacing.xxs,
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.optical,
   },
   agentMessageRow: {
     alignItems: "stretch",
     flexDirection: "row",
-    gap: 7,
+    gap: spacing.xs,
     justifyContent: "flex-start",
     minWidth: 0,
     width: "100%",
   },
-  agentPlaceholder: { fontSize: 12, lineHeight: 17 },
+  agentPlaceholder: { ...typeScale.label },
   empty: { alignItems: "center", flex: 1, gap: spacing.sm, justifyContent: "center" },
-  emptyTitle: { fontSize: 16, lineHeight: 22 },
+  emptyTitle: { ...typeScale.title },
   lifecycleIcon: {
     alignItems: "center",
     flexShrink: 0,
@@ -323,50 +331,50 @@ const styles = StyleSheet.create({
   },
   lifecycleList: {
     alignSelf: "stretch",
-    gap: 3,
+    gap: spacing.xxs,
     minWidth: 0,
-    paddingVertical: 2,
+    paddingVertical: spacing.optical,
     width: "100%",
   },
   lifecycleRow: {
     alignItems: "center",
     flexDirection: "row",
-    gap: 7,
-    minHeight: 28,
-    paddingHorizontal: 8,
+    gap: spacing.xs,
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.xs,
     width: "100%",
   },
-  lifecycleText: { flexShrink: 1, fontSize: 12, lineHeight: 17, minWidth: 0 },
+  lifecycleText: { flexShrink: 1, ...typeScale.label, minWidth: 0 },
   list: {
     flexGrow: 1,
     justifyContent: "flex-end",
     paddingHorizontal: spacing.xs,
-    paddingTop: 6,
+    paddingTop: spacing.compact,
   },
   messageTime: {
     color: colors.textDim,
     flexShrink: 0,
-    fontSize: 10,
-    lineHeight: 13,
-    marginBottom: 4,
+    ...typeScale.caption,
+
+    marginBottom: spacing.xxs,
   },
   scroll: { flex: 1 },
-  statusDot: { borderRadius: 4, height: 7, width: 7 },
+  statusDot: { borderRadius: radii.pill, height: 7, width: 7 },
   turnFooter: {
     alignItems: "center",
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 6,
+    gap: spacing.compact,
     minHeight: 20,
-    paddingHorizontal: 5,
+    paddingHorizontal: spacing.xxs,
   },
-  turnGroup: { alignSelf: "center", gap: 5, maxWidth: 880, width: "100%" },
-  turnMetaText: { color: colors.textMuted, fontSize: 10, lineHeight: 14 },
-  turnTokenMetrics: { alignItems: "baseline", flexDirection: "row", gap: 3 },
+  turnGroup: { alignSelf: "center", gap: spacing.xxs, maxWidth: 880, width: "100%" },
+  turnMetaText: { color: colors.textMuted, ...typeScale.caption },
+  turnTokenMetrics: { alignItems: "baseline", flexDirection: "row", gap: spacing.xxs },
   userMessageRow: {
     alignItems: "flex-end",
     flexDirection: "row",
-    gap: 7,
+    gap: spacing.xs,
     justifyContent: "flex-end",
     minWidth: 0,
     width: "100%",

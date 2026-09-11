@@ -23,7 +23,16 @@ function uiCacheDirectory(): string {
 
 function getUiCacheNativeDatabase(): ReturnType<typeof open> {
   if (sharedDatabase !== null) return sharedDatabase;
-  sharedDatabase = open({ name: "codex-remote-ui-cache.db", location: uiCacheDirectory() });
+  const database = open({ name: "codex-remote-ui-cache.db", location: uiCacheDirectory() });
+  // Configure the connection before any consumer can start a transaction.
+  // History memberships must never outlive their chain or referenced content.
+  try {
+    database.executeSync("PRAGMA foreign_keys = ON");
+  } catch (cause) {
+    database.close();
+    throw cause;
+  }
+  sharedDatabase = database;
   return sharedDatabase;
 }
 

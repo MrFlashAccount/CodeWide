@@ -9,7 +9,7 @@ import {
 import Svg, { Circle } from "react-native-svg";
 
 import { useEvent } from "../../react/useEvent";
-import { colors, radii, touchTarget } from "../../theme";
+import { colors, radii, touchTarget, typeWeight } from "../../theme";
 import { ProductText } from "../text/ProductText";
 
 interface ContextRingActionViewProps {
@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
   ringLabel: { alignItems: "center", inset: 0, justifyContent: "center", position: "absolute" },
   ringLabelText: {
     color: colors.text,
-    fontWeight: "600",
+    fontWeight: typeWeight.semibold,
     includeFontPadding: false,
     textAlign: "center",
     width: "100%",

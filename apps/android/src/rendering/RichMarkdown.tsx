@@ -1,4 +1,6 @@
 import type { Nodes, PhrasingContent, RootContent, Table, TableCell } from "mdast";
+import { messageMarkupNodeHtml } from "@codewide/rendering-core/markup";
+import { ArtifactImageReferences } from "./ArtifactImageReferences";
 import { isSafeLink, plainRichMarkdownRootText, richMarkdownBlockIndexAtLine } from "@codewide/rendering-core";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -6,7 +8,7 @@ import { createContext, type ComponentProps, type ReactNode, useContext, useId, 
 import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { ScrollView as GestureScrollView } from "react-native-gesture-handler";
 
-import { colors, radii } from "../theme";
+import { colors, radii, typeScale, spacing, typeWeight, iconSize } from "../theme";
 import { usePerformanceExperiment } from "../data/performance-experiments";
 import { AppText } from "../ui/Typography";
 import { isRemoteFileHref, remoteFileKind } from "./document-preview";
@@ -17,18 +19,22 @@ import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
 import { markdownTableLayout } from "./markdown-table-layout";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
 import { NativeCodeBlock } from "./NativeCodeBlock";
+import { CodeBlockHeader } from "./CodeBlockHeader";
 import { NativeRevealSurface } from "./NativeRevealSurface";
+import type { MarkupImageDimensions } from "./markup-image-dimensions";
 import { useContentReview, useContentReviewHighlights } from "./ContentReviewHost";
 import type { ContentReviewTarget } from "./content-review";
 import { ReviewableText } from "./ReviewableText";
 import { looksLikeAsciiDiagram } from "./ascii-diagram";
 import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
 import { usePrivateImageUri } from "./use-private-image-uri";
+import { NativeMarkup } from "./NativeMarkup";
+import { HighlightSearchText } from "../search/SearchMessageFocus";
 
 const HorizontalScrollView = Platform.OS === "android" ? GestureScrollView : ScrollView;
 const RichMarkdownTextScaleContext = createContext(1);
 const RichMarkdownReviewContext = createContext<{ target: ContentReviewTarget; pathPrefix: string } | null>(null);
-const RichMarkdownStreamingContext = createContext(false);
+const RichMarkdownRevealContext = createContext(false);
 
 export function RichMarkdownTextScaleProvider({
   scale,
@@ -110,6 +116,7 @@ export function RichMarkdown({
   reviewTarget,
   reviewPathPrefix = "segment-0",
   streaming = false,
+  animateStreaming = streaming,
 }: {
   source: string;
   extensions?: Record<string, RichExtensionRenderer>;
@@ -119,6 +126,7 @@ export function RichMarkdown({
   reviewTarget?: ContentReviewTarget;
   reviewPathPrefix?: string;
   streaming?: boolean;
+  animateStreaming?: boolean;
 }) {
   const plainText = usePerformanceExperiment("plainTextMarkdown");
   if (plainText) {
@@ -135,7 +143,8 @@ export function RichMarkdown({
       </RichMarkdownReviewContext.Provider>
     );
   }
-  const parsed = parseDiagnosticRichMarkdown(source);
+  // Streaming revisions belong to this mounted view, not the completed-text cache.
+  const parsed = parseDiagnosticRichMarkdown(source, !streaming);
   const imageOrder = collectImageOrder(parsed.root);
   if (maxLines !== undefined) {
     return (
@@ -154,7 +163,7 @@ export function RichMarkdown({
   }
   const targetBlockIndex = targetLine === undefined ? null : richMarkdownBlockIndexAtLine(source, targetLine);
   return (
-    <RichMarkdownStreamingContext.Provider value={streaming}>
+    <RichMarkdownRevealContext.Provider value={animateStreaming}>
       <RichMarkdownReviewContext.Provider value={reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }}>
         <View style={styles.document}>
           {parsed.root.children.map((node, index) => {
@@ -171,23 +180,23 @@ export function RichMarkdown({
           )}
         </View>
       </RichMarkdownReviewContext.Provider>
-    </RichMarkdownStreamingContext.Provider>
+    </RichMarkdownRevealContext.Provider>
   );
 }
 
 function BlockNode({ node, path, extensions, imageOrder }: { node: RootContent; path: string; extensions: Record<string, RichExtensionRenderer>; imageOrder: WeakMap<object, number> }) {
   const review = useContext(RichMarkdownReviewContext);
-  const streaming = useContext(RichMarkdownStreamingContext);
+  const animateStreaming = useContext(RichMarkdownRevealContext);
   switch (node.type) {
     case "paragraph":
       if (node.children.length === 1 && node.children[0]?.type === "image") {
         const order = imageOrder.get(node.children[0]);
-        return <MarkdownImage url={node.children[0].url} alt={node.children[0].alt ?? "Image"} reveal={streaming} {...(order === undefined ? {} : { order })} />;
+        return <MarkdownImage url={node.children[0].url} alt={node.children[0].alt ?? "Image"} reveal={animateStreaming} {...(order === undefined ? {} : { order })} />;
       }
       if (node.children.length === 1 && node.children[0]?.type === "link" && node.children[0].children.length === 1 && node.children[0].children[0]?.type === "image") {
         const image = node.children[0].children[0];
         const order = imageOrder.get(image);
-        return <MarkdownImage url={image.url} alt={image.alt ?? "Image"} target={node.children[0].url} reveal={streaming} {...(order === undefined ? {} : { order })} />;
+        return <MarkdownImage url={image.url} alt={image.alt ?? "Image"} target={node.children[0].url} reveal={animateStreaming} {...(order === undefined ? {} : { order })} />;
       }
       return <Text selectable reviewBlockPath={path} style={styles.paragraph}>{inline(node.children)}</Text>;
     case "heading": {
@@ -200,7 +209,7 @@ function BlockNode({ node, path, extensions, imageOrder }: { node: RootContent; 
         return (
           <View style={styles.alert}>
             <View style={styles.alertHeader}>
-              <Ionicons name={alert.icon} size={15} color={alert.color} />
+              <Ionicons name={alert.icon} size={iconSize.inline} color={alert.color} />
               <Text style={[styles.alertTitle, { color: alert.color }]}>{alert.label}</Text>
             </View>
             <View style={styles.alertBody}>
@@ -225,7 +234,7 @@ function BlockNode({ node, path, extensions, imageOrder }: { node: RootContent; 
           {node.children.map((item, index) => (
             <View key={index} style={styles.listRow}>
               {typeof item.checked === "boolean"
-                ? <View accessibilityLabel={item.checked ? "Completed task" : "Open task"} style={styles.taskMarker}><Ionicons name={item.checked ? "checkbox" : "square-outline"} size={15} color={item.checked ? colors.green : colors.textMuted} /></View>
+                ? <View accessibilityLabel={item.checked ? "Completed task" : "Open task"} style={styles.taskMarker}><Ionicons name={item.checked ? "checkbox" : "square-outline"} size={iconSize.inline} color={item.checked ? colors.green : colors.textMuted} /></View>
                 : <Text style={styles.listMarker}>{node.ordered ? `${(node.start ?? 1) + index}.` : "•"}</Text>}
               <View style={styles.listBody}>
                 <InsetRichContentWidth inset={25}>
@@ -242,7 +251,7 @@ function BlockNode({ node, path, extensions, imageOrder }: { node: RootContent; 
         <View style={styles.wideBlock}>
           <MermaidDiagram
             source={node.value}
-            reveal={streaming}
+            reveal={animateStreaming}
             {...(review === null ? {} : { reviewTarget: review.target, diagramId: `${review.pathPrefix}/${path}` })}
           />
         </View>
@@ -261,7 +270,7 @@ function BlockNode({ node, path, extensions, imageOrder }: { node: RootContent; 
     case "thematicBreak":
       return <View style={styles.rule} />;
     case "html":
-      return <CopyableInline value={node.value} style={styles.rawHtml}>{node.value}</CopyableInline>;
+      return <MarkupBlock node={node} path={path} extensions={extensions} imageOrder={imageOrder} />;
     case "footnoteDefinition":
       return (
         <View style={styles.footnote}>
@@ -277,14 +286,24 @@ function BlockNode({ node, path, extensions, imageOrder }: { node: RootContent; 
   }
 }
 
+function MarkupBlock({ node, path, extensions, imageOrder }: { node: Extract<RootContent, { type: "html" }>; path: string; extensions: Record<string, RichExtensionRenderer>; imageOrder: WeakMap<object, number> }) {
+  const animateStreaming = useContext(RichMarkdownRevealContext);
+  const html = messageMarkupNodeHtml(node);
+  if (html === null) return <CopyableInline value={node.value} style={styles.rawHtml}>{node.value}</CopyableInline>;
+  return <NativeMarkup
+    html={html}
+    code={(value, language, childPath) => <BlockNode node={{ type: "code", value, lang: language }} path={`${path}/${childPath}`} extensions={extensions} imageOrder={imageOrder} />}
+    image={(url, alt, dimensions) => <MarkdownImage url={url} alt={alt} reveal={animateStreaming} {...(dimensions === undefined ? {} : { dimensions })} />}
+    link={(url, children) => <MarkdownLink url={url}>{children}</MarkdownLink>}
+  />;
+}
+
 function CopyableCodeBlock({ value, language }: { value: string; language: string }) {
   const [copied, copy] = useCopyFeedback(value);
+  const scale = useContext(RichMarkdownTextScaleContext);
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={`Copy ${language} code block`} onPress={copy} style={({ pressed }) => [styles.codeContainer, pressed && styles.copyPressed]}>
-      <View style={styles.codeHeader}>
-        <Text style={styles.codeLanguage}>{language}</Text>
-        <Text accessibilityLiveRegion="polite" style={[styles.copyHint, copied && styles.copyHintDone]}>{copied ? "Copied" : "Tap to copy"}</Text>
-      </View>
+      <CodeBlockHeader language={language} copied={copied} scale={scale} />
       <NativeCodeBlock value={value} language={language} />
     </Pressable>
   );
@@ -323,8 +342,8 @@ function MarkdownLink({ url, children }: { url: string; children: ReactNode }) {
     >
       {children}
       {(external || localKind === "download") && " "}
-      {external && <Ionicons name="open-outline" size={11} color={colors.accent} />}
-      {localKind === "download" && <Ionicons name="download-outline" size={11} color={colors.accent} />}
+      {external && <Ionicons name="open-outline" size={iconSize.indicator} color={colors.accent} />}
+      {localKind === "download" && <Ionicons name="download-outline" size={iconSize.indicator} color={colors.accent} />}
     </Text>
   );
 }
@@ -344,14 +363,20 @@ function useCopyFeedback(value: string): [boolean, () => void] {
   return [copied, copy];
 }
 
-function MarkdownImage({ url, alt, target = url, order, reveal = false }: { url: string; alt: string; target?: string; order?: number; reveal?: boolean }) {
+function MarkdownImage({ url, alt, target = url, order, reveal = false, dimensions }: { url: string; alt: string; target?: string; order?: number; reveal?: boolean; dimensions?: MarkupImageDimensions }) {
+  const inGallery = useContext(ArtifactImageReferences)?.has(url) === true;
   const openImagePreview = useImagePreview();
   const openLocalLink = useMarkdownLocalLinkHandler();
   const groupId = useImagePreviewGroup();
   const previewId = useId();
-  const imageUri = safeImageUri(url);
+  const imageUri = inGallery ? null : safeImageUri(url);
   const privateImage = usePrivateImageUri(imageUri);
   const [loadedUri, setLoadedUri] = useState<string | null>(null);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const availableWidth = useRichContentWidth();
+  const imageStyle = dimensions !== undefined && availableWidth !== null
+    ? [styles.markdownImage, { height: Math.max(48, Math.min(440, availableWidth * dimensions.height / dimensions.width)) }]
+    : styles.markdownImage;
   const safeTarget = isSafeLink(target) ? target : null;
   const previewItem = {
     id: groupId === null ? previewId : `${groupId}:${url}:${alt}`,
@@ -361,28 +386,31 @@ function MarkdownImage({ url, alt, target = url, order, reveal = false }: { url:
     reference: url,
     ...(order === undefined ? {} : { order }),
   };
-  useRegisterImagePreviewItem(groupId, previewItem);
+  useRegisterImagePreviewItem(inGallery ? null : groupId, previewItem);
+  if (inGallery) return null;
   if (imageUri === null && openLocalLink !== null && isRemoteFileHref(url) && remoteFileKind(alt, url) === "image") {
     return (
       <Pressable accessibilityRole="imagebutton" accessibilityLabel={`Open ${alt}`} onPress={() => openLocalLink(url)} style={styles.localImageLink}>
-        <Ionicons name="image-outline" size={16} color={colors.accent} />
+        <Ionicons name="image-outline" size={iconSize.inline} color={colors.accent} />
         <Text numberOfLines={1} ellipsizeMode="middle" style={styles.link}>{alt}</Text>
       </Pressable>
     );
   }
-  if (imageUri === null || privateImage.failed) return <Text selectable style={styles.secondary}>[Image: {alt}]</Text>;
-  if (privateImage.uri === null) return <View style={styles.markdownImage} />;
+  if (imageUri === null || privateImage.failed || (privateImage.uri !== null && failedUri === privateImage.uri)) return <Text selectable style={styles.secondary}>[Image: {alt}]</Text>;
+  if (privateImage.uri === null) return <View style={imageStyle} />;
   return (
-    <NativeRevealSurface ready={!reveal || loadedUri === privateImage.uri} revealKey={`image:${privateImage.uri}`}>
+    <View style={imageStyle}>
+    <NativeRevealSurface animate={reveal} ready={!reveal || loadedUri === privateImage.uri} revealKey={`image:${privateImage.uri}`}>
       <Pressable
         accessibilityRole="imagebutton"
         accessibilityLabel={`Open ${alt}`}
         onPress={() => openImagePreview({ ...previewItem, groupId })}
         {...(safeTarget === null ? {} : { onLongPress: () => void Linking.openURL(safeTarget) })}
       >
-        <Image accessibilityLabel={alt} source={privateImage.source ?? { uri: privateImage.uri }} resizeMode="contain" style={styles.markdownImage} onLoad={() => setLoadedUri(privateImage.uri)} />
+        <Image accessibilityLabel={alt} source={privateImage.source ?? { uri: privateImage.uri }} resizeMode="contain" resizeMethod="resize" style={imageStyle} onLoad={() => setLoadedUri(privateImage.uri)} onError={() => setFailedUri(privateImage.uri)} />
       </Pressable>
     </NativeRevealSurface>
+    </View>
   );
 }
 
@@ -403,7 +431,7 @@ function collectImageOrder(root: Nodes): WeakMap<object, number> {
 }
 
 function MarkdownTable({ table, path }: { table: Table; path: string }) {
-  const streaming = useContext(RichMarkdownStreamingContext);
+  const animateStreaming = useContext(RichMarkdownRevealContext);
   const availableWidth = useRichContentWidth();
   const [viewportWidth, setViewportWidth] = useState(0);
   const columnCount = Math.max(1, ...table.children.map((row) => row.children.length));
@@ -441,7 +469,7 @@ function MarkdownTable({ table, path }: { table: Table; path: string }) {
                 ))}
               </View>
             );
-            return streaming
+            return animateStreaming
               ? <NativeRevealSurface key={rowIndex} revealKey={`${path}:row:${rowIndex}`}>{content}</NativeRevealSurface>
               : content;
           })}
@@ -455,17 +483,19 @@ function TableCellView({ cell, width, header, align }: { cell: TableCell; width:
   return <Text style={[styles.tableCell, header && styles.tableCellHeader, { width, textAlign: align ?? "left" }]}>{inline(cell.children)}</Text>;
 }
 
-function inline(nodes: PhrasingContent[]): ReactNode[] {
+function inline(nodes: PhrasingContent[], insideLink = false): ReactNode[] {
   return nodes.map((node, index) => {
     switch (node.type) {
-      case "text": return node.value;
-      case "strong": return <Text key={index} style={styles.strong}>{inline(node.children)}</Text>;
-      case "emphasis": return <Text key={index} style={styles.emphasis}>{inline(node.children)}</Text>;
-      case "delete": return <Text key={index} style={styles.deleted}>{inline(node.children)}</Text>;
-      case "inlineCode": return <CopyableInline key={index} value={node.value} style={styles.inlineCode}>{node.value}</CopyableInline>;
+      case "text": return <HighlightSearchText key={index} text={node.value} />;
+      case "strong": return <Text key={index} style={styles.strong}>{inline(node.children, insideLink)}</Text>;
+      case "emphasis": return <Text key={index} style={styles.emphasis}>{inline(node.children, insideLink)}</Text>;
+      case "delete": return <Text key={index} style={styles.deleted}>{inline(node.children, insideLink)}</Text>;
+      case "inlineCode": return insideLink
+        ? <Text key={index} style={styles.inlineCode}><HighlightSearchText text={node.value} /></Text>
+        : <CopyableInline key={index} value={node.value} style={styles.inlineCode}><HighlightSearchText text={node.value} /></CopyableInline>;
       case "break": return "\n";
       case "link": {
-        return <MarkdownLink key={index} url={node.url}>{inline(node.children)}</MarkdownLink>;
+        return <MarkdownLink key={index} url={node.url}>{inline(node.children, true)}</MarkdownLink>;
       }
       case "image": return <Text key={index} style={styles.secondary}>[Image: {node.alt ?? node.url}]</Text>;
       case "footnoteReference": return <Text key={index} style={styles.secondary}>[{node.identifier}]</Text>;
@@ -516,40 +546,37 @@ function fallbackText(node: Nodes): string {
 }
 
 const styles = StyleSheet.create({
-  document: { minWidth: 0, gap: 5 },
+  document: { minWidth: 0, gap: spacing.xxs },
   wideBlock: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" },
-  paragraph: { minWidth: 0, color: colors.text, fontSize: 13, lineHeight: 18 },
-  heading: { color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "700", marginTop: 3 },
-  headingOne: { fontSize: 17, lineHeight: 22 },
-  headingTwo: { fontSize: 16, lineHeight: 21 },
-  headingThree: { fontSize: 15, lineHeight: 20 },
-  headingMinor: { fontSize: 14, lineHeight: 19 },
-  strong: { fontWeight: "700" },
+  paragraph: { minWidth: 0, color: colors.text, ...typeScale.body },
+  heading: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold, marginTop: spacing.xxs },
+  headingOne: { ...typeScale.heading },
+  headingTwo: { ...typeScale.title, },
+  headingThree: { ...typeScale.body, fontWeight: typeWeight.semibold },
+  headingMinor: { ...typeScale.body, fontWeight: typeWeight.semibold },
+  strong: { fontWeight: typeWeight.semibold },
   emphasis: { fontStyle: "italic" },
   deleted: { textDecorationLine: "line-through", color: colors.textMuted },
   inlineCode: { color: colors.text, backgroundColor: colors.code, fontFamily: "monospace" },
   link: { color: colors.accent, textDecorationLine: "underline" },
   secondary: { color: colors.textMuted },
-  blockquote: { borderLeftWidth: 2, borderLeftColor: colors.accent, paddingLeft: 8, gap: 4 },
-  alert: { width: "100%", minWidth: 0, borderRadius: radii.small, backgroundColor: colors.surfaceRaised, paddingHorizontal: 9, paddingVertical: 7, gap: 3 },
-  alertHeader: { flexDirection: "row", alignItems: "center", gap: 5 },
-  alertTitle: { fontSize: 12, lineHeight: 16, fontWeight: "700" },
-  alertBody: { minWidth: 0, gap: 4 },
-  list: { minWidth: 0, alignSelf: "flex-start", gap: 3 },
-  listRow: { minWidth: 0, alignSelf: "flex-start", flexDirection: "row", alignItems: "flex-start", gap: 6 },
-  listMarker: { color: colors.textMuted, width: 19, textAlign: "right", fontSize: 13, lineHeight: 18 },
-  taskMarker: { width: 19, minHeight: 18, alignItems: "flex-end", justifyContent: "flex-start", paddingTop: 1 },
-  listBody: { minWidth: 0, flexShrink: 1, gap: 2 },
-  footnote: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: 6, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 5 },
-  footnoteMarker: { color: colors.accent, fontSize: 10, lineHeight: 15 },
-  footnoteBody: { minWidth: 0, flex: 1, gap: 3 },
-  codeContainer: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", backgroundColor: colors.code, borderRadius: radii.small, borderWidth: 1, borderColor: colors.border, padding: 7, gap: 4 },
-  codeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  codeLanguage: { color: colors.textDim, fontSize: 9, textTransform: "uppercase" },
-  copyHint: { color: colors.textDim, fontSize: 9 },
+  blockquote: { borderLeftWidth: 2, borderLeftColor: colors.accent, paddingLeft: spacing.xs, gap: spacing.xxs },
+  alert: { width: "100%", minWidth: 0, borderRadius: radii.small, backgroundColor: colors.surfaceRaised, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, gap: spacing.xxs },
+  alertHeader: { flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  alertTitle: { ...typeScale.label, fontWeight: typeWeight.semibold },
+  alertBody: { minWidth: 0, gap: spacing.xxs },
+  list: { minWidth: 0, alignSelf: "flex-start", gap: spacing.xxs },
+  listRow: { minWidth: 0, alignSelf: "flex-start", flexDirection: "row", alignItems: "flex-start", gap: spacing.compact },
+  listMarker: { color: colors.textMuted, width: typeScale.body.lineHeight, textAlign: "right", ...typeScale.body },
+  taskMarker: { width: typeScale.body.lineHeight, minHeight: typeScale.body.lineHeight, alignItems: "flex-end", justifyContent: "center" },
+  listBody: { minWidth: 0, flexShrink: 1, gap: spacing.optical },
+  footnote: { width: "100%", minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: spacing.compact, borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: spacing.xxs },
+  footnoteMarker: { color: colors.accent, ...typeScale.caption, },
+  footnoteBody: { minWidth: 0, flex: 1, gap: spacing.xxs },
+  codeContainer: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", backgroundColor: colors.code, borderRadius: radii.small, borderWidth: 1, borderColor: colors.border, padding: spacing.xs, gap: spacing.xxs },
   copyHintDone: { color: colors.green },
   copyPressed: { opacity: 0.76 },
-  rawHtml: { color: colors.textMuted, fontFamily: "monospace", fontSize: 11 },
+  rawHtml: { color: colors.textMuted, ...typeScale.code, fontFamily: "monospace" },
   rule: { height: 8 },
   tableViewport: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" },
   tableHorizontalScroller: { flexGrow: 0, width: "100%", minWidth: 0, maxWidth: "100%" },
@@ -557,9 +584,9 @@ const styles = StyleSheet.create({
   table: { alignSelf: "flex-start", borderWidth: 1, borderColor: colors.border, borderRadius: radii.small, overflow: "hidden" },
   tableRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: colors.borderSoft },
   tableHeader: { backgroundColor: colors.surfaceHover },
-  tableCell: { flexShrink: 0, color: colors.text, minWidth: 144, paddingHorizontal: 7, paddingVertical: 5, borderRightWidth: 1, borderRightColor: colors.borderSoft, fontSize: 12, lineHeight: 16 },
-  tableCellHeader: { fontWeight: "700" },
-  truncated: { borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: 5 },
+  tableCell: { flexShrink: 0, color: colors.text, minWidth: 144, paddingHorizontal: spacing.xs, paddingVertical: spacing.xxs, borderRightWidth: 1, borderRightColor: colors.borderSoft, ...typeScale.label, },
+  tableCellHeader: { fontWeight: typeWeight.semibold },
+  truncated: { borderTopWidth: 1, borderTopColor: colors.borderSoft, paddingTop: spacing.xxs },
   markdownImage: { width: "100%", height: 220, borderRadius: radii.medium, backgroundColor: colors.code },
-  localImageLink: { minWidth: 0, maxWidth: "100%", flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 4 },
+  localImageLink: { minWidth: 0, maxWidth: "100%", flexDirection: "row", alignItems: "center", gap: spacing.xxs, paddingVertical: spacing.xxs },
 });

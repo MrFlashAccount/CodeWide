@@ -27,14 +27,14 @@ export function ModelThinkingMenu({
   onSelectEffort,
   onSelectPersonality,
 }: ModelThinkingMenuProps) {
-  const model = models.find((candidate) => candidate.id === selectedModel) ?? models[0];
-  const effectiveModel = selectedModel ?? model?.id ?? null;
+  const model = models.find((candidate) => candidate.id === selectedModel);
+  const effectiveModel = selectedModel;
   const efforts = model === undefined
     ? []
     : model.efforts.length > 0
       ? model.efforts
       : [model.defaultEffort];
-  const effectiveEffort = selectedEffort ?? model?.defaultEffort ?? null;
+  const effectiveEffort = selectedEffort;
   const actions: ActionMenuItem[] = [
     ...(loading && models.length === 0
       ? [{ id: "model:loading", section: "Model", label: "Loading from remote server…", disabled: true }]

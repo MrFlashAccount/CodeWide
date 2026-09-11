@@ -5,9 +5,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioFormat
 import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
@@ -25,6 +23,7 @@ import android.util.Log
 import android.view.View
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -50,16 +49,8 @@ import okhttp3.Response
 import org.json.JSONObject
 import org.json.JSONTokener
 
-class CodeWideModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context) {
-  private data class CaptureSource(val value: Int, val label: String)
-
-  private data class PcmCaptureSession(
-    val recorder: AudioRecord,
-    val source: CaptureSource,
-    val sampleRate: Int,
-    val noiseSuppressor: NoiseSuppressor?,
-    val automaticGainControl: AutomaticGainControl?,
-  )
+class CodeWideModule(private val context: ReactApplicationContext) : ReactContextBaseJavaModule(context), LifecycleEventListener {
+  private val microphone = PreparedMicrophone(context)
 
   private var speechRecognizer: SpeechRecognizer? = null
   private var voiceGeneration = 0L
@@ -77,6 +68,24 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
 
   init {
     contexts += context
+    context.addLifecycleEventListener(this)
+  }
+
+  override fun onHostResume() {
+    microphone.setForeground(true)
+    refreshMicrophonePermission()
+  }
+
+  override fun onHostPause() { microphone.setForeground(false) }
+  override fun onHostDestroy() { microphone.setForeground(false) }
+
+  @ReactMethod
+  fun refreshMicrophonePermission() {
+    microphone.refresh()
+    if (context.hasActiveReactInstance()) {
+      context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("CodeWideMicrophonePermission", microphone.hasPermission())
+    }
   }
 
   override fun getName(): String = "CodeWideNative"
@@ -84,6 +93,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   override fun getConstants(): MutableMap<String, Any> = mutableMapOf(
     "localeTag" to (context.resources.configuration.locales[0] ?: Locale.getDefault()).toLanguageTag(),
     "uses24HourClock" to DateFormat.is24HourFormat(context),
+    "microphonePermissionGranted" to microphone.hasPermission(),
   )
 
   @ReactMethod
@@ -757,7 +767,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     try {
       require(connectionId.isNotBlank()) { "Connection id is required" }
       val rows = CodexConnectionService.instance?.listPortForwards(connectionId)
-        ?: NativePortForwardStore(context).list(connectionId).map { PortForwardProjection(it, null, "stopped", null) }
+        ?: emptyList()
       val values = org.json.JSONArray()
       rows.forEach { values.put(it.json()) }
       promise.resolve(values.toString())
@@ -800,28 +810,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       require(preferredLocalPort == null || preferredLocalPort == preferred?.toDouble()) { "Local port is invalid" }
       require(serviceKey == null || serviceKey.matches(Regex("^[a-f0-9]{64}$"))) { "Service key is invalid" }
       require(preference in setOf("automatic", "included", "excluded")) { "Forwarding preference is invalid" }
-      val service = CodexConnectionService.instance
-      val result = if (service != null) {
-        service.upsertPortForward(connectionId, profileId, label, remote, preferred, serviceKey, preference)
-      } else {
-        val store = NativePortForwardStore(context)
-        val previous = store.get(profileId)
-        require(previous == null || previous.connectionId == connectionId) { "Port forward belongs to another server" }
-        val profile = store.upsert(
-          StoredPortForward(
-            profileId,
-            connectionId,
-            label.trim(),
-            remote,
-            preferred,
-            serviceKey,
-            preference,
-            preference != "excluded" && (previous?.enabled ?: false),
-            System.currentTimeMillis(),
-          ),
-        )
-        PortForwardProjection(profile, null, "stopped", null)
-      }
+      val service = CodexConnectionService.instance ?: error("Server connection is not ready")
+      val result = service.upsertPortForward(connectionId, profileId, label, remote, preferred, serviceKey, preference)
       promise.resolve(result.json().toString())
     } catch (error: Throwable) {
       promise.reject("PORT_FORWARD_SAVE_FAILED", error.message ?: "Could not save port forward", error)
@@ -832,16 +822,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   fun startPortForward(profileId: String, promise: Promise) {
     try {
       require(profileId.isNotBlank()) { "Port forward id is required" }
-      val service = CodexConnectionService.instance
-      val result = if (service != null) service.startPortForward(profileId) else {
-        val store = NativePortForwardStore(context)
-        val profile = store.setEnabled(profileId, true) ?: error("Port forward not found")
-        ContextCompat.startForegroundService(context, Intent(context, CodexConnectionService::class.java).apply {
-          action = CodexConnectionService.ACTION_START_PORT_FORWARD
-          putExtra(CodexConnectionService.EXTRA_PORT_FORWARD_ID, profileId)
-        })
-        PortForwardProjection(profile, null, "connecting", null)
-      }
+      val service = CodexConnectionService.instance ?: error("Server connection is not ready")
+      val result = service.startPortForward(profileId)
       promise.resolve(result.json().toString())
     } catch (error: Throwable) {
       promise.reject("PORT_FORWARD_START_FAILED", error.message ?: "Could not start port forward", error)
@@ -852,11 +834,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   fun stopPortForward(profileId: String, promise: Promise) {
     try {
       require(profileId.isNotBlank()) { "Port forward id is required" }
-      val service = CodexConnectionService.instance
-      val result = if (service != null) service.stopPortForward(profileId) else {
-        val profile = NativePortForwardStore(context).setEnabled(profileId, false) ?: error("Port forward not found")
-        PortForwardProjection(profile, null, "stopped", null)
-      }
+      val service = CodexConnectionService.instance ?: error("Server connection is not ready")
+      val result = service.stopPortForward(profileId)
       promise.resolve(result.json().toString())
     } catch (error: Throwable) {
       promise.reject("PORT_FORWARD_STOP_FAILED", error.message ?: "Could not stop port forward", error)
@@ -867,8 +846,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   fun removePortForward(profileId: String, promise: Promise) {
     try {
       require(profileId.isNotBlank()) { "Port forward id is required" }
-      val service = CodexConnectionService.instance
-      if (service != null) service.removePortForward(profileId) else NativePortForwardStore(context).remove(profileId)
+      val service = CodexConnectionService.instance ?: error("Server connection is not ready")
+      service.removePortForward(profileId)
       promise.resolve(null)
     } catch (error: Throwable) {
       promise.reject("PORT_FORWARD_REMOVE_FAILED", error.message ?: "Could not remove port forward", error)
@@ -935,6 +914,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod
   fun startLegacyRuntimeResources(promise: Promise) {
     try {
+      microphone.setForeground(context.lifecycleState == com.facebook.react.common.LifecycleState.RESUMED)
+      microphone.setEnabled(true)
       val service = CodexConnectionService.instance
       if (service != null) {
         service.activateLegacySync()
@@ -955,6 +936,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   @ReactMethod
   fun stopLegacyRuntimeResources(promise: Promise) {
     try {
+      microphone.setEnabled(false)
       CodexConnectionService.instance?.stopLegacyRuntimeResources()
       promise.resolve(null)
     } catch (error: Throwable) {
@@ -1011,6 +993,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
     context.runOnUiQueueThread {
       try {
+        microphone.setPlatformRecognition(true)
         val generation = ++voiceGeneration
         speechRecognizer?.cancel()
         speechRecognizer?.destroy()
@@ -1040,6 +1023,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
         speechRecognizer?.destroy()
         speechRecognizer = null
         promise.reject("VOICE_START_FAILED", error.message, error)
+        microphone.setPlatformRecognition(false)
       }
     }
   }
@@ -1051,6 +1035,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       speechRecognizer?.cancel()
       speechRecognizer?.destroy()
       speechRecognizer = null
+      microphone.setPlatformRecognition(false)
     }
   }
 
@@ -1067,7 +1052,27 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
-  /** Moves the live shader into the separate Android window owned by a React Native Modal. */
+  /** Keeps the actual Compose dialog's system bars dark, independently of the Activity. */
+  @ReactMethod
+  fun configureFullscreenWindow(reactTag: Double) {
+    context.runOnUiQueueThread {
+      try {
+        val tag = reactTag.toInt()
+        val view = UIManagerHelper.getUIManagerForReactTag(context, tag)?.resolveView(tag) as? View
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          view?.windowInsetsController?.setSystemBarsAppearance(
+            0,
+            android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+              android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+          )
+        }
+      } catch (error: Throwable) {
+        Log.e("CodeWideFullscreen", "Could not configure fullscreen window", error)
+      }
+    }
+  }
+
+  /** Moves the live shader into the separate Android window owned by a fullscreen overlay. */
   @ReactMethod
   fun setVoiceAuraTarget(reactTag: Double?) {
     context.runOnUiQueueThread {
@@ -1084,6 +1089,22 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
+  @ReactMethod
+  fun setVoiceAuraOrigin(reactTag: Double?) {
+    context.runOnUiQueueThread {
+      try {
+        val tag = reactTag?.toInt()?.takeIf { it > 0 }
+        val view = tag?.let {
+          UIManagerHelper.getUIManagerForReactTag(context, it)?.resolveView(it) as? View
+        }
+        voiceAura.setOrigin(view)
+      } catch (error: Throwable) {
+        voiceAura.setOrigin(null)
+        Log.e(VOICE_AURA_LOG_TAG, "Could not locate voice aura origin", error)
+      }
+    }
+  }
+
   /** Captures mono PCM16 and emits bandwidth-efficient Opus frames. Transcription stays on the paired Codex host. */
   @ReactMethod
   fun startPcmCapture(promise: Promise) {
@@ -1093,7 +1114,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
     try {
       stopPcmCaptureInternal()
-      val capture = openPcmCapture()
+      val capture = microphone.start()
       val recorder = capture.recorder
       val sampleRate = capture.sampleRate
       val noiseSuppressor = capture.noiseSuppressor
@@ -1138,6 +1159,8 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
   override fun invalidate() {
     val service = CodexConnectionService.instance
     invalidated = true
+    context.removeLifecycleEventListener(this)
+    microphone.close()
     authenticatedLeaseGate.close().forEach { leaseHandle -> service?.releaseAuthenticatedTransportLease(leaseHandle) }
     mainHandler.removeCallbacksAndMessages(null)
     contexts -= context
@@ -1180,6 +1203,10 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
           energy += normalized * normalized
         }
         val level = sqrt(energy / count.toDouble()).coerceIn(0.0, 1.0)
+        // The visual envelope follows PCM frames, not transport batches or JS scheduling.
+        context.runOnUiQueueThread {
+          if (audioCaptureRunning && generation == audioCaptureGeneration) voiceAura.setLevel(level)
+        }
         for (packet in activeEncoder.append(samples, count)) {
           batcher.append(packet, level)?.let { emitOpus(it, sampleRate) }
         }
@@ -1215,6 +1242,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
       noiseSuppressor?.release()
       automaticGainControl?.release()
       recorder.release()
+      microphone.captureReleased()
       emitPcm("stopped", null, sampleRate, 0, 0.0)
     }
   }
@@ -1250,6 +1278,7 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     emitVoice(type, text)
     speechRecognizer = null
     recognizer.destroy()
+    microphone.setPlatformRecognition(false)
   }
 
   private fun firstResult(bundle: Bundle?): String? =
@@ -1320,71 +1349,6 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     }
   }
 
-  private fun openPcmCapture(): PcmCaptureSession {
-    val failures = mutableListOf<String>()
-    for (source in AUDIO_CAPTURE_SOURCES) {
-      var recorder: AudioRecord? = null
-      var noiseSuppressor: NoiseSuppressor? = null
-      var automaticGainControl: AutomaticGainControl? = null
-      try {
-        val recorderBuilder = AudioRecord.Builder()
-          .setAudioSource(source.value)
-          .setAudioFormat(
-            AudioFormat.Builder()
-              .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-              .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-              // Opus has a fixed set of legal rates. 48 kHz is Android's
-              // standard full-band route and avoids a JavaScript resampler.
-              .setSampleRate(OPUS_SAMPLE_RATE)
-              .build(),
-          )
-          .setBufferSizeInBytes(AUDIO_CAPTURE_BUFFER_BYTES)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-          recorderBuilder.setPrivacySensitive(true)
-        }
-        recorder = recorderBuilder.build()
-        require(recorder.state == AudioRecord.STATE_INITIALIZED) { "Microphone could not be initialized" }
-        val sampleRate = recorder.sampleRate
-        require(sampleRate in 8_000..96_000) { "Android returned an unsupported microphone sample rate" }
-        noiseSuppressor = createNoiseSuppressor(recorder.audioSessionId)
-        automaticGainControl = createAutomaticGainControl(recorder.audioSessionId)
-        // Several Android vendors accept an AudioSource in Builder.build()
-        // and reject it only here. Treat startRecording as capability probing
-        // so one unsupported processing path cannot disable dictation.
-        recorder.startRecording()
-        return PcmCaptureSession(recorder, source, sampleRate, noiseSuppressor, automaticGainControl)
-      } catch (error: Throwable) {
-        failures += "${source.label}:${error.javaClass.simpleName}"
-        Log.w(AUDIO_LOG_TAG, "PCM capture source ${source.label} unavailable; trying fallback", error)
-        noiseSuppressor?.release()
-        automaticGainControl?.release()
-        try {
-          recorder?.release()
-        } catch (_: Throwable) {
-          // A partially constructed vendor AudioRecord can reject release.
-        }
-      }
-    }
-    throw IllegalStateException("No supported microphone capture source (${failures.joinToString()})")
-  }
-
-  private fun createNoiseSuppressor(audioSessionId: Int): NoiseSuppressor? = try {
-    if (!NoiseSuppressor.isAvailable()) null else NoiseSuppressor.create(audioSessionId)?.also { effect ->
-      if (effect.hasControl()) effect.enabled = true
-    }
-  } catch (error: Throwable) {
-    Log.w(AUDIO_LOG_TAG, "NoiseSuppressor unavailable for this capture session", error)
-    null
-  }
-
-  private fun createAutomaticGainControl(audioSessionId: Int): AutomaticGainControl? = try {
-    if (!AutomaticGainControl.isAvailable()) null else AutomaticGainControl.create(audioSessionId)?.also { effect ->
-      if (effect.hasControl()) effect.enabled = true
-    }
-  } catch (error: Throwable) {
-    Log.w(AUDIO_LOG_TAG, "AutomaticGainControl unavailable for this capture session", error)
-    null
-  }
 
   private fun validateEndpoint(endpoint: String) {
     val uri = URI(endpoint)
@@ -1421,22 +1385,12 @@ class CodeWideModule(private val context: ReactApplicationContext) : ReactContex
     // acknowledgement continue to belong to RealtimeAudioUploader.
     private const val AUDIO_CHUNKS_PER_SECOND = 5
     private const val OPUS_FRAMES_PER_SECOND = 50
-    private const val OPUS_SAMPLE_RATE = 48_000
     private const val OPUS_BITRATE = 24_000
     // 200 ms of mono PCM16 at 96 kHz. AudioRecord may internally enlarge it;
     // this is intentionally above the usual 48 kHz route minimum so capture
     // remains smooth while the JS bridge handles the previous chunk.
-    private const val AUDIO_CAPTURE_BUFFER_BYTES = 38_400
     private const val AUDIO_LOG_TAG = "CodeWideAudio"
     private const val VOICE_AURA_LOG_TAG = "CodeWideVoiceAura"
-    // Prefer the processed communication path for stable speech level, but
-    // vendor support is not uniform. Recognition and raw mic keep capture
-    // working on devices that reject VOICE_COMMUNICATION.
-    private val AUDIO_CAPTURE_SOURCES = listOf(
-      CaptureSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION, "voice_communication"),
-      CaptureSource(MediaRecorder.AudioSource.VOICE_RECOGNITION, "voice_recognition"),
-      CaptureSource(MediaRecorder.AudioSource.MIC, "mic"),
-    )
     private const val MAX_ENGINE_ARGUMENT_BYTES = 64 * 1024 * 1024
     private const val NATIVE_BRIDGE_CONTRACT_VERSION = 2
     private const val MAX_COMMITTED_FRAME_PAGE = 128

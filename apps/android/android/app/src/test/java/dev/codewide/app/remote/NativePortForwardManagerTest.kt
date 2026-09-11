@@ -1,8 +1,5 @@
 package dev.codewide.app.remote
 
-import java.io.BufferedInputStream
-import java.io.ByteArrayInputStream
-import java.nio.charset.StandardCharsets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,8 +11,6 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 class NativePortForwardManagerTest {
-  private val localCapability = "a".repeat(43)
-
   @Test
   fun derivesSecurePortForwardEndpointFromSyncEndpoint() {
     assertEquals(
@@ -64,7 +59,7 @@ class NativePortForwardManagerTest {
 
   @Test
   fun unavailableForwardDoesNotExposeADeadPreviewUrl() {
-    val profile = StoredPortForward(
+    val profile = CurrentPortForward(
       id = "forward-test",
       connectionId = "server-test",
       label = "Vite",
@@ -145,85 +140,18 @@ class NativePortForwardManagerTest {
   }
 
   @Test
-  fun liveForwardExposesOnlyAnUnguessableCapabilityUrl() {
+  fun liveForwardExposesTheOriginRootForRelativeApiAndAssetRequests() {
     val profile = portForwardProfile()
     val projection = PortForwardProjection(
       profile = profile,
       localPort = 46_213,
       status = "live",
       error = null,
-      localCapability = localCapability,
     ).json()
 
-    assertEquals("http://127.0.0.1:46213/$localCapability/", projection.getString("previewUrl"))
+    assertEquals("http://127.0.0.1:46213/", projection.getString("previewUrl"))
   }
 
-  @Test
-  fun httpCapabilityIsStrippedBeforeBytesReachTheRemoteService() {
-    val request =
-      "GET /$localCapability/app?q=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\nbody"
-    val authorized = PortForwardLocalAuthorization.authenticate(
-      buffered(request),
-      localCapability,
-    )
-
-    assertEquals(
-      "GET /app?q=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-      authorized.initialPayload.toString(StandardCharsets.ISO_8859_1),
-    )
-    assertEquals("body", authorized.input.readBytes().toString(StandardCharsets.ISO_8859_1))
-    assertFalse(authorized.initialPayload.toString(StandardCharsets.ISO_8859_1).contains(localCapability))
-  }
-
-  @Test
-  fun headerAndGenericPrefaceAuthenticateWithoutLeakingTheCapability() {
-    val header = PortForwardLocalAuthorization.authenticate(
-      buffered(
-        "GET /app HTTP/1.1\r\nX-CodeWide-Local-Capability: $localCapability\r\n\r\n",
-      ),
-      localCapability,
-    )
-    val generic = PortForwardLocalAuthorization.authenticate(
-      buffered("CODEWIDE/1 $localCapability\r\npayload"),
-      localCapability,
-    )
-
-    assertEquals("GET /app HTTP/1.1\r\n\r\n", header.initialPayload.toString(StandardCharsets.ISO_8859_1))
-    assertEquals(0, generic.initialPayload.size)
-    assertEquals("payload", generic.input.readBytes().toString(StandardCharsets.ISO_8859_1))
-  }
-
-  @Test
-  fun rejectsConflictingCapabilityEvenWhenThePathCapabilityIsValid() {
-    assertThrows(IllegalStateException::class.java) {
-      PortForwardLocalAuthorization.authenticate(
-        buffered(
-          "GET /$localCapability/app HTTP/1.1\r\n" +
-            "X-CodeWide-Local-Capability: ${"b".repeat(43)}\r\n\r\n",
-        ),
-        localCapability,
-      )
-    }
-  }
-
-  @Test
-  fun unauthenticatedLocalSocketCannotAllocateOrTouchUpstream() {
-    var upstreamConnections = 0
-    var upstreamBytes = 0
-
-    assertThrows(IllegalStateException::class.java) {
-      PortForwardLocalAuthorization.authenticateBeforeUpstream(
-        buffered("GET /private HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
-        localCapability,
-      ) {
-        upstreamConnections += 1
-        upstreamBytes += it.initialPayload.size
-      }
-    }
-
-    assertEquals(0, upstreamConnections)
-    assertEquals(0, upstreamBytes)
-  }
 
   @Test
   fun blockedStartCannotInstallAfterStopRevokesItsGeneration() {
@@ -276,7 +204,7 @@ class NativePortForwardManagerTest {
     assertFalse(gate.isCurrent(permit))
   }
 
-  private fun portForwardProfile(): StoredPortForward = StoredPortForward(
+  private fun portForwardProfile(): CurrentPortForward = CurrentPortForward(
     id = "forward-test",
     connectionId = "server-test",
     label = "Vite",
@@ -288,7 +216,4 @@ class NativePortForwardManagerTest {
     updatedAt = 1,
   )
 
-  private fun buffered(value: String): BufferedInputStream = BufferedInputStream(
-    ByteArrayInputStream(value.toByteArray(StandardCharsets.ISO_8859_1)),
-  )
 }

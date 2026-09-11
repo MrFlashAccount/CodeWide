@@ -9,6 +9,7 @@ interface WebViewMockProps {
 }
 
 export const webViewInjectedJavaScript: string[] = [];
+export const webViewPostedMessages: string[] = [];
 export let latestWebViewProps: WebViewMockProps | null = null;
 
 interface WebViewMockHandle {
@@ -28,7 +29,7 @@ export const WebView = forwardRef<WebViewMockHandle, WebViewMockProps>(
       injectJavaScript: (script) => {
         webViewInjectedJavaScript.push(script);
       },
-      postMessage: () => undefined,
+      postMessage: (message) => { webViewPostedMessages.push(message); },
       reload: () => undefined,
     }));
     return (

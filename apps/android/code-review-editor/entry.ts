@@ -107,9 +107,29 @@ const previewEmptyHost = requiredElement("preview-empty");
 const workspaceHost = requiredElement("workspace");
 const fileHost = document.createElement("div");
 const diffHost = document.createElement("div");
+const patchHost = document.createElement("div");
+const patchRenderers: { host: HTMLElement; renderer: FileDiff<AnnotationMetadata> }[] = [];
 fileHost.className = "pierre-preview-host";
 diffHost.className = "pierre-preview-host";
-previewHost.replaceChildren(fileHost, diffHost);
+patchHost.className = "pierre-preview-host";
+patchHost.hidden = true;
+previewHost.replaceChildren(fileHost, diffHost, patchHost);
+
+// Pierre reports selection changes, not activation of an already selected file.
+// Its row path attribute is the adapter seam for reopening that file on touch.
+treeHost.addEventListener("click", (event) => {
+  if (!currentWorkspace.compact || !currentWorkspace.sidebarOpen) return;
+  for (const target of event.composedPath()) {
+    if (!(target instanceof HTMLElement)) continue;
+    const path = target.dataset.itemPath;
+    if (path === undefined) continue;
+    const file = treePathToFile.get(path);
+    if (file?.path === currentWorkspace.selectedPath) {
+      post({ type: "fileSelect", requestId: latestRequestId, path: file.path });
+    }
+    return;
+  }
+});
 
 function requiredElement(id: string): HTMLElement {
   const element = document.getElementById(id);
@@ -261,6 +281,7 @@ function renderCurrentDocument(forceRender = false): void {
   if (currentDocument === null) {
     fileHost.hidden = true;
     diffHost.hidden = true;
+    patchHost.hidden = true;
     if (currentWorkspace.files.length === 0) {
       setEmptyState(previewEmptyHost, EMPTY_CHANGES_STATE);
     } else if (currentWorkspace.selectedPath !== null) {
@@ -277,6 +298,7 @@ function renderCurrentDocument(forceRender = false): void {
     if (emptyState !== null) {
       fileHost.hidden = true;
       diffHost.hidden = true;
+      patchHost.hidden = true;
       activeRenderer = null;
       setEmptyState(previewEmptyHost, emptyState);
       finishRender();
@@ -305,6 +327,7 @@ function setEmptyState(host: HTMLElement, state: CodeReviewEmptyState | null, lo
 function renderSource(payload: CodeReviewDocument, forceRender = false): void {
   fileHost.hidden = false;
   diffHost.hidden = true;
+  patchHost.hidden = true;
   const instance = ensureFileRenderer();
   instance.setOptions(fileOptions());
   activeRenderer = instance;
@@ -320,12 +343,12 @@ function renderSource(payload: CodeReviewDocument, forceRender = false): void {
 function renderDiff(payload: CodeReviewDocument, mode: Exclude<CodeReviewViewMode, "source">, forceRender = false): void {
   const before = materializeBeforeSource(payload);
   if (before === null) {
-    post({ type: "diffUnavailable", requestId: latestRequestId, message: "The complete previous version is unavailable. Showing the current file." });
-    renderSource(payload, forceRender);
+    renderRecordedPatches(payload, mode, forceRender);
     return;
   }
   fileHost.hidden = true;
   diffHost.hidden = false;
+  patchHost.hidden = true;
   const instance = ensureDiffRenderer();
   instance.setOptions(diffOptions(mode));
   activeRenderer = instance;
@@ -337,6 +360,36 @@ function renderDiff(payload: CodeReviewDocument, mode: Exclude<CodeReviewViewMod
     forceRender,
   });
   revealPendingLine(instance);
+}
+
+/** Recorded edits are authoritative even without a complete before/after file. */
+function renderRecordedPatches(payload: CodeReviewDocument, mode: Exclude<CodeReviewViewMode, "source">, forceRender: boolean): void {
+  fileHost.hidden = true;
+  diffHost.hidden = true;
+  patchHost.hidden = false;
+  while (patchRenderers.length > payload.patches.length) {
+    const removed = patchRenderers.pop();
+    removed?.renderer.cleanUp();
+    removed?.host.remove();
+  }
+  for (const [index, patch] of payload.patches.entries()) {
+    const metadata = processFile(canonicalPatch(payload.path, patch), { cacheKey: `${payload.revision}:recorded:${index}`, throwOnError: true });
+    if (metadata === undefined) throw new Error("The recorded patch could not be rendered");
+    let entry = patchRenderers[index];
+    if (entry === undefined) {
+      const host = document.createElement("section");
+      patchHost.append(host);
+      entry = { host, renderer: new FileDiff<AnnotationMetadata>(diffOptions(mode)) };
+      patchRenderers.push(entry);
+    }
+    const instance = entry.renderer;
+    instance.setOptions({ ...diffOptions(mode), onLineNumberClick: (event) => {
+      activeRenderer = instance;
+      openComposer(referenceForDiffLine(payload.path, event));
+    } });
+    activeRenderer = instance;
+    instance.render({ containerWrapper: entry.host, fileDiff: metadata, lineAnnotations: diffAnnotations(payload), forceRender });
+  }
 }
 
 function ensureFileRenderer(): PierreFile<AnnotationMetadata> {
@@ -483,6 +536,7 @@ function openComposer(reference: CodeReviewLineReference): void {
     reference,
     draft: same ? currentComposer?.draft ?? "" : "",
     voicePhase: "idle",
+    voicePermissionGranted: false,
     voiceRetryAvailable: false,
     voiceError: null,
   };
@@ -499,6 +553,7 @@ function updateComposer(payload: CodeReviewComposerState | null): void {
       resizeComposerInput(composerInput);
     }
     const presentationChanged = payload.voicePhase !== previous.voicePhase
+      || payload.voicePermissionGranted !== previous.voicePermissionGranted
       || payload.voiceRetryAvailable !== previous.voiceRetryAvailable
       || payload.voiceError !== previous.voiceError;
     if (!presentationChanged) return;
@@ -600,8 +655,12 @@ function createComposer(spec: CodeReviewComposerState): HTMLElement {
   input.rows = 1;
   input.value = spec.draft;
   input.setAttribute("aria-label", "Comment on this line");
-  const voice = composerButton(spec.voiceRetryAvailable ? "retry" : spec.voicePhase === "idle" ? "microphone" : "stop", spec.voiceRetryAvailable ? "Retry voice comment" : spec.voicePhase === "idle" ? "Record voice comment" : "Stop voice comment");
+  const voice = composerButton(spec.voiceRetryAvailable ? "retry" : spec.voicePhase === "starting" || spec.voicePhase === "finishing" ? "loading" : spec.voicePhase === "idle" ? "microphone" : "stop", spec.voiceRetryAvailable ? "Retry voice comment" : spec.voicePhase === "idle" ? "Record voice comment" : "Stop voice comment");
   if (spec.voicePhase !== "idle") voice.classList.add("is-recording");
+  if (spec.voicePhase === "idle" && !spec.voiceRetryAvailable && !spec.voicePermissionGranted) {
+    voice.classList.add("needs-permission");
+    voice.setAttribute("aria-label", "Allow microphone access");
+  }
   if (spec.voicePhase === "starting" || spec.voicePhase === "finishing") voice.classList.add("is-pending");
   const submit = composerButton("send", "Add line comment");
   submit.classList.add("is-submit");
@@ -609,7 +668,7 @@ function createComposer(spec: CodeReviewComposerState): HTMLElement {
     if (currentComposer !== null && sameReference(currentComposer.reference, spec.reference)) currentComposer = { ...currentComposer, draft: input.value };
     submit.disabled = input.value.trim() === "";
     resizeComposerInput(input);
-    post({ type: "draftChanged", requestId: latestRequestId, draft: input.value, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
+    post({ type: "draftChanged", requestId: latestRequestId, reference: spec.reference, draft: input.value, selectionStart: input.selectionStart, selectionEnd: input.selectionEnd });
   };
   input.addEventListener("input", syncDraft);
   input.addEventListener("select", syncDraft);
@@ -653,7 +712,7 @@ function resizeComposerInput(input: HTMLTextAreaElement): void {
   input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
 }
 
-function composerButton(icon: "microphone" | "retry" | "send" | "stop", label: string): HTMLButtonElement {
+function composerButton(icon: "microphone" | "retry" | "send" | "stop" | "loading", label: string): HTMLButtonElement {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "review-composer-button";
@@ -662,7 +721,8 @@ function composerButton(icon: "microphone" | "retry" | "send" | "stop", label: s
   return button;
 }
 
-function composerIcon(icon: "microphone" | "retry" | "send" | "stop"): string {
+function composerIcon(icon: "microphone" | "retry" | "send" | "stop" | "loading"): string {
+  if (icon === "loading") return '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-8-8"/></svg>';
   if (icon === "send") return '<svg viewBox="0 0 24 24"><path d="M5 12l7-7 7 7M12 5v14"/></svg>';
   if (icon === "retry") return '<svg viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5M6.1 9a7 7 0 0111.8-2.2L20 11M4 13l2.1 4.2A7 7 0 0017.9 15"/></svg>';
   if (icon === "stop") return '<svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>';

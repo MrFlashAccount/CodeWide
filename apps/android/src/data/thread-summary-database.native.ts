@@ -12,15 +12,22 @@ import {
 import { SerialTaskQueue } from "./serial-task-queue";
 import { createThreadSummaryModel, type ThreadSummaryModel, type ThreadSummaryViewRequest, type ThreadSummaryViewResource } from "./thread-summary-model";
 import { createThreadSummarySqlite } from "./thread-summary-sqlite.native";
+import { ThreadCatalogReads, type ThreadCatalogRead } from "./thread-catalog-read";
+import { THREAD_CATALOG_PAGE_SIZE } from "./thread-catalog-loader";
+import { ProjectUnreadModel } from "./project-unread-model";
 
 export type ThreadSummaryDatabase = {
   readonly model: ThreadSummaryModel;
+  readonly projectUnread: ProjectUnreadModel;
   prepare(): Promise<void>;
   viewResource(request: ThreadSummaryViewRequest): ThreadSummaryViewResource;
   loadView(request: ThreadSummaryViewRequest): Promise<void>;
   get(connectionId: string, threadId: string): Promise<StoredThreadSummary | null>;
   applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
   replaceCatalog(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
+  beginCatalogRead(connectionId: string): ThreadCatalogRead;
+  applyCatalogPage(connectionId: string, threads: SyncSnapshotThread[], archived: boolean, prefixIds: ReadonlySet<string>, read: ThreadCatalogRead, replaceHead: boolean, projectCwd?: string): Promise<void>;
+  setCatalogLoader(loader: (request: ThreadSummaryViewRequest) => Promise<void>): void;
   replaceSubagentCatalog(connectionId: string, rootThreadId: string, threads: SyncSnapshotThread[]): Promise<void>;
   mergeSnapshots(connectionId: string, threads: SyncSnapshotThread[]): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<void>;
@@ -41,11 +48,14 @@ export type ThreadSummaryDatabase = {
 type ThreadRenameHandler = (connectionId: string, threadId: string, name: string) => Promise<void>;
 
 export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
+  const catalogReads = new ThreadCatalogReads();
+  let catalogLoader: ((request: ThreadSummaryViewRequest) => Promise<void>) | null = null;
   let renameHandler: ThreadRenameHandler | null = null;
   let disposed = false;
   const writes = new SerialTaskQueue();
   const model = createThreadSummaryModel();
   const storage = createThreadSummarySqlite();
+  const projectUnread = new ProjectUnreadModel();
   let refreshScheduled = false;
 
   const loadConnectionRows = storage.loadConnectionRows;
@@ -77,7 +87,14 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     changes: readonly ({ type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string })[],
     refillBoundedViews = false,
   ): void => {
+    for (const change of changes) {
+      if (change.type === "delete") {
+        const separator = change.key.indexOf("\u0000");
+        catalogReads.changed(change.key.slice(0, separator), change.key.slice(separator + 1));
+      } else catalogReads.changed(change.value.connectionId, change.value.remoteThreadId);
+    }
     model.publish(changes);
+    projectUnread.publish(changes);
     if (refillBoundedViews) scheduleActiveViewRefresh();
   };
 
@@ -159,9 +176,61 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
 
   return {
     model,
-    prepare: storage.prepare,
+    projectUnread,
+    async prepare() {
+      await storage.prepare();
+      await projectUnread.resource(storage.loadUnread);
+    },
     viewResource(request) {
-      return model.resource(request, async () => await storage.loadView(request));
+      return model.resource(request, async () => {
+        const cached = await storage.loadView(request);
+        if (catalogLoader !== null && (request.recentLimit > 0 || request.archivedLimit > 0)) {
+          const updating = catalogLoader(request);
+          const count = request.archivedLimit > 0 ? cached.archived.length : cached.recent.length;
+          if (count === 0) {
+            await updating;
+            return await storage.loadView(request);
+          }
+          void updating.catch((cause: unknown) => console.warn("Catalog window refresh failed", cause));
+        }
+        return cached;
+      });
+    },
+    setCatalogLoader(loader) { catalogLoader = loader; },
+    beginCatalogRead: (connectionId) => catalogReads.begin(connectionId),
+    async applyCatalogPage(connectionId, snapshots, archived, prefixIds, read, replaceHead, projectCwd) {
+      await writes.run(async () => {
+        if (disposed) return;
+        const count = Math.max(THREAD_CATALOG_PAGE_SIZE, prefixIds.size);
+        const window = await storage.loadView({ connectionId, ...(projectCwd === undefined ? {} : { projectCwd }), recentLimit: archived ? 0 : count,
+          archivedLimit: archived ? count : 0, selectedConnectionId: null, selectedThreadId: null,
+          subagentConnectionId: null, subagentLimit: 0 });
+        const existing = await loadRows(connectionId, snapshots.map(({ thread }) => thread.id));
+        const current = new Map(existing.map((row) => [row.remoteThreadId, row]));
+        const changes: import("./thread-summary-sqlite.native").ThreadSummaryChange[] = [];
+        for (const row of replaceHead ? archived ? window.archived : window.recent : []) {
+          // Paging a catalog must not erase device-owned unread state outside its head.
+          if (!prefixIds.has(row.remoteThreadId) && !row.pinned && row.unread === 0 && row.deleteCommandId === null && !read.changed.has(row.remoteThreadId)) {
+            // Evict only this stale cached prefix; absence is not a server
+            // thread deletion, and older cached ranges are left untouched.
+            changes.push({ type: "delete", key: threadSummaryKey(connectionId, row.remoteThreadId) });
+          }
+        }
+        for (const snapshot of snapshots) {
+          if (read.changed.has(snapshot.thread.id)) continue;
+          const previous = current.get(snapshot.thread.id);
+          const row = projectThreadSummarySnapshot(connectionId, snapshot.thread, archived, previous);
+          if (previous === undefined || !sameThreadSummary(previous, row)) {
+            changes.push({ type: previous === undefined ? "insert" : "update", value: row });
+          }
+        }
+        if (changes.length === 0) return;
+        storage.begin();
+        for (const change of changes) storage.write(change);
+        const checkpoint = storage.commit({ durable: true });
+        publishModelChanges(changes, true);
+        await checkpoint;
+      });
     },
     loadView,
     async get(connectionId, threadId) {
@@ -323,6 +392,7 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     close() {
       disposed = true;
       model.close();
+      projectUnread.close();
       void storage.close().catch((cause: unknown) => console.warn("Could not close thread summary model", cause));
     },
   };
@@ -359,6 +429,7 @@ function compareThreadSummaryRecency(left: StoredThreadSummary, right: StoredThr
 
 function summaryViewMembershipChanged(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
   return left.connectionId !== right.connectionId
+    || left.cwd !== right.cwd
     || left.parentThreadId !== right.parentThreadId
     || left.pinned !== right.pinned
     || left.archived !== right.archived

@@ -39,6 +39,26 @@ describe("account rate limits", () => {
     expect(weekly?.remainingPercent).toBe(60);
   });
 
+  it("selects the canonical Codex allowance instead of another weekly bucket", () => {
+    const codex = rateLimit({
+      primary: { usedPercent: 100, windowDurationMins: 10_080, resetsAt: 3_000 },
+      secondary: null,
+    });
+    const baseModelInference = rateLimit({
+      limitId: "base_model_inference",
+      limitName: "gpt-reserve",
+      primary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: 4_000 },
+      secondary: null,
+    });
+    const weekly = selectWeeklyRateLimit({
+      rateLimits: codex,
+      rateLimitsByLimitId: { base_model_inference: baseModelInference, codex },
+      rateLimitResetCredits: null,
+    });
+    expect(weekly?.snapshot.limitId).toBe("codex");
+    expect(weekly?.remainingPercent).toBe(0);
+  });
+
   it("does not mislabel a non-weekly window as the weekly allowance", () => {
     const snapshot = rateLimit({ secondary: null });
     expect(selectWeeklyRateLimit(response(snapshot))).toBeNull();

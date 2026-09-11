@@ -46,9 +46,6 @@ export function ActionSheetView(props: ActionSheetViewProps): React.JSX.Element 
         <ProductText style={styles.title} weight="semibold">
           {title}
         </ProductText>
-        <Pressable accessibilityLabel={`Close ${title}`} onPress={onClose} style={closeStyle}>
-          <PresentationIcon color={colors.text} name="close" size={22} />
-        </Pressable>
       </View>
       <PresentationSheetScrollView contentContainerStyle={styles.content}>
         {items.map((item) => (
@@ -88,11 +85,6 @@ function ActionSheetRow(props: ActionSheetRowProps): React.JSX.Element {
   );
 }
 
-function closeStyle(state: PressableStateCallbackType) {
-  const { pressed } = state;
-  return [styles.close, pressed && styles.pressed];
-}
-
 function rowStyle(state: PressableStateCallbackType) {
   const { pressed } = state;
   return [styles.row, pressed && styles.pressed];
@@ -104,13 +96,6 @@ function selectedRowStyle(state: PressableStateCallbackType) {
 }
 
 const styles = StyleSheet.create({
-  close: {
-    alignItems: "center",
-    borderRadius: radii.large,
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
   content: { gap: spacing.xxs, padding: spacing.sm, paddingBottom: spacing.lg },
   copy: { flex: 1, minWidth: 0 },
   detail: { ...typeScale.label, marginTop: spacing.optical },

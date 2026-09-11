@@ -125,11 +125,18 @@ export async function listNativeCommands(): Promise<NativeCommandDelivery[]> { r
 export async function retryNativeCommand(): Promise<NativeCommandDelivery> { throw new Error("Android only"); }
 export async function acknowledgeNativeCommandReceipt(): Promise<void> {}
 
+export type MicrophonePermission = "granted" | "denied" | "blocked";
+export function getMicrophonePermission(): MicrophonePermission { return "granted"; }
+export function subscribeMicrophonePermission(_notify: () => void): () => void { return () => {}; }
+export async function requestMicrophonePermission(): Promise<MicrophonePermission> { return "granted"; }
+
 export async function startVoiceRecognition(): Promise<() => void> {
   throw new Error("Native voice input is available on Android only");
 }
 
 export function cancelVoiceRecognition(): void {}
+
+export function setNativeVoiceAuraOrigin(_reactTag: number | null): void {}
 
 export type PcmAudioChunk = {
   encoding?: "pcm_s16le";
@@ -156,3 +163,4 @@ export async function startPcmCapture(): Promise<{ stop(): Promise<void>; info: 
 }
 
 export function stopPcmCapture(): void {}
+export function configureNativeFullscreenWindow(_reactTag: number): void {}

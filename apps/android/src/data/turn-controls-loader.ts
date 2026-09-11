@@ -21,6 +21,7 @@ export function isTurnControlsCacheFresh(
     && cached.value !== null
     && cached.value.defaults !== undefined
     && cached.value.models.every((model) => typeof model.isDefault === "boolean")
+    && cached.value.skills.every((skill) => skill.catalog !== undefined)
     && now - cached.updatedAt < maxAgeMs;
 }
 

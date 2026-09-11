@@ -6,6 +6,7 @@ import {
 } from "@expo/ui/community/bottom-sheet";
 import type { ReactNode } from "react";
 import {
+  Pressable,
   StyleSheet,
   View,
   type ScrollViewProps,
@@ -14,6 +15,7 @@ import {
 } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
+import type { SheetPerformanceSurface } from "../../../presentation/diagnostics/sheetPerformanceSurface";
 import { colors, radii, spacing } from "../../theme";
 
 const SHEET_MAX_WIDTH = 580;
@@ -24,9 +26,12 @@ export type PresentationSheetContentProps = Omit<
   "children" | "index" | "onChange" | "onClose" | "onDismiss" | "ref"
 > & {
   backgroundClassName?: string;
+  performanceSurface?: SheetPerformanceSurface;
   bottomInset?: number;
   className?: string;
   contentContainerClassName?: string;
+  /** Accessible name of the dismissible drag handle. */
+  dismissLabel?: string;
   detached?: boolean;
   index?: number;
   maxDynamicContentSize?: number;
@@ -70,13 +75,18 @@ export function PresentationSheetView(props: PresentationSheetViewProps): React.
               contentProps.style,
             ]}
           >
-            <View
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={contentProps.dismissLabel ?? "Dismiss sheet"}
+              disabled={contentProps.enablePanDownToClose === false}
+              onPress={close}
+              onAccessibilityEscape={
+                contentProps.enablePanDownToClose === false ? undefined : close
+              }
               style={styles.handleArea}
             >
               <View style={styles.handle} />
-            </View>
+            </Pressable>
             {children}
           </View>
         </View>
@@ -94,7 +104,7 @@ const styles = StyleSheet.create({
   detachedSurface: { borderRadius: 32 },
   expandedFrame: { flex: 1, minHeight: 0 },
   expandedInset: { flex: 1, minHeight: 0 },
-  expandedSurface: { flex: 1, minHeight: 0 },
+  expandedSurface: { flex: 1, minHeight: 0, paddingBottom: 0 },
   frame: { minWidth: 0, width: "100%" },
   handle: {
     backgroundColor: colors.textDim,
@@ -112,7 +122,6 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     maxWidth: SHEET_FRAME_MAX_WIDTH,
     minWidth: 0,
-    paddingBottom: spacing.sm,
     paddingHorizontal: spacing.md,
     width: "100%",
   },

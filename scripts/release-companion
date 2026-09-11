@@ -121,7 +121,11 @@ run_quiet 'checking source diff' git diff --check -- \
   clippy.toml \
   apps/companion \
   scripts/build-companion.sh \
+  scripts/cargo-target-budget.sh \
   scripts/release-companion
+run_quiet 'checking Cargo target budget' ./scripts/cargo-target-budget.sh
+export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1
+export CARGO_TARGET_DIR="$REPO_ROOT/target"
 run_quiet 'checking formatting' cargo fmt --all -- --check
 run_quiet 'running clippy' env CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets --all-features --quiet -- -D warnings
 run_quiet 'running tests' env CARGO_INCREMENTAL=0 cargo test --workspace --all-features --quiet

@@ -20,6 +20,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     sync::Mutex,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod metrics;
@@ -54,7 +55,7 @@ const SESSION_MANIFEST_VERSION: u8 = 1;
 
 #[derive(Clone)]
 pub struct DictationService {
-    sessions: Arc<Mutex<HashMap<String, Arc<Mutex<Session>>>>>,
+    sessions: Arc<Mutex<HashMap<String, Arc<SessionHandle>>>>,
     v2_start_lock: Arc<Mutex<()>>,
     auth_file: PathBuf,
     endpoint: Arc<str>,
@@ -91,6 +92,45 @@ struct Session {
     opus_decoder: Option<OpusDecoder>,
     upload_metrics: DictationUploadMetrics,
     last_activity_ms: u64,
+}
+
+// Ownership and cancellation must stay accessible while an operation owns the
+// mutable recording. In particular, cancelling must never queue behind finish.
+struct SessionHandle {
+    client_id: String,
+    directory: PathBuf,
+    cancellation: CancellationToken,
+    state: Mutex<Session>,
+}
+
+impl SessionHandle {
+    fn new(session: Session) -> Self {
+        Self {
+            client_id: session.client_id.clone(),
+            directory: session.directory.clone(),
+            cancellation: CancellationToken::new(),
+            state: Mutex::new(session),
+        }
+    }
+
+    async fn run(
+        &self,
+        operation: impl Future<Output = Result<Value, DictationError>>,
+    ) -> Result<Value, DictationError> {
+        tokio::select! {
+            biased;
+            // A cancelled recording is no longer an addressable session. Dropping
+            // the future also drops the HTTP request/body read or retry timer.
+            () = self.cancellation.cancelled() => Err(DictationError::Missing),
+            result = operation => {
+                if self.cancellation.is_cancelled() {
+                    Err(DictationError::Missing)
+                } else {
+                    result
+                }
+            },
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -321,7 +361,14 @@ impl DictationService {
 
     #[must_use]
     pub fn handles(method: &str) -> bool {
-        method.starts_with("companion/dictation/")
+        matches!(
+            method,
+            "companion/dictation/start"
+                | "companion/dictation/append"
+                | "companion/dictation/appendBatch"
+                | "companion/dictation/finish"
+                | "companion/dictation/cancel"
+        )
     }
 
     /// Executes a private local dictation RPC. OAuth material is never
@@ -372,7 +419,7 @@ impl DictationService {
             .collect::<Vec<_>>();
         let mut owned = Vec::new();
         for (id, session) in candidates {
-            if session.lock().await.client_id == client_id {
+            if session.client_id == client_id {
                 owned.push((id, session));
             }
         }
@@ -390,8 +437,8 @@ impl DictationService {
                 .collect::<Vec<_>>()
         };
         for session in abandoned {
-            let directory = session.lock().await.directory.clone();
-            let _ = fs::remove_dir_all(directory).await;
+            session.cancellation.cancel();
+            let _ = fs::remove_dir_all(&session.directory).await;
         }
         self.create_session(client_id, params).await
     }
@@ -451,7 +498,7 @@ impl DictationService {
         self.sessions
             .lock()
             .await
-            .insert(id.clone(), Arc::new(Mutex::new(session)));
+            .insert(id.clone(), Arc::new(SessionHandle::new(session)));
         Ok(json!({"sessionId": id}))
     }
 
@@ -461,10 +508,21 @@ impl DictationService {
         params: &Value,
         batch: bool,
     ) -> Result<Value, DictationError> {
+        let session = self.owned_session(client_id, params).await?;
+        session
+            .run(self.append_session(&session, params, batch))
+            .await
+    }
+
+    async fn append_session(
+        &self,
+        handle: &SessionHandle,
+        params: &Value,
+        batch: bool,
+    ) -> Result<Value, DictationError> {
         let append_started = std::time::Instant::now();
         let append_received_at_ms = unix_time_ms();
-        let session = self.owned_session(client_id, params).await?;
-        let mut session = session.lock().await;
+        let mut session = handle.state.lock().await;
         if session.sealed {
             return Err(DictationError::Sealed);
         }
@@ -557,10 +615,14 @@ impl DictationService {
     }
 
     async fn finish(&self, client_id: &str, params: &Value) -> Result<Value, DictationError> {
+        let session = self.owned_session(client_id, params).await?;
+        session.run(self.finish_session(&session)).await
+    }
+
+    async fn finish_session(&self, handle: &SessionHandle) -> Result<Value, DictationError> {
         let finish_started = std::time::Instant::now();
         let finish_received_at_ms = unix_time_ms();
-        let session = self.owned_session(client_id, params).await?;
-        let mut session = session.lock().await;
+        let mut session = handle.state.lock().await;
         let session_acquire_ms = elapsed_millis(finish_started.elapsed());
         if let Some(text) = &session.completed {
             return Ok(json!({"text": text}));
@@ -644,7 +706,7 @@ impl DictationService {
         let id = string_param(params, "sessionId")?;
         let candidate = self.sessions.lock().await.get(id).cloned();
         let owned = if let Some(session) = &candidate {
-            session.lock().await.client_id == client_id
+            session.client_id == client_id
         } else {
             false
         };
@@ -663,8 +725,8 @@ impl DictationService {
             None
         };
         if let Some(session) = session {
-            let directory = session.lock().await.directory.clone();
-            let _ = fs::remove_dir_all(directory).await;
+            session.cancellation.cancel();
+            let _ = fs::remove_dir_all(&session.directory).await;
             Ok(json!({"cancelled": true}))
         } else {
             Ok(json!({"cancelled": false}))
@@ -675,7 +737,7 @@ impl DictationService {
         &self,
         client_id: &str,
         params: &Value,
-    ) -> Result<Arc<Mutex<Session>>, DictationError> {
+    ) -> Result<Arc<SessionHandle>, DictationError> {
         let id = string_param(params, "sessionId")?;
         let session = self
             .sessions
@@ -684,7 +746,7 @@ impl DictationService {
             .get(id)
             .cloned()
             .ok_or(DictationError::Missing)?;
-        if session.lock().await.client_id != client_id {
+        if session.client_id != client_id || session.cancellation.is_cancelled() {
             return Err(DictationError::Missing);
         }
         Ok(session)

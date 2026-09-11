@@ -1,16 +1,15 @@
 import type { PresentationIconName } from "../icons/PresentationIcon";
 
 export interface UsageAccountViewModel {
-  active: boolean;
   detail: string;
   enabled: boolean;
-  exhausted: boolean;
   id: string;
   label: string;
   limitState: "disabled" | "limitReached" | "ready" | "refreshRequired" | "unavailable";
   remainingPercent: number | null;
   resetAt: string | null;
   resetIn: string | null;
+  state: "active" | "exhausted" | "inactive";
 }
 
 export interface UsageContextViewModel {

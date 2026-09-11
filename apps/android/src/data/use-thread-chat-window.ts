@@ -14,6 +14,7 @@ export type ThreadChatWindowView = {
 function useThreadChatWindowResource(
   database: ThreadDetailDatabase | null,
   input: ThreadChatWindowRequest | null,
+  suspendUntilReady: boolean,
 ): ReturnType<ThreadDetailDatabase["windowResource"]> | null {
   const enabled = input !== null;
   const connectionId = input?.connectionId ?? "";
@@ -34,15 +35,16 @@ function useThreadChatWindowResource(
       anchorTurnId,
       openGeneration,
     });
-  useSelector(() => resource === null ? true : resource.ready$.get(), { suspense: true });
+  useSelector(() => resource === null ? true : resource.ready$.get(), { suspense: suspendUntilReady });
   return resource;
 }
 
 export function useThreadChatWindow(
   database: ThreadDetailDatabase | null,
   input: ThreadChatWindowRequest | null,
+  suspendUntilReady = true,
 ): ThreadChatWindowView | null {
-  useThreadChatWindowResource(database, input);
+  useThreadChatWindowResource(database, input, suspendUntilReady);
   const enabled = input !== null;
   const connectionId = input?.connectionId ?? "";
   const threadId = input?.threadId ?? "";
@@ -51,7 +53,9 @@ export function useThreadChatWindow(
     const node = database.chat.window$(connectionId, threadId);
     const layoutRevision = node.layoutRevision.get();
     const revision = node.revision.get();
-    return { ...node.peek(), layoutRevision, revision };
+    const status = node.status.get();
+    const error = node.error.get();
+    return { ...node.peek(), layoutRevision, revision, status, error };
   });
 
   if (database === null || snapshot === null) return null;

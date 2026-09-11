@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
 
-import { colors, spacing } from "../theme";
+import { colors, spacing, typeScale, typeWeight, iconSize, radii, controlSize, layoutSize } from "../theme";
 import { AppText as Text, AppTextInput as TextInput } from "../ui/Typography";
 import type {
   CodeReviewDocument,
@@ -30,6 +30,7 @@ export function CodeReviewEditor({
   selectedReference,
   commentDraft,
   voicePhase,
+  voicePermissionGranted,
   voiceRetryAvailable,
   voiceError,
   onLinePress,
@@ -54,6 +55,7 @@ export function CodeReviewEditor({
   revealReference: CodeReviewLineReference | null;
   commentDraft: string;
   voicePhase: VoicePhase;
+  voicePermissionGranted: boolean;
   voiceRetryAvailable: boolean;
   voiceError: string | null;
   onLinePress(reference: CodeReviewLineReference): void;
@@ -73,7 +75,7 @@ export function CodeReviewEditor({
             {files.length === 0 && <ReviewEmptyState state={EMPTY_CHANGES_TREE_STATE} />}
             {files.map((file) => (
               <Pressable key={file.path} onPress={() => onFileSelect(file.path)} style={[styles.fileRow, file.path === selectedPath && styles.fileRowSelected]}>
-                <Ionicons name={file.status === "added" ? "add-circle-outline" : file.status === "deleted" ? "remove-circle-outline" : "document-text-outline"} size={16} color={colors.textMuted} />
+                <Ionicons name={file.status === "added" ? "add-circle-outline" : file.status === "deleted" ? "remove-circle-outline" : "document-text-outline"} size={iconSize.inline} color={colors.textMuted} />
                 <Text numberOfLines={1} ellipsizeMode="middle" style={styles.fileName}>{file.treePath}</Text>
               </Pressable>
             ))}
@@ -118,10 +120,10 @@ export function CodeReviewEditor({
                             style={styles.input}
                           />
                           <Pressable onPress={() => onVoicePress(commentDraft, { start: commentDraft.length, end: commentDraft.length })} style={styles.iconButton}>
-                            <Ionicons name={voiceRetryAvailable ? "refresh" : voicePhase === "idle" ? "mic-outline" : "stop"} size={18} color={colors.text} />
+                            <Ionicons name={voiceRetryAvailable ? "refresh" : voicePhase === "idle" ? "mic-outline" : "stop"} size={iconSize.action} color={voicePermissionGranted || voiceRetryAvailable || voicePhase !== "idle" ? colors.text : colors.textDim} />
                           </Pressable>
                           <Pressable disabled={commentDraft.trim() === ""} onPress={() => onCommentSubmit(reference, commentDraft)} style={styles.iconButton}>
-                            <Ionicons name="arrow-up" size={18} color={colors.text} />
+                            <Ionicons name="arrow-up" size={iconSize.action} color={colors.text} />
                           </Pressable>
                           {voiceError !== null && <Text style={styles.error}>{voiceError}</Text>}
                         </View>
@@ -161,29 +163,29 @@ const styles = StyleSheet.create({
   sidebar: { width: 300, minWidth: 220, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.outline },
   sidebarCompact: { width: "100%", flex: 1, borderRightWidth: 0 },
   sidebarScroll: { flex: 1 },
-  sidebarContent: { flexGrow: 1, padding: spacing.sm, gap: 2 },
-  fileRow: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, borderRadius: 10 },
+  sidebarContent: { flexGrow: 1, padding: spacing.sm, gap: spacing.optical },
+  fileRow: { minHeight: controlSize.regular, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm, borderRadius: radii.small },
   fileRowSelected: { backgroundColor: colors.surfaceContainerHighest },
-  fileName: { flex: 1, color: colors.text, fontSize: 13 },
+  fileName: { flex: 1, color: colors.text, ...typeScale.body },
   preview: { flex: 1, minWidth: 0, minHeight: 0 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
-  emptyState: { flex: 1, minHeight: 160, alignItems: "center", justifyContent: "center", gap: 6, padding: spacing.lg },
-  emptyMark: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.outline, borderRadius: 14, backgroundColor: colors.surfaceContainer },
-  emptyMarkText: { color: colors.textDim, fontSize: 18, fontWeight: "600" },
-  emptyTitle: { color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: "700", textAlign: "center" },
-  emptyMessage: { maxWidth: 340, color: colors.textMuted, fontSize: 13, lineHeight: 19, textAlign: "center" },
+  emptyState: { flex: 1, minHeight: 160, alignItems: "center", justifyContent: "center", gap: spacing.compact, padding: spacing.lg },
+  emptyMark: { width: controlSize.regular, height: controlSize.regular, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.outline, borderRadius: radii.medium, backgroundColor: colors.surfaceContainer },
+  emptyMarkText: { color: colors.textDim, ...typeScale.heading, fontWeight: typeWeight.semibold },
+  emptyTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold, textAlign: "center" },
+  emptyMessage: { maxWidth: 340, color: colors.textMuted, ...typeScale.body, textAlign: "center" },
   muted: { color: colors.textMuted, padding: spacing.sm },
   codeContent: { flexGrow: 1, minWidth: "100%" },
   lines: { flex: 1, minWidth: "100%", paddingVertical: spacing.xs },
-  line: { minHeight: 24, flexDirection: "row", alignItems: "flex-start" },
+  line: { minHeight: layoutSize.metadataRow, flexDirection: "row", alignItems: "flex-start" },
   lineSelected: { backgroundColor: "rgba(120,169,255,0.12)" },
-  lineNumber: { width: 48, paddingRight: spacing.sm, color: colors.textDim, textAlign: "right", fontFamily: "monospace", fontSize: 12, lineHeight: 20 },
-  code: { minWidth: 360, paddingHorizontal: spacing.sm, color: colors.text, fontFamily: "monospace", fontSize: 13, lineHeight: 20 },
+  lineNumber: { width: 48, paddingRight: spacing.sm, color: colors.textDim, textAlign: "right", ...typeScale.code, fontFamily: "monospace",  },
+  code: { minWidth: 360, paddingHorizontal: spacing.sm, color: colors.text, ...typeScale.code, fontFamily: "monospace",  },
   codeWrapped: { minWidth: 0, flexShrink: 1 },
   composer: { flexDirection: "row", alignItems: "flex-end", gap: spacing.xs, padding: spacing.sm, backgroundColor: colors.surfaceContainer },
-  input: { flex: 1, minHeight: 40, maxHeight: 120, color: colors.text, backgroundColor: colors.surfaceContainerHighest, borderRadius: 12, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  iconButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: colors.surfaceContainerHighest },
-  error: { position: "absolute", left: spacing.sm, bottom: -20, color: colors.red, fontSize: 11 },
-  comment: { color: colors.textMuted, paddingHorizontal: spacing.sm, paddingVertical: 2 },
-  path: { position: "absolute", top: 6, right: 8, maxWidth: "60%", color: colors.textDim, fontSize: 11 },
+  input: { flex: 1, minHeight: controlSize.touch, maxHeight: 120, color: colors.text, backgroundColor: colors.surfaceContainerHighest, borderRadius: radii.medium, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
+  iconButton: { width: controlSize.regular, height: controlSize.regular, alignItems: "center", justifyContent: "center", borderRadius: radii.medium, backgroundColor: colors.surfaceContainerHighest },
+  error: { position: "absolute", left: spacing.sm, bottom: -20, color: colors.red, ...typeScale.label },
+  comment: { color: colors.textMuted, paddingHorizontal: spacing.sm, paddingVertical: spacing.optical },
+  path: { position: "absolute", top: 6, right: 8, maxWidth: "60%", color: colors.textDim, ...typeScale.label },
 });

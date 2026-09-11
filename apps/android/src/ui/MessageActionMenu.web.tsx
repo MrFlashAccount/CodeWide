@@ -11,7 +11,7 @@ import {
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
-import { colors, spacing } from "../theme";
+import { colors, spacing, typeScale, iconSize, layoutSize, radii } from "../theme";
 import { AppSheet } from "./AppSheet";
 import { useAppDialog } from "./AppDialog";
 import type {
@@ -88,15 +88,15 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(function Messa
     <AppSheet isOpen={isOpen} onOpenChange={setOpen} contentProps={{ index: 0, enableDynamicSizing: true }}>
       <View style={styles.content}>
         <Pressable accessibilityRole="menuitem" disabled={request?.copyText === ""} onPress={copy} style={({ pressed }) => [styles.item, pressed && styles.pressed, request?.copyText === "" && styles.disabled]}>
-          <Ionicons name="copy-outline" size={19} color={colors.textMuted} />
+          <Ionicons name="copy-outline" size={iconSize.action} color={colors.textMuted} />
           <Text style={styles.label}>Copy</Text>
         </Pressable>
         <Pressable accessibilityRole="menuitem" disabled={request?.onFork === undefined} onPress={fork} style={({ pressed }) => [styles.item, pressed && styles.pressed, request?.onFork === undefined && styles.disabled]}>
-          <Ionicons name="git-branch-outline" size={19} color={colors.textMuted} />
+          <Ionicons name="git-branch-outline" size={iconSize.action} color={colors.textMuted} />
           <Text style={styles.label}>Fork</Text>
         </Pressable>
         <Pressable accessibilityRole="menuitem" disabled={request?.onReview === undefined} onPress={review} style={({ pressed }) => [styles.item, pressed && styles.pressed, request?.onReview === undefined && styles.disabled]}>
-          <Ionicons name="chatbubble-ellipses-outline" size={19} color={colors.textMuted} />
+          <Ionicons name="chatbubble-ellipses-outline" size={iconSize.action} color={colors.textMuted} />
           <Text style={styles.label}>Review response</Text>
         </Pressable>
       </View>
@@ -105,9 +105,9 @@ const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(function Messa
 });
 
 const styles = StyleSheet.create({
-  content: { gap: 2 },
-  item: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: 14 },
+  content: { gap: spacing.optical },
+  item: { minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radii.medium },
   pressed: { backgroundColor: colors.surfaceContainerHigh },
   disabled: { opacity: 0.42 },
-  label: { flex: 1, color: colors.text, fontSize: 15, lineHeight: 20, fontFamily: "RobotoFlex-Medium" },
+  label: { flex: 1, color: colors.text, ...typeScale.body, fontFamily: "RobotoFlex-Medium" },
 });

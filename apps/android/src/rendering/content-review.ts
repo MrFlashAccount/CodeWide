@@ -27,7 +27,14 @@ export type ResponseReviewAnchor = {
   target: ContentReviewTarget;
 };
 
-export type ContentReviewAnchor = TextReviewAnchor | MermaidReviewAnchor | ResponseReviewAnchor;
+export type ImageReviewAnchor = {
+  kind: "image";
+  target: ContentReviewTarget;
+  x: number;
+  y: number;
+};
+
+export type ContentReviewAnchor = TextReviewAnchor | MermaidReviewAnchor | ResponseReviewAnchor | ImageReviewAnchor;
 
 export type ContentReviewComment = {
   id: string;
@@ -91,6 +98,12 @@ export function serializeContentReviewAttachment(comments: readonly ContentRevie
     if (anchor.kind === "response") {
       lines.push(`### Comment ${ordinal} · whole response`, "");
       lines.push("Scope: **entire response**", "");
+      lines.push(comment.body.trim(), "");
+      return;
+    }
+    if (anchor.kind === "image") {
+      lines.push(`### Comment ${ordinal} · image point`, "");
+      lines.push(`Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the image top-left.`, "");
       lines.push(comment.body.trim(), "");
       return;
     }

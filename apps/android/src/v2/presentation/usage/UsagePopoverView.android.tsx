@@ -57,6 +57,11 @@ const ACCOUNT_LIMIT_LABELS: Record<UsageAccountViewModel["limitState"], string> 
   refreshRequired: "Refresh required",
   unavailable: "Unavailable",
 };
+const ACCOUNT_STATE_COLORS: Record<UsageAccountViewModel["state"], string> = {
+  active: colors.green,
+  exhausted: colors.red,
+  inactive: colors.textDim,
+};
 
 function Text(textProps: ComponentProps<typeof NativeText>): React.JSX.Element {
   const { style, ...props } = textProps;
@@ -204,22 +209,28 @@ export function UsagePopoverView(props: UsagePopoverViewProps): React.JSX.Elemen
                         <View
                           style={[
                             styles.accountStateDot,
-                            {
-                              backgroundColor: account.active
-                                ? colors.green
-                                : account.exhausted
-                                  ? colors.red
-                                  : colors.textDim,
-                            },
+                            { backgroundColor: ACCOUNT_STATE_COLORS[account.state] },
                           ]}
                         />
                         <View style={styles.grow}>
                           <Text numberOfLines={1} style={styles.accountName}>
                             {account.label}
                           </Text>
-                          <Text numberOfLines={1} style={styles.meta}>
-                            {account.detail}
-                          </Text>
+                          <View style={styles.accountMetaRow}>
+                            <Text numberOfLines={1} style={styles.accountPlan}>
+                              {account.detail}
+                            </Text>
+                            {account.resetAt === null ? null : (
+                              <>
+                                <Text style={styles.accountMetaSeparator}>·</Text>
+                                <PresentationIcon color={colors.textDim} name="refresh" size={11} />
+                                <Text numberOfLines={1} style={styles.accountResetMeta}>
+                                  {account.resetAt}
+                                  {account.resetIn === null ? "" : ` · ${account.resetIn}`}
+                                </Text>
+                              </>
+                            )}
+                          </View>
                         </View>
                         <Text
                           style={[
@@ -232,18 +243,6 @@ export function UsagePopoverView(props: UsagePopoverViewProps): React.JSX.Elemen
                             : accountLimitLabel(account.limitState)}
                         </Text>
                       </View>
-                      {account.resetAt === null ? null : (
-                        <View style={styles.resetRow}>
-                          <Text numberOfLines={1} style={[styles.meta, styles.grow]}>
-                            Resets {account.resetAt}
-                          </Text>
-                          {account.resetIn === null ? null : (
-                            <Text numberOfLines={1} style={styles.relativeReset}>
-                              {account.resetIn}
-                            </Text>
-                          )}
-                        </View>
-                      )}
                     </View>
                   ))}
                 </View>
@@ -395,12 +394,27 @@ const styles = StyleSheet.create({
   accountDivider: {
     borderTopColor: colors.border,
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: spacing.xs,
+    paddingTop: spacing.optical,
   },
+  accountMetaRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.optical,
+    minWidth: 0,
+  },
+  accountMetaSeparator: { color: colors.textDim, flexShrink: 0, ...typeScale.caption },
   accountName: { color: colors.text, ...typeScale.body },
-  accountRow: { gap: spacing.xxs, paddingVertical: spacing.xxs },
+  accountPlan: { color: colors.textDim, flexShrink: 0, ...typeScale.caption },
+  accountResetMeta: {
+    color: colors.textDim,
+    flexShrink: 1,
+    fontVariant: ["tabular-nums"],
+    minWidth: 0,
+    ...typeScale.caption,
+  },
+  accountRow: { paddingVertical: spacing.optical },
   accountStateDot: { borderRadius: 4, height: 8, width: 8 },
-  accountTitleRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minHeight: 38 },
+  accountTitleRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minHeight: 36 },
   accountValue: {
     color: colors.text,
     flexShrink: 0,
@@ -435,14 +449,6 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
     fontWeight: typeWeight.semibold,
   },
-  relativeReset: {
-    color: colors.text,
-    flexShrink: 0,
-    ...typeScale.caption,
-    fontVariant: ["tabular-nums"],
-    fontWeight: typeWeight.semibold,
-  },
-  resetRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minHeight: 24 },
   secondaryValue: {
     color: colors.textMuted,
     fontVariant: ["tabular-nums"],

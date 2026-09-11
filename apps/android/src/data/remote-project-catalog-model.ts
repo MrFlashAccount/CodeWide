@@ -24,6 +24,7 @@ type ProjectResource = {
   retryAttempt: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
   loader: () => Promise<RemoteProject[]>;
+  mergedWhileLoading: Map<string, RemoteProject>;
 };
 
 /**
@@ -64,14 +65,24 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
     record.loadingRevision = revision;
     record.loader = loader;
     record.failed = false;
+    record.mergedWhileLoading.clear();
     return Promise.resolve().then(loader).then((projects) => {
       const current = resources.get(connectionId);
       if (current !== record || current.generation !== generation || current.revision !== revision) return false;
       current.loadingRevision = null;
       current.retryAttempt = 0;
+      // A pin/add acknowledgement is newer than the list read already in flight.
+      let resolvedProjects = projects;
+      if (current.mergedWhileLoading.size > 0) {
+        resolvedProjects = projects.map((project) => current.mergedWhileLoading.get(project.path) ?? project);
+        for (const [path, project] of current.mergedWhileLoading) {
+          if (!projects.some((candidate) => candidate.path === path)) resolvedProjects.push(project);
+        }
+      }
+      current.mergedWhileLoading.clear();
       snapshot$.projectsByConnection.set({
         ...snapshot$.projectsByConnection.peek(),
-        [connectionId]: projects,
+        [connectionId]: resolvedProjects,
       });
       snapshot$.errorsByConnection.set({
         ...snapshot$.errorsByConnection.peek(),
@@ -107,6 +118,7 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
           retryAttempt: 0,
           retryTimer: null,
           loader,
+          mergedWhileLoading: new Map(),
         };
         resources.set(connectionId, record);
         record.ready$ = observable(beginLoad(connectionId, revision, loader, record)) as unknown as Observable<boolean>;
@@ -137,6 +149,8 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
       };
     },
     mergeProject(connectionId, project) {
+      const resource = resources.get(connectionId);
+      if (resource !== undefined && resource.loadingRevision !== null) resource.mergedWhileLoading.set(project.path, project);
       const projectsByConnection = snapshot$.projectsByConnection.peek();
       const existing = projectsByConnection[connectionId] ?? [];
       snapshot$.projectsByConnection.set({

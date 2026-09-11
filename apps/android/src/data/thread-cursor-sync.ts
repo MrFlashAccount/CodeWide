@@ -1,5 +1,8 @@
 import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
+import { projectedTurnMetadata } from "@codewide/sync-client";
+
+import { isThreadHistorySourceWitness } from "./thread-history-source-witness";
 
 export type ThreadSyncHistory = {
   kind: "current" | "delta" | "reset";
@@ -7,10 +10,12 @@ export type ThreadSyncHistory = {
   turns: Turn[];
   hasMore: boolean;
   olderCursor: string | null;
+  sourceWitness?: string;
 };
 
 export type ThreadSyncResponse = {
-  readModelVersion: 2;
+  readModelVersion: 3;
+  throughCursor: number;
   thread: Thread;
   history: ThreadSyncHistory;
   activeTurn: Turn | null;
@@ -18,7 +23,38 @@ export type ThreadSyncResponse = {
 
 export type MaterializedThreadSync = {
   thread: Thread;
-  historyCursor: string | null;
+  historyCursor: string | null | undefined;
+};
+
+/** Carries source reset and cursor state across all pages of one catch-up. */
+export class ThreadSyncCatchUp {
+  #thread: Thread | null;
+  #historyCursor: string | null | undefined;
+  #reset = false;
+  sourceWitness: string | undefined;
+
+  constructor(cached: Thread | null, historyCursor: string | null | undefined, sourceWitness: string | undefined) {
+    this.#thread = cached;
+    this.#historyCursor = historyCursor;
+    this.sourceWitness = sourceWitness;
+  }
+
+  get mode(): "reset" | "merge" { return this.#reset ? "reset" : "merge"; }
+
+  accept(response: ThreadSyncResponse): MaterializedThreadSync {
+    const next = materializeThreadSync(this.#thread, response, this.#historyCursor);
+    this.#thread = next.thread;
+    this.#historyCursor = next.historyCursor;
+    this.#reset ||= response.history.kind === "reset";
+    this.sourceWitness = response.history.sourceWitness;
+    return next;
+  }
+}
+
+export type ThreadContentReference = {
+  readonly id: string;
+  readonly byteLength: number;
+  readonly contentType: string;
 };
 
 // Recovery and bounded projections can retain turn metadata after the item
@@ -41,19 +77,24 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
   const turns = parseHistoryTurns(history.turns);
   const activeTurn = parseActiveTurn(response.activeTurn);
   if (
-    response?.readModelVersion !== 2
+    response?.readModelVersion !== 3
+    || typeof response.throughCursor !== "number"
+    || !Number.isSafeInteger(response.throughCursor)
+    || response.throughCursor < 0
     || !isThread(thread)
     || (kind !== "current" && kind !== "delta" && kind !== "reset")
     || turns === null
     || typeof history.hasMore !== "boolean"
     || (history.headTurnId !== null && typeof history.headTurnId !== "string")
     || (history.olderCursor !== null && typeof history.olderCursor !== "string")
+    || (history.sourceWitness !== undefined && !isThreadHistorySourceWitness(history.sourceWitness))
     || activeTurn === undefined
   ) {
     throw new Error("Companion thread sync returned an invalid response");
   }
   return {
-    readModelVersion: 2,
+    readModelVersion: 3,
+    throughCursor: response.throughCursor,
     thread,
     history: {
       kind,
@@ -61,57 +102,49 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
       turns,
       hasMore: history.hasMore,
       olderCursor: history.olderCursor,
+      ...(history.sourceWitness === undefined ? {} : { sourceWitness: history.sourceWitness }),
     },
     activeTurn,
   };
 }
 
 type ThreadSyncLaneState<Result> = {
-  dirty: boolean;
-  promise: Promise<Result> | null;
+  readonly promise: Promise<Result>;
+  followUp: Promise<Result> | null;
 };
 
+/** Serializes per-thread snapshots without extending a reader's completion to later updates. */
 export class ThreadSyncLane<Result> {
   readonly #states = new Map<string, ThreadSyncLaneState<Result>>();
 
-  run(key: string, synchronize: () => Promise<Result>): Promise<Result> {
+  /** Invalidation/foreground callers need a new read; ordinary readers can share the current one. */
+  run(key: string, synchronize: () => Promise<Result>, freshness: "inFlight" | "afterCurrent" = "inFlight"): Promise<Result> {
     const existing = this.#states.get(key);
-    if (existing?.promise !== null && existing?.promise !== undefined) {
-      return existing.promise;
+    if (existing !== undefined) {
+      if (freshness === "inFlight") return existing.promise;
+      if (existing.followUp === null) {
+        const startNext = (): Promise<Result> => this.run(key, synchronize);
+        // Both outcomes release this lane. A failed old connection must not
+        // suppress a fresh read requested after foregrounding/reconnection.
+        existing.followUp = existing.promise.then(startNext, startNext);
+      }
+      return existing.followUp;
     }
-    const state: ThreadSyncLaneState<Result> = {
-      dirty: false,
-      promise: null,
-    };
-    const operation = (async (): Promise<Result> => {
-      let result: Result;
-      do {
-        state.dirty = false;
-        result = await synchronize();
-      } while (state.dirty);
-      return result;
-    })().finally(() => {
+    const operation = (async (): Promise<Result> => await synchronize())().finally(() => {
       if (this.#states.get(key) === state) this.#states.delete(key);
     });
-    state.promise = operation;
+    const state: ThreadSyncLaneState<Result> = { promise: operation, followUp: null };
     this.#states.set(key, state);
     return operation;
-  }
-
-  markDirty(key: string): boolean {
-    const state = this.#states.get(key);
-    if (state === undefined) return false;
-    state.dirty = true;
-    return true;
   }
 }
 
 export function materializeThreadSync(
   cached: Thread | null,
   response: ThreadSyncResponse,
-  currentHistoryCursor: string | null,
+  currentHistoryCursor: string | null | undefined,
 ): MaterializedThreadSync {
-  if (response.readModelVersion !== 2) {
+  if (response.readModelVersion !== 3) {
     throw new Error(`Unsupported companion thread read model: ${String(response.readModelVersion)}`);
   }
   if (!Array.isArray(response.thread.turns) || !Array.isArray(response.history.turns)) {
@@ -124,12 +157,81 @@ export function materializeThreadSync(
   for (const turn of sealed) byId.set(turn.id, turn);
   for (const turn of response.history.turns) byId.set(turn.id, turn);
   const turns = [...byId.values()];
-  if (response.activeTurn !== null) turns.push(response.activeTurn);
+  const activeTurn = mergeActiveTurnCheckpoint(response.history.kind === "reset" ? null : cached, response.activeTurn);
+  if (activeTurn !== null) turns.push(activeTurn);
   return {
     thread: { ...response.thread, turns },
     historyCursor: response.history.kind === "reset"
       ? response.history.olderCursor
       : currentHistoryCursor,
+  };
+}
+
+/** Resolves only the active agent text externalized by the bounded wire view. */
+export async function hydrateThreadSyncActiveText(
+  response: ThreadSyncResponse,
+  read: (reference: ThreadContentReference) => Promise<string>,
+): Promise<ThreadSyncResponse> {
+  const activeTurn = response.activeTurn;
+  if (activeTurn === null) return response;
+  let changed = false;
+  const items = await Promise.all(activeTurn.items.map(async (item) => {
+    if (item.type !== "agentMessage") return item;
+    const reference = projectedContentField(item, "/text");
+    if (reference === null) return item;
+    const text = await read(reference);
+    changed = changed || text !== item.text;
+    return text === item.text ? item : { ...item, text };
+  }));
+  return changed
+    ? { ...response, activeTurn: { ...activeTurn, items } }
+    : response;
+}
+
+/**
+ * The server's active-turn summary is a recovery checkpoint, not a replacement
+ * for richer item patches already committed from the durable live stream.
+ */
+function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | null): Turn | null {
+  if (checkpoint === null) return null;
+  const previous = cached?.turns.find((turn) => turn.id === checkpoint.id && turn.status === "inProgress");
+  if (previous === undefined || checkpoint.itemsView !== "summary" || previous.itemsView === "notLoaded") {
+    return checkpoint;
+  }
+
+  const checkpointItems = new Map(checkpoint.items.map((item) => [item.id, item]));
+  const items = previous.items.map((item) => {
+    const current = checkpointItems.get(item.id);
+    if (current === undefined) return item;
+    checkpointItems.delete(item.id);
+    if (
+      item.type === "agentMessage"
+      && current.type === "agentMessage"
+      && item.text.startsWith(current.text)
+    ) {
+      return item.text === current.text ? current : { ...current, text: item.text };
+    }
+    return current;
+  });
+  for (const item of checkpointItems.values()) items.push(item);
+
+  const previousMetadata = projectedTurnMetadata(previous);
+  const checkpointMetadata = projectedTurnMetadata(checkpoint);
+  const codewide = previousMetadata === null && checkpointMetadata === null
+    ? {}
+    : {
+        codewide: {
+          ...(previousMetadata ?? {}),
+          ...(checkpointMetadata ?? {}),
+        },
+      };
+
+  return {
+    ...previous,
+    ...checkpoint,
+    ...codewide,
+    items,
+    itemsView: previous.itemsView,
   };
 }
 
@@ -172,6 +274,25 @@ export function isStableThreadCursorTurn(turn: Turn): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function projectedContentField(value: unknown, pointer: string): ThreadContentReference | null {
+  const object = isRecord(value) ? value : null;
+  const content = isRecord(object?.codewideContent) ? object.codewideContent : null;
+  const fields = isRecord(content?.fields) ? content.fields : null;
+  const reference = isRecord(fields?.[pointer]) ? fields[pointer] : null;
+  return typeof reference?.id === "string"
+    && /^[a-f0-9]{64}$/u.test(reference.id)
+    && typeof reference.byteLength === "number"
+    && Number.isSafeInteger(reference.byteLength)
+    && reference.byteLength >= 0
+    && typeof reference.contentType === "string"
+    ? {
+        id: reference.id,
+        byteLength: reference.byteLength,
+        contentType: reference.contentType,
+      }
+    : null;
 }
 
 function isThread(value: unknown): value is Thread {
@@ -235,7 +356,8 @@ function parseActiveTurn(value: unknown): Turn | null | undefined {
   return undefined;
 }
 
-function parseHistoryTurns(value: unknown): Turn[] | null {
+/** Validates summary/full turn envelopes shared by cursor sync and historical search. */
+export function parseHistoryTurns(value: unknown): Turn[] | null {
   if (!Array.isArray(value)) return null;
   const turns: Turn[] = [];
   for (const turn of value) {

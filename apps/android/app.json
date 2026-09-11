@@ -2,13 +2,13 @@
   "expo": {
     "name": "CodeWide",
     "slug": "codewide",
-    "version": "0.2.112",
-    "runtimeVersion": "0.2.112-native-125",
+    "version": "0.2.145",
+    "runtimeVersion": "0.2.145-native-158",
     "updates": {
       "enabled": true,
       "url": "https://updates.example.invalid/api/updates",
-      "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 1200,
+      "checkAutomatically": "NEVER",
+      "fallbackToCacheTimeout": 0,
       "codeSigningCertificate": "./certs/certificate.pem",
       "codeSigningMetadata": {
         "keyid": "main",
@@ -48,7 +48,7 @@
     ],
     "android": {
       "package": "dev.codexremote.app",
-      "versionCode": 125,
+      "versionCode": 158,
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",

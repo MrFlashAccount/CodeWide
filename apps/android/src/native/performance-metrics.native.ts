@@ -5,6 +5,8 @@ import { setOperationalDiagnosticsEnabled } from "../data/operational-metrics";
 import { resetPerformanceExperiments } from "../data/performance-experiments";
 import { setTelemetryEnabled } from "../data/telemetry";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
+import { startFrameIncidentReporting } from "./frame-incidents.native";
+import { parseWindowFrameReport, type WindowFrameReport } from "../data/window-frame-report";
 
 export type PerformanceMetricPoint = {
   sampledAtMs: number;
@@ -66,7 +68,47 @@ export type HermesHeapSnapshot = {
   location: string;
 };
 
+export type MemoryCheckpoint = {
+  version: number;
+  collectedAtMs: number;
+  uptimeMs: number;
+  captureDurationMs: number;
+  javaUsedBytes: number;
+  javaCommittedBytes: number;
+  nativeAllocatedBytes: number;
+  nativeCommittedBytes: number;
+  nativeFreeBytes: number;
+  totalPssBytes: number;
+  javaHeapPssBytes: number;
+  nativeHeapPssBytes: number;
+  graphicsPssBytes: number;
+  privateOtherPssBytes: number;
+  procRssBytes: number | null;
+  smapsPssBytes: number | null;
+  smapsRssBytes: number | null;
+  smapsSwapPssBytes: number | null;
+  artAllocatedBytes: number | null;
+  artFreedBytes: number | null;
+  openFileDescriptors: number;
+  threads: number;
+  errors: unknown[];
+};
+
+export type MemoryReclamationActionResult = {
+  performed: boolean;
+  durationMs: number;
+};
+
 type PerformanceBridge = {
+  getWindowFrameReport?(): Promise<unknown>;
+  drainFrameIncidents?(): Promise<unknown>;
+  captureMemoryReport?(): Promise<unknown>;
+  captureMemoryCheckpoint?(): Promise<unknown>;
+  clearNativeCodeMemoryCache?(): Promise<unknown>;
+  clearImageMemoryCache?(): Promise<unknown>;
+  collectJavaGarbage?(): Promise<unknown>;
+  collectHermesGarbage?(): Promise<unknown>;
+  purgeNativeAllocator?(exhaustive: boolean): Promise<unknown>;
   getPerformanceSnapshot(): Promise<PerformanceMetricsSnapshot>;
   setPerformanceMonitoringEnabled(enabled: boolean): Promise<PerformanceMetricsSnapshot>;
   beginNavigationTrace?(traceId: string): Promise<boolean>;
@@ -120,6 +162,10 @@ function ensureNativeSubscription(): void {
 // may happen before Settings is ever opened, so diagnostics cannot be lazily
 // enabled by the settings screen itself.
 ensureNativeSubscription();
+const drainFrameIncidents = bridge?.drainFrameIncidents;
+if (typeof drainFrameIncidents === "function") {
+  startFrameIncidentReporting({ drainFrameIncidents: () => drainFrameIncidents.call(bridge) });
+}
 
 export function subscribePerformanceMetrics(listener: () => void): () => void {
   listeners.add(listener);
@@ -163,4 +209,116 @@ export async function captureHermesHeapSnapshot(): Promise<HermesHeapSnapshot> {
     throw new Error("Hermes heap capture requires a newer Android APK");
   }
   return await bridge.captureHermesHeapSnapshot();
+}
+
+const MAX_MEMORY_REPORT_CHARACTERS = 512 * 1_024;
+
+export async function captureMemoryReport(): Promise<string> {
+  if (bridge === undefined || typeof bridge.captureMemoryReport !== "function") {
+    throw new Error("Memory report requires a newer Android APK");
+  }
+  const report = await bridge.captureMemoryReport();
+  if (typeof report !== "string" || report.length === 0 || report.length > MAX_MEMORY_REPORT_CHARACTERS) {
+    throw new Error("Android returned an invalid memory report");
+  }
+  const parsed: unknown = JSON.parse(report);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("Android returned an invalid memory report");
+  }
+  return report;
+}
+
+export function memoryReclamationExperimentAvailable(): boolean {
+  return bridge?.captureMemoryCheckpoint !== undefined
+    && bridge.clearNativeCodeMemoryCache !== undefined
+    && bridge.clearImageMemoryCache !== undefined
+    && bridge.collectJavaGarbage !== undefined
+    && bridge.collectHermesGarbage !== undefined
+    && bridge.purgeNativeAllocator !== undefined;
+}
+
+export async function captureMemoryCheckpoint(): Promise<MemoryCheckpoint> {
+  if (bridge?.captureMemoryCheckpoint === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  const encoded = await bridge.captureMemoryCheckpoint();
+  if (typeof encoded !== "string" || encoded.length === 0 || encoded.length > 64 * 1_024) {
+    throw new Error("Android returned an invalid memory checkpoint");
+  }
+  const parsed: unknown = JSON.parse(encoded);
+  if (!isMemoryCheckpoint(parsed)) throw new Error("Android returned an invalid memory checkpoint");
+  return parsed;
+}
+
+export async function clearNativeCodeMemoryCache(): Promise<MemoryReclamationActionResult> {
+  if (bridge?.clearNativeCodeMemoryCache === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  return parseMemoryActionResult(await bridge.clearNativeCodeMemoryCache());
+}
+
+export async function clearImageMemoryCache(): Promise<MemoryReclamationActionResult> {
+  if (bridge?.clearImageMemoryCache === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  return parseMemoryActionResult(await bridge.clearImageMemoryCache());
+}
+
+export async function collectJavaGarbage(): Promise<MemoryReclamationActionResult> {
+  if (bridge?.collectJavaGarbage === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  return parseMemoryActionResult(await bridge.collectJavaGarbage());
+}
+
+export async function collectHermesGarbage(): Promise<MemoryReclamationActionResult> {
+  if (bridge?.collectHermesGarbage === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  return parseMemoryActionResult(await bridge.collectHermesGarbage());
+}
+
+export async function purgeNativeAllocator(exhaustive: boolean): Promise<MemoryReclamationActionResult> {
+  if (bridge?.purgeNativeAllocator === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  return parseMemoryActionResult(await bridge.purgeNativeAllocator(exhaustive));
+}
+
+function isMemoryCheckpoint(value: unknown): value is MemoryCheckpoint {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const requiredNumbers = [
+    "version",
+    "collectedAtMs",
+    "uptimeMs",
+    "captureDurationMs",
+    "javaUsedBytes",
+    "javaCommittedBytes",
+    "nativeAllocatedBytes",
+    "nativeCommittedBytes",
+    "nativeFreeBytes",
+    "totalPssBytes",
+    "javaHeapPssBytes",
+    "nativeHeapPssBytes",
+    "graphicsPssBytes",
+    "privateOtherPssBytes",
+    "openFileDescriptors",
+    "threads",
+  ];
+  if (!requiredNumbers.every((key) => typeof Reflect.get(value, key) === "number")) return false;
+  const nullableNumbers = ["procRssBytes", "smapsPssBytes", "smapsRssBytes", "smapsSwapPssBytes", "artAllocatedBytes", "artFreedBytes"];
+  if (!nullableNumbers.every((key) => {
+    const field = Reflect.get(value, key);
+    return field === null || typeof field === "number";
+  })) return false;
+  return Array.isArray(Reflect.get(value, "errors"));
+}
+
+function parseMemoryActionResult(value: unknown): MemoryReclamationActionResult {
+  if (
+    typeof value !== "object"
+    || value === null
+    || Array.isArray(value)
+    || typeof Reflect.get(value, "performed") !== "boolean"
+    || typeof Reflect.get(value, "durationMs") !== "number"
+  ) {
+    throw new Error("Android returned an invalid memory action result");
+  }
+  return {
+    performed: Reflect.get(value, "performed") === true,
+    durationMs: Number(Reflect.get(value, "durationMs")),
+  };
+}
+
+export async function getWindowFrameReport(): Promise<WindowFrameReport | null> {
+  if (bridge?.getWindowFrameReport === undefined) return null;
+  return parseWindowFrameReport(await bridge.getWindowFrameReport());
 }

@@ -25,3 +25,14 @@ function deviceTimeFormatter(preferences: DeviceTimePreferences): Intl.DateTimeF
 export function formatTimeForDevice(timestampSeconds: number, preferences: DeviceTimePreferences): string {
   return deviceTimeFormatter(preferences).format(timestampSeconds * 1_000);
 }
+
+/** Calendar dates and clock mode both follow the device's explicit preferences. */
+export function formatDateTimeForDevice(timestampSeconds: number, preferences: DeviceTimePreferences): string {
+  return new Intl.DateTimeFormat(preferences.locale, {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(preferences.uses24HourClock === undefined ? {} : { hour12: !preferences.uses24HourClock }),
+  }).format(timestampSeconds * 1_000);
+}

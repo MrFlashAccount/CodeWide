@@ -4,7 +4,18 @@ import { type ComponentProps, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../react/useEvent";
-import { colors, radii, spacing, touchTarget, typeScale } from "../theme";
+import {
+  colors,
+  controlHitSlop,
+  controlSize,
+  iconSize,
+  layoutSize,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+} from "../theme";
 import { AppText as Text } from "./Typography";
 
 type QuickdrawSnapshot = NonNullable<ComponentProps<typeof Quickdraw>["snapshot"]>;
@@ -77,7 +88,7 @@ export function DrawingWorkspace({
           onPress={onClose}
           style={({ pressed }) => [styles.iconButton, pressed && styles.pressed, saving && styles.disabled]}
         >
-          <Ionicons name="close" size={24} color={colors.text} />
+          <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
         </Pressable>
         <View style={styles.titleBlock}>
           <Text numberOfLines={1} style={styles.title}>{mode === "image-annotation" ? "Annotate image" : "Drawing"}</Text>
@@ -88,6 +99,7 @@ export function DrawingWorkspace({
           accessibilityLabel={editing ? "Save drawing" : "Attach drawing"}
           accessibilityState={{ disabled: !ready || saving }}
           disabled={!ready || saving}
+          hitSlop={controlHitSlop.compact}
           onPress={() => void commit()}
           style={({ pressed }) => [styles.saveButton, pressed && styles.savePressed, (!ready || saving) && styles.disabled]}
         >
@@ -98,7 +110,7 @@ export function DrawingWorkspace({
       </View>
       {error !== null && (
         <View style={styles.errorBar}>
-          <Ionicons name="alert-circle-outline" size={17} color={colors.red} />
+          <Ionicons name="alert-circle-outline" size={iconSize.inline} color={colors.red} />
           <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
@@ -124,9 +136,8 @@ export function DrawingWorkspace({
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   header: {
-    minHeight: 64,
+    minHeight: layoutSize.header,
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
@@ -136,12 +147,12 @@ const styles = StyleSheet.create({
   },
   iconButton: { width: touchTarget, height: touchTarget, borderRadius: radii.large, alignItems: "center", justifyContent: "center" },
   titleBlock: { flex: 1, minWidth: 0 },
-  title: { color: colors.text, ...typeScale.titleMedium, fontWeight: "700" },
-  subtitle: { color: colors.textMuted, ...typeScale.labelMedium },
-  saveButton: { minWidth: 78, height: 38, paddingHorizontal: spacing.md, borderRadius: radii.large, alignItems: "center", justifyContent: "center", backgroundColor: colors.accent },
-  saveText: { color: colors.onPrimary, ...typeScale.labelLarge, fontWeight: "700" },
+  title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
+  subtitle: { color: colors.textMuted, ...typeScale.label },
+  saveButton: { height: controlSize.compact, paddingHorizontal: spacing.sm, borderRadius: radii.small, alignItems: "center", justifyContent: "center", backgroundColor: colors.accent },
+  saveText: { color: colors.onPrimary, ...typeScale.label, fontWeight: typeWeight.semibold },
   errorBar: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.surfaceRaised },
-  errorText: { flex: 1, color: colors.red, ...typeScale.labelMedium },
+  errorText: { flex: 1, color: colors.red, ...typeScale.label },
   board: { flex: 1, position: "relative" },
   quickdraw: { flex: 1 },
   loader: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 1 },

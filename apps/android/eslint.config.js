@@ -1,7 +1,13 @@
 const babelParser = require("@babel/eslint-parser");
 const reactHooks = require("eslint-plugin-react-hooks");
+const presentationTokens = require("./eslint-presentation-tokens.cjs");
 
 module.exports = [
+  {
+    files: ["src/CodeWideScreen.tsx", "src/ui/**/*.{ts,tsx}", "src/rendering/**/*.{ts,tsx}", "src/presentation/**/*.{ts,tsx}"],
+    plugins: { codewide: { rules: { "presentation-tokens": presentationTokens } } },
+    rules: { "codewide/presentation-tokens": "error" },
+  },
   {
     ignores: ["android/**", "dist/**", ".expo/**"],
   },

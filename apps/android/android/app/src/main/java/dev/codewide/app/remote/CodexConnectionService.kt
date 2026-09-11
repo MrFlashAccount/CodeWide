@@ -44,8 +44,10 @@ class CodexConnectionService : Service() {
   private lateinit var authenticatedTransportLeases: AuthenticatedTransportLeaseRegistry
   private lateinit var syncGenerationStore: NativeSyncGenerationStore
   private lateinit var v2NotificationProjectionStore: V2NotificationProjectionStore
+  private lateinit var processExitTelemetry: NativeProcessExitTelemetry
   private lateinit var connectivityManager: ConnectivityManager
   private val handler = Handler(Looper.getMainLooper())
+  private val recoveryWorker = NativeRecoveryWorker()
   private val journalThread = HandlerThread("CodeWideJournal")
   private lateinit var journalHandler: Handler
   private val sessions = ConcurrentHashMap<String, Session>()
@@ -73,6 +75,7 @@ class CodexConnectionService : Service() {
   @Volatile private var syncGeneration = NativeSyncGeneration.LEGACY
   @Volatile private var destroyed = false
   @Volatile private var activeDefaultNetwork: Network? = null
+  private var processExitTelemetryCollectionStarted = false
   private val networkCallback = object : ConnectivityManager.NetworkCallback() {
     override fun onAvailable(network: Network) {
       synchronized(this@CodexConnectionService) {
@@ -118,6 +121,7 @@ class CodexConnectionService : Service() {
     super.onCreate()
     journalThread.start()
     journalHandler = Handler(journalThread.looper)
+    processExitTelemetry = NativeProcessExitTelemetry(this)
     frameStore = NativeFrameStore(this)
     commandStore = NativeCommandStore(this)
     credentialsStore = NativeSessionCredentialsStore(this)
@@ -151,21 +155,24 @@ class CodexConnectionService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     when (intent?.action) {
       ACTION_ATTACH -> {
-        activateLegacySync()
-        intent.getStringExtra(EXTRA_CONNECTION_ID)?.let(::attach)
+        intent.getStringExtra(EXTRA_CONNECTION_ID)?.let { id ->
+          recoverInBackground(id, "attach") {
+            selectLegacySync()
+            attach(id)
+          }
+        }
       }
       ACTION_CLOSE -> intent.getStringExtra(EXTRA_CONNECTION_ID)?.let(::close)
       ACTION_WAKE -> {
-        activateLegacySync()
         intent.getStringExtra(EXTRA_CONNECTION_ID)?.let(::wake)
       }
       ACTION_ACTIVATE_V2 -> activateV2Sync(headless = false)
-      ACTION_START_PORT_FORWARD -> {
-        restoreSelectedSyncGeneration()
-        intent.getStringExtra(EXTRA_PORT_FORWARD_ID)?.let(::startPortForward)
-      }
       ACTION_STOP_ALL -> stopSelf()
-      null -> restoreSelectedSyncGeneration()
+      null -> recoveryWorker.submit {
+        synchronized(this) {
+          if (!destroyed) restoreSelectedSyncGeneration()
+        }
+      }
     }
     return START_STICKY
   }
@@ -174,6 +181,7 @@ class CodexConnectionService : Service() {
     processNativeAuthorityLifecycle.access {
       synchronized(this) {
         destroyed = true
+        recoveryWorker.close()
         handler.removeCallbacksAndMessages(null)
         sessions.values.forEach { it.close("service_destroyed") }
         sessions.clear()
@@ -209,13 +217,18 @@ class CodexConnectionService : Service() {
     val session = Session(id, endpoint, token, tlsPinSha256)
     sessions[id] = session
     session.replayBuffered()
-    session.connect()
+    handler.post { if (!destroyed) session.connect() }
     portForwardManager.resumeConnection(id)
     updateNotification()
   }
 
   @Synchronized
   fun companionHttpOrigin(connectionId: String): String = companionHttpProxy.origin(connectionId)
+
+  @Synchronized
+  internal fun publishStartupTiming(timing: NativeStartupTiming) {
+    sessions.values.forEach { it.publishStartupTiming(timing) }
+  }
 
   @Synchronized
   internal fun acquireAuthenticatedTransportLease(savedServerId: String): String {
@@ -379,7 +392,7 @@ class CodexConnectionService : Service() {
   internal fun closeTerminal(sessionId: String) = terminalSessionManager.close(sessionId)
 
   private fun attach(connectionId: String) {
-    val saved = credentialsStore.get(connectionId)
+    val saved = readRecoveryCredentials(connectionId)
     if (saved == null) {
       CodeWideModule.emitEngineEvent(
         connectionId,
@@ -406,9 +419,30 @@ class CodexConnectionService : Service() {
       && existing.tlsPinSha256 == saved.innerTlsPinSha256
     ) {
       existing.attachRuntime()
+      collectPreviousProcessExit(existing)
       return
     }
     open(saved.id, saved.endpoint, saved.token, saved.innerTlsPinSha256)
+    sessions[connectionId]?.let(::collectPreviousProcessExit)
+  }
+
+  private fun collectPreviousProcessExit(session: Session) {
+    if (processExitTelemetryCollectionStarted) return
+    processExitTelemetryCollectionStarted = true
+    journalHandler.post {
+      val batch = runCatching { processExitTelemetry.collect() }.getOrNull() ?: return@post
+      handler.post {
+        synchronized(this@CodexConnectionService) {
+          if (destroyed) return@synchronized
+          if (sessions[session.id] !== session) {
+            processExitTelemetryCollectionStarted = false
+            return@synchronized
+          }
+          batch.metrics.forEach(session::publishProcessExitTelemetry)
+          journalHandler.post { processExitTelemetry.acknowledge(batch.checkpointTimestampUnixMs) }
+        }
+      }
+    }
   }
 
   fun rpc(connectionId: String, method: String, params: Any?, completion: (Result<Any?>) -> Unit) {
@@ -446,9 +480,15 @@ class CodexConnectionService : Service() {
     sessions[connectionId]?.resetTransport(reason)
   }
 
-  @Synchronized
   fun wake(connectionId: String) {
-    val saved = credentialsStore.get(connectionId)
+    recoverInBackground(connectionId, "wake") {
+      selectLegacySync()
+      wakeRecovered(connectionId)
+    }
+  }
+
+  private fun wakeRecovered(connectionId: String) {
+    val saved = readRecoveryCredentials(connectionId)
     if (saved?.enabled != true) {
       attach(connectionId)
       return
@@ -463,7 +503,53 @@ class CodexConnectionService : Service() {
       attach(connectionId)
       return
     }
-    session.reconnectNow()
+    handler.post { if (!destroyed) session.reconnectNow() }
+  }
+
+  private fun readRecoveryCredentials(connectionId: String): StoredNativeSession? {
+    val startedAt = SystemClock.elapsedRealtimeNanos()
+    return try {
+      credentialsStore.get(connectionId)
+    } finally {
+      CodeWideModule.emitEngineEvent(connectionId, "telemetry", NativeTelemetryMetric(
+        "connection.recovery_credentials",
+        values = mapOf("durationMs" to elapsedMilliseconds(startedAt)),
+      ).toJson(), null)
+    }
+  }
+
+  private fun recoverInBackground(connectionId: String, action: String, operation: () -> Unit) {
+    val queuedAt = SystemClock.elapsedRealtimeNanos()
+    recoveryWorker.submit {
+      val startedAt = SystemClock.elapsedRealtimeNanos()
+      var outcome = "completed"
+      var failureKind = "none"
+      var lockWaitMs = 0.0
+      try {
+        synchronized(this) {
+          if (destroyed) return@submit
+          lockWaitMs = elapsedMilliseconds(startedAt)
+          operation()
+        }
+      } catch (error: Exception) {
+        outcome = "failed"
+        failureKind = error.javaClass.simpleName
+        // Recovery errors may contain credentials; only the bounded class is exported.
+        CodeWideModule.emitEngineEvent(connectionId, "state", JSONObject()
+          .put("state", "degraded").put("rpcAvailable", false)
+          .put("error", "Native connection recovery failed ($failureKind)").toString(), null)
+      } finally {
+        CodeWideModule.emitEngineEvent(connectionId, "telemetry", NativeTelemetryMetric(
+          "connection.recovery",
+          values = mapOf(
+            "queueWaitMs" to (startedAt - queuedAt) / 1_000_000.0,
+            "durationMs" to elapsedMilliseconds(startedAt),
+            "lockWaitMs" to lockWaitMs,
+          ),
+          tags = mapOf("action" to action, "outcome" to outcome, "failureKind" to failureKind),
+        ).toJson(), null)
+      }
+    }
   }
 
   @Synchronized
@@ -539,6 +625,12 @@ class CodexConnectionService : Service() {
 
   @Synchronized
   internal fun activateLegacySync() {
+    selectLegacySync()
+    restoreLegacySync()
+    updateNotification()
+  }
+
+  private fun selectLegacySync() {
     if (syncGeneration != NativeSyncGeneration.LEGACY) {
       syncGeneration = NativeSyncGeneration.LEGACY
       if (!syncGenerationStore.write(syncGeneration)) Log.w(LOG_TAG, "Could not persist legacy sync generation")
@@ -549,8 +641,6 @@ class CodexConnectionService : Service() {
       clearAllV2NotificationState()
     }
     terminalSessionManager.activateGeneration()
-    restoreLegacySync()
-    updateNotification()
   }
 
   private fun restoreSelectedSyncGeneration() {
@@ -934,20 +1024,18 @@ class CodexConnectionService : Service() {
     val tlsPinSha256: String
   ) {
     private var socket: WebSocket? = null
-    private var replacementSocket: WebSocket? = null
-    private val retiringSockets = ConcurrentHashMap.newKeySet<WebSocket>()
     private var closed = false
     private var authBlocked = false
     private var connecting = false
-    private var credentialRefreshInFlight = false
     private var reconnectAttempt = 0
     private var reconnectRunnable: Runnable? = null
     private var connectWatchdogRunnable: Runnable? = null
-    private var credentialRefreshRunnable: Runnable? = null
     private var transportGeneration = 0L
     private var connectStartedAt = 0L
     private var outboxDrainRunning = false
     private var outboxWakeRunnable: Runnable? = null
+    private var startupTelemetrySent = false
+    private var splashExitTelemetrySent = false
     private val activeThreads = ConcurrentHashMap.newKeySet<String>()
     private val pendingApprovals = ConcurrentHashMap.newKeySet<String>()
     private val protocolEngine = NativeProtocolEngine(
@@ -958,6 +1046,7 @@ class CodexConnectionService : Service() {
       sendFrame = { payload -> socket?.send(payload) == true },
       resetTransport = { reason -> resetTransport("protocol:$reason") },
       onLive = { handler.post { drainOutbox() } },
+      telemetry = NativeTelemetryRecorder(::emitTelemetry),
     )
 
     fun connect() {
@@ -965,37 +1054,34 @@ class CodexConnectionService : Service() {
       connecting = true
       connectStartedAt = SystemClock.elapsedRealtime()
       val generation = ++transportGeneration
+      publishStartupTiming(NativeStartupTrace.snapshot())
+      emitTelemetry(NativeTelemetryMetric(
+        "connection.attempt_started",
+        values = mapOf("attempt" to generation, "reconnectAttempt" to reconnectAttempt),
+      ))
       emitTransportStatus("connecting")
       scheduleConnectWatchdog(generation)
-      mintCurrent { result ->
+      // One mTLS handshake proves the device key; the capability remains a
+      // separate authorization factor on that same encrypted WebSocket.
+      // Keystore access must not block Android's UI/connection handler.
+      httpClient.dispatcher.executorService.execute {
+        val preparationStartedAt = SystemClock.elapsedRealtimeNanos()
+        val prepared = runCatching {
+          InnerTlsTransport.client(httpClient, currentSaved(), "socket", contextualTelemetry(generation, "socket"))
+        }
+        contextualTelemetry(generation, "socket").record(NativeTelemetryMetric(
+          "connection.prepare",
+          values = mapOf("durationMs" to elapsedMilliseconds(preparationStartedAt)),
+          tags = mapOf("outcome" to if (prepared.isSuccess) "completed" else "failed"),
+        ))
         handler.post {
           if (closed || generation != transportGeneration) return@post
-          result.fold(
-            onSuccess = { credential ->
-              afterCredentialMinted(credential, generation)
-            },
-            onFailure = { error ->
-              connecting = false
-              cancelConnectWatchdog()
-              if (error is SessionAuthorizationException) {
-                authBlocked = true
-                emitTransportStatus("authRequired")
-              } else {
-                emitTransportStatus("degraded", transportDiagnostic(error, "Could not reach the server"))
-                scheduleReconnect()
-              }
-            },
+          prepared.fold(
+            onSuccess = { client -> openSocket(client, generation) },
+            onFailure = ::failConnect,
           )
         }
       }
-    }
-
-    private fun mintCurrent(callback: (Result<MintedSessionCredential>) -> Unit) {
-      SessionCredentialClient.mint(credentialHttpClient, currentSaved(), callback)
-    }
-
-    private fun afterCredentialMinted(credential: MintedSessionCredential, generation: Long) {
-      openSocket(credential.token, credential.expiresAt, generation)
     }
 
     private fun failConnect(error: Throwable) {
@@ -1022,49 +1108,53 @@ class CodexConnectionService : Service() {
       )
     }
 
-    private fun openSocket(sessionToken: String, expiresAt: Long, generation: Long, replacement: Boolean = false) {
+    private fun openSocket(sessionClient: OkHttpClient, generation: Long) {
       if (closed || generation != transportGeneration) return
       authBlocked = false
-      val saved = currentSaved()
       val request = Request.Builder()
-        .url(InnerTlsTransport.url(saved, endpoint))
-        .header("Authorization", "Bearer $sessionToken")
+        .url(InnerTlsTransport.url(endpoint, endpoint))
+        .header("Authorization", "Bearer $token")
         .build()
-      val sessionClient = InnerTlsTransport.client(httpClient, saved)
+      val socketStartedAt = SystemClock.elapsedRealtime()
+      val socketPurpose = "socket"
+      emitTelemetry(NativeTelemetryMetric(
+        "connection.websocket",
+        values = mapOf("attempt" to generation),
+        tags = mapOf("phase" to "started", "purpose" to socketPurpose),
+      ))
+      var openedAtMs: Long? = null
       val listener = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-          val expected = if (replacement) replacementSocket === webSocket else socket === webSocket
-          if (!expected || closed || generation != transportGeneration) {
+          if (socket !== webSocket || closed || generation != transportGeneration) {
             webSocket.close(1000, "superseded")
             return
           }
-          if (replacement) {
-            val previous = socket
-            socket = webSocket
-            replacementSocket = null
-            credentialRefreshInFlight = false
-            if (previous != null && previous !== webSocket) {
-              retiringSockets.add(previous)
-              handler.postDelayed({
-                if (retiringSockets.remove(previous)) previous.close(1000, "credential_rotated")
-              }, RETIRING_SOCKET_GRACE_MS)
-            }
-          } else {
-            connecting = false
-          }
+          connecting = false
           cancelConnectWatchdog()
           reconnectAttempt = 0
+          openedAtMs = SystemClock.elapsedRealtime()
+          emitTelemetry(NativeTelemetryMetric(
+            "connection.websocket",
+            values = mapOf(
+              "attempt" to generation,
+              "durationMs" to (SystemClock.elapsedRealtime() - socketStartedAt),
+              "httpStatus" to response.code,
+            ),
+            tags = mapOf("phase" to "completed", "purpose" to socketPurpose),
+          ))
+          emitTelemetry(NativeTelemetryMetric(
+            "connection.transport_opened",
+            values = mapOf(
+              "attempt" to generation,
+              "durationMs" to (SystemClock.elapsedRealtime() - connectStartedAt),
+            ),
+          ))
           protocolEngine.onSocketOpen()
-          scheduleCredentialRefresh(expiresAt)
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
           if (closed) return
-          if (socket !== webSocket) {
-            if (!retiringSockets.contains(webSocket) || !isRpcResponseFrame(text)) return
-            protocolEngine.onFrame(text)
-            return
-          }
+          if (socket !== webSocket) return
           observeNotificationState(text)
           protocolEngine.onFrame(text)
         }
@@ -1075,24 +1165,26 @@ class CodexConnectionService : Service() {
         }
 
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-          if (socket !== webSocket && replacementSocket !== webSocket && !retiringSockets.contains(webSocket)) return
+          if (socket !== webSocket) return
           webSocket.close(code, reason)
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-          if (retiringSockets.remove(webSocket)) return
-          if (replacementSocket === webSocket) {
-            replacementSocket = null
-            credentialRefreshInFlight = false
-            scheduleCredentialRefreshRetry()
-            return
-          }
           if (socket !== webSocket) return
           socket = null
           connecting = false
           cancelConnectWatchdog()
-          cancelCredentialRefresh()
           protocolEngine.onSocketClosed(if (reason.isBlank()) "Connection interrupted" else reason)
+          if (code == 4003) authBlocked = true
+          emitTelemetry(NativeTelemetryMetric(
+            "connection.websocket_disconnected",
+            values = mapOf(
+              "attempt" to generation,
+              "connectedDurationMs" to maxOf(0L, SystemClock.elapsedRealtime() - (openedAtMs ?: socketStartedAt)),
+              "closeCode" to code,
+            ),
+            tags = mapOf("purpose" to socketPurpose, "failureKind" to "closed"),
+          ))
           if (authBlocked) emitTransportStatus("authRequired") else {
             emitTransportStatus("degraded", if (reason.isBlank()) "Connection interrupted" else reason.take(240))
             scheduleReconnect()
@@ -1100,82 +1192,59 @@ class CodexConnectionService : Service() {
         }
 
         override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
-          if (retiringSockets.remove(webSocket)) return
-          if (replacementSocket === webSocket) {
-            replacementSocket = null
-            credentialRefreshInFlight = false
-            Log.w(LOG_TAG, "replacement websocket failure ${throwable.javaClass.simpleName} id=${safeConnectionId(id)}")
-            scheduleCredentialRefreshRetry()
-            return
-          }
           if (socket !== webSocket) return
           socket = null
           connecting = false
           cancelConnectWatchdog()
-          cancelCredentialRefresh()
           protocolEngine.onSocketClosed(throwable.javaClass.simpleName)
           Log.w(LOG_TAG, "websocket failure ${throwable.javaClass.simpleName} id=${safeConnectionId(id)}")
-          emitTransportStatus("degraded", transportDiagnostic(throwable, "Connection failed"))
-          scheduleReconnect()
+          val openedAt = openedAtMs
+          if (openedAt == null) {
+            emitTelemetry(NativeTelemetryMetric(
+              "connection.websocket",
+              values = mapOf(
+                "attempt" to generation,
+                "durationMs" to (SystemClock.elapsedRealtime() - socketStartedAt),
+                "httpStatus" to (response?.code ?: 0),
+              ),
+              tags = mapOf(
+                "phase" to "failed",
+                "purpose" to socketPurpose,
+                "failureKind" to throwable.javaClass.simpleName,
+              ),
+            ))
+            emitTelemetry(NativeTelemetryMetric(
+              "connection.attempt_failed",
+              values = mapOf(
+                "attempt" to generation,
+                "durationMs" to (SystemClock.elapsedRealtime() - connectStartedAt),
+              ),
+              tags = mapOf("stage" to "websocket", "failureKind" to throwable.javaClass.simpleName),
+            ))
+          } else {
+            emitTelemetry(NativeTelemetryMetric(
+              "connection.websocket_disconnected",
+              values = mapOf(
+                "attempt" to generation,
+                "connectedDurationMs" to maxOf(0L, SystemClock.elapsedRealtime() - openedAt),
+                "httpStatus" to (response?.code ?: 0),
+              ),
+              tags = mapOf("purpose" to socketPurpose, "failureKind" to throwable.javaClass.simpleName),
+            ))
+          }
+          if (response?.code == 401 || response?.code == 403) {
+            authBlocked = true
+            emitTransportStatus("authRequired")
+          } else {
+            emitTransportStatus("degraded", transportDiagnostic(throwable, "Connection failed"))
+            scheduleReconnect()
+          }
         }
       }
       val created = sessionClient.newWebSocket(request, listener)
-      if (replacement) replacementSocket = created else socket = created
+      socket = created
     }
 
-    private fun scheduleCredentialRefresh(expiresAt: Long) {
-      credentialRefreshRunnable?.let(handler::removeCallbacks)
-      val delay = maxOf(MIN_CREDENTIAL_REFRESH_DELAY_MS, expiresAt - System.currentTimeMillis() - CREDENTIAL_REFRESH_LEAD_MS)
-      val runnable = Runnable {
-        credentialRefreshRunnable = null
-        refreshCredential()
-      }
-      credentialRefreshRunnable = runnable
-      handler.postDelayed(runnable, delay)
-    }
-
-    private fun scheduleCredentialRefreshRetry() {
-      if (closed || socket == null || credentialRefreshRunnable != null) return
-      val runnable = Runnable {
-        credentialRefreshRunnable = null
-        refreshCredential()
-      }
-      credentialRefreshRunnable = runnable
-      handler.postDelayed(runnable, CREDENTIAL_REFRESH_RETRY_MS)
-    }
-
-    private fun refreshCredential() {
-      if (closed || socket == null || credentialRefreshInFlight || replacementSocket != null) return
-      credentialRefreshInFlight = true
-      val generation = transportGeneration
-      mintCurrent { result ->
-        handler.post {
-          if (closed || generation != transportGeneration) return@post
-          result.fold(
-            onSuccess = { credential -> openSocket(credential.token, credential.expiresAt, generation, replacement = true) },
-            onFailure = { error ->
-              credentialRefreshInFlight = false
-              if (error is SessionAuthorizationException) {
-                // Keep the already authenticated socket usable until the host
-                // expires it; after that reconnect must surface re-pairing.
-                authBlocked = true
-              } else {
-                Log.w(LOG_TAG, "session credential refresh failed ${error.javaClass.simpleName} id=${safeConnectionId(id)}")
-                scheduleCredentialRefreshRetry()
-              }
-            },
-          )
-        }
-      }
-    }
-
-    private fun cancelCredentialRefresh() {
-      credentialRefreshRunnable?.let(handler::removeCallbacks)
-      credentialRefreshRunnable = null
-      credentialRefreshInFlight = false
-      replacementSocket?.cancel()
-      replacementSocket = null
-    }
 
     fun send(payload: String): Boolean = socket?.send(payload) == true
 
@@ -1184,8 +1253,19 @@ class CodexConnectionService : Service() {
     }
 
     fun attachRuntime() {
+      val startedAt = SystemClock.elapsedRealtimeNanos()
       protocolEngine.attachRuntime()
-      reconnectNow()
+      emitTelemetry(NativeTelemetryMetric(
+        "connection.runtime_attach",
+        values = mapOf("durationMs" to elapsedMilliseconds(startedAt), "attempt" to transportGeneration),
+        tags = mapOf("transport" to when {
+          connecting -> "connecting"
+          socket != null -> "retained"
+          else -> "missing"
+        }),
+      ))
+      publishStartupTiming(NativeStartupTrace.snapshot())
+      handler.post { if (!destroyed) reconnectNow() }
     }
 
     fun rpc(method: String, params: Any?, completion: (Result<Any?>) -> Unit) {
@@ -1472,31 +1552,37 @@ class CodexConnectionService : Service() {
       reconnectRunnable?.let(handler::removeCallbacks)
       reconnectRunnable = null
       cancelConnectWatchdog()
-      cancelCredentialRefresh()
       val active = socket
       socket = null
       connecting = false
       active?.cancel()
-      retiringSockets.forEach(WebSocket::cancel)
-      retiringSockets.clear()
       protocolEngine.onSocketClosed("Network unavailable")
+      emitTelemetry(NativeTelemetryMetric(
+        "connection.network_lost",
+        values = mapOf("attempt" to transportGeneration),
+      ))
       emitTransportStatus("offline")
     }
 
     fun resetTransport(reason: String) {
       if (closed) return
       Log.w(LOG_TAG, "reset transport reason=${reason.take(120)} id=${safeConnectionId(id)}")
+      emitTelemetry(NativeTelemetryMetric(
+        "connection.transport_reset",
+        values = mapOf(
+          "attempt" to transportGeneration,
+          "durationMs" to maxOf(0L, SystemClock.elapsedRealtime() - connectStartedAt),
+        ),
+        tags = mapOf("reason" to reason.take(120)),
+      ))
       transportGeneration += 1
       reconnectRunnable?.let(handler::removeCallbacks)
       reconnectRunnable = null
       cancelConnectWatchdog()
-      cancelCredentialRefresh()
       val active = socket
       socket = null
       connecting = false
       active?.cancel()
-      retiringSockets.forEach(WebSocket::cancel)
-      retiringSockets.clear()
       if (reason == "user_reconnect" || reason == "stale_connect_wake") {
         reconnectAttempt = 0
         reconnectNow()
@@ -1515,13 +1601,10 @@ class CodexConnectionService : Service() {
       reconnectRunnable?.let(handler::removeCallbacks)
       reconnectRunnable = null
       cancelConnectWatchdog()
-      cancelCredentialRefresh()
       outboxWakeRunnable?.let(handler::removeCallbacks)
       outboxWakeRunnable = null
       socket?.close(1000, reason)
       socket = null
-      retiringSockets.forEach { it.close(1000, reason) }
-      retiringSockets.clear()
       pendingApprovals.forEach { cancelApprovalNotification(id, it) }
       pendingApprovals.clear()
       protocolEngine.close(reason)
@@ -1536,12 +1619,6 @@ class CodexConnectionService : Service() {
       else -> "string:$value"
     }
 
-    private fun isRpcResponseFrame(text: String): Boolean = runCatching {
-      when (JSONObject(text).optString("type")) {
-        "rpc", "serverResponseAccepted", "serverResponseRejected" -> true
-        else -> false
-      }
-    }.getOrDefault(false)
 
     private fun emitTransportStatus(status: String, diagnostic: String? = null) {
       protocolEngine.onTransportState(status, diagnostic)
@@ -1622,6 +1699,10 @@ class CodexConnectionService : Service() {
       if (closed || reconnectRunnable != null) return
       val delay = minOf(MAX_RECONNECT_DELAY_MS, 500L * (1L shl minOf(reconnectAttempt, 1)))
       reconnectAttempt += 1
+      emitTelemetry(NativeTelemetryMetric(
+        "connection.retry_scheduled",
+        values = mapOf("delayMs" to delay, "reconnectAttempt" to reconnectAttempt),
+      ))
       val runnable = Runnable {
         reconnectRunnable = null
         connect()
@@ -1650,6 +1731,53 @@ class CodexConnectionService : Service() {
       val detail = error.message?.trim()?.takeIf { it.isNotBlank() }?.take(200)
       return if (detail == null) "$fallback (${error.javaClass.simpleName})" else "$fallback: $detail"
     }
+
+    fun publishStartupTiming(timing: NativeStartupTiming?) {
+      if (timing == null) return
+      if (!startupTelemetrySent) {
+        startupTelemetrySent = true
+        emitTelemetry(NativeTelemetryMetric(
+          "app.splash_hide_requested",
+          values = mapOf(
+            "applicationOnCreateMs" to timing.applicationOnCreateMs,
+            "applicationEntryToContentMs" to timing.applicationEntryToContentMs,
+            "activityToContentMs" to timing.activityToContentMs,
+            "applicationReadyToContentMs" to timing.applicationReadyToContentMs,
+          ),
+          tags = mapOf("startKind" to "cold"),
+        ))
+      }
+      val exit = timing.splashExit ?: return
+      if (splashExitTelemetrySent) return
+      splashExitTelemetrySent = true
+      emitTelemetry(NativeTelemetryMetric(
+        "app.splash_removed",
+        values = mapOf(
+          "contentToExitMs" to exit.contentToExitMs,
+          "animationStartDelayMs" to exit.animationStartDelayMs,
+          "animationDurationMs" to exit.animationDurationMs,
+          "applicationEntryToSplashRemovedMs" to exit.applicationEntryToSplashRemovedMs,
+        ),
+        tags = mapOf("startKind" to "cold", "outcome" to if (exit.cancelled) "cancelled" else "completed"),
+      ))
+    }
+
+    fun publishProcessExitTelemetry(metric: NativeTelemetryMetric) {
+      emitTelemetry(metric)
+    }
+
+    private fun contextualTelemetry(generation: Long, purpose: String): NativeTelemetryRecorder =
+      NativeTelemetryRecorder { metric ->
+        val values = linkedMapOf<String, Number>("attempt" to generation)
+        values.putAll(metric.values)
+        val tags = linkedMapOf("purpose" to purpose)
+        tags.putAll(metric.tags)
+        emitTelemetry(NativeTelemetryMetric(metric.name, values, tags))
+      }
+
+    private fun emitTelemetry(metric: NativeTelemetryMetric) {
+      CodeWideModule.emitEngineEvent(id, "telemetry", metric.toJson(), null)
+    }
   }
 
   companion object {
@@ -1658,21 +1786,15 @@ class CodexConnectionService : Service() {
     const val ACTION_CLOSE = "dev.codexremote.app.CLOSE"
     const val ACTION_WAKE = "dev.codexremote.app.WAKE"
     const val ACTION_ACTIVATE_V2 = "dev.codewide.app.ACTIVATE_V2"
-    const val ACTION_START_PORT_FORWARD = "dev.codexremote.app.START_PORT_FORWARD"
     const val ACTION_STOP_ALL = "dev.codexremote.app.STOP_ALL"
     const val EXTRA_CONNECTION_ID = "connection_id"
-    const val EXTRA_PORT_FORWARD_ID = "port_forward_id"
     private const val CHANNEL_ID = "codewide_connections"
     private const val ACTIVITY_CHANNEL_ID = "codewide_turn_updates"
     private const val NOTIFICATION_ID = 4107
-    private const val CREDENTIAL_REFRESH_LEAD_MS = 60_000L
-    private const val MIN_CREDENTIAL_REFRESH_DELAY_MS = 1_000L
-    private const val CREDENTIAL_REFRESH_RETRY_MS = 5_000L
     private const val CREDENTIAL_HTTP_TIMEOUT_MS = 12_000L
     private const val MAX_RECONNECT_DELAY_MS = 1_000L
     private const val STALE_CONNECT_WAKE_MS = 8_000L
     private const val CONNECT_WATCHDOG_MS = 20_000L
-    private const val RETIRING_SOCKET_GRACE_MS = 10_000L
     private const val OUTBOX_RECONCILE_DELAY_MS = 2_000L
     // Avoid monopolizing process capacity in the common case. If other native
     // resources consume the reserve, explicit work preempts the oldest headless owner.

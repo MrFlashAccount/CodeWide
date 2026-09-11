@@ -18,5 +18,5 @@ export function TerminalWorkspace(_props: {
 
 const styles = StyleSheet.create({
   root: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg, backgroundColor: colors.background },
-  title: { color: colors.textMuted, textAlign: "center", ...typeScale.bodyLarge },
+  title: { color: colors.textMuted, textAlign: "center", ...typeScale.body },
 });

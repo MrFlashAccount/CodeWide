@@ -1,13 +1,14 @@
 async fn sync_upgrade(
     State(state): State<AppState>,
     headers: HeaderMap,
+    tls: Option<axum::Extension<DeviceTlsConnectInfo>>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     let mut authorization_changes = match &state.authorization {
         Authorization::Registry(registry) => Some(registry.subscribe_authorization_changes()),
         Authorization::AdminOnly(_) => None,
     };
-    let authorization = authorize_sync(&state, &headers).await;
+    let authorization = authorize_sync_transport(&state, &headers, tls.as_ref().map(|value| &value.0)).await;
     if headers.get("origin").is_some() || authorization.is_none() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
@@ -133,4 +134,3 @@ async fn bridge_inner_tls(
             ports::bridge_tcp_idle_bounded(socket, stream, Duration::from_secs(15)).await;
         })
 }
-

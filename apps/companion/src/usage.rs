@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::store::{IndexStore, StoreError};
 
-pub const PRICING_VERSION: &str = "openai-api-2026-08-17";
+pub const PRICING_VERSION: &str = "openai-api-2026-09-05";
 const LONG_CONTEXT_INPUT_TOKENS: u64 = 272_000;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -388,20 +388,25 @@ fn normalize_model(model: &str) -> String {
 
 fn price_for(model: &str) -> Option<ModelPrice> {
     match normalize_model(model).as_str() {
+        "gpt-6-astra" => Some(ModelPrice {
+            input: 10.0,
+            cached_input: 1.0,
+            output: 50.0,
+        }),
         "gpt-5.6" | "gpt-5.6-sol" => Some(ModelPrice {
-            input: 5.0,
-            cached_input: 0.5,
-            output: 30.0,
+            input: 4.0,
+            cached_input: 0.4,
+            output: 20.0,
         }),
         "gpt-5.6-terra" => Some(ModelPrice {
-            input: 2.5,
-            cached_input: 0.25,
-            output: 15.0,
+            input: 2.0,
+            cached_input: 0.2,
+            output: 12.0,
         }),
         "gpt-5.6-luna" => Some(ModelPrice {
-            input: 1.0,
-            cached_input: 0.1,
-            output: 6.0,
+            input: 0.2,
+            cached_input: 0.02,
+            output: 1.2,
         }),
         _ => None,
     }
@@ -525,7 +530,7 @@ mod tests {
         };
         let cost =
             estimate_request_cost(Some("gpt-5.6-luna"), usage).ok_or("known model missing")?;
-        assert!((cost.total_cost_usd - 0.5559).abs() < 0.000_000_1);
+        assert!((cost.total_cost_usd - 0.11118).abs() < 0.000_000_1);
         Ok(())
     }
 
@@ -542,12 +547,24 @@ mod tests {
         assert_eq!(
             terra.price,
             ModelPrice {
-                input: 2.5,
-                cached_input: 0.25,
-                output: 15.0
+                input: 2.0,
+                cached_input: 0.2,
+                output: 12.0
             }
         );
-        assert!((terra.total_cost_usd - 27.5).abs() < f64::EPSILON);
+        assert!((terra.total_cost_usd - 22.0).abs() < f64::EPSILON);
+
+        let astra =
+            estimate_request_cost(Some("GPT-6-Astra"), million).ok_or("known model missing")?;
+        assert_eq!(
+            astra.price,
+            ModelPrice {
+                input: 10.0,
+                cached_input: 1.0,
+                output: 50.0
+            }
+        );
+        assert!((astra.total_cost_usd - 95.0).abs() < f64::EPSILON);
         Ok(())
     }
 
@@ -598,10 +615,10 @@ mod tests {
         };
         let estimate =
             estimate_session_cost(Some("gpt-5.6-luna"), usage).ok_or("known model missing")?;
-        assert!((estimate.uncached_input_cost_usd - 0.5).abs() < f64::EPSILON);
-        assert!((estimate.cached_input_cost_usd - 0.05).abs() < f64::EPSILON);
-        assert!((estimate.output_cost_usd - 6.0).abs() < f64::EPSILON);
-        assert!((estimate.total_cost_usd - 6.55).abs() < f64::EPSILON);
+        assert!((estimate.uncached_input_cost_usd - 0.1).abs() < f64::EPSILON);
+        assert!((estimate.cached_input_cost_usd - 0.01).abs() < f64::EPSILON);
+        assert!((estimate.output_cost_usd - 1.2).abs() < f64::EPSILON);
+        assert!((estimate.total_cost_usd - 1.31).abs() < f64::EPSILON);
         Ok(())
     }
 

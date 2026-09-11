@@ -63,3 +63,23 @@ Java_dev_codewide_app_performance_CodexPerformanceModule_nativeCaptureHermesHeap
     throwJavaException(env, "Hermes heap snapshot failed");
   }
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_codewide_app_performance_CodexPerformanceModule_nativeCollectHermesGarbage(
+    JNIEnv* env,
+    jobject,
+    jlong runtimePointer) {
+  if (runtimePointer == 0) {
+    throwJavaException(env, "Hermes runtime is unavailable");
+    return;
+  }
+
+  auto* runtime = reinterpret_cast<facebook::jsi::Runtime*>(runtimePointer);
+  try {
+    runtime->instrumentation().collectGarbage("CodeWide memory reclamation experiment");
+  } catch (const std::exception& error) {
+    throwJavaException(env, error.what());
+  } catch (...) {
+    throwJavaException(env, "Hermes garbage collection failed");
+  }
+}

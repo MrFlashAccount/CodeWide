@@ -90,11 +90,17 @@ export const colors = {
   borderSoft: "#242424",
   surfaceRaised: scheme.surfaceContainer,
   surfaceHover: scheme.surfaceContainerHigh,
+  threadListSurface: scheme.background,
+  conversationSurface: scheme.surface,
+  messageSurface: scheme.background,
 } as const;
 
 export const spacing = {
+  optical: 2,
   xxs: 4,
+  compact: 6,
   xs: 8,
+  inputInset: 10,
   sm: 12,
   md: 16,
   lg: 24,
@@ -102,25 +108,67 @@ export const spacing = {
 } as const;
 
 export const radii = {
-  small: 10,
-  selected: 18,
-  medium: 20,
-  bubble: 22,
-  bubbleTail: 7,
+  compact: 4,
+  small: 8,
+  selected: 16,
+  medium: 16,
+  bubble: 24,
+  bubbleTail: 8,
   large: 24,
   menu: 30, // HeroUI --radius-3xl with CodeWide's 10dp base radius.
-  composer: 28,
+  composer: 24,
   pill: 999,
 } as const;
 
+export const typeWeight = {
+  regular: "400",
+  medium: "500",
+  semibold: "600",
+} as const;
+
+export const typeTracking = { caps: 0.7, pairingCode: 1.5 } as const;
+
 export const typeScale = {
-  titleLarge: { fontSize: 22, lineHeight: 28, fontWeight: "600" as const },
-  titleMedium: { fontSize: 16, lineHeight: 22, fontWeight: "500" as const },
-  bodyLarge: { fontSize: 16, lineHeight: 24, fontWeight: "400" as const },
-  bodyMedium: { fontSize: 14, lineHeight: 20, fontWeight: "400" as const },
-  labelLarge: { fontSize: 14, lineHeight: 20, fontWeight: "500" as const },
-  labelMedium: { fontSize: 12, lineHeight: 16, fontWeight: "500" as const },
-  caption: { fontSize: 10, lineHeight: 14, fontWeight: "500" as const },
+  heading: { fontSize: 22, lineHeight: 28, fontWeight: typeWeight.semibold },
+  title: { fontSize: 16, lineHeight: 22, fontWeight: typeWeight.semibold },
+  body: { fontSize: 14, lineHeight: 20, fontWeight: typeWeight.regular },
+  label: { fontSize: 12, lineHeight: 16, fontWeight: typeWeight.medium },
+  caption: { fontSize: 10, lineHeight: 14, fontWeight: typeWeight.medium },
+  code: { fontSize: 13, lineHeight: 20, fontWeight: typeWeight.regular, fontFamily: "monospace" },
+  composerInput: { fontSize: 15, lineHeight: 21, fontWeight: typeWeight.regular },
+  voiceLabel: { fontSize: 13, lineHeight: 20, fontWeight: typeWeight.medium },
+  emoji: { fontSize: 22, lineHeight: 28 },
 } as const;
 
 export const touchTarget = 48;
+
+/** Glyph size is independent of the surrounding touch target. */
+export const iconSize = {
+  indicator: 12,
+  inline: 16,
+  action: 20,
+  navigation: 24,
+  illustration: 32,
+} as const;
+
+/** Compact controls retain explicit hit slop when their visual bounds are below 48dp. */
+export const controlSize = {
+  compact: 32,
+  regular: 40,
+  touch: touchTarget,
+} as const;
+
+/** Panel and list geometry is independent of button size. Text-bearing rows may grow. */
+export const layoutSize = {
+  header: 56,
+  row: 64,
+  metadataRow: 24,
+  attachmentTile: 200,
+} as const;
+
+/** Extra target area for isolated compact controls; never replaces adequate parent bounds. */
+export const controlHitSlop = {
+  compact: (touchTarget - controlSize.compact) / 2,
+  regular: (touchTarget - controlSize.regular) / 2,
+  touch: 0,
+} as const;

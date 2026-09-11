@@ -26,12 +26,19 @@ describe("composer attachment preview", () => {
     expect(composerAttachmentPreviewKind({ ...image, id: "markdown-1", name: "review.md", path: "sessions/thread/files/review.md", kind: "file" })).toBe("markdown");
   });
 
-  it("uses one compact renderer in the composer and queue editor", () => {
+  it("reuses the composer attachment tray while editing a queued prompt", () => {
     const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
-    expect(screen.match(/<CompactAttachmentStrip/g)).toHaveLength(2);
-    expect(screen).toContain('testID="composer-attachment-strip"');
-    expect(screen).toContain('testID="queue-attachment-strip"');
-    expect(screen).toContain("source: composerAttachmentSource(attachment)");
-    expect(screen).toContain("useRegisterImagePreviewItem(resolvedSource === null ? null : groupId, previewItem)");
+    const tray = readFileSync(new URL("../src/rendering/ComposerAttachmentTray.tsx", import.meta.url), "utf8");
+    expect(screen.match(/<ComposerAttachmentTray/g)).toHaveLength(1);
+    expect(tray).toContain('testID="composer-attachment-strip"');
+    expect(screen).toContain('scope={composerUploadScope}');
+    expect(screen).toContain('const attachments = queuedComposerEdit?.attachments ?? storedAttachments');
+    expect(screen).toContain('`${composerScope}\\u0000queue-edit:${queuedComposerEdit.commandId}`');
+    expect(screen).toContain("onEditQueued(edit.commandId, text, editedAttachments).then");
+    expect(screen).toContain("const draft = queuedComposerEdit?.text ?? storedDraft");
+    expect(screen).toContain('testID="queued-composer-edit-bar"');
+    expect(screen).not.toContain('testID="queue-attachment-strip"');
+    expect(tray).toContain("composerAttachmentSource(attachment)");
+    expect(tray).toContain("useRegisterImagePreviewItem");
   });
 });

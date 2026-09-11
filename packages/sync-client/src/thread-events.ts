@@ -1,6 +1,7 @@
 import type { Thread, ThreadItem, Turn, TurnPlanStep } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import { reconcileTurnItems } from "./thread-items";
+import { appendCommandOutputReference } from "./command-output";
 
 export type ProjectedTurnMetadata = {
   usage?: TurnUsageProjection;
@@ -146,7 +147,18 @@ export function threadProjectionNeedsAuthoritativeRepair(
     if (patch.threadId !== thread.id) continue;
     const operation = patch.operation;
     const turn = asObject(operation.turn);
-    if (operation.kind === "turnCompleted") return true;
+    if (operation.kind === "turnCompleted") {
+      if (typeof turn?.id !== "string" || turn.itemsView !== "full" || !Array.isArray(turn.items)) {
+        return true;
+      }
+      itemTypesByTurn.set(turn.id, new Map<string, string>(turn.items.flatMap((value) => {
+        const item = asObject(value);
+        return typeof item?.id === "string" && typeof item.type === "string"
+          ? [[item.id, item.type] as const]
+          : [];
+      })));
+      continue;
+    }
     if (operation.kind === "turnStarted") {
       if (typeof turn?.id !== "string") return true;
       itemTypesByTurn.set(turn.id, new Map<string, string>(
@@ -243,7 +255,9 @@ export function applyThreadProjectionPatch(thread: Thread, patch: ThreadProjecti
     upsertItem(thread, params.turnId, itemWithLifecycleMetadata(thread, params.turnId, params.item, params.itemPhase));
   }
   else if (params.kind === "itemTextDelta" && (params.itemType === "agentMessage" || params.itemType === "plan" || params.itemType === "commandExecution")) {
-    appendText(thread, params.turnId, params.itemId, params.delta, params.itemType);
+    const externalOutput = params.itemType === "commandExecution"
+      && appendCommandOutputReference(itemInTurn(thread, params.turnId, params.itemId), params);
+    changed = externalOutput || appendText(thread, params.turnId, params.itemId, params.delta, params.itemType);
   }
   else if (params.kind === "fileChanges") updateFileChanges(thread, params.turnId, params.itemId, params.changes);
   else if (params.kind === "mcpProgress") appendMcpProgress(thread, params.turnId, params.itemId, params.message);
@@ -336,32 +350,26 @@ export function projectedTurnMetadata(turn: Turn): ProjectedTurnMetadata | null 
   return metadata === undefined || metadata === null || typeof metadata !== "object" ? null : metadata;
 }
 
-export function projectedThreadExecutionSettings(thread: Thread): ProjectedThreadExecutionSettings | null {
-  const settings = (thread as ProjectedThread).codewide?.executionSettings;
-  return settings === undefined ? null : structuredClone(settings);
-}
-
 /**
- * Returns the latest real execution settings that can paint a cached thread.
- * Current thread settings are authoritative; older persisted projections may
- * only have the immutable per-turn snapshot, which is still preferable to a
- * loading placeholder while thread/resume refreshes in the background.
+ * Current App Server settings only. Per-turn execution describes history, not
+ * the thread's current configuration. Newer servers expose model/effort on
+ * Thread itself; settings notifications keep those fields current as well.
  */
-export function latestProjectedThreadExecutionSettings(thread: Thread): ProjectedThreadExecutionSettings | null {
-  const settings = projectedThreadExecutionSettings(thread);
-  if (settings !== null) return settings;
-  for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
-    const execution = projectedTurnMetadata(thread.turns[index]!)?.execution;
-    if (execution === undefined) continue;
-    return {
-      model: execution.model,
-      effort: execution.effort,
-      permissions: execution.permissions,
-      approvalPolicy: null,
-      sandboxPolicy: null,
-    };
-  }
-  return null;
+export function projectedThreadExecutionSettings(thread: Thread): ProjectedThreadExecutionSettings | null {
+  const settings = asObject(asObject(asObject(thread)?.codewide)?.executionSettings);
+  // The generated 0.147 DTO predates these fields. Validate the actual wire
+  // extension here instead of asserting it or guessing from the model catalog.
+  const direct = "model" in thread;
+  const model = direct ? thread.model : settings?.model;
+  const effort = direct ? ("reasoningEffort" in thread ? thread.reasoningEffort : null) : settings?.effort;
+  if (typeof model !== "string" || model.length === 0) return null;
+  return {
+    model,
+    effort: typeof effort === "string" ? effort : null,
+    permissions: typeof settings?.permissions === "string" ? settings.permissions : null,
+    approvalPolicy: typeof settings?.approvalPolicy === "string" ? settings.approvalPolicy : null,
+    sandboxPolicy: typeof settings?.sandboxPolicy === "string" ? settings.sandboxPolicy : null,
+  };
 }
 
 /** Seeds the authoritative settings returned by thread/resume for future turns. */
@@ -375,6 +383,7 @@ export function seedThreadExecutionSettings(
     sandboxPolicy?: string | null;
   },
 ): Thread {
+  Object.assign(thread, { model: settings.model, reasoningEffort: settings.effort });
   const projected = thread as ProjectedThread;
   projected.codewide ??= {};
   const previous = projected.codewide.executionSettings;
@@ -396,10 +405,15 @@ export function preserveProjectedTurnMetadata(incoming: Thread, cached: Thread |
   if (cached === null || cached === undefined) return incoming;
   const cachedThreadMetadata = (cached as ProjectedThread).codewide;
   if (cachedThreadMetadata !== undefined) {
-    (incoming as ProjectedThread).codewide = {
+    const incomingSettings = asObject(asObject(incoming)?.codewide)?.executionSettings;
+    const metadata: ProjectedThreadMetadata = {
       ...structuredClone(cachedThreadMetadata),
       ...structuredClone((incoming as ProjectedThread).codewide ?? {}),
     };
+    // A fresh snapshot must not inherit execution authority from the previous
+    // connection. Preserve turn metadata, but require fresh thread settings.
+    if (incomingSettings === undefined) delete metadata.executionSettings;
+    Object.assign(incoming, { codewide: metadata });
   }
   if (cached.turns.length === 0 || incoming.turns.length === 0) return incoming;
   const cachedTurns = new Map(cached.turns.map((turn) => [turn.id, turn] as const));
@@ -434,8 +448,8 @@ function sandboxPolicyName(value: unknown): string | null {
 
 function snapshotTurnExecution(thread: Thread, rawTurnId: unknown): void {
   if (typeof rawTurnId !== "string") return;
-  const settings = (thread as ProjectedThread).codewide?.executionSettings;
-  if (settings === undefined) return;
+  const settings = projectedThreadExecutionSettings(thread);
+  if (settings === null) return;
   metadataForTurn(thread, rawTurnId).execution = {
     model: settings.model,
     effort: settings.effort,
@@ -600,20 +614,28 @@ function appendText(
   itemId: unknown,
   delta: unknown,
   kind: "agentMessage" | "plan" | "commandExecution",
-): void {
-  if (typeof delta !== "string") return;
+): boolean {
+  if (typeof delta !== "string") return false;
   const item = itemInTurn(thread, turnId, itemId);
   if (kind === "agentMessage" && item?.type === kind) {
-    item.text = appendBoundedText(item.text, delta);
+    item.text += delta;
     if (typeof turnId === "string" && typeof itemId === "string") {
       const turn = turnInThread(thread, turnId);
       if (turn !== undefined && removeMatchingAgentPlaceholder(turn, turnId, itemId)) {
         indexTurnItems(eventIndex(thread), turn);
       }
     }
+    return true;
   }
-  else if (kind === "plan" && item?.type === kind) item.text = appendBoundedText(item.text, delta);
-  else if (kind === "commandExecution" && item?.type === kind) item.aggregatedOutput = appendBoundedText(item.aggregatedOutput ?? "", delta);
+  if (kind === "plan" && item?.type === kind) {
+    item.text = appendBoundedText(item.text, delta);
+    return true;
+  }
+  if (kind === "commandExecution" && item?.type === kind) {
+    item.aggregatedOutput = appendBoundedText(item.aggregatedOutput ?? "", delta);
+    return true;
+  }
+  return false;
 }
 
 function updateFileChanges(thread: Thread, turnId: unknown, itemId: unknown, changes: unknown): void {

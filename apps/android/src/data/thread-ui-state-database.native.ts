@@ -7,6 +7,7 @@ import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import { sanitizeHistoryAnchorOffset } from "./thread-history-anchor";
 import type {
   QuickdrawDraftState,
+  AttachmentPreview,
   StoredComposerPreferences,
   StoredDraftAttachment,
   ThreadUiStateRow,
@@ -22,6 +23,8 @@ export type ThreadUiStateDatabase = {
   getOrCreate(connectionId: string, threadId: string): Promise<ThreadUiStateRow>;
   saveDraft(connectionId: string, threadId: string, text: string): Promise<void>;
   saveAttachments(connectionId: string, threadId: string, attachments: StoredDraftAttachment[]): Promise<void>;
+  upsertAttachment(connectionId: string, threadId: string, attachment: StoredDraftAttachment, isCurrent: () => boolean): Promise<void>;
+  removeAttachment(connectionId: string, threadId: string, attachmentId: string): Promise<void>;
   saveScrollOffset(connectionId: string, threadId: string, offset: number, historyAnchorTurnId: string | null, historyAnchorOffsetPx: number | null): Promise<void>;
   savePreferences(connectionId: string, threadId: string, preferences: StoredComposerPreferences): Promise<void>;
   deleteConnection(connectionId: string): Promise<void>;
@@ -139,6 +142,21 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       const value = sanitizeDraftAttachments(attachments);
       await patch(connectionId, threadId, (draft) => { draft.attachments = value; });
     },
+    async upsertAttachment(connectionId, threadId, attachment, isCurrent) {
+      const value = sanitizeDraftAttachments([attachment])[0];
+      if (value === undefined) throw new Error("Invalid draft attachment");
+      await patch(connectionId, threadId, (draft) => {
+        if (!isCurrent()) return;
+        const index = draft.attachments.findIndex((item) => item.id === value.id);
+        if (index < 0) draft.attachments.push(value);
+        else draft.attachments[index] = value;
+      });
+    },
+    async removeAttachment(connectionId, threadId, attachmentId) {
+      await patch(connectionId, threadId, (draft) => {
+        draft.attachments = draft.attachments.filter((attachment) => attachment.id !== attachmentId);
+      });
+    },
     async saveScrollOffset(connectionId, threadId, offset, historyAnchorTurnId, historyAnchorOffsetPx) {
       const value = boundedScrollOffset(offset) ?? 0;
       await patch(connectionId, threadId, (draft) => {
@@ -229,7 +247,7 @@ function sanitizeDraftAttachments(value: unknown): StoredDraftAttachment[] {
   if (!Array.isArray(value)) return [];
   return value.slice(0, 128).flatMap((raw) => {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return [];
-    const { id, rootId, path, name, kind, editor } = raw as Record<string, unknown>;
+    const { id, rootId, path, name, kind, editor, preview } = raw as Record<string, unknown>;
     if (
       typeof id !== "string" || id.length < 1 || id.length > 128 ||
       typeof rootId !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/u.test(rootId) ||
@@ -238,8 +256,18 @@ function sanitizeDraftAttachments(value: unknown): StoredDraftAttachment[] {
       (kind !== "image" && kind !== "audio" && kind !== "file")
     ) return [];
     const quickdrawEditor = sanitizeQuickdrawEditor(editor);
-    return [{ id, rootId, path, name, kind, ...(quickdrawEditor === null ? {} : { editor: quickdrawEditor }) }];
+    const localPreview = sanitizeAttachmentPreview(preview);
+    return [{ id, rootId, path, name, kind, ...(quickdrawEditor === null ? {} : { editor: quickdrawEditor }), ...(localPreview === null ? {} : { preview: localPreview }) }];
   });
+}
+
+function sanitizeAttachmentPreview(value: unknown): AttachmentPreview | null {
+  if (value === null || typeof value !== "object" || !("uri" in value) || !("text" in value) || !("bytes" in value) || !("mimeType" in value)) return null;
+  const { uri, text, bytes, mimeType } = value;
+  if (uri !== null && (typeof uri !== "string" || uri.length > 4096 || !/^(?:file|content):\/\//u.test(uri))) return null;
+  if (text !== null && (typeof text !== "string" || text.length > 512)) return null;
+  if (typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes < 0 || typeof mimeType !== "string" || mimeType.length > 256) return null;
+  return { uri, text, bytes, mimeType };
 }
 
 function sanitizeQuickdrawEditor(value: unknown): QuickdrawDraftState | null {

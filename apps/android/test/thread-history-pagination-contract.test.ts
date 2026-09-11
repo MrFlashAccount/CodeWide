@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+import { compactSource } from "./source-contract";
+
+const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const timelineListSource = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
 const initialPositionSource = readFileSync(new URL("../src/rendering/timeline-initial-position.ts", import.meta.url), "utf8");
 const uiStateDatabase = readFileSync(new URL("../src/data/thread-ui-state-database.native.ts", import.meta.url), "utf8");
@@ -13,7 +15,7 @@ const historyController = readFileSync(new URL("../src/data/use-thread-history-c
 const remoteWorkspace = readFileSync(new URL("../src/data/use-remote-workspace.ts", import.meta.url), "utf8");
 
 describe("thread history pagination contract", () => {
-  it("pulls one SQLite range only when the list crosses an edge", () => {
+  it("keeps range fetching in the model and coalesces viewport intents", () => {
     expect(historyController).toContain("const loadedLocally = await context.pullRange(direction)");
     expect(historyController).not.toContain("loadOlderTurns");
     expect(historyController).not.toContain("while (");
@@ -30,17 +32,19 @@ describe("thread history pagination contract", () => {
     expect(historyController).not.toContain("mutationRef");
     expect(detailDatabase).not.toContain('"chat.history.range_blocked_with_optimistic"');
     expect(detailDatabase).toContain('"chat.optimistic.reconciliation_stalled"');
-    expect(historyController).toContain("inFlightRef.current[direction]");
+    expect(historyController).toContain("runtime.operations[direction]");
     expect(detailDatabase).toContain('const pullKey = `${scope}\\u0000${direction}`');
     expect(detailDatabase).toContain("await remoteLoader.loadOlder(");
-    expect(detailDatabase).toContain("return await pullStoredRange()");
+    expect(detailDatabase).toContain("await remoteLoader.loadNewer(");
+    expect(detailDatabase).toContain("await remoteLoader.loadBefore(");
+    expect(historyController).toContain("ThreadHistoryViewportFill");
   });
 
   it("leaves scroll position to MVCP while paging and follows only the authoritative tail", () => {
     expect(historyController).not.toContain("maintainAtEnd");
     expect(screen).not.toContain("maintainAtEnd=");
     expect(historyController).toContain("containsLatest: options.isLatestRange");
-    expect(screen).toContain("followTail={historyViewport.containsLatest && !awayFromLatest && !threadSearchActive}");
+    expect(screen).toContain("!fullscreenCovered && historyViewport.containsLatest && !awayFromLatest && !threadSearchActive");
     expect(screen).toContain("const away = !historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;");
     expect(timelineListSource).toContain("maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}");
     expect(timelineListSource).toContain("dataChange: true");
@@ -52,21 +56,49 @@ describe("thread history pagination contract", () => {
     expect(remoteWorkspace).toContain("const persisted = await threadDetails.prependTurns(");
     expect(remoteWorkspace).toContain('if (!persisted.accepted) throw new Error("Backend history page was not persisted")');
     expect(remoteWorkspace).not.toContain("threadDetails?.prependTurns(");
-    expect(detailDatabase.indexOf("await remoteLoader.loadOlder(")).toBeLessThan(
-      detailDatabase.lastIndexOf("return await pullStoredRange()"),
-    );
+    expect(remoteWorkspace).toContain('"companion/thread/history/after"');
+    expect(remoteWorkspace).toContain("await threadDetails.appendTurnsAfter(");
+    // Reopened-SQLite regressions verify durable-before-visible ordering.
+    // This source check protects the ownership boundary only.
+    expect(remoteWorkspace).toContain("await threadDetails.prependTurnsBefore(");
     expect(historyController).not.toContain("acceptedHistory");
   });
 
+  it("tops up a short cached head from the canonical fifteen-turn tail", () => {
+    expect(remoteWorkspace).toContain("residentTurnCount < THREAD_RESIDENT_TURN_LIMIT");
+    expect(remoteWorkspace).toContain("new ThreadSyncCatchUp(cached, details.historyCursor(connectionId, threadId)");
+    expect(remoteWorkspace).not.toContain("new ThreadSyncCatchUp(cached, details.historyCursor(connectionId, threadId) ?? null");
+    expect(remoteWorkspace).toContain('reason !== "activation"');
+    expect(remoteWorkspace).toContain("repairShortWindow || details.historyCursor(connectionId, threadId) !== null");
+    expect(remoteWorkspace).toContain("cursor: null");
+    expect(remoteWorkspace).toContain("limit: THREAD_RESIDENT_TURN_LIMIT");
+    expect(remoteWorkspace).toContain('sortDirection: "desc"');
+    expect(remoteWorkspace).toContain("parseThreadTurnsListPage(await rpcAfterAttach<unknown>");
+    expect(remoteWorkspace).toContain("await details.mergeTailTurns(connectionId, threadId, [...page.turns].reverse(), page.nextCursor, isCurrent)");
+    expect(detailDatabase).toContain('mode: "authoritative" | "reset" | "live" | "append" | "tail"');
+    expect(detailDatabase).toContain('mode === "reset" || mode === "tail"');
+    expect(detailDatabase).not.toContain('replaceExisting: mode === "reset" || mode === "tail"');
+  });
+
+  it("publishes a visible loading state for every explicit range request", () => {
+    const loading = historyController.indexOf('context.putState({ ...current, status: "loading-history", error: null })');
+    const operation = historyController.indexOf("const operation = loadRange(context, direction)");
+    const settlement = historyController.indexOf("publishLoadSettlement(context, settlement)");
+
+    expect(loading).toBeGreaterThan(-1);
+    expect(loading).toBeLessThan(operation);
+    expect(settlement).toBeGreaterThan(operation);
+    expect(historyController).toContain("ThreadHistoryLoadCoordinator");
+  });
+
   it("keeps SQLite residency bounded and derives one atomic ready surface", () => {
-    expect(detailSqlite).toContain('ORDER BY "ordinal" DESC, "__key" DESC LIMIT ?');
     expect(detailSqlite).toContain("await database.transaction(async (executor) => {");
     expect(detailDatabase).toContain("createThreadChatModel({");
     expect(detailDatabase).not.toContain("createSqliteSyncRuntime<ThreadDetailRow, string>");
     expect(detailDatabase).not.toContain("createCollection({");
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
+    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
     expect(screen).toContain("function MainConversationDetail(");
-    expect(screen).toContain("const projection = projectThreadChatWindow(chatDatabase, chatWindow");
+    expect(screen).toContain("const projection = projectThreadChatWindow( chatDatabase, chatWindow,");
     expect(chatModel).toContain("commitRange(");
     expect(screen).toContain("!threadLoadBlocksPresentation(chatSnapshot.status)");
     expect(screen).not.toContain("activeConversationNavigationReady");
@@ -83,9 +115,9 @@ describe("thread history pagination contract", () => {
     expect(windowHook).toContain("node.revision.get()");
     expect(windowHook).toContain("node.peek()");
     expect(windowHook).not.toContain("node.get()");
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
+    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
     expect(screen.indexOf("function MainConversationDetail")).toBeLessThan(
-      screen.indexOf("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)"),
+      screen.indexOf("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)"),
     );
     expect(screen).not.toContain("useThreadChatWindowContent");
     expect(screen).not.toContain("useThreadChatWindowStructure");
@@ -171,9 +203,9 @@ describe("thread history pagination contract", () => {
 
     expect(loader).toContain("detailStorage.loadPrependFacts");
     expect(detailSqlite).toContain("loadTurnFamilies(query, connectionId, threadId, turnIds)");
-    expect(detailSqlite).toContain('ORDER BY "ordinal" ${direction === "asc" ? "ASC" : "DESC"}');
     expect(prepend.indexOf("loadDurablePrependRows")).toBeLessThan(prepend.indexOf("projectPrependedTurnOrdinals"));
-    expect(prepend).toContain("source.set(row.id, row)");
+    expect(prepend).not.toContain("source.set(row.id, row)");
+    expect(prepend).toContain("mergeHistoryFacts(facts, source.rowsForThread(connectionId, threadId))");
     expect(prepend).toContain("await commitThreadProjection({");
     expect(detailDatabase).toContain("activityKey(input.connectionId, input.threadId, turn.id)");
     expect(prepend.indexOf("await commitThreadProjection({")).toBeLessThan(prepend.indexOf("composeExpandedRangeRows("));
@@ -190,9 +222,7 @@ describe("thread history pagination contract", () => {
     );
 
     expect(loader).toContain("detailStorage.loadAuthoritativeFacts");
-    expect(detailSqlite).toContain('AND "kind" = \'thread\' LIMIT 1');
     expect(detailSqlite).toContain("loadTurnFamilies(query, connectionId, threadId, incomingTurnIds)");
-    expect(detailSqlite).toContain('ORDER BY "ordinal" DESC');
     expect(detailSqlite).toContain("baseOrdinal + incomingTurnIds.length - 1");
     expect(publish.indexOf("await loadDurableAuthoritativeRows")).toBeLessThan(publish.indexOf("projectAuthoritativeHistoryEpoch"));
   });
@@ -220,13 +250,16 @@ describe("thread history pagination contract", () => {
     expect(historyController).not.toContain("freeze");
     expect(screen).not.toContain("timelineInteractionStartedRef");
     expect(screen).not.toContain("scrollDirectionRef");
-    expect(screen).toContain('const paginationEdgeLockRef = useRef<"older" | "newer" | null>(null)');
+    expect(screen).toContain('const paginationEdgeLockRef = useConversationRef<"older" | "newer" | null>( composerScope, () => null, );');
     expect(screen).toContain('paginationEdgeLockRef.current = null;');
     expect(screen).toContain('paginationEdgeLockRef.current === "newer"');
     expect(screen).toContain('paginationEdgeLockRef.current === "older"');
     expect(screen).toContain('"ignored_opposite_edge"');
     expect(screen).toContain("schedulePaginationWindowTrim();");
-    expect(screen).toContain("onMomentumScrollBegin={cancelScheduledPaginationTrim}");
+    // Starting momentum cancels deferred trimming even when the handler also pauses decoration.
+    const momentumBegin = screen.match(/onMomentumScrollBegin=\{\(\) => \{([^}]+)\}\}/u)?.[1];
+    expect(momentumBegin).toContain("cancelScheduledPaginationTrim()");
+    expect(momentumBegin).not.toContain("trimPaginationWindow()");
     expect(screen).toContain("trimPaginationWindow();");
     expect(historyController).toContain("trimAfterGesture");
     expect(timelineListSource).toContain("maintainVisibleContentPosition={{ data: true, size: true }}");
@@ -235,7 +268,7 @@ describe("thread history pagination contract", () => {
   });
 
   it("projects delivery state as ordinary chronological timeline rows", () => {
-    expect(screen).toContain("timelineEntries={projection.timeline}");
+    expect(screen).toContain("searchState === null ? projection.timeline");
     expect(screen).toContain("if (modelTimeline !== null) return modelTimeline");
     expect(screen).not.toContain("mergeChronologicalTimeline");
     expect(screen).not.toContain("pendingDeliveries={");
@@ -262,8 +295,8 @@ describe("thread history pagination contract", () => {
   });
 
   it("keeps a mounted timeline visible while a pagination subset reloads", () => {
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest)");
-    expect(screen).toContain("<Suspense fallback={<ConversationNavigationFallback");
+    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
+    expect(screen).toContain("<Suspense fallback={ <ConversationNavigationFallback");
     expect(screen).toContain("<ConversationDestination");
     expect(screen).not.toContain("pendingConversationRequest");
     expect(screen).not.toContain("advanceConversationPresentation(");

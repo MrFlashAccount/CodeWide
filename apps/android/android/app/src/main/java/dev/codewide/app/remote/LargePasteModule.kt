@@ -4,6 +4,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.text.InputFilter
 import android.text.Spanned
+import android.view.View
+import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.view.ContentInfoCompat
 import androidx.core.view.OnReceiveContentListener
@@ -219,9 +221,24 @@ class LargePasteModule(
     }
   }
 
-  private fun resolveTextView(uiManager: UIManager, tag: Int): TextView? = runCatching {
-    uiManager.resolveView(tag) as? TextView
-  }.getOrNull()
+  private fun resolveTextView(uiManager: UIManager, tag: Int): TextView? {
+    val registeredView = runCatching { uiManager.resolveView(tag) }.getOrNull() ?: return null
+    return registeredView.findTextView()
+  }
+
+  /**
+   * Composite inputs register their stable React wrapper because their public
+   * imperative ref is not a native host instance. Resolve the one editable
+   * descendant before installing the filter that must see the clipboard data.
+   */
+  private fun View.findTextView(): TextView? {
+    if (this is TextView) return this
+    if (this !is ViewGroup) return null
+    for (index in 0 until childCount) {
+      getChildAt(index).findTextView()?.let { return it }
+    }
+    return null
+  }
 
   companion object {
     private const val MODULE_NAME = "CodeWideLargePaste"

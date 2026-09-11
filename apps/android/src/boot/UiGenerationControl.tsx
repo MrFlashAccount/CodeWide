@@ -1,3 +1,4 @@
+import { colors, spacing, typeScale, typeWeight, controlSize } from "../theme";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -11,44 +12,38 @@ interface UiGenerationControlProps {
   current: UiGeneration;
 }
 
-interface UiGenerationOptionProps {
-  busy: boolean;
-  current: UiGeneration;
-  generation: UiGeneration;
-  onSelect(generation: UiGeneration): void;
-}
-
-export function UiGenerationControl(props: UiGenerationControlProps): React.JSX.Element {
+export function UiGenerationControl(props: UiGenerationControlProps): React.JSX.Element | null {
   const { current } = props;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const select = useEvent(async (generation: UiGeneration): Promise<void> => {
-    if (busy || generation === current) return;
+  const select = useEvent(async (): Promise<void> => {
+    if (busy || current === "legacy") return;
     setBusy(true);
     setError(null);
-    await selectUiGeneration(generation);
+    await selectUiGeneration("legacy");
     await stopRuntime(current);
     await restartApplication();
   });
-  const requestSelection = useEvent((generation: UiGeneration): void => {
-    select(generation).catch(() => {
+  const requestSelection = useEvent((): void => {
+    select().catch(() => {
       setError("The switch could not restart the app. Try again or reopen CodeWide.");
       setBusy(false);
     });
   });
+  // A still-mounted Modern session may return to Legacy; Legacy exposes no switch.
+  if (current === "legacy") return null;
   return (
     <View style={styles.control}>
-      <View style={styles.row} accessibilityLabel="UI generation selector">
-        {(["legacy", "v2"] as const).map((generation) => (
-          <UiGenerationOption
-            busy={busy}
-            current={current}
-            generation={generation}
-            key={generation}
-            onSelect={requestSelection}
-          />
-        ))}
-      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Return to Legacy"
+        accessibilityState={{ busy }}
+        disabled={busy}
+        onPress={requestSelection}
+        style={styles.row}
+      >
+        <Text style={styles.label}>Return to Legacy</Text>
+      </Pressable>
       {error === null ? null : (
         <Text accessibilityLiveRegion="polite" style={styles.error}>
           {error}
@@ -58,32 +53,14 @@ export function UiGenerationControl(props: UiGenerationControlProps): React.JSX.
   );
 }
 
-function UiGenerationOption(props: UiGenerationOptionProps): React.JSX.Element {
-  const { busy, current, generation, onSelect } = props;
-  const select = useEvent(() => onSelect(generation));
-  return (
-    <Pressable
-      accessibilityLabel={`Use ${generation === "v2" ? "V2" : "legacy"} interface`}
-      accessibilityRole="button"
-      disabled={busy}
-      onPress={select}
-      style={[styles.button, generation === current && styles.selected]}
-    >
-      <Text style={styles.label}>{generation === "v2" ? "V2" : "Legacy"}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
-  control: { gap: 8 },
-  row: { flexDirection: "row", gap: 8 },
-  button: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: "#27272a",
+  control: { gap: spacing.xs },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: controlSize.regular,
+    gap: spacing.xs,
   },
-  selected: { backgroundColor: "#0369a1" },
-  error: { color: "#ef4444", fontSize: 13 },
-  label: { color: "#fafafa", fontWeight: "600" },
+  error: { color: colors.error, ...typeScale.body },
+  label: { color: colors.textMuted, ...typeScale.body, fontWeight: typeWeight.semibold },
 });

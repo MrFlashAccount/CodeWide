@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   joinDirectoryPath,
+  directoryCrumbs,
   parentDirectoryPath,
   parseRemoteProjects,
+  parseProjectHome,
   partitionDiscoveredProjects,
   pathCrumbs,
   projectIncludesDirectory,
@@ -21,6 +23,24 @@ function project(path: string, lastUsedAt: number): RemoteProject {
 }
 
 describe("remote projects", () => {
+  it("accepts only a server-provided absolute Home path", () => {
+    expect(parseProjectHome({ path: "/srv/users/custom/" })).toBe("/srv/users/custom");
+    expect(parseProjectHome({ path: "C:\\Users\\remote" })).toBe("C:\\Users\\remote");
+    for (const value of [null, {}, { path: "~" }, { path: "relative/path" }, { path: "/home/\0user" }]) {
+      expect(() => parseProjectHome(value)).toThrow("invalid home directory");
+    }
+  });
+
+  it("uses a Home breadcrumb only for the resolved server directory", () => {
+    expect(directoryCrumbs("/srv/custom/projects/app", "/srv/custom")).toEqual([
+      { label: "Home", path: "/srv/custom" },
+      { label: "projects", path: "/srv/custom/projects" },
+      { label: "app", path: "/srv/custom/projects/app" },
+    ]);
+    expect(directoryCrumbs("/srv/custom-other", "/srv/custom")).toEqual(pathCrumbs("/srv/custom-other"));
+    expect(directoryCrumbs("/", "/srv/custom")).toEqual([{ label: "/", path: "/" }]);
+  });
+
   it("accepts companion-owned pinned and discovered projects", () => {
     expect(parseRemoteProjects({ data: [
       { path: "/work/pinned", name: "pinned", addedAt: 1, lastUsedAt: 2, pinned: true },

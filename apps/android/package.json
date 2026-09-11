@@ -23,6 +23,9 @@
     "format:v2:check": "oxfmt --config oxfmt.v2.json --check --no-error-on-unmatched-pattern app src/boot src/presentation src/v2",
     "typecheck:v2": "tsc --project tsconfig.v2.json",
     "test:v2:render": "jest --config jest.v2.config.cjs --runInBand",
+    "test:markup": "jest --config jest.markup.config.cjs --runInBand",
+    "test:diagram-preview": "node --test test/diagram-preview.browser.test.mjs",
+    "test:review-preview": "pnpm sync:code-review && node --test test/code-review-preview.browser.test.mjs test/footer-layout.browser.test.mjs",
     "compile:v2:android": "sh ../../scripts/validate-android-v2-bundle.sh",
     "validate:v2": "pnpm format:v2:check && pnpm typecheck:v2 && pnpm lint:v2 && pnpm lint:v2:dead-code && pnpm lint:v2:dependencies",
     "typecheck": "tsc --noEmit",
@@ -41,6 +44,7 @@
     "@gorhom/bottom-sheet": "5.2.14",
     "@legendapp/list": "3.3.5",
     "@legendapp/state": "2.1.15",
+    "@native-html/render": "1.0.3",
     "@noble/hashes": "2.0.1",
     "@op-engineering/op-sqlite": "15.2.5",
     "@panzoom/panzoom": "4.6.2",
@@ -79,6 +83,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
+    "react-native-enriched-markdown": "1.0.2",
     "react-native-gesture-handler": "~2.32.0",
     "react-native-keyboard-controller": "1.21.9",
     "react-native-reanimated": "4.5.1",
@@ -96,6 +101,7 @@
   },
   "devDependencies": {
     "@babel/eslint-parser": "7.29.7",
+    "@babel/plugin-transform-dynamic-import": "7.27.1",
     "@react-native/eslint-plugin": "0.86.2",
     "@react-native/jest-preset": "0.86.2",
     "@sergeigarin/hygene": "github:MrFlashAccount/hygiene#828e4a23b913b010ac314964b32aa903870fa621",
@@ -121,7 +127,16 @@
     "speedscope": "1.25.0",
     "tm-grammars": "1.32.5"
   },
+  "enriched-markdown": {
+    "enableCodeHighlight": false,
+    "enableMath": false
+  },
   "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": ["expo-ui"]
+      }
+    },
     "doctor": {
       "appConfigFieldsNotSyncedCheck": {
         "enabled": false

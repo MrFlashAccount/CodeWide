@@ -11,6 +11,7 @@ const assets = [
   [require.resolve("mermaid/dist/mermaid.min.js"), "mermaid.min.js"],
   [require.resolve("@panzoom/panzoom/dist/panzoom.min.js"), "panzoom.min.js"],
   [path.join(androidRoot, "assets/mermaid-renderer.html"), "mermaid-renderer.html"],
+  [path.join(androidRoot, "assets/diagram-preview.js"), "diagram-preview.js"],
 ];
 
 await mkdir(destinationDirectory, { recursive: true });

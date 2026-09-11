@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
+
+import { compactSource } from "./source-contract";
 
 const rootGradle = readFileSync(new URL("../android/build.gradle", import.meta.url), "utf8");
 const nativeModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt", import.meta.url), "utf8");
@@ -25,9 +26,10 @@ describe("native Android voice aura", () => {
     expect(nativeVoiceAura).toContain("requestedRootView?.get()");
   });
 
-  it("applies the original shader to the live Android view tree", () => {
-    expect(voiceAura).toContain("useVoiceInputLevel(controller, active ? scope : null)");
-    expect(voiceAura).toContain("setNativeVoiceAuraState(active, level, reducedMotion)");
+  it("keeps lifecycle in React and speech levels in the native capture loop", () => {
+    expect(voiceAura).not.toContain("useVoiceInputLevel");
+    expect(voiceAura).toContain("setNativeVoiceAuraState(active, 0, reducedMotion)");
+    expect(nativeModule).toContain("generation == audioCaptureGeneration) voiceAura.setLevel(level)");
     expect(voiceAura).not.toContain("makeImageFromView");
     expect(voiceAura).not.toContain("<ImageShader");
     expect(voiceAura).not.toContain("SkImage");
@@ -37,24 +39,50 @@ describe("native Android voice aura", () => {
     expect(nativeVoiceAura).toContain('view.setRenderEffect(RenderEffect.createRuntimeShaderEffect(runtimeShader, "contents"))');
     expect(nativeVoiceAura).not.toContain("private var effect: RenderEffect?");
     expect(nativeVoiceAura).toContain("uniform shader contents;");
-    expect(nativeVoiceAura).toContain("half4 foreground = contents.eval(st * iResolution);");
-    expect(nativeVoiceAura).toContain("half4 color = mix(foreground, background, half4(bgMask * intensity));");
+    expect(nativeVoiceAura).toContain("contents.eval(clamp(samplePoint");
     expect(nativeVoiceAura).not.toContain("makeImageFromView");
     expect(nativeVoiceAura).not.toContain("ImageShader");
   });
 
-  it("preserves the upstream shader and limits speech response to its width", () => {
-    expect(nativeVoiceAura).toContain("float snoise3(float3 p)");
-    expect(nativeVoiceAura).toContain("float circle(float2 st, float2 center, float radius)");
-    expect(nativeVoiceAura).toContain('setFloatUniform("uExcess", (16f + 4f * smoothedLevel) * density)');
-    expect(nativeVoiceAura).toContain('setFloatUniform("uShimmerAmount", 0.3f)');
-    expect(nativeVoiceAura).toContain('setFloatUniform("uWaveStrength", 1f)');
-    expect(nativeVoiceAura).toContain("20.0 * log10(rawLevel.coerceAtLeast(0.0001))");
+  it("accepts the pressed microphone origin in composer and reusable inputs", () => {
+    const composer = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+    const input = compactSource(readFileSync(new URL("../src/ui/Typography.tsx", import.meta.url), "utf8"));
+    for (const surface of [composer, input]) {
+      expect(surface).toContain("setNativeVoiceAuraOrigin(");
+      expect(surface).toContain("findNodeHandle(microphoneButtonRef.current)");
+    }
+    expect(nativeTransport).toContain("bridge.setVoiceAuraOrigin?.(reactTag)");
+    expect(nativeModule).toContain("voiceAura.setOrigin(view)");
+    expect(nativeVoiceAura).toContain("source.getLocationOnScreen(location)");
+    expect(nativeVoiceAura).toContain("target.getLocationOnScreen(location)");
+  });
 
-    const nativeShader = nativeVoiceAura.match(/SHADER_SOURCE = """([\s\S]*?)"""/u)?.[1];
-    expect(nativeShader).toBeDefined();
-    const normalizedShader = nativeShader!.replace(/\s+/gu, " ").trim();
-    expect(createHash("sha256").update(normalizedShader).digest("hex"))
-      .toBe("b58c322013bb3f75bd0bcdb79e2b22274f642c22f78aa573c520d734a0003091");
+  it("keeps original Reacticx refraction and brightness on a physical shared front", () => {
+    // The shader contract uses one phase for the border and ripple, on both legs.
+    expect(nativeVoiceAura).toContain("float front = uIntro * duration - distanceFromOrigin / (1200.0 * uDensity);");
+    expect(nativeVoiceAura).toContain("float time = max(0.0, front);");
+    expect(nativeVoiceAura).toContain("smoothstep(0.0, 0.08, front)");
+    expect(nativeVoiceAura).toContain("12.0 * sin(15.0 * time) * exp(-8.0 * time)");
+    expect(nativeVoiceAura).toContain("float2 samplePoint = fragCoord + rippleAmount * uDensity * direction;");
+    expect(nativeVoiceAura).toContain("float brightness = 0.3 * (rippleAmount / 12.0) * foreground.a;");
+    expect(nativeVoiceAura).toContain("foreground.rgb += half(brightness);");
+    expect(nativeVoiceAura).toContain("distanceFromOrigin > 0.001 * uDensity");
+    expect(nativeVoiceAura).not.toContain("wavePhase");
+    expect(nativeVoiceAura).toContain("float perimeterPosition(");
+    expect(nativeVoiceAura).not.toContain("atan(uv.y - 0.5, uv.x - 0.5)");
+    expect(nativeVoiceAura).not.toContain("bgMask");
+    expect(nativeVoiceAura).toContain('setFloatUniform("uMotion", if (reducedMotion) 0f else 1f)');
+  });
+
+  it("retraces the ripple even after a long recording instead of rewinding the recording clock", () => {
+    expect(nativeVoiceAura).toContain('setFloatUniform("uIntro", intensity)');
+    expect(nativeVoiceAura).toContain("intensity = transition.advance(deltaSeconds)");
+    expect(nativeVoiceAura).toContain('setFloatUniform("uOpacity", transition.opacity)');
+    expect(nativeVoiceAura).toContain("if (transition.isVisible)");
+    expect(nativeVoiceAura).toContain("transition.setActive(active, reduceMotion)");
+    expect(nativeVoiceAura).not.toContain("OUTRO_DURATION_NANOS");
+    expect(nativeVoiceAura).not.toContain("uRippleTime");
+    expect(nativeVoiceAura).not.toContain("uRippleRelease");
+    expect(nativeVoiceAura).not.toContain("* uMotion * sin(3.14159265 * uIntro)");
   });
 });

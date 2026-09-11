@@ -1,22 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import type { V2Attachment } from "@codewide/sync-client/v2";
 import { router } from "expo-router";
-import { useTransition } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 
 import { useEvent } from "../../../react/useEvent";
 import { useV2Runtime } from "../../application/react/V2RuntimeContext";
 import type { QualifiedThread } from "../../domain/qualifiedThread";
 import { ProductText as Text } from "../../presentation/text/ProductText";
-import { ShimmerText } from "../../presentation/text/ShimmerText";
-import { colors, spacing, touchTarget, typeScale, typeWeight } from "../../theme";
+import { colors, spacing, typeScale, typeWeight } from "../../theme";
 import { attachmentPreviewDestination } from "../navigation/routeDestinations";
 import { formatBytes } from "./attachmentDisplay";
 
 interface AttachmentListProps {
   attachments: V2Attachment[];
-  onClose(): void;
-  onRefresh(): Promise<void>;
   owner: QualifiedThread;
 }
 
@@ -27,41 +23,17 @@ interface AttachmentRowProps {
 }
 
 export function AttachmentList(props: AttachmentListProps): React.JSX.Element {
-  const { attachments, onClose, onRefresh, owner } = props;
-  const [refreshing, startRefresh] = useTransition();
-  const refresh = useEvent(() => startRefresh(() => onRefresh()));
+  const { attachments, owner } = props;
   return (
     <View style={styles.root}>
       <View style={styles.header}>
         <View style={styles.headerIconSlot}>
           <Ionicons color={colors.textMuted} name="attach-outline" size={21} />
         </View>
-        {refreshing ? (
-          <ShimmerText style={styles.title} text={`Attachments · ${attachments.length}`} />
-        ) : (
-          <Text numberOfLines={1} style={styles.title}>
-            Attachments · {attachments.length}
-          </Text>
-        )}
+        <Text numberOfLines={1} style={styles.title}>
+          Attachments · {attachments.length}
+        </Text>
         <View style={styles.flex} />
-        <Pressable
-          accessibilityLabel="Refresh session resources"
-          accessibilityRole="button"
-          accessibilityState={{ busy: refreshing, disabled: refreshing }}
-          disabled={refreshing}
-          onPress={refresh}
-          style={styles.iconButton}
-        >
-          <Ionicons color={colors.text} name="refresh" size={20} />
-        </Pressable>
-        <Pressable
-          accessibilityLabel="Close attachments"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.iconButton}
-        >
-          <Ionicons color={colors.text} name="close" size={21} />
-        </Pressable>
       </View>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {attachments.map((attachment) => (
@@ -132,28 +104,21 @@ function attachmentColor(attachment: V2Attachment): string {
 }
 
 const styles = StyleSheet.create({
-  content: { gap: spacing.optical, padding: spacing.md, paddingBottom: spacing.xl },
+  content: { flexGrow: 1, gap: spacing.optical, paddingBottom: spacing.sm },
   empty: { alignItems: "center", gap: spacing.sm, justifyContent: "center", minHeight: 180 },
   flex: { flex: 1 },
   header: {
     alignItems: "center",
     flexDirection: "row",
     minHeight: 54,
-    paddingHorizontal: spacing.sm,
   },
   headerIconSlot: { alignItems: "center", justifyContent: "center", width: 32 },
-  iconButton: {
-    alignItems: "center",
-    height: touchTarget,
-    justifyContent: "center",
-    width: touchTarget,
-  },
   notice: { color: colors.textMuted, ...typeScale.body },
   resourceIcon: { alignItems: "center", justifyContent: "center", width: 32 },
   resourceSubtitle: { color: colors.textMuted, ...typeScale.caption },
   resourceText: { flex: 1, minWidth: 0 },
   resourceTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
-  root: { backgroundColor: colors.surface, flex: 1, minHeight: 0 },
+  root: { flex: 1, minHeight: 0 },
   row: {
     alignItems: "center",
     borderRadius: 12,

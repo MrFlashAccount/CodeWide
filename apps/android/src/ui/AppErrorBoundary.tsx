@@ -1,3 +1,4 @@
+import { spacing, typeScale, typeWeight, radii, controlSize, layoutSize } from "../theme";
 import { Component, type ErrorInfo, type ReactNode, useState, useSyncExternalStore } from "react";
 import {
   ActivityIndicator,
@@ -14,6 +15,7 @@ import {
   getGlobalErrorSnapshot,
   subscribeGlobalError,
 } from "./global-error-store";
+import { errorDiagnostic } from "./error-diagnostic";
 
 type Props = {
   children: ReactNode;
@@ -36,8 +38,7 @@ function normalizeError(value: unknown): Error {
 
 function errorReport(error: Error, componentStack: string): string {
   return [
-    `CodeWide UI failure: ${error.message}`,
-    error.stack ?? "No JavaScript stack available",
+    errorDiagnostic("UI failure", error),
     componentStack.length > 0 ? `React component stack:${componentStack}` : "No React component stack available",
   ].join("\n\n");
 }
@@ -168,48 +169,48 @@ const styles = StyleSheet.create({
     backgroundColor: "#101011",
     flex: 1,
     justifyContent: "center",
-    paddingBottom: 32,
-    paddingHorizontal: 24,
-    paddingTop: 56,
+    paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    paddingTop: layoutSize.header,
   },
   badge: {
     alignItems: "center",
     alignSelf: "flex-start",
     backgroundColor: "#3b2024",
-    borderRadius: 18,
-    minHeight: 36,
-    paddingVertical: 6,
+    borderRadius: radii.selected,
+    minHeight: controlSize.regular,
+    paddingVertical: spacing.compact,
     justifyContent: "center",
-    marginBottom: 18,
+    marginBottom: spacing.md,
     width: 36,
   },
-  badgeText: { color: "#ff8a96", fontSize: 20, fontWeight: "700" },
-  title: { color: "#f4f4f5", fontSize: 24, fontWeight: "700", lineHeight: 30 },
-  message: { color: "#b7b7bc", fontSize: 15, lineHeight: 21, marginTop: 8 },
-  actions: { flexDirection: "row", gap: 10, marginTop: 24 },
+  badgeText: { color: "#ff8a96", ...typeScale.heading, fontWeight: typeWeight.semibold },
+  title: { color: "#f4f4f5", ...typeScale.heading, fontWeight: typeWeight.semibold,  },
+  message: { color: "#b7b7bc", ...typeScale.body, marginTop: spacing.xs },
+  actions: { flexDirection: "row", gap: spacing.inputInset, marginTop: spacing.lg },
   primaryButton: {
     alignItems: "center",
     backgroundColor: "#f4f4f5",
-    borderRadius: 18,
+    borderRadius: radii.selected,
     flex: 1,
     justifyContent: "center",
-    minHeight: 48,
-    paddingHorizontal: 18,
+    minHeight: controlSize.touch,
+    paddingHorizontal: spacing.md,
   },
-  primaryLabel: { color: "#111113", fontSize: 15, fontWeight: "700" },
+  primaryLabel: { color: "#111113", ...typeScale.body, fontWeight: typeWeight.semibold },
   secondaryButton: {
     alignItems: "center",
     backgroundColor: "#27272a",
-    borderRadius: 18,
+    borderRadius: radii.selected,
     flex: 1,
     justifyContent: "center",
-    minHeight: 48,
-    paddingHorizontal: 18,
+    minHeight: controlSize.touch,
+    paddingHorizontal: spacing.md,
   },
-  secondaryLabel: { color: "#f4f4f5", fontSize: 15, fontWeight: "700" },
-  copyButton: { alignSelf: "flex-start", minHeight: 44, justifyContent: "center", marginTop: 4 },
-  copyLabel: { color: "#8bb8ff", fontSize: 14, fontWeight: "600" },
-  details: { backgroundColor: "#19191b", borderRadius: 16, flexGrow: 0, marginTop: 8, maxHeight: 220 },
-  detailsContent: { padding: 14 },
-  detailsText: { color: "#8f8f96", fontFamily: "monospace", fontSize: 11, lineHeight: 16 },
+  secondaryLabel: { color: "#f4f4f5", ...typeScale.body, fontWeight: typeWeight.semibold },
+  copyButton: { alignSelf: "flex-start", minHeight: controlSize.touch, justifyContent: "center", marginTop: spacing.xxs },
+  copyLabel: { color: "#8bb8ff", ...typeScale.body, fontWeight: typeWeight.semibold },
+  details: { backgroundColor: "#19191b", borderRadius: radii.medium, flexGrow: 0, marginTop: spacing.xs, maxHeight: 220 },
+  detailsContent: { padding: spacing.md },
+  detailsText: { color: "#8f8f96", ...typeScale.code, fontFamily: "monospace",  },
 });

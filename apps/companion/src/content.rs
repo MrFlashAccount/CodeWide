@@ -65,6 +65,14 @@ struct CachedContent {
     bytes: Arc<[u8]>,
     content_type: String,
     last_access: u64,
+    persistence: PersistenceStatus,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PersistenceStatus {
+    MemoryOnly,
+    Queued,
+    Persisted,
 }
 
 struct PersistRequest {
@@ -147,16 +155,24 @@ impl PrivateContentService {
     pub fn put_bytes(&self, bytes: &[u8], content_type: &str) -> ContentReference {
         let id = hex::encode(Sha256::digest(bytes));
         let bytes: Arc<[u8]> = Arc::from(bytes);
-        remember(&self.memory, &id, bytes.clone(), content_type);
-        if self
-            .writes
-            .try_send(PersistRequest {
-                id: id.clone(),
-                bytes: bytes.clone(),
-                content_type: content_type.to_owned(),
-            })
-            .is_err()
+        remember(
+            &self.memory,
+            &id,
+            bytes.clone(),
+            content_type,
+            PersistenceStatus::MemoryOnly,
+        );
+        if queue_persistence(&self.memory, &id)
+            && self
+                .writes
+                .try_send(PersistRequest {
+                    id: id.clone(),
+                    bytes: bytes.clone(),
+                    content_type: content_type.to_owned(),
+                })
+                .is_err()
         {
+            mark_persistence(&self.memory, &id, PersistenceStatus::MemoryOnly);
             tracing::warn!(
                 id,
                 "private content persistence queue is full; keeping memory copy"
@@ -237,6 +253,7 @@ impl PrivateContentService {
                     id,
                     content.bytes.clone(),
                     &content.content_type,
+                    PersistenceStatus::Persisted,
                 );
                 return Ok(Some(content));
             }
@@ -267,6 +284,7 @@ async fn load_from_directory(
         bytes,
         content_type,
         last_access: unix_time_ms(),
+        persistence: PersistenceStatus::Persisted,
     }))
 }
 
@@ -292,6 +310,14 @@ impl ContentProjector {
             "thread/started" => {
                 project_nested(params, "thread", |value| self.project_thread(value))
             }
+            // The replay ingestor already splits these deltas to its bounded
+            // 64 KiB contract. Replacing them with a content preview would
+            // make the append-only client reducer permanently lose bytes.
+            "item/agentMessage/delta"
+            | "item/plan/delta"
+            | "item/reasoning/summaryTextDelta"
+            | "item/reasoning/textDelta" => params,
+            "item/commandExecution/outputDelta" => self.externalize_text_field(params, "delta"),
             _ => self.project_bounded(params, MAX_PROJECTED_NOTIFICATION_BYTES),
         };
         let mut envelope = payload;
@@ -306,7 +332,11 @@ impl ContentProjector {
         match method {
             "companion/thread/sync" => self.project_thread_sync_result(value),
             "thread/read" => project_nested(value, "thread", |thread| self.project_thread(thread)),
-            "thread/turns/list" => project_data(value, |turn| self.project_turn(turn)),
+            // Explicit full-item reads are used when expanding activity. They
+            // must not be collapsed back into a summary by the wire projector.
+            "companion/thread/history/after"
+            | "companion/thread/history/before"
+            | "thread/turns/list" => project_data(value, |turn| self.project_turn_items(turn)),
             "thread/items/list" => project_data(value, |entry| {
                 project_nested(entry, "item", |item| self.project_item(item))
             }),
@@ -341,6 +371,11 @@ impl ContentProjector {
         // expose per-tool token usage, so this mirrors Codex's own bytes/4
         // approximation and deliberately remains an estimate.
         let item = self.compact_inline_images(attach_command_output_footprint(raw));
+        let item = if item.get("type").and_then(Value::as_str) == Some("commandExecution") {
+            self.externalize_text_field(item, "aggregatedOutput")
+        } else {
+            item
+        };
         let projected = self.project_bounded(item.clone(), MAX_PROJECTED_ITEM_BYTES);
         if encoded_len(&projected) <= MAX_PROJECTED_ITEM_BYTES {
             return projected;
@@ -357,6 +392,8 @@ impl ContentProjector {
             "codewideOutputFootprint",
             "content",
             "codewideAttachments",
+            "codewideAsset",
+            "savedPath",
             "changes",
         ] {
             if let Some(value) = item.get(key).cloned() {
@@ -371,38 +408,63 @@ impl ContentProjector {
 
     #[must_use]
     pub fn project_turn(&self, raw: Value) -> Value {
-        let Some(object) = raw.as_object() else {
+        if !raw.is_object() {
+            return raw;
+        }
+        let whole = (raw.get("status").and_then(Value::as_str) != Some("inProgress")
+            && encoded_len(&raw) > MAX_PROJECTED_TURN_BYTES)
+            .then(|| self.content.put_json(&raw));
+        let raw = self.project_turn_items(raw);
+        // Items already own their large-field projection. Applying the generic
+        // object budget here drops the whole items array (or truncates it at
+        // 128 entries), so a running turn becomes an empty status shell.
+        // Keep every live item; only completed turns may collapse to the
+        // message summary whose activity is explicitly loaded on demand.
+        let Some(whole) = whole else {
             return raw;
         };
-        let mut turn = object.clone();
-        if let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) {
-            for item in items {
-                *item = self.project_item(item.take());
-            }
-        }
-        let projected = self.project_bounded(Value::Object(turn), MAX_PROJECTED_TURN_BYTES);
-        if encoded_len(&projected) <= MAX_PROJECTED_TURN_BYTES {
-            return projected;
-        }
-        let whole = self.content.put_json(&raw);
         let mut summary = scalar_fields(&raw);
-        let items = projected
+        let items = raw
             .get("items")
             .and_then(Value::as_array)
             .map(|items| summarize_turn_items(items))
             .unwrap_or_default();
         let activity = activity_summary(
-            projected
-                .get("items")
+            raw.get("items")
                 .and_then(Value::as_array)
                 .unwrap_or(&Vec::new()),
         );
         summary.insert("items".into(), Value::Array(items));
         summary.insert("itemsView".into(), Value::String("summary".into()));
+        let mut metadata = raw
+            .get("codewide")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         if let Some(activity) = activity {
-            summary.insert("codewide".into(), json!({"activity": activity}));
+            metadata.insert("activity".into(), activity);
+        }
+        let artifacts = generated_artifact_references(
+            raw.get("items")
+                .and_then(Value::as_array)
+                .map_or(&[], Vec::as_slice),
+        );
+        if !artifacts.is_empty() {
+            metadata.insert("artifacts".into(), Value::Array(artifacts));
+        }
+        if !metadata.is_empty() {
+            summary.insert("codewide".into(), Value::Object(metadata));
         }
         Self::attach_whole(Value::Object(summary), whole)
+    }
+
+    fn project_turn_items(&self, mut turn: Value) -> Value {
+        if let Some(items) = turn.get_mut("items").and_then(Value::as_array_mut) {
+            for item in items {
+                *item = self.project_item(item.take());
+            }
+        }
+        turn
     }
 
     #[must_use]
@@ -455,6 +517,28 @@ impl ContentProjector {
             let whole = self.content.put_json(&original);
             Self::attach_whole(Value::Object(scalar_fields(&projected)), whole)
         }
+    }
+
+    // Hidden output never travels inline, including short live deltas. The
+    // existing private content store owns the bytes; clients receive references
+    // and only read them while the command is expanded.
+    fn externalize_text_field(&self, mut value: Value, field: &str) -> Value {
+        let Some(text) = value.get(field).and_then(Value::as_str) else {
+            return value;
+        };
+        if text.is_empty() {
+            return value;
+        }
+        let reference = self.content.put_text(text, "text/plain; charset=utf-8");
+        if let Some(object) = value.as_object_mut() {
+            object.insert(field.into(), Value::String(String::new()));
+        }
+        attach_content_metadata(
+            &mut value,
+            Map::from_iter([(format!("/{field}"), json!(reference))]),
+            None,
+        );
+        value
     }
 
     fn project_value(
@@ -606,10 +690,23 @@ fn attach_content_metadata(
     if fields.is_empty() && whole.is_none() {
         return;
     }
-    let mut metadata = Map::from_iter([
-        ("version".into(), json!(1)),
-        ("fields".into(), Value::Object(fields)),
-    ]);
+    let mut metadata = object
+        .remove("codewideContent")
+        .and_then(|value| match value {
+            Value::Object(object) => Some(object),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let mut combined_fields = metadata
+        .remove("fields")
+        .and_then(|value| match value {
+            Value::Object(object) => Some(object),
+            _ => None,
+        })
+        .unwrap_or_default();
+    combined_fields.extend(fields);
+    metadata.insert("version".into(), json!(1));
+    metadata.insert("fields".into(), Value::Object(combined_fields));
     if let Some(whole) = whole {
         metadata.insert(
             "whole".into(),
@@ -973,6 +1070,22 @@ fn scalar_fields(value: &Value) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
+fn generated_artifact_references(items: &[Value]) -> Vec<Value> {
+    items
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("imageGeneration"))
+        .filter_map(|item| {
+            let mut artifact = Map::new();
+            for key in ["savedPath", "codewideAsset"] {
+                if let Some(value) = item.get(key).filter(|value| !value.is_null()) {
+                    artifact.insert(key.into(), value.clone());
+                }
+            }
+            (!artifact.is_empty()).then_some(Value::Object(artifact))
+        })
+        .collect()
+}
+
 fn summarize_turn_items(items: &[Value]) -> Vec<Value> {
     let first_user = items
         .iter()
@@ -1125,7 +1238,13 @@ fn encoded_len(value: &Value) -> usize {
     serde_json::to_vec(value).map_or(usize::MAX, |bytes| bytes.len())
 }
 
-fn remember(cache: &Mutex<MemoryCache>, id: &str, bytes: Arc<[u8]>, content_type: &str) {
+fn remember(
+    cache: &Mutex<MemoryCache>,
+    id: &str,
+    bytes: Arc<[u8]>,
+    content_type: &str,
+    persistence: PersistenceStatus,
+) {
     if bytes.len() > MAX_MEMORY_BYTES {
         return;
     }
@@ -1136,6 +1255,9 @@ fn remember(cache: &Mutex<MemoryCache>, id: &str, bytes: Arc<[u8]>, content_type
     let last_access = cache.clock;
     if let Some(existing) = cache.values.get_mut(id) {
         existing.last_access = last_access;
+        if persistence == PersistenceStatus::Persisted {
+            existing.persistence = PersistenceStatus::Persisted;
+        }
         return;
     }
     while cache.bytes.saturating_add(bytes.len()) > MAX_MEMORY_BYTES {
@@ -1158,8 +1280,32 @@ fn remember(cache: &Mutex<MemoryCache>, id: &str, bytes: Arc<[u8]>, content_type
             bytes,
             content_type: content_type.to_owned(),
             last_access,
+            persistence,
         },
     );
+}
+
+fn queue_persistence(cache: &Mutex<MemoryCache>, id: &str) -> bool {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(content) = cache.values.get_mut(id) else {
+        return true;
+    };
+    if content.persistence != PersistenceStatus::MemoryOnly {
+        return false;
+    }
+    content.persistence = PersistenceStatus::Queued;
+    true
+}
+
+fn mark_persistence(cache: &Mutex<MemoryCache>, id: &str, status: PersistenceStatus) {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(content) = cache.values.get_mut(id) {
+        content.persistence = status;
+    }
 }
 
 fn cached(cache: &Mutex<MemoryCache>, id: &str) -> Option<CachedContent> {
@@ -1180,8 +1326,12 @@ async fn persist_worker(
 ) {
     let mut last_prune = tokio::time::Instant::now() - PRUNE_INTERVAL;
     while let Some(request) = receiver.recv().await {
-        if let Err(error) = persist_one(&directory, &request).await {
-            tracing::warn!(id = request.id, %error, "private content persistence failed");
+        match persist_one(&directory, &request).await {
+            Ok(()) => mark_persistence(&memory, &request.id, PersistenceStatus::Persisted),
+            Err(error) => {
+                mark_persistence(&memory, &request.id, PersistenceStatus::MemoryOnly);
+                tracing::warn!(id = request.id, %error, "private content persistence failed");
+            }
         }
         if last_prune.elapsed() >= PRUNE_INTERVAL {
             if let Err(error) = prune_disk_to(&directory, &memory, MAX_DISK_BYTES).await {
@@ -1345,6 +1495,207 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn repeated_content_queues_one_persistence_write() {
+        let directory = tempfile::tempdir().expect("temp content directory");
+        let (writes, mut receiver) = tokio::sync::mpsc::channel(1);
+        let content = PrivateContentService {
+            directory: directory.path().to_path_buf(),
+            fallback_directories: Vec::new().into(),
+            memory: Arc::new(Mutex::new(MemoryCache::default())),
+            writes,
+        };
+
+        let first = content.put_text("same payload", "text/plain");
+        let second = content.put_text("same payload", "text/plain");
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(
+            receiver.try_recv().expect("first persistence write").id,
+            first.id
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn queue_backpressure_leaves_content_retryable() {
+        let directory = tempfile::tempdir().expect("temp content directory");
+        let (writes, mut receiver) = tokio::sync::mpsc::channel(1);
+        let content = PrivateContentService {
+            directory: directory.path().to_path_buf(),
+            fallback_directories: Vec::new().into(),
+            memory: Arc::new(Mutex::new(MemoryCache::default())),
+            writes,
+        };
+
+        let occupied = content.put_text("occupied", "text/plain");
+        let retryable = content.put_text("retryable", "text/plain");
+        assert_eq!(
+            receiver.try_recv().expect("occupied persistence write").id,
+            occupied.id
+        );
+
+        let _ = content.put_text("retryable", "text/plain");
+        assert_eq!(
+            receiver.try_recv().expect("retried persistence write").id,
+            retryable.id
+        );
+    }
+
+    #[test]
+    fn artifact_references_exclude_tool_bodies_and_input_images() {
+        let items = vec![
+            json!({ "type": "imageGeneration", "savedPath": "/tmp/output.png", "result": "large binary data" }),
+            json!({ "type": "imageView", "path": "/tmp/input.png" }),
+            json!({ "type": "commandExecution", "aggregatedOutput": "/tmp/unknown.png" }),
+        ];
+        assert_eq!(
+            generated_artifact_references(&items),
+            vec![json!({ "savedPath": "/tmp/output.png" })]
+        );
+    }
+
+    #[tokio::test]
+    async fn active_turn_keeps_messages_and_activity_after_exceeding_turn_budget() {
+        let directory = tempfile::tempdir().expect("temp content directory");
+        let projector =
+            ContentProjector::new(PrivateContentService::open(directory.path().join("cas")));
+        let mut items = vec![json!({
+            "id": "user", "type": "userMessage",
+            "content": [{"type": "text", "text": "Run the checks"}]
+        })];
+        for index in 0..12 {
+            items.push(json!({
+                "id": format!("command-{index}"), "type": "commandExecution",
+                "command": "cargo test", "status": "completed",
+                "aggregatedOutput": "output\n".repeat(8_000)
+            }));
+        }
+        items.push(json!({
+            "id": "answer", "type": "agentMessage", "text": "Checks are still running"
+        }));
+        let raw =
+            json!({"id": "active", "status": "inProgress", "itemsView": "full", "items": items});
+        let projected =
+            projector.project_rpc_result("companion/thread/sync", json!({"activeTurn": raw}));
+        let active = &projected["activeTurn"];
+        let visible = active["items"]
+            .as_array()
+            .expect("active items stay renderable");
+        assert_eq!(visible.len(), items.len());
+        assert_eq!(visible.first(), items.first());
+        assert_eq!(visible.last(), items.last());
+        assert_eq!(active["itemsView"], "full");
+        for item in &visible[1..visible.len() - 1] {
+            assert_eq!(item["type"], "commandExecution");
+            assert_eq!(item["aggregatedOutput"], "");
+            assert!(
+                item.pointer("/codewideContent/fields/~1aggregatedOutput/id")
+                    .is_some()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn active_turn_keeps_items_beyond_generic_collection_limit() {
+        let directory = tempfile::tempdir().expect("temp content directory");
+        let projector =
+            ContentProjector::new(PrivateContentService::open(directory.path().join("cas")));
+        let items: Vec<Value> = (0..MAX_COLLECTION_ENTRIES + 10)
+            .map(|index| json!({"id": format!("message-{index}"), "type": "agentMessage", "text": "Progress"}))
+            .collect();
+        let projected = projector.project_notification(json!({
+            "method": "turn/started",
+            "params": {"turn": {"id": "active", "status": "inProgress", "items": items}}
+        }));
+        assert_eq!(projected["params"]["turn"]["items"], json!(items));
+    }
+
+    #[tokio::test]
+    async fn command_output_is_private_for_short_items_and_live_deltas()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let content = PrivateContentService::open(directory.path().join("cas"));
+        let projector = ContentProjector::new(content.clone());
+        for output in ["short output", "вывод 🦀\n", "same\nsame\n"] {
+            let item = projector.project_item(json!({
+                "id": "command", "type": "commandExecution", "command": "echo",
+                "status": "inProgress", "aggregatedOutput": output
+            }));
+            assert_eq!(item["aggregatedOutput"], "");
+            assert_eq!(item["command"], "echo");
+            let event = projector.project_notification(json!({
+                "method": "item/commandExecution/outputDelta",
+                "params": {"threadId": "t", "turnId": "turn", "itemId": "command", "delta": output}
+            }));
+            assert_eq!(event["params"]["delta"], "");
+            let reference = &event["params"]["codewideContent"]["fields"]["/delta"];
+            assert_eq!(reference["byteLength"], output.len());
+            assert_eq!(
+                item["codewideContent"]["fields"]["/aggregatedOutput"],
+                *reference
+            );
+            let response = content
+                .serve(
+                    reference["id"].as_str().ok_or("missing reference")?,
+                    ContentQuery {
+                        offset: None,
+                        limit: None,
+                    },
+                    &HeaderMap::new(),
+                    false,
+                )
+                .await?;
+            let bytes = axum::body::to_bytes(response.into_body(), output.len()).await?;
+            assert_eq!(bytes.as_ref(), output.as_bytes());
+        }
+        let agent = projector.project_notification(json!({
+            "method": "item/agentMessage/delta", "params": {"delta": "x".repeat(18 * 1024)}
+        }));
+        assert_eq!(
+            agent["params"]["delta"].as_str().map(str::len),
+            Some(18 * 1024)
+        );
+        assert!(agent["params"].get("codewideContent").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn completed_large_turn_keeps_message_summary_and_lazy_activity() {
+        let directory = tempfile::tempdir().expect("temp content directory");
+        let projector =
+            ContentProjector::new(PrivateContentService::open(directory.path().join("cas")));
+        let mut items = vec![json!({"id": "user", "type": "userMessage", "content": []})];
+        for index in 0..12 {
+            items.push(json!({
+                "id": format!("command-{index}"), "type": "commandExecution",
+                "command": "cargo test", "aggregatedOutput": "output\n".repeat(8_000)
+            }));
+        }
+        items.push(json!({"id": "answer", "type": "agentMessage", "text": "All checks passed"}));
+        let projected =
+            projector.project_turn(json!({"id": "done", "status": "completed", "items": items}));
+        assert_eq!(projected["items"], json!([items[0], items[13]]));
+        assert_eq!(projected["itemsView"], "summary");
+        assert_eq!(projected["codewide"]["activity"]["count"], 12);
+        assert!(projected.pointer("/codewideContent/whole/id").is_some());
+        let expanded = projector.project_rpc_result(
+            "thread/turns/list",
+            json!({
+                "data": [{"id": "done", "status": "completed", "itemsView": "full", "items": items}]
+            }),
+        );
+        assert_eq!(expanded["data"][0]["itemsView"], "full");
+        assert_eq!(
+            expanded["data"][0]["items"].as_array().map(Vec::len),
+            Some(14)
+        );
+        assert_eq!(expanded["data"][0]["items"][1]["aggregatedOutput"], "");
+    }
+
     #[tokio::test]
     async fn bounds_history_and_active_turn_in_thread_sync() {
         let directory = tempfile::tempdir().expect("temp content directory");
@@ -1370,7 +1721,7 @@ mod tests {
         let projected = projector.project_rpc_result(
             "companion/thread/sync",
             json!({
-                "readModelVersion": 2,
+                "readModelVersion": 3,
                 "thread": {"id": "thread", "turns": []},
                 "history": {"turns": [older]},
                 "activeTurn": large_head
@@ -1695,7 +2046,13 @@ mod tests {
                 bytes: Arc::from(vec![index; 8]),
                 content_type: "application/octet-stream".into(),
             };
-            remember(&memory, &id, request.bytes.clone(), &request.content_type);
+            remember(
+                &memory,
+                &id,
+                request.bytes.clone(),
+                &request.content_type,
+                PersistenceStatus::Persisted,
+            );
             persist_one(directory.path(), &request).await?;
             tokio::time::sleep(std::time::Duration::from_millis(2)).await;
         }

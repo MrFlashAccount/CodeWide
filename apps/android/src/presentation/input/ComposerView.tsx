@@ -7,7 +7,7 @@ import {
   View,
 } from "react-native";
 
-import { colors, radii, spacing, touchTarget } from "../../theme";
+import { colors, radii, spacing, touchTarget, iconSize, typeScale, controlSize } from "../../theme";
 import { useEvent } from "../../react/useEvent";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { PresentationIcon } from "../icons/PresentationIcon";
@@ -74,7 +74,7 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
             disabled
             style={disabledMenuStyle}
           >
-            <PresentationIcon color={colors.text} name="add" size={22} />
+            <PresentationIcon color={colors.text} name="add" size={iconSize.navigation} />
           </Pressable>
         ) : (
           <ActionMenu
@@ -90,7 +90,7 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
               accessibilityRole="button"
               style={enabledMenuStyle}
             >
-              <PresentationIcon color={colors.text} name="add" size={22} />
+              <PresentationIcon color={colors.text} name="add" size={iconSize.navigation} />
             </Pressable>
           </ActionMenu>
         )}
@@ -134,7 +134,7 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
             <PresentationIcon
               color={voiceActive ? colors.red : colors.text}
               name={voiceActive ? "stop" : voiceState === "error" ? "refresh" : "mic"}
-              size={20}
+              size={iconSize.action}
             />
           </Pressable>
           <Pressable
@@ -148,7 +148,7 @@ export function ComposerView(props: ComposerViewProps): React.JSX.Element {
             {pending ? (
               <ActivityIndicator color={colors.onPrimary} size="small" />
             ) : (
-              <PresentationIcon color={colors.onPrimary} name="send" size={21} />
+              <PresentationIcon color={colors.onPrimary} name="send" size={iconSize.action} />
             )}
           </Pressable>
         </View>
@@ -190,27 +190,27 @@ function enabledSendStyle(state: PressableStateCallbackType) {
 const styles = StyleSheet.create({
   disabled: { opacity: 0.45 },
   dock: { backgroundColor: colors.surface, flexShrink: 0 },
-  error: { flex: 1, fontSize: 12, lineHeight: 17 },
+  error: { flex: 1, ...typeScale.label },
   errorRow: {
     alignItems: "center",
     backgroundColor: colors.surface,
     flexDirection: "row",
-    minHeight: 34,
-    paddingHorizontal: 14,
-    paddingTop: 5,
+    minHeight: controlSize.compact,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xxs,
   },
   input: {
     color: colors.text,
     flex: 1,
-    fontSize: 15,
-    lineHeight: 20,
+    ...typeScale.body,
+
     maxHeight: 132,
     minHeight: touchTarget,
     minWidth: 0,
-    paddingBottom: 10,
+    paddingBottom: spacing.inputInset,
     paddingLeft: spacing.sm,
     paddingRight: spacing.xxs,
-    paddingTop: 12,
+    paddingTop: spacing.sm,
   },
   inputAction: {
     alignItems: "center",
@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     minHeight: touchTarget + 12,
     paddingHorizontal: spacing.xs,
-    paddingVertical: 6,
+    paddingVertical: spacing.compact,
   },
   send: {
     alignItems: "center",
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     width: touchTarget,
   },
   sendPressed: { backgroundColor: colors.primaryPressed },
-  voiceLabel: { flex: 1, fontSize: 13, lineHeight: 18 },
+  voiceLabel: { flex: 1, ...typeScale.voiceLabel },
   voiceStatus: {
     alignItems: "center",
     flex: 1,

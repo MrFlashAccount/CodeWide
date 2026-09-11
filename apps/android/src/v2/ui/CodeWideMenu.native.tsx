@@ -49,7 +49,7 @@ function MenuIcon(props: MenuIconProps): React.JSX.Element {
 
   return (
     <RNHostView matchContents>
-      <View pointerEvents="none" style={[styles.iconSlot, { width: size, height: size }]}>
+      <View pointerEvents="none" style={{ width: size, height: size }}>
         <Ionicons color={color} name={icon} size={size} />
       </View>
     </RNHostView>
@@ -174,9 +174,16 @@ function CodeWideMenuItem(props: CodeWideMenuItemProps): React.JSX.Element {
             )}
           </Column>
         </DropdownMenuItem.Text>
-        {action.selected === true ? (
+        {/* Keep the native slot and its bounds mounted while selection changes. */}
+        {action.selected !== undefined ? (
           <DropdownMenuItem.TrailingIcon>
-            <MenuIcon color={colors.text} icon="checkmark" size={18} />
+            <RNHostView matchContents>
+              <View pointerEvents="none" style={styles.selectionSlot}>
+                {action.selected ? (
+                  <Ionicons color={colors.text} name="checkmark" size={18} />
+                ) : null}
+              </View>
+            </RNHostView>
           </DropdownMenuItem.TrailingIcon>
         ) : null}
       </DropdownMenuItem>
@@ -185,10 +192,7 @@ function CodeWideMenuItem(props: CodeWideMenuItemProps): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  iconSlot: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  selectionSlot: { width: 18, height: 18 },
   sectionText: {
     fontFamily: productFonts.medium,
     ...typeScale.label,

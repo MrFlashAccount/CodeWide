@@ -1,6 +1,6 @@
 import { Pressable, type PressableStateCallbackType, StyleSheet } from "react-native";
 
-import { colors, radii, touchTarget } from "../../theme";
+import { colors, radii, touchTarget, iconSize } from "../../theme";
 import { ActionMenu, type ActionMenuItem } from "../../ui/ActionMenu";
 import { PresentationIcon } from "../icons/PresentationIcon";
 
@@ -20,7 +20,7 @@ export function ThreadActionMenuView(props: ThreadActionMenuViewProps): React.JS
       placement="bottom"
     >
       <Pressable accessibilityLabel="Thread menu" style={triggerStyle}>
-        <PresentationIcon color={colors.text} name="more" size={22} />
+        <PresentationIcon color={colors.text} name="more" size={iconSize.navigation} />
       </Pressable>
     </ActionMenu>
   );

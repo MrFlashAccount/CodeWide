@@ -1,9 +1,11 @@
 import { StyleSheet, View } from "react-native";
 
 import { colors } from "../theme";
+import type { BrowserFeedbackCapability } from "../browser/feedback";
 
 export function InternalBrowser({ url }: {
   url: string;
+  feedback?: BrowserFeedbackCapability;
   headers?: Record<string, string>;
   header?: { title: string; closeLabel: string; onClose(): void; closeIcon?: "arrow-back" | "close"; status?: string };
   originWhitelist?: string[];

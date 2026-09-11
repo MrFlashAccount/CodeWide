@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from "@jest/globals";
+import { LegendList } from "@legendapp/list/react-native";
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import { useState } from "react";
 import type { V2ThreadGoal } from "@codewide/sync-client/v2";
@@ -306,6 +307,13 @@ describe("V2 Drawing, Goal, and Skills", () => {
     fireEvent.press(screen.getByLabelText("disabled"));
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith(skillFixture());
+    const list = screen.UNSAFE_getByType(LegendList);
+    expect(list.props.recycleItems).toBe(true);
+    for (const row of list.props.data) {
+      expect(screen.getByLabelText(row.skill.name)).toHaveStyle({
+        height: list.props.getFixedItemSize(row),
+      });
+    }
   });
 });
 

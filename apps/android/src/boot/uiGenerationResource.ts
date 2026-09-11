@@ -25,9 +25,11 @@ export function subscribeUiGeneration(listener: () => void): () => void {
 function loadUiGeneration(): void {
   if (loading !== null || snapshot.status !== "loading") return;
   const pending = readUiGeneration().then(
-    (generation) => {
+    () => {
       loading = null;
-      publish({ status: "ready", generation });
+      // Product availability is owned by boot, not by the persisted preference.
+      // A previously selected Modern interface must not bypass the Legacy-only UI.
+      publish({ status: "ready", generation: "legacy" });
     },
     () => {
       loading = null;
@@ -43,7 +45,7 @@ export function retryUiGeneration(): void {
   loadUiGeneration();
 }
 
-export async function selectUiGeneration(generation: UiGeneration): Promise<void> {
+export async function selectUiGeneration(generation: "legacy"): Promise<void> {
   await writeUiGeneration(generation);
 }
 

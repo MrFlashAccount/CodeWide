@@ -43,7 +43,8 @@ interface TunnelCreateOperation {
 
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;
 const FORWARDING_KEY_PATTERN = /^[a-f0-9]{64}$/u;
-const LOOPBACK_PREVIEW_PATTERN = /^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}\/$/u;
+// Native-136 uses raw loopback URLs; older shells retain the capability path.
+const LOOPBACK_PREVIEW_PATTERN = /^http:\/\/127\.0\.0\.1:\d+\/(?:[A-Za-z0-9_-]{43}\/)?$/u;
 export function createClosedPortTransport(): PortTransport {
   // WHY: React Native exposes native modules through an untyped runtime registry.
   const bridge = NativeModules["CodeWideNative"] as NativePortBridge | undefined;

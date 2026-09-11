@@ -1,5 +1,6 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import { describe, expect, it } from "vitest";
+import { projectAgentArtifacts } from "../src/rendering/agent-artifacts";
 
 import {
   compactCompletedTurnForStorage,
@@ -53,6 +54,22 @@ function turn(): Turn {
 }
 
 describe("thread detail projection", () => {
+  it("keeps generated images visible after storing a completed turn without its activity", () => {
+    const full: Turn = {
+      ...turn(), itemsView: "full", items: [
+        { type: "imageGeneration", id: "image", status: "completed", revisedPrompt: null, result: "opaque image bytes", savedPath: "/tmp/output.png" },
+        { type: "agentMessage", id: "answer", text: "Done", phase: "final_answer", memoryCitation: null },
+      ],
+    };
+    const compact = compactCompletedTurnForStorage(full);
+    expect(compact.itemsView).toBe("summary");
+    expect(compact.items.map((item) => item.type)).toEqual(["agentMessage"]);
+    expect(projectAgentArtifacts(compact)).toEqual(projectAgentArtifacts(full));
+    expect(projectAgentArtifacts(compact)).toHaveLength(1);
+    const persisted = JSON.stringify(compact);
+    expect(persisted).not.toContain("opaque image bytes");
+    expect(projectAgentArtifacts(JSON.parse(persisted))).toEqual(projectAgentArtifacts(full));
+  });
   it("keeps optimistic rows and tombstones atomic over an older SQLite window", () => {
     const stalePending = row({ id: "client", kind: "pending", sealed: false, remoteTurnId: null });
     const optimisticPending = row({ ...stalePending, lastOpenedAt: 2 });
@@ -362,7 +379,7 @@ describe("thread detail projection", () => {
     expect(materializeThreadTurns([authoritative]).map((entry) => entry.id)).toEqual(["remote"]);
   });
 
-  it("removes retired direct deliveries from the resident projection", () => {
+  it("removes only direct deliveries with a canonical replacement", () => {
     const pending = (commandId: string, presentation: "delivery" | "queue") => row({
       id: commandId,
       kind: "pending",
@@ -386,14 +403,18 @@ describe("thread detail projection", () => {
     expect(planPendingDeliveryProjectionCleanup([
       pending("still-native", "delivery"),
       pending("retired", "delivery"),
+      pending("absent-from-ledger", "delivery"),
       pending("queued", "queue"),
+      row({ turn: { ...turn(), items: [
+        { type: "userMessage", id: "user", clientId: "retired", content: [{ type: "text", text: "retired", text_elements: [] }] },
+      ] } }),
     ], new Set(["still-native"]))).toEqual({
       upserts: [],
       deletes: ["retired"],
     });
   });
 
-  it("does not require the canonical client-id turn to be resident before cleanup", () => {
+  it("does not treat an absent native receipt as a canonical replacement", () => {
     const commandId = "retired";
     const pending = row({
       id: "stale-pending-row",
@@ -416,7 +437,7 @@ describe("thread detail projection", () => {
     });
     expect(planPendingDeliveryProjectionCleanup([pending], new Set())).toEqual({
       upserts: [],
-      deletes: ["stale-pending-row"],
+      deletes: [],
     });
   });
 

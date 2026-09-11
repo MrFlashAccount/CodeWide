@@ -39,6 +39,29 @@ describe("chronological turn sequence", () => {
       .toEqual(["tool-1", "commentary", "tool-2", "final"]);
   });
 
+  it("collapses large completed tool runs into chronological groups around agent updates", () => {
+    const firstRun = Array.from({ length: 20 }, (_value, index) =>
+      block(`first-tool-${index}`, "commandExecution"),
+    );
+    const secondRun = Array.from({ length: 20 }, (_value, index) =>
+      block(`second-tool-${index}`, "commandExecution"),
+    );
+    const sequence = chronologicalTurnSequence([
+      ...firstRun,
+      block("progress", "agentMessage", "First result"),
+      ...secondRun,
+    ]);
+
+    expect(
+      sequence.map((part) => (part.kind === "agent" ? part.block.key : part.blocks.length)),
+    ).toEqual([20, "progress", 20]);
+    expect(
+      sequence
+        .filter((part) => part.kind === "activity")
+        .map((part) => part.followedByAgent),
+    ).toEqual([true, false]);
+  });
+
   it("marks only activity already followed by an agent message for collapse", () => {
     const sequence = chronologicalTurnSequence([
       block("tool-1", "commandExecution"),

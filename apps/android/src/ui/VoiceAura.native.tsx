@@ -4,18 +4,15 @@ import { useEffect } from "react";
 import { setNativeVoiceAuraState } from "../native/native-transport.native";
 import type { VoiceInputController } from "../data/voice-input-controller";
 import { usePerformanceExperiment } from "../data/performance-experiments";
-import { useVoiceInputLevel } from "./VoiceInputRuntime";
 
 export type VoiceAuraPhase = "idle" | "recording" | "transcribing";
 
 /**
  * Keeps React responsible only for the recording lifecycle. Android applies
- * the original Reacticx shader to the live root RenderNode on the GPU.
+ * the live-root shader on the GPU; microphone levels stay in the native loop.
  */
 export function VoiceAura({
   phase,
-  controller,
-  scope,
   reducedMotion,
   children,
 }: {
@@ -27,11 +24,10 @@ export function VoiceAura({
 }) {
   const motionExperimentDisabled = usePerformanceExperiment("reduceCustomMotion");
   const active = phase !== "idle" && !motionExperimentDisabled;
-  const level = useVoiceInputLevel(controller, active ? scope : null);
 
   useEffect(() => {
-    setNativeVoiceAuraState(active, level, reducedMotion);
-  }, [active, level, reducedMotion]);
+    setNativeVoiceAuraState(active, 0, reducedMotion);
+  }, [active, reducedMotion]);
 
   useEffect(() => () => {
     setNativeVoiceAuraState(false, 0, false);

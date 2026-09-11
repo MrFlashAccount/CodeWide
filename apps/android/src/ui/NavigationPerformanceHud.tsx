@@ -17,7 +17,7 @@ import {
   usePerformanceMetrics,
   type HermesHeapSnapshot,
 } from "../native/performance-metrics";
-import { colors } from "../theme";
+import { colors, spacing, typeScale, typeWeight, iconSize, radii, layoutSize, controlSize } from "../theme";
 import { useAppFullscreenOverlay } from "./AppFullscreenOverlay";
 import { SpeedscopeProfileViewer } from "./SpeedscopeProfileViewer";
 import { AppText as Text } from "./Typography";
@@ -88,7 +88,7 @@ export function NavigationPerformanceHud() {
       >
         <View style={[styles.status, profile?.status === "active" ? styles.statusActive : styles.statusReady]} />
         <Text numberOfLines={1} style={styles.text}>{copied ? "Full profile copied" : `${frameText}${profileText === "" ? "" : `  ·  ${profileText}`}`}</Text>
-        <Ionicons name={menuOpen ? "chevron-up" : "chevron-down"} size={12} color={colors.textMuted} />
+        <Ionicons name={menuOpen ? "chevron-up" : "chevron-down"} size={iconSize.indicator} color={colors.textMuted} />
       </Pressable>
       {menuOpen && (
         <View testID="navigation-performance-menu" style={[styles.menu, { top: insets.top + 28, right: insets.right + 8 }]}>
@@ -158,7 +158,7 @@ function MenuAction({ icon, title, subtitle, busy = false, disabled = false, onP
       onPress={onPress}
       style={({ pressed }) => [styles.menuAction, disabled && styles.menuActionDisabled, pressed && styles.menuActionPressed]}
     >
-      {busy ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name={icon} size={19} color={colors.textMuted} />}
+      {busy ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name={icon} size={iconSize.action} color={colors.textMuted} />}
       <View style={styles.menuActionText}>
         <Text style={styles.menuActionTitle}>{title}</Text>
         <Text numberOfLines={1} style={styles.menuActionSubtitle}>{subtitle}</Text>
@@ -253,42 +253,42 @@ const styles = StyleSheet.create({
     position: "absolute",
     zIndex: 20_000,
     elevation: 20,
-    height: 24,
+    height: layoutSize.metadataRow,
     flexDirection: "row",
     alignItems: "center",
-    gap: 7,
-    paddingHorizontal: 10,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.inputInset,
     backgroundColor: "rgba(10, 10, 10, 0.92)",
     borderBottomColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  status: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
+  status: { width: 6, height: 6, borderRadius: radii.pill, flexShrink: 0 },
   statusActive: { backgroundColor: colors.amber },
   statusReady: { backgroundColor: colors.green },
-  text: { color: colors.textMuted, fontSize: 10, lineHeight: 13, flexShrink: 1 },
+  text: { color: colors.textMuted, ...typeScale.caption, flexShrink: 1 },
   menu: {
     position: "absolute",
     zIndex: 20_001,
     elevation: 21,
     width: 280,
     overflow: "hidden",
-    borderRadius: 14,
+    borderRadius: radii.medium,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     backgroundColor: colors.surfaceRaised,
   },
   menuAction: {
-    minHeight: 58,
+    minHeight: controlSize.touch,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    gap: spacing.inputInset,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
   },
   menuActionPressed: { backgroundColor: colors.surfaceHover },
   menuActionDisabled: { opacity: 0.68 },
   menuActionText: { flex: 1, minWidth: 0 },
-  menuActionTitle: { color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: "500" },
-  menuActionSubtitle: { color: colors.textMuted, fontSize: 10, lineHeight: 14 },
-  menuEmpty: { color: colors.textMuted, fontSize: 12, lineHeight: 17, padding: 14 },
+  menuActionTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
+  menuActionSubtitle: { color: colors.textMuted, ...typeScale.caption, },
+  menuEmpty: { color: colors.textMuted, ...typeScale.label, padding: spacing.md },
 });

@@ -1,8 +1,8 @@
-import { Popover } from "heroui-native/popover";
+import { AppPopover } from "./AppPopover";
 import { useState } from "react";
 import { Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
 
-import { colors, radii, spacing, typeScale } from "../theme";
+import { colors, spacing, typeScale, typeWeight, controlSize } from "../theme";
 import { formatEstimatedTurnCost, type TokenCostEstimate } from "../turn-cost";
 import { AnimatedNumber, integerNumberFormat, usdNumberFormat } from "./AnimatedNumber";
 import { AppText as Text } from "./Typography";
@@ -18,28 +18,18 @@ export function CostBreakdownPopover({ estimate, animated = false }: { estimate:
       accessibilityLabel={label}
       accessibilityHint="Shows the token cost breakdown"
       hitSlop={5}
-      onPress={open ? undefined : () => setOpen(true)}
       style={({ pressed }) => pressed && styles.pressed}
     >
       {animated
         ? <AnimatedNumber value={estimate.totalCostUsd} format={usdNumberFormat(estimate.totalCostUsd)} prefix="≈" style={styles.trigger} />
-        : <Text style={styles.trigger}>≈{formatEstimatedTurnCost(estimate.totalCostUsd)}</Text>}
+        : <Text numberOfLines={1} style={styles.trigger}>≈{formatEstimatedTurnCost(estimate.totalCostUsd)}</Text>}
     </Pressable>
   );
-  if (!open) return trigger;
   return (
-    <Popover presentation="popover" isOpen onOpenChange={setOpen}>
-      <Popover.Trigger asChild>{trigger}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Overlay className="bg-backdrop" />
-        <Popover.Content
-          presentation="popover"
+    <AppPopover open={open} onOpenChange={setOpen} trigger={trigger}
           placement="top"
           align="end"
-          offset={8}
           width={Math.max(1, Math.min(300, width - 24))}
-          className="border border-border"
-          style={styles.popover}
         >
           <View testID="turn-cost-breakdown" style={styles.content}>
             <View style={styles.heading}>
@@ -51,10 +41,7 @@ export function CostBreakdownPopover({ estimate, animated = false }: { estimate:
               API-equivalent estimate computed by the companion from per-request usage · {estimate.pricingVersion}
             </Text>
           </View>
-          <Popover.Arrow />
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover>
+    </AppPopover>
   );
 }
 
@@ -106,20 +93,19 @@ function TokenCostRow({ label, tokens, costUsd }: { label: string; tokens: numbe
 }
 
 const styles = StyleSheet.create({
-  popover: { padding: 0, borderRadius: radii.large, overflow: "hidden" },
   content: { gap: spacing.xs, padding: spacing.sm },
-  heading: { gap: 2 },
-  title: { color: colors.text, ...typeScale.titleMedium, fontWeight: "700" },
-  model: { color: colors.textDim, fontSize: 11, lineHeight: 15 },
-  rows: { gap: 2 },
-  row: { minHeight: 25, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  rowLabel: { flexShrink: 1, color: colors.textMuted, ...typeScale.bodyMedium },
-  rowValue: { flexShrink: 0, color: colors.text, fontSize: 12, lineHeight: 17, fontVariant: ["tabular-nums"] },
-  tokenCostValue: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 4 },
-  totalRow: { minHeight: 30, marginTop: 3, paddingTop: 5, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  totalLabel: { color: colors.text, ...typeScale.labelMedium },
-  totalValue: { color: colors.text, ...typeScale.titleMedium, fontWeight: "700", fontVariant: ["tabular-nums"] },
-  note: { color: colors.textDim, fontSize: 10, lineHeight: 14 },
-  trigger: { color: colors.textMuted, fontSize: 10, lineHeight: 14 },
+  heading: { gap: spacing.optical },
+  title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
+  model: { color: colors.textDim, ...typeScale.label, },
+  rows: { gap: spacing.optical },
+  row: { minHeight: controlSize.compact, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  rowLabel: { flexShrink: 1, color: colors.textMuted, ...typeScale.body },
+  rowValue: { flexShrink: 0, color: colors.text, ...typeScale.label, fontVariant: ["tabular-nums"] },
+  tokenCostValue: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  totalRow: { minHeight: controlSize.compact, marginTop: spacing.xxs, paddingTop: spacing.xxs, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  totalLabel: { color: colors.text, ...typeScale.label },
+  totalValue: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold, fontVariant: ["tabular-nums"] },
+  note: { color: colors.textDim, ...typeScale.caption, },
+  trigger: { color: colors.textMuted, ...typeScale.caption, },
   pressed: { opacity: 0.68 },
 });

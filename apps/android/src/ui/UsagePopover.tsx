@@ -1,24 +1,26 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
-import { Popover } from "heroui-native/popover";
+import type { TurnUsageProjection } from "@codewide/sync-client";
+import { AppPopover } from "./AppPopover";
 import { useState, type ReactElement } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View, useWindowDimensions, type PressableProps } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 
 import {
   accountProfileRateLimitsStale,
   accountRateLimitsStale,
-  currentThreadContextUsage,
+  contextUsageFromProjection,
   currentThreadUsageProjection,
   relativeResetTime,
   selectWeeklyRateLimit,
-  type AccountRateLimitsRow,
 } from "../data/account-rate-limits";
-import { accountProfileLabel } from "../data/account-pool";
-import { colors, radii, spacing, touchTarget, typeScale } from "../theme";
+import { accountUsageProfiles, type AccountUsageSource } from "../data/account-usage-presentation";
+import { colors, spacing, touchTarget, typeScale, typeWeight, iconSize, controlSize, layoutSize } from "../theme";
 import { formatEstimatedTurnCost } from "../turn-cost";
 import { AnimatedNumber, compactNumberFormat, integerNumberFormat, usdNumberFormat } from "./AnimatedNumber";
-import { AnimatedBreakdownRow, BreakdownRow } from "./CostBreakdownPopover";
+import { SessionUsageDetails } from "./SessionUsageDetails";
+import { AccountUsageRow } from "./AccountUsageRow";
+import { formatDeviceDateTime } from "../data/device-time";
 import { AppText as Text } from "./Typography";
 import { TOKEN_SYMBOL } from "./token-display";
 
@@ -33,65 +35,54 @@ type UsagePopoverAction = {
 export function UsagePopover({
   children,
   thread,
-  model,
+  currentUsage,
   compactionCount,
-  rateLimits = null,
+  accountSources,
   onRefresh,
   actions = [],
-  showAccountLimits = true,
   placement = "top",
   align = "start",
 }: {
-  children: ReactElement;
+  children: ReactElement<PressableProps>;
   thread?: Thread | null;
-  model?: string | null;
+  currentUsage?: TurnUsageProjection | null;
   compactionCount?: number | null;
-  rateLimits?: AccountRateLimitsRow | null;
+  accountSources?: readonly AccountUsageSource[];
   onRefresh?(): Promise<unknown>;
   actions?: UsagePopoverAction[];
-  showAccountLimits?: boolean;
   placement?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
 }) {
   const [open, setOpen] = useState(false);
   const [sessionExpanded, setSessionExpanded] = useState(false);
-  const { height, width } = useWindowDimensions();
-  const context = thread === undefined ? null : currentThreadContextUsage(thread);
-  const usageProjection = thread === undefined ? null : currentThreadUsageProjection(thread);
+  const { width } = useWindowDimensions();
+  const usageProjection = currentUsage === undefined ? currentThreadUsageProjection(thread) : currentUsage;
+  const context = contextUsageFromProjection(usageProjection);
   const sessionUsage = usageProjection?.thread.tokens ?? null;
   const sessionCost = usageProjection?.thread.cost ?? null;
-  const weekly = selectWeeklyRateLimit(rateLimits?.snapshot ?? null);
-  const accountProfiles = rateLimits?.accountPool?.profiles ?? [];
-  const loading = rateLimits?.status === "loading" && rateLimits.snapshot === null;
-  const refreshing = rateLimits?.status === "loading" && rateLimits.snapshot !== null;
+  const singleRateLimits = accountSources?.length === 1 ? accountSources[0]?.rateLimits ?? null : null;
+  const weekly = selectWeeklyRateLimit(singleRateLimits?.snapshot ?? null);
+  const accountProfiles = accountUsageProfiles(accountSources ?? []);
+  const loading = accountSources?.some((source) => source.rateLimits?.status === "loading" && source.rateLimits.snapshot === null) ?? false;
+  const refreshing = accountSources?.some((source) => source.rateLimits?.status === "loading" && source.rateLimits.snapshot !== null) ?? false;
+  const failed = accountSources?.some((source) => source.rateLimits?.status === "error") ?? false;
+  const aggregateAccounts = (accountSources?.length ?? 0) > 1;
+  const exhausted = accountSources?.some((source) => source.rateLimits?.accountPool?.allExhausted === true) ?? false;
   const contentWidth = Math.max(1, Math.min(312, width - 24));
-  const contentMaxHeight = Math.max(1, height - 24);
   const sessionAccessibilityLabel = [
     sessionUsage === null ? "token usage unavailable" : `${sessionUsage.totalTokens.toLocaleString()} tokens`,
     sessionCost === null ? "cost unavailable" : `estimated cost ${formatEstimatedTurnCost(sessionCost.totalCostUsd)}`,
   ].join(", ");
-  const hasLeadingSection = thread !== undefined || showAccountLimits;
+  const hasLeadingSection = thread !== undefined || accountSources !== undefined;
   const openChanged = (open: boolean) => {
     setOpen(open);
     if (!open) setSessionExpanded(false);
-    if (open && showAccountLimits && onRefresh !== undefined && accountRateLimitsStale(rateLimits)) void onRefresh().catch(() => undefined);
+    if (open && accountSources?.some((source) => accountRateLimitsStale(source.rateLimits)) === true && onRefresh !== undefined) void onRefresh().catch(() => undefined);
   };
 
   return (
-    <Popover presentation="popover" isOpen={open} onOpenChange={openChanged}>
-      <Popover.Trigger asChild>{children}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Overlay className="bg-backdrop" />
-        <Popover.Content
-          presentation="popover"
-          placement={placement}
-          align={align}
-          offset={8}
-          width={contentWidth}
-          className="border border-border"
-          style={StyleSheet.flatten([styles.popover, { maxHeight: contentMaxHeight }])}
-        >
-          <ScrollView testID="usage-popover" style={{ maxHeight: contentMaxHeight }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    <AppPopover open={open} onOpenChange={openChanged} trigger={children} width={contentWidth} placement={placement} align={align}>
+          <View testID="usage-popover" style={styles.content}>
             {thread !== undefined && (
               <View testID="usage-context-section" style={styles.section}>
                 <Text accessibilityRole="header" style={styles.title}>Context</Text>
@@ -115,52 +106,53 @@ export function UsagePopover({
                     ) : (
                       <AnimatedNumber value={context.remainingTokens} format={compactNumberFormat} prefix={TOKEN_SYMBOL} suffix=" available" style={styles.secondaryValue} />
                     )}
-                    {model !== null && model !== undefined && <Text numberOfLines={1} style={styles.meta}>{model}</Text>}
                   </View>
                 </View>
               </View>
             )}
 
-            {showAccountLimits && accountProfiles.length > 0 ? (
+            {accountSources !== undefined && accountProfiles.length > 0 ? (
               <View testID="usage-accounts-section" style={[styles.section, thread !== undefined && styles.dividedSection]}>
                 <View style={styles.weeklyTitle}>
-                  <Ionicons name="people-outline" size={17} color={colors.textMuted} />
+                  <Ionicons name="people-outline" size={iconSize.inline} color={colors.textMuted} />
                   <Text accessibilityRole="header" style={styles.title}>Accounts</Text>
                   {(loading || refreshing) && <ActivityIndicator accessibilityLabel="Refreshing account usage" size="small" color={colors.textMuted} />}
                 </View>
-                {accountProfiles.map((profile, index) => {
+                {accountProfiles.map((account) => {
+                  const profile = account.profile;
                   const profileWeekly = selectWeeklyRateLimit(profile.rateLimits);
                   const resetAt = profile.exhaustedUntil ?? profileWeekly?.window.resetsAt ?? null;
                   const profileStale = profile.enabled && accountProfileRateLimitsStale(profile);
                   return (
-                    <View key={profile.id} testID={`usage-account-${profile.id}`} style={[styles.accountRow, index > 0 && styles.accountDivider]}>
-                      <View style={styles.accountTitleRow}>
-                        <View style={[styles.accountStateDot, { backgroundColor: profile.active ? colors.green : profile.exhaustedUntil !== null || profile.exhaustedIndefinitely ? colors.red : colors.textDim }]} />
-                        <View style={styles.grow}>
-                          <Text numberOfLines={1} style={styles.accountName}>{accountProfileLabel(profile, index)}</Text>
-                          <Text numberOfLines={1} style={styles.meta}>{profile.planType ?? "Plan unavailable"}{profile.active ? " · active" : ""}</Text>
-                        </View>
+                    <AccountUsageRow
+                      key={account.id}
+                      testID={`usage-account-${profile.id}`}
+                      label={account.label}
+                      plan={account.detail}
+                      status={!profile.enabled ? "disabled" : profile.exhaustedUntil !== null || profile.exhaustedIndefinitely || profileWeekly?.remainingPercent === 0 ? "exhausted" : profile.active ? "active" : "inactive"}
+                      reset={profile.enabled && !profileStale && resetAt !== null ? { absolute: formatDeviceDateTime(resetAt), relative: relativeResetTime(resetAt) } : null}
+                    >
                         {!profile.enabled || profileStale || profileWeekly === null ? (
                           <Text style={[styles.secondaryValue, styles.unavailable]}>{!profile.enabled ? "Disabled" : profileStale ? "Refresh required" : profile.exhaustedIndefinitely ? "Limit reached" : "Unavailable"}</Text>
                         ) : (
                           <AnimatedNumber value={Math.round(profileWeekly.remainingPercent)} format={integerNumberFormat} suffix="% left" style={styles.accountValue} />
                         )}
-                      </View>
-                      {profile.enabled && !profileStale && resetAt !== null && (
-                        <View style={styles.resetRow}>
-                          <Text numberOfLines={1} style={[styles.meta, styles.grow]}>Resets {formatAbsoluteReset(resetAt)}</Text>
-                          <Text numberOfLines={1} style={styles.relativeReset}>{relativeResetTime(resetAt)}</Text>
-                        </View>
-                      )}
-                    </View>
+                    </AccountUsageRow>
                   );
                 })}
-                {rateLimits?.accountPool?.allExhausted === true && <Text style={styles.error}>All configured accounts are exhausted.</Text>}
+                {exhausted && <Text style={styles.error}>{aggregateAccounts ? "All configured accounts are exhausted on at least one server." : "All configured accounts are exhausted."}</Text>}
               </View>
-            ) : showAccountLimits ? <View testID="usage-weekly-section" style={[styles.section, thread !== undefined && styles.dividedSection]}>
+            ) : aggregateAccounts ? <View testID="usage-accounts-section" style={[styles.section, thread !== undefined && styles.dividedSection]}>
+              <View style={styles.weeklyTitle}>
+                <Ionicons name="people-outline" size={17} color={colors.textMuted} />
+                <Text accessibilityRole="header" style={styles.title}>Accounts</Text>
+                {(loading || refreshing) && <ActivityIndicator accessibilityLabel="Refreshing account usage" size="small" color={colors.textMuted} />}
+              </View>
+              <Text style={[styles.secondaryValue, failed && styles.error]}>{loading ? "Loading…" : failed ? "Couldn’t load account usage." : "No account profiles available."}</Text>
+            </View> : accountSources !== undefined ? <View testID="usage-weekly-section" style={[styles.section, thread !== undefined && styles.dividedSection]}>
               <View style={styles.weeklyHeader}>
                 <View style={styles.weeklyTitle}>
-                  <Ionicons name="calendar-clear-outline" size={17} color={colors.textMuted} />
+                  <Ionicons name="calendar-clear-outline" size={iconSize.inline} color={colors.textMuted} />
                   <Text accessibilityRole="header" style={styles.title}>Weekly</Text>
                   {(loading || refreshing) && <ActivityIndicator accessibilityLabel="Refreshing weekly usage" size="small" color={colors.textMuted} />}
                 </View>
@@ -178,14 +170,14 @@ export function UsagePopover({
               </View>
               {weekly?.window.resetsAt !== null && weekly?.window.resetsAt !== undefined && (
                 <View testID="usage-reset-time" style={styles.resetRow}>
-                  <Text numberOfLines={1} style={[styles.secondaryValue, styles.grow]}>Resets {formatAbsoluteReset(weekly.window.resetsAt)}</Text>
-                  <Text numberOfLines={1} style={styles.relativeReset}>{relativeResetTime(weekly.window.resetsAt)}</Text>
+                  <Ionicons name="refresh-outline" size={iconSize.indicator} color={colors.textDim} />
+                  <Text numberOfLines={1} style={[styles.meta, styles.grow]}>{formatDeviceDateTime(weekly.window.resetsAt)} · {relativeResetTime(weekly.window.resetsAt)}</Text>
                 </View>
               )}
-              {weekly === null && !loading && rateLimits?.status !== "error" && <Text style={styles.meta}>This account did not return a weekly window.</Text>}
-              {rateLimits?.status === "error" && (
-                <Text accessibilityLabel={rateLimits.error ?? "Could not refresh weekly usage"} numberOfLines={2} style={styles.error}>
-                  {rateLimits.snapshot === null ? "Couldn’t load weekly usage." : "Couldn’t refresh · showing last update"}
+              {weekly === null && !loading && singleRateLimits?.status !== "error" && <Text style={styles.meta}>This account did not return a weekly window.</Text>}
+              {singleRateLimits?.status === "error" && (
+                <Text accessibilityLabel={singleRateLimits.error ?? "Could not refresh weekly usage"} numberOfLines={2} style={styles.error}>
+                  {singleRateLimits.snapshot === null ? "Couldn’t load weekly usage." : "Couldn’t refresh · showing last update"}
                 </Text>
               )}
             </View> : null}
@@ -202,7 +194,7 @@ export function UsagePopover({
                   onPress={() => setSessionExpanded((expanded) => !expanded)}
                   style={({ pressed }) => [styles.sessionSummaryRow, pressed && styles.pressed]}
                 >
-                  <Ionicons name="analytics-outline" size={17} color={colors.textMuted} />
+                  <Ionicons name="analytics-outline" size={iconSize.inline} color={colors.textMuted} />
                   <Text style={styles.title}>Session</Text>
                   <View style={styles.sessionSummaryValues}>
                     {sessionUsage !== null && (
@@ -216,43 +208,24 @@ export function UsagePopover({
                       <Text numberOfLines={1} style={styles.sessionSummaryText}>Unavailable</Text>
                     )}
                   </View>
-                  <Ionicons name={sessionExpanded ? "chevron-up" : "chevron-down"} size={15} color={colors.textDim} />
+                  <Ionicons name={sessionExpanded ? "chevron-up" : "chevron-down"} size={iconSize.inline} color={colors.textDim} />
                 </Pressable>
                 {sessionExpanded && (
-                  <View testID="usage-session-details" style={styles.sessionDetails}>
-                    {sessionUsage === null ? (
-                      <Text style={styles.secondaryValue}>Token usage unavailable</Text>
-                    ) : (
-                      <>
-                        {sessionCost === null ? (
-                          <>
-                            <AnimatedBreakdownRow label="Input" value={sessionUsage.inputTokens} prefix={TOKEN_SYMBOL} />
-                            <AnimatedBreakdownRow label="Output" value={sessionUsage.outputTokens} prefix={TOKEN_SYMBOL} />
-                            <AnimatedBreakdownRow label="Total" value={sessionUsage.totalTokens} prefix={TOKEN_SYMBOL} />
-                          </>
-                        ) : (
-                          <>
-                            <SessionUsageRow
-                              testID="usage-session-input"
-                              label="Input"
-                              tokens={sessionUsage.inputTokens}
-                              costUsd={sessionCost.uncachedInputCostUsd + sessionCost.cachedInputCostUsd + sessionCost.cacheWriteInputCostUsd}
-                            />
-                            <SessionUsageRow testID="usage-session-output" label="Output" tokens={sessionUsage.outputTokens} costUsd={sessionCost.outputCostUsd} />
-                            <SessionUsageRow testID="usage-session-total" label="Total" tokens={sessionUsage.totalTokens} costUsd={sessionCost.totalCostUsd} emphasized />
-                          </>
-                        )}
-                      </>
-                    )}
-                    {compactionCount === undefined || compactionCount === null
-                      ? <BreakdownRow label="Compactions" value="History not loaded" />
-                      : <AnimatedBreakdownRow label="Compactions" value={compactionCount} />}
-                    <Text style={styles.meta}>
-                      {sessionCost === null
-                        ? "Cost unavailable for the current model."
-                        : "API-equivalent session estimate at the current model price. Model switches and per-request long-context premiums are not reconstructed."}
-                    </Text>
-                  </View>
+                  <SessionUsageDetails
+                    tokens={sessionUsage === null ? null : {
+                      input: sessionUsage.inputTokens,
+                      cached: sessionUsage.cachedInputTokens,
+                      output: sessionUsage.outputTokens,
+                      total: sessionUsage.totalTokens,
+                    }}
+                    cost={sessionCost === null ? null : {
+                      input: sessionCost.uncachedInputCostUsd + sessionCost.cachedInputCostUsd + sessionCost.cacheWriteInputCostUsd,
+                      cached: sessionCost.cachedInputCostUsd,
+                      output: sessionCost.outputCostUsd,
+                      total: sessionCost.totalCostUsd,
+                    }}
+                    compactionCount={compactionCount ?? null}
+                  />
                 )}
               </View>
             )}
@@ -266,46 +239,17 @@ export function UsagePopover({
                   setOpen(false);
                   action.onPress();
                 }}
-                style={({ pressed }) => [styles.action, (hasLeadingSection || index > 0) && styles.dividedAction, pressed && styles.pressed]}
+                style={({ pressed }) => [styles.action, hasLeadingSection && index === 0 && styles.dividedAction, pressed && styles.pressed]}
               >
-                <View style={styles.actionIcon}><Ionicons name={action.icon} size={18} color={colors.textMuted} /></View>
+                <View style={styles.actionIcon}><Ionicons name={action.icon} size={iconSize.action} color={colors.textMuted} /></View>
                 <View style={styles.grow}>
                   <Text style={styles.actionTitle}>{action.label}</Text>
                   {action.description !== undefined && <Text numberOfLines={1} style={styles.meta}>{action.description}</Text>}
                 </View>
-                <Ionicons name="chevron-forward" size={16} color={colors.textDim} />
               </Pressable>
             ))}
-          </ScrollView>
-          <Popover.Arrow />
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover>
-  );
-}
-
-function SessionUsageRow({
-  testID,
-  label,
-  tokens,
-  costUsd,
-  emphasized = false,
-}: {
-  testID: string;
-  label: string;
-  tokens: number;
-  costUsd: number;
-  emphasized?: boolean;
-}) {
-  return (
-    <View testID={testID} style={[styles.sessionUsageRow, emphasized && styles.sessionUsageTotalRow]}>
-      <Text style={[styles.sessionUsageLabel, emphasized && styles.sessionUsageTotalText]}>{label}</Text>
-      <View style={styles.sessionUsageValues}>
-        <AnimatedNumber value={tokens} format={integerNumberFormat} prefix={TOKEN_SYMBOL} style={[styles.sessionUsageValue, emphasized && styles.sessionUsageTotalText]} />
-        <Text style={[styles.sessionUsageValue, emphasized && styles.sessionUsageTotalText]}>·</Text>
-        <AnimatedNumber value={costUsd} format={usdNumberFormat(costUsd)} style={[styles.sessionUsageValue, emphasized && styles.sessionUsageTotalText]} />
-      </View>
-    </View>
+          </View>
+    </AppPopover>
   );
 }
 
@@ -346,62 +290,39 @@ export function ContextRing({ percent, size = 22, showValue = false }: { percent
   );
 }
 
-function formatAbsoluteReset(resetsAt: number): string {
-  return new Date(resetsAt * 1_000).toLocaleString(undefined, {
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function compactNumber(value: number): string {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 const styles = StyleSheet.create({
-  popover: { padding: 0, borderRadius: radii.large, overflow: "hidden" },
   content: { paddingVertical: spacing.xxs },
   section: { gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   dividedSection: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  sessionSummaryRow: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  sessionSummaryValues: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4 },
-  sessionSummaryText: { flexShrink: 1, minWidth: 0, textAlign: "right", color: colors.textMuted, fontSize: 11, lineHeight: 15, fontVariant: ["tabular-nums"] },
-  sessionSummarySeparator: { flexShrink: 0, color: colors.textMuted, fontSize: 11, lineHeight: 15 },
-  sessionCostText: { flexShrink: 0, color: colors.textMuted, fontSize: 11, lineHeight: 15, fontVariant: ["tabular-nums"] },
-  sessionDetails: { gap: 2, paddingBottom: 2 },
-  sessionUsageRow: { minHeight: 25, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  sessionUsageLabel: { flexShrink: 1, color: colors.textMuted, ...typeScale.bodyMedium },
-  sessionUsageValues: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: 4 },
-  sessionUsageValue: { flexShrink: 0, color: colors.text, fontSize: 12, lineHeight: 17, fontVariant: ["tabular-nums"] },
-  sessionUsageTotalRow: { minHeight: 30, marginTop: 3, paddingTop: 5, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  sessionUsageTotalText: { color: colors.text, fontWeight: "700" },
-  contextSummary: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  sessionSummaryRow: { minHeight: controlSize.regular, flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  sessionSummaryValues: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: spacing.xxs },
+  sessionSummaryText: { flexShrink: 1, minWidth: 0, textAlign: "right", color: colors.textMuted, ...typeScale.label, fontVariant: ["tabular-nums"] },
+  sessionSummarySeparator: { flexShrink: 0, color: colors.textMuted, ...typeScale.label, },
+  sessionCostText: { flexShrink: 0, color: colors.textMuted, ...typeScale.label, fontVariant: ["tabular-nums"] },
+  contextSummary: { minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", gap: spacing.sm },
   contextRingLabel: { position: "absolute", inset: 0, alignItems: "center", justifyContent: "center" },
   contextRingNumber: { width: "100%", alignItems: "center" },
-  contextRingLabelText: { width: "100%", color: colors.text, fontWeight: "600", textAlign: "center", includeFontPadding: false },
+  contextRingLabelText: { width: "100%", color: colors.text, fontWeight: typeWeight.semibold, textAlign: "center", includeFontPadding: false },
   grow: { flex: 1, minWidth: 0 },
-  title: { color: colors.textMuted, ...typeScale.labelMedium },
-  primaryValue: { color: colors.text, fontSize: 18, lineHeight: 23, fontWeight: "600", fontVariant: ["tabular-nums"] },
-  secondaryValue: { color: colors.textMuted, ...typeScale.bodyMedium, fontVariant: ["tabular-nums"] },
-  meta: { color: colors.textDim, fontSize: 11, lineHeight: 15 },
+  title: { color: colors.textMuted, ...typeScale.label },
+  primaryValue: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold, fontVariant: ["tabular-nums"] },
+  secondaryValue: { color: colors.textMuted, ...typeScale.body, fontVariant: ["tabular-nums"] },
+  meta: { color: colors.textDim, ...typeScale.label, },
   unavailable: { color: colors.textMuted },
-  weeklyHeader: { minHeight: 34, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.xs },
+  weeklyHeader: { minHeight: controlSize.compact, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.xs },
   weeklyTitle: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  weeklyValue: { flexShrink: 1, color: colors.text, ...typeScale.titleMedium, fontWeight: "600", fontVariant: ["tabular-nums"] },
-  accountRow: { gap: 3, paddingVertical: spacing.xxs },
-  accountDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: spacing.xs },
-  accountTitleRow: { minHeight: 38, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  accountStateDot: { width: 8, height: 8, borderRadius: 4 },
-  accountName: { color: colors.text, ...typeScale.labelLarge },
-  accountValue: { flexShrink: 0, color: colors.text, ...typeScale.labelLarge, fontVariant: ["tabular-nums"] },
-  resetRow: { minHeight: 24, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  relativeReset: { flexShrink: 0, color: colors.text, fontSize: 11, lineHeight: 16, fontWeight: "600", fontVariant: ["tabular-nums"] },
+  weeklyValue: { flexShrink: 1, color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold, fontVariant: ["tabular-nums"] },
+  accountValue: { flexShrink: 0, color: colors.text, ...typeScale.body, fontVariant: ["tabular-nums"] },
+  resetRow: { minHeight: layoutSize.metadataRow, flexDirection: "row", alignItems: "center", gap: spacing.xs },
   action: { minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm },
   dividedAction: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   actionIcon: { width: 20, height: 20, flexShrink: 0, alignItems: "center", justifyContent: "center" },
-  actionTitle: { color: colors.text, ...typeScale.labelLarge },
-  error: { color: colors.red, fontSize: 11, lineHeight: 15 },
+  actionTitle: { color: colors.text, ...typeScale.body },
+  error: { color: colors.red, ...typeScale.label, },
   disabled: { opacity: 0.4 },
   pressed: { opacity: 0.7 },
 });

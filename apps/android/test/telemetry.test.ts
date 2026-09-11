@@ -3,12 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   configureTelemetryTransport,
   flushTelemetry,
+  recordOperationalTelemetryEvent,
   recordTelemetryEvent,
   resetTelemetryForTests,
   setTelemetryEnabled,
   type TelemetryBatch,
 } from "../src/data/telemetry";
-import { recordThreadHistoryTelemetry } from "../src/data/thread-history-telemetry";
+import { recordThreadHistoryTelemetry, recordThreadOpeningMeasure } from "../src/data/thread-history-telemetry";
 
 describe("telemetry batching", () => {
   afterEach(() => {
@@ -59,6 +60,26 @@ describe("telemetry batching", () => {
     expect(delivered[0]?.events[0]?.requestId).toBe("request-1");
   });
 
+  it("delivers low-volume operational events when performance telemetry is disabled", async () => {
+    const batches: TelemetryBatch[] = [];
+    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    setTelemetryEnabled(false);
+
+    recordOperationalTelemetryEvent("server", {
+      name: "connection.attempt_started",
+      values: { attempt: 1 },
+      tags: { source: "native" },
+    });
+    await flushTelemetry();
+
+    expect(batches[0]?.events[0]).toMatchObject({
+      connectionId: "server",
+      name: "connection.attempt_started",
+      values: { attempt: 1 },
+      tags: { source: "native" },
+    });
+  });
+
   it("flushes no more than 64 events per batch", async () => {
     vi.useFakeTimers();
     const batches: TelemetryBatch[] = [];
@@ -73,6 +94,7 @@ describe("telemetry batching", () => {
   });
 
   it("adds stable connection and thread dimensions to history diagnostics", async () => {
+
     const batches: TelemetryBatch[] = [];
     configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
     setTelemetryEnabled(true);
@@ -92,5 +114,27 @@ describe("telemetry batching", () => {
       values: { historyEpoch: 4 },
       tags: { direction: "older" },
     });
+  });
+});
+
+describe("opening diagnostics", () => {
+  afterEach(resetTelemetryForTests);
+  it("correlates opening stages without enabling render profiling", async () => {
+    const batches: TelemetryBatch[] = [];
+    configureTelemetryTransport(async (_connectionId, batch) => { batches.push(batch); });
+    setTelemetryEnabled(false);
+    recordThreadOpeningMeasure("connection-1", "thread-1", "cache_read", 12);
+    recordThreadOpeningMeasure("connection-1", "thread-1", "hydrate", 450);
+    recordThreadOpeningMeasure("connection-1", "thread-1", "open", 470);
+    recordThreadOpeningMeasure("connection-1", "", "open", 20);
+    recordThreadHistoryTelemetry("connection-1", "thread-1", "chat.render");
+    await flushTelemetry();
+    const events = batches.flatMap((batch) => batch.events);
+    expect(events).toHaveLength(3);
+    expect(events).toEqual([
+      expect.objectContaining({ threadId: "thread-1", connectionId: "connection-1", name: "chat.window.open_stage", tags: { stage: "cache_read" }, values: { durationMs: 12 } }),
+      expect.objectContaining({ threadId: "thread-1", tags: { stage: "hydrate" }, values: { durationMs: 450 } }),
+      expect.objectContaining({ threadId: "thread-1", tags: { stage: "open" }, values: { durationMs: 470 } }),
+    ]);
   });
 });

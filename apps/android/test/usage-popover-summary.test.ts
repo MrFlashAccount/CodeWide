@@ -20,14 +20,8 @@ describe("usage popover session summary", () => {
     expect(usagePopover).toContain("prefix={TOKEN_SYMBOL}");
     expect(usagePopover).toContain('testID="usage-session-cost"');
     expect(usagePopover).toMatch(/sessionCostText: \{ flexShrink: 0,/);
+    expect(usagePopover).toContain("cached: sessionUsage.cachedInputTokens");
+    expect(usagePopover).toContain("cached: sessionCost.cachedInputCostUsd");
   });
 
-  it("shows session input, output, and total as token and price pairs", () => {
-    expect(usagePopover).toContain('testID="usage-session-input"');
-    expect(usagePopover).toContain('testID="usage-session-output"');
-    expect(usagePopover).toContain('testID="usage-session-total"');
-    expect(usagePopover).toContain("sessionCost.uncachedInputCostUsd + sessionCost.cachedInputCostUsd + sessionCost.cacheWriteInputCostUsd");
-    expect(usagePopover).toContain("costUsd={sessionCost.outputCostUsd}");
-    expect(usagePopover).toContain("costUsd={sessionCost.totalCostUsd}");
-  });
 });

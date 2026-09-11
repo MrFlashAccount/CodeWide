@@ -10,7 +10,11 @@ import {
 import { NativeEventEmitter, NativeModules } from "react-native";
 import { shouldFlushLiveEventsImmediately } from "../data/live-event-priority";
 import { incrementDiagnosticMetric, liveStreamMetricKey, markLiveBatchDelivered, operationalDiagnosticsEnabled, recordDiagnosticTiming } from "../data/operational-metrics";
-import { recordTelemetryEvent } from "../data/telemetry";
+import {
+  recordOperationalTelemetryEvent,
+  recordTelemetryEvent,
+  type TelemetryEventInput,
+} from "../data/telemetry";
 import type { ThreadEventProjection } from "../data/thread-projection-store";
 import { OrderedProjectionAcknowledger } from "./ordered-projection-acknowledger";
 import { nativeEngineErrorDiagnostic } from "./native-engine-error-diagnostic";
@@ -20,7 +24,7 @@ import { OrderedProjectionGate, type ProjectionWork } from "./ordered-projection
 type NativeEngineEvent = {
   contractVersion: 1 | 2;
   connectionId: string;
-  type: "state" | "snapshot" | "pendingRequests" | "events" | "checkpointEvents" | "journalAdvanced" | "outbox";
+  type: "state" | "snapshot" | "pendingRequests" | "events" | "checkpointEvents" | "journalAdvanced" | "outbox" | "telemetry";
   data: string;
   frameId?: number;
   projectionCursor?: number;
@@ -86,6 +90,7 @@ export class NativeEngineSession implements RpcClient {
   readonly #projectionAcknowledger: OrderedProjectionAcknowledger;
   #stopped = false;
   #stateGeneration = 0;
+  #publishedLiveRpcAvailable: boolean | undefined;
   #projectionRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
   #projectionRecoveryAttempt = 0;
   #journalReadCursor: number | undefined;
@@ -104,6 +109,7 @@ export class NativeEngineSession implements RpcClient {
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
     const projectionFailed = (cause: unknown) => {
+      this.#publishedLiveRpcAvailable = undefined;
       this.#stateGeneration += 1;
       this.#journalReadCursor = undefined;
       void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native projection update failed"));
@@ -114,6 +120,7 @@ export class NativeEngineSession implements RpcClient {
   }
 
   start(): void {
+    this.#publishedLiveRpcAvailable = undefined;
     if (bridge === undefined) {
       void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native remote engine is unavailable in this build", false);
       return;
@@ -140,7 +147,13 @@ export class NativeEngineSession implements RpcClient {
   receive(event: NativeEngineEvent): void {
     if (this.#stopped) return;
     if (event.contractVersion !== 1 && event.contractVersion !== 2) {
+      this.#publishedLiveRpcAvailable = undefined;
       void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native bridge contract version is unsupported", false);
+      return;
+    }
+    if (event.type === "telemetry") {
+      const telemetry = parseNativeTelemetry(event.data);
+      if (telemetry !== null) recordOperationalTelemetryEvent(this.connectionId, telemetry);
       return;
     }
     if (event.type === "state") {
@@ -153,7 +166,11 @@ export class NativeEngineSession implements RpcClient {
           // projection batch, while that batch is still committing to SQLite.
           // Keep the UI in syncing until the ordered durable projection seam
           // has drained; RPC availability remains a separate transport axis.
-          void Promise.resolve(this.#connectionState.setConnectionState(this.connectionId, "syncing", undefined, state.rpcAvailable));
+          // Reattaching an existing JS runtime also emits its unchanged native
+          // state. Do not fabricate a reconnect: that edge reloads the chat.
+          if (this.#publishedLiveRpcAvailable !== state.rpcAvailable) {
+            void Promise.resolve(this.#connectionState.setConnectionState(this.connectionId, "syncing", undefined, state.rpcAvailable));
+          }
           void Promise.resolve(this.#journalDrain).then(() => this.#projectionGate.settled()).then(async () => {
             // The gate enqueues acknowledgement only after applying the batch,
             // so observe its tail after the presentation queue has drained.
@@ -165,9 +182,12 @@ export class NativeEngineSession implements RpcClient {
               || this.#projectionGate.blocked
               || this.#projectionAcknowledger.blocked
             ) return;
+            if (this.#publishedLiveRpcAvailable === state.rpcAvailable) return;
+            this.#publishedLiveRpcAvailable = state.rpcAvailable;
             return this.#connectionState.setConnectionState(this.connectionId, "live", null, state.rpcAvailable);
           });
         } else {
+          this.#publishedLiveRpcAvailable = undefined;
           void Promise.resolve(this.#connectionState.setConnectionState(
             this.connectionId,
             state.state,
@@ -176,6 +196,7 @@ export class NativeEngineSession implements RpcClient {
           ));
         }
       } catch (cause: unknown) {
+        this.#publishedLiveRpcAvailable = undefined;
         void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native engine state is invalid"), false);
       }
       return;
@@ -186,6 +207,7 @@ export class NativeEngineSession implements RpcClient {
         if (!Array.isArray(requests)) throw new Error("Native pending request projection is invalid");
         this.#onPendingRequests?.(this.connectionId, requests);
       } catch (cause: unknown) {
+        this.#publishedLiveRpcAvailable = undefined;
         void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native pending request projection is invalid"));
       }
       return;
@@ -246,6 +268,7 @@ export class NativeEngineSession implements RpcClient {
         throw new Error("Native projection cursor is missing or invalid");
       }
       if (event.type === "snapshot") {
+        this.#publishedLiveRpcAvailable = undefined;
         const snapshot = parseJson<{ cursor: number; threads: SyncSnapshotThread[] }>(event.data, "native snapshot");
         if (!Number.isSafeInteger(snapshot.cursor) || !Array.isArray(snapshot.threads)) throw new Error("Native snapshot is invalid");
         if (projectionCursor !== snapshot.cursor) throw new Error("Native snapshot projection cursor is invalid");
@@ -289,6 +312,10 @@ export class NativeEngineSession implements RpcClient {
   }
 
   #requestJournalDrain(headCursor: number, recovery: boolean): void {
+    // The same runtime already owns everything through this cursor, including
+    // any queued writes. A failed write clears the cursor in projectionFailed.
+    if (this.#journalReadCursor !== undefined && headCursor <= this.#journalReadCursor) return;
+    if (recovery) this.#publishedLiveRpcAvailable = undefined;
     this.#journalHeadCursor = Math.max(this.#journalHeadCursor ?? headCursor, headCursor);
     this.#journalRecoveryRequested ||= recovery;
     if (this.#journalDrain !== undefined || bridge === undefined) return;
@@ -422,6 +449,13 @@ export class NativeEngineSession implements RpcClient {
         const startedAt = performance.now();
         const projected = await this.#projection.applyEvents(this.connectionId, eventProjection.events);
         const projectionMs = performance.now() - startedAt;
+        if (projectionMs >= 50) {
+          recordOperationalTelemetryEvent(this.connectionId, {
+            name: "sync.projection_slow",
+            values: { durationMs: projectionMs, eventCount: eventProjection.events.length },
+            tags: { mode: recovery ? "recovery" : "live", measurement: "elapsed_including_await" },
+          });
+        }
         if (measureDiagnostics) {
           recordDiagnosticTiming("projection_apply_ms", projectionMs);
         }
@@ -464,11 +498,13 @@ export class NativeEngineSession implements RpcClient {
   }
 
   async rpc<T>(method: string, params: unknown): Promise<T> {
+    if (this.#stopped) throw new Error("Native connection session was replaced");
     if (bridge === undefined) throw new Error("Native remote engine is unavailable");
     const envelope = parseJson<NativeEngineResult<T>>(
       await bridge.engineRpc(this.connectionId, method, JSON.stringify(params ?? null)),
       "native RPC response",
     );
+    if (this.#stopped) throw new Error("Native connection session was replaced");
     if (envelope.ok) return envelope.result;
     if (typeof envelope.code === "number") throw new RpcResponseError(envelope.code, envelope.message);
     throw new Error(envelope.message);
@@ -608,6 +644,48 @@ function parseJson<T>(raw: string, label: string): T {
   } catch {
     throw new Error(`Invalid ${label}`);
   }
+}
+
+function parseNativeTelemetry(raw: string): TelemetryEventInput | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const name = Reflect.get(value, "name");
+  if (typeof name !== "string") return null;
+  const values = numericTelemetryFields(Reflect.get(value, "values"));
+  const tags = stringTelemetryFields(Reflect.get(value, "tags"));
+  if (values === null || tags === null) return null;
+  return {
+    name,
+    ...(Object.keys(values).length === 0 ? {} : { values }),
+    ...(Object.keys(tags).length === 0 ? {} : { tags }),
+  };
+}
+
+function numericTelemetryFields(value: unknown): Record<string, number> | null {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const result: Record<string, number> = {};
+  for (const [name, field] of Object.entries(value)) {
+    if (typeof field !== "number" || !Number.isFinite(field)) return null;
+    result[name] = field;
+  }
+  return result;
+}
+
+function stringTelemetryFields(value: unknown): Record<string, string> | null {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const result: Record<string, string> = {};
+  for (const [name, field] of Object.entries(value)) {
+    if (typeof field !== "string") return null;
+    result[name] = field;
+  }
+  return result;
 }
 
 function isEventProjectionWork(work: ProjectionWork): work is EventProjectionWork {

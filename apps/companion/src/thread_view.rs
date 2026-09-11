@@ -2,10 +2,14 @@ use serde_json::{Value, json};
 
 use crate::{
     history_service::{HistoryService, HistoryServiceError},
-    upstream::{UpstreamError, UpstreamHandle},
+    upstream::{UpstreamError, UpstreamFence, UpstreamHandle},
 };
 
-pub const READ_MODEL_VERSION: u64 = 2;
+pub const READ_MODEL_VERSION: u64 = 3;
+
+// Match App Server's explicit instruction to inspect this unloaded child.
+// A generic RPC error code is insufficient: unrelated failures must stay visible.
+const UNLOADED_SUBAGENT_RESUME: &str = "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it";
 
 /// Current App Server execution authority for one thread.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,19 +68,12 @@ impl ThreadViewService {
             }))
             .await?;
         let result = rpc_result(&response)?;
-        match result
-            .pointer("/thread/status/type")
-            .and_then(Value::as_str)
-        {
-            Some("active") => Ok(ThreadActivity::Active),
-            Some("idle" | "notLoaded") => Ok(ThreadActivity::Idle),
-            Some("systemError") => Ok(ThreadActivity::Unavailable),
-            _ => Err(ThreadViewError::InvalidStatus),
-        }
+        queue_activity(&result)
     }
 
     /// Synchronizes immutable indexed history and the mutable App Server head,
-    /// then leaves the single Companion transport observing the thread.
+    /// then leaves the single Companion transport observing resumable threads.
+    /// Unloaded multi-agent children remain inspectable without reviving a parent.
     ///
     /// # Errors
     ///
@@ -89,13 +86,18 @@ impl ThreadViewService {
             .and_then(Value::as_str)
             .ok_or(ThreadViewError::InvalidRequest)?;
         let after_turn_id = params.get("afterTurnId").and_then(Value::as_str);
+        let source_witness = params
+            .get("sourceWitness")
+            .filter(|value| !value.is_null())
+            .map(|value| value.as_str().ok_or(ThreadViewError::InvalidRequest))
+            .transpose()?;
         let limit = params
             .get("limit")
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(36);
 
-        let result = self.attach_observer(thread_id).await?;
+        let (result, shell_fence) = self.read_thread_shell(thread_id).await?;
         let mut thread = result
             .get("thread")
             .cloned()
@@ -109,10 +111,11 @@ impl ThreadViewService {
             .as_object_mut()
             .ok_or(ThreadViewError::InvalidStatus)?
             .insert("turns".into(), Value::Array(Vec::new()));
-        let active_turn = if active {
-            self.read_active_turn(thread_id).await?
+        let (active_turn, fence) = if active {
+            let (active_turn, active_fence) = self.read_active_turn(thread_id).await?;
+            (active_turn, active_fence)
         } else {
-            Value::Null
+            (Value::Null, shell_fence)
         };
         let active_turn_id = if active {
             Some(
@@ -126,7 +129,13 @@ impl ThreadViewService {
         };
         let history = match self
             .history
-            .sync_thread_history(thread_id, after_turn_id, limit, active_turn_id)
+            .sync_thread_history_with_source(
+                thread_id,
+                after_turn_id,
+                limit,
+                active_turn_id,
+                source_witness,
+            )
             .await
         {
             Ok(history) => history,
@@ -143,18 +152,23 @@ impl ThreadViewService {
             }
             Err(error) => return Err(error.into()),
         };
+        let through_cursor = fence.wait().await?;
         Ok(json!({
             "readModelVersion": READ_MODEL_VERSION,
+            "throughCursor": through_cursor,
             "thread": thread,
             "history": history,
             "activeTurn": active_turn,
         }))
     }
 
-    async fn attach_observer(&self, thread_id: &str) -> Result<Value, ThreadViewError> {
-        let response = self
+    async fn read_thread_shell(
+        &self,
+        thread_id: &str,
+    ) -> Result<(Value, UpstreamFence), ThreadViewError> {
+        let (response, fence) = self
             .upstream
-            .request(json!({
+            .request_fenced(json!({
                 "id": "thread-view-observe",
                 "method": "thread/resume",
                 "params": {
@@ -163,13 +177,34 @@ impl ThreadViewService {
                 },
             }))
             .await?;
-        rpc_result(&response)
+        match rpc_result(&response) {
+            Err(ThreadViewError::Rpc(message)) if message == UNLOADED_SUBAGENT_RESUME => {
+                // Inspection must not restart the parent execution tree. Keep history
+                // bounded through HistoryService, rather than includeTurns=true.
+                let (stored, stored_fence) = self
+                    .upstream
+                    .request_fenced(json!({
+                        "id": "thread-view-inspect",
+                        "method": "thread/read",
+                        "params": {"threadId": thread_id, "includeTurns": false},
+                    }))
+                    .await?;
+                Ok((rpc_result(&stored)?, stored_fence))
+            }
+            result => Ok((result?, fence)),
+        }
     }
 
-    async fn read_active_turn(&self, thread_id: &str) -> Result<Value, ThreadViewError> {
-        let response = self
+    /// Reads the complete semantic mutable head. Large content is externalized
+    /// by the downstream projector; item shells must remain present so the
+    /// client can apply only the durable event tail after this snapshot.
+    async fn read_active_turn(
+        &self,
+        thread_id: &str,
+    ) -> Result<(Value, UpstreamFence), ThreadViewError> {
+        let (response, fence) = self
             .upstream
-            .request(json!({
+            .request_fenced(json!({
                 "id": "thread-view-sync-active",
                 "method": "thread/turns/list",
                 "params": {
@@ -182,11 +217,37 @@ impl ThreadViewService {
             }))
             .await?;
         let page = rpc_result(&response)?;
-        page.get("data")
+        let turn = page
+            .get("data")
             .and_then(Value::as_array)
             .and_then(|turns| turns.first())
             .cloned()
-            .ok_or(ThreadViewError::InvalidActiveTurn)
+            .ok_or(ThreadViewError::InvalidActiveTurn)?;
+        Ok((turn, fence))
+    }
+}
+
+/// A failed turn is not a permanent input lock. Only an explicit capability
+/// makes systemError dispatchable; active turns must still preserve queue order.
+fn queue_activity(result: &Value) -> Result<ThreadActivity, ThreadViewError> {
+    match result
+        .pointer("/thread/status/type")
+        .and_then(Value::as_str)
+    {
+        Some("active") => Ok(ThreadActivity::Active),
+        Some("idle" | "notLoaded") => Ok(ThreadActivity::Idle),
+        Some("systemError") => {
+            if result
+                .pointer("/thread/canAcceptDirectInput")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                Ok(ThreadActivity::Idle)
+            } else {
+                Ok(ThreadActivity::Unavailable)
+            }
+        }
+        _ => Err(ThreadViewError::InvalidStatus),
     }
 }
 
@@ -202,4 +263,59 @@ fn rpc_result(response: &Value) -> Result<Value, ThreadViewError> {
         .get("result")
         .cloned()
         .ok_or(ThreadViewError::InvalidRequest)
+}
+
+#[cfg(test)]
+mod queue_activity_tests {
+    use super::*;
+
+    #[test]
+    fn failed_turn_allows_next_queued_prompt_only_with_explicit_authority()
+    -> Result<(), ThreadViewError> {
+        assert_eq!(
+            queue_activity(&json!({"thread": {
+                "status": {"type": "systemError"}, "canAcceptDirectInput": true
+            }}))?,
+            ThreadActivity::Idle
+        );
+        for capability in [json!(false), Value::Null, json!("true")] {
+            assert_eq!(
+                queue_activity(&json!({"thread": {
+                    "status": {"type": "systemError"}, "canAcceptDirectInput": capability
+                }}))?,
+                ThreadActivity::Unavailable
+            );
+        }
+        assert_eq!(
+            queue_activity(&json!({"thread": {
+                "status": {"type": "systemError"}
+            }}))?,
+            ThreadActivity::Unavailable
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn direct_input_capability_does_not_steer_a_queued_prompt_into_an_active_turn()
+    -> Result<(), ThreadViewError> {
+        assert_eq!(
+            queue_activity(&json!({"thread": {
+                "status": {"type": "active"}, "canAcceptDirectInput": true
+            }}))?,
+            ThreadActivity::Active
+        );
+        for status in ["idle", "notLoaded"] {
+            assert_eq!(
+                queue_activity(&json!({"thread": {
+                    "status": {"type": status}
+                }}))?,
+                ThreadActivity::Idle
+            );
+        }
+        assert!(matches!(
+            queue_activity(&json!({"thread": {}})),
+            Err(ThreadViewError::InvalidStatus)
+        ));
+        Ok(())
+    }
 }

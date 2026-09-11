@@ -16,6 +16,20 @@ afterEach(() => {
 });
 
 describe("Legend remote project catalog", () => {
+  it("does not let a stale list response undo an acknowledged pin change", async () => {
+    const model = createRemoteProjectCatalogModel();
+    let resolve!: (projects: RemoteProject[]) => void;
+    const pending = new Promise<RemoteProject[]>((done) => { resolve = done; });
+    const resource = model.resource("server", "live", async () => await pending);
+    const pinned = { ...project("/repo"), pinned: true, name: "Custom label" };
+    const added = { ...project("/new"), pinned: true };
+    model.mergeProject("server", pinned);
+    model.mergeProject("server", added);
+    resolve([project("/repo"), project("/other")]);
+    await resource.peek();
+    expect(model.snapshot$.projectsByConnection.peek().server).toEqual([pinned, project("/other"), added]);
+    model.clear();
+  });
   it("deduplicates initial demand and publishes the resolved catalog", async () => {
     const model = createRemoteProjectCatalogModel();
     let loads = 0;
