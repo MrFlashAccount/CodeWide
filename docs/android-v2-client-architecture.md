@@ -1,5 +1,9 @@
 # Android V2: independent Expo Router runtime over Sync API V2
 
+Port inventory arrives through the shared sync websocket and a coalescing native
+reconciliation worker; client resources do not poll discovery. See
+[Companion-owned port inventory](port-inventory-sync.md).
+
 > Status: approved target architecture and active implementation scope. Backend, sync-client, Android V2, native modules, routes, and E2E are one sequential workstream; there is no deferred implementation phase.
 >
 > This document is the durable architecture contract. It records ownership, allowed dependency direction, public routes and APIs, compatibility decisions, verification gates, and rollback. It is not an implementation proposal or a promise that target files already exist.

@@ -1,30 +1,7 @@
+import type { NativeVoiceEvent, CapturedAudioChunk, PcmCaptureInfo, NativeConnectionConfig, NativeBrowserDevToolsBridge, NativeBrowserTrace, NativePortForwardProfile, NativePortForwardingPreference, NativePortForwardEvent, NativeTerminalEvent, NativeTerminalOutput, NativeDiscoveredPort, NativeCommandDelivery, MicrophonePermission, NativeCommandMethod } from "./native-transport-contract";
+export type { NativeVoiceEvent, PcmAudioChunk, OpusAudioChunk, CapturedAudioChunk, PcmCaptureInfo, NativeConnectionConfig, NativeBrowserDevToolsBridge, NativeBrowserTrace, NativePortForwardProfile, NativePortForwardingPreference, NativePortForwardEvent, NativeTerminalEvent, NativeTerminalOutput, NativeDiscoveredPort, NativeCommandDelivery, MicrophonePermission, NativeCommandMethod } from "./native-transport-contract";
 import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
 import type { RemoteFileAttachment } from "@codewide/sync-client";
-
-type NativeVoiceEvent = {
-  type: "ready" | "speechStart" | "speechEnd" | "partial" | "final" | "error";
-  text?: string;
-};
-
-export type PcmAudioChunk = {
-  encoding?: "pcm_s16le";
-  data: string;
-  sampleRate: number;
-  numChannels: number;
-  samplesPerChannel: number;
-  level: number;
-};
-
-export type OpusAudioChunk = {
-  encoding: "opus";
-  data: string;
-  sampleRate: number;
-  numChannels: number;
-  samplesPerChannel: number;
-  level: number;
-};
-
-export type CapturedAudioChunk = PcmAudioChunk | OpusAudioChunk;
 
 type NativeAudioEvent = CapturedAudioChunk & {
   type: "started" | "chunk" | "stopped" | "error";
@@ -88,108 +65,9 @@ type NativeBridge = {
   removeListeners(count: number): void;
 };
 
-export type PcmCaptureInfo = {
-  sampleRate: number;
-  source: "voice_recognition" | "voice_communication" | "mic";
-  noiseSuppressor: boolean;
-  automaticGainControl: boolean;
-};
-
-export type NativeConnectionConfig = {
-  connectionId: string;
-  savedServerId: string;
-  endpoint: string;
-  tlsPinSha256: string | null;
-  enabled: boolean;
-  deviceId: string | null;
-};
-
-export type NativeBrowserDevToolsBridge = {
-  host: "127.0.0.1";
-  port: number;
-  token: string;
-  tracingSupported: boolean;
-};
-
-export type NativeBrowserTrace = {
-  path: string;
-  size: number;
-};
-
-export type NativePortForwardProfile = {
-  id: string;
-  connectionId: string;
-  label: string;
-  remoteHost: "127.0.0.1";
-  remotePort: number;
-  preferredLocalPort: number | null;
-  serviceKey: string | null;
-  preference: NativePortForwardingPreference;
-  localPort: number | null;
-  enabled: boolean;
-  status: "stopped" | "connecting" | "live" | "unavailable" | "error";
-  previewUrl: string | null;
-  error: string | null;
-  updatedAt: number;
-};
-
-export type NativePortForwardingPreference = "automatic" | "included" | "excluded";
-
-export type NativePortForwardEvent =
-  | { type: "profile"; profile: NativePortForwardProfile }
-  | { type: "removed"; id: string };
-
-export type NativeTerminalEvent = {
-  sessionId: string;
-  connectionId: string;
-  threadId: string;
-  type: "connecting" | "open" | "output" | "closed" | "error" | "removed";
-  data?: string;
-  code?: number;
-  message?: string;
-  offset?: number;
-};
-
-export type NativeTerminalOutput = {
-  data: string;
-  nextOffset: number;
-  hasMore: boolean;
-  finished: boolean;
-};
-
-export type NativeDiscoveredPort = {
-  port: number;
-  name: string;
-  group: string;
-  details: string;
-  process: string | null;
-  pid: number | null;
-  cwd: string | null;
-  kind: "docker" | "hermes" | "kubernetes" | "minikube" | "vite" | "node" | "python" | "zrok" | "process" | "system";
-  forwardingKey: string;
-  defaultForwardingEnabled: boolean;
-};
-
-export type NativeCommandDelivery = {
-  connectionId: string;
-  commandId: string;
-  method: string;
-  threadId: string | null;
-  targetCommandId: string | null;
-  text: string;
-  attachments: RemoteFileAttachment[];
-  workspaceRequestId?: string | null;
-  state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
-  attempts: number;
-  lastError: string | null;
-  createdAt: number;
-  updatedAt: number;
-};
-
 const bridge = NativeModules.CodeWideNative as NativeBridge | undefined;
 const emitter = bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodeWideNative);
 
-export type MicrophonePermission = "granted" | "denied" | "blocked";
 let microphonePermission: MicrophonePermission = bridge?.microphonePermissionGranted === true ? "granted" : "denied";
 const microphonePermissionListeners = new Set<() => void>();
 
@@ -539,9 +417,12 @@ function parseNativePortForwardEvent(value: unknown): NativePortForwardEvent {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Native port-forward event is invalid");
   }
-  const row = value as { type?: unknown; profile?: unknown; id?: unknown };
-  if (row.type === "profile") return { type: "profile", profile: parseNativePortForwardProfile(row.profile) };
-  if (row.type === "removed" && typeof row.id === "string" && row.id.length > 0) return { type: "removed", id: row.id };
+  const type = Reflect.get(value, "type");
+  if (type === "profile") return { type, profile: parseNativePortForwardProfile(Reflect.get(value, "profile")) };
+  const id = Reflect.get(value, "id");
+  if (type === "removed" && typeof id === "string" && id.length > 0) return { type, id };
+  const connectionId = Reflect.get(value, "connectionId");
+  if ((type === "inventory" || type === "inventoryError") && typeof connectionId === "string" && connectionId.length > 0) return { type, connectionId };
   throw new Error("Native port-forward event is invalid");
 }
 
@@ -566,12 +447,6 @@ function parseNativeDiscoveredPort(value: unknown): NativeDiscoveredPort {
 function isPort(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 65_535;
 }
-
-export type NativeCommandMethod =
-  | "turn/start" | "turn/steer" | "thread/name/set" | "thread/archive" | "thread/unarchive" | "thread/delete"
-  | "thread/settings/update" | "turn/interrupt" | "serverRequest/respond"
-  | "companion/queue/put" | "companion/queue/edit" | "companion/queue/cancel"
-  | "companion/queue/move" | "companion/queue/retry" | "companion/queue/steer";
 
 export async function enqueueNativeCommand(
   connectionId: string,

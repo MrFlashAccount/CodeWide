@@ -1910,7 +1910,7 @@ function createWorkspaceActions(): WorkspaceActions {
       const connection = currentConnections().find((candidate) => candidate.id === connectionId);
       if (connection === undefined) throw new Error("Connection not found");
       const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
-      return { baseUrl: companionHttpUrl(origin, "/"), authorization: await scopedHttpAuthorization(connection, forceRefresh) };
+      return { baseUrl: companionHttpUrl(origin, "/"), authorization: await scopedHttpAuthorization(connection, forceRefresh), cacheScope: connection.id };
     };
 
   return {

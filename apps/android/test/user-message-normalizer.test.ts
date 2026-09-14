@@ -3,6 +3,26 @@ import { describe, expect, it } from "vitest";
 import { normalizeUserMessage } from "../src/rendering/user-message-normalizer";
 
 describe("normalizeUserMessage", () => {
+  it.each(["\n", "\r\n"])("strips the complete Desktop browser wrapper with short request heading (%j)", (newline) => {
+    const source = [
+      "", '<in-app-browser-context source="ambient-ui-state">', "Automatically supplied UI state.", "# In app browser:", "",
+      "https://example.invalid/review", "</in-app-browser-context>", "", "## My request:", "",
+      "Проверь страницу.", "", "## My request:", "Этот заголовок — часть моего текста.",
+    ].join(newline);
+    expect(normalizeUserMessage(source)).toEqual({
+      text: ["Проверь страницу.", "", "## My request:", "Этот заголовок — часть моего текста."].join(newline), files: [],
+    });
+  });
+
+  it.each([
+    "## My request:\n\nKeep my heading.",
+    "An example:\n\n# In app browser:\n\n## My request:\nKeep this example.",
+    "# In app browser:\n\n## My request:\nNo browser envelope here.",
+    "```markdown\n## My request:\nDo not strip this code.\n```",
+  ])("preserves a short request heading without a proven Desktop envelope", (source) => {
+    expect(normalizeUserMessage(source)).toEqual({ text: source, files: [] });
+  });
+
   it("projects the authored request and extracts file metadata", () => {
     const source = [
       "# Files mentioned by the user:",

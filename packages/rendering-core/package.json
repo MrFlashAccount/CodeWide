@@ -6,11 +6,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./markup": "./src/message-markup.ts",
-    "./math": "./src/message-math.ts"
+    "./math": "./src/message-math.ts",
+    "./ascii": "./src/svgbob-wasm-runtime.web.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "build": "pnpm typecheck"
   },
   "dependencies": {
     "htmlparser2": "10.0.0",

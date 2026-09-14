@@ -42,7 +42,11 @@ describe("application text input contract", () => {
 
   it("provides voice runtime around adaptive roots and the standalone browser; sidebar search inherits its root", () => {
     expect(screen).toContain("const voiceInputRuntime: AppVoiceInputRuntime");
-    expect(screen.match(/<AppVoiceInputProvider runtime=\{voiceInputRuntime\}>/gu)).toHaveLength(3);
+    const providers = screen.slice(screen.indexOf("function WorkspaceConversationProviders("), screen.indexOf("type SelectWorkspaceThread"));
+    expect(providers).toContain("<AppVoiceInputProvider runtime={voiceInputRuntime}>");
+    const shell = screen.slice(screen.indexOf("function CodeWideWorkspaceContent("), screen.indexOf("function workspaceConversationScope("));
+    expect(shell.indexOf("<WorkspaceConversationProviders")).toBeLessThan(shell.indexOf("<ForwardedLoopbackBrowser"));
+    expect(shell.lastIndexOf("</WorkspaceConversationProviders>")).toBeGreaterThan(shell.indexOf("<WorkspaceVoiceAura"));
     expect(screen.match(/searchContent=\{sidebarSearch\}/gu)).toHaveLength(2);
   });
 

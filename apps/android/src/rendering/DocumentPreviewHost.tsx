@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
 
 import { colors, spacing, typeScale, typeWeight, iconSize, controlSize, layoutSize, radii } from "../theme";
@@ -34,10 +34,10 @@ import {
 import { MarkdownLocalLinkProvider } from "./MarkdownLinkHandler";
 import { useImagePreview } from "./ImagePreviewHost";
 import { materializePrivateAsset } from "./private-asset";
-import { RichMarkdown, RichMarkdownTextScaleProvider } from "./RichMarkdown";
+import { RichMarkdownTextScaleProvider } from "./RichMarkdown";
 import type { ContentReviewTarget } from "./content-review";
 import { ContentReviewComments, ContentReviewComposer } from "./ContentReviewHost";
-import { RichContentWidthProvider } from "./RichContentLayout";
+import { MarkdownDocumentView } from "./MarkdownDocumentView";
 import { useEphemeralAsyncResource } from "./async-resource-store";
 import { useDocumentViewerPreferences } from "./use-document-viewer-preferences";
 import {
@@ -103,7 +103,7 @@ async function runDocumentDownload(
 function loadImagePreviewWithRetry(
   request: DocumentPreviewRequest,
   isCurrent: () => boolean,
-  onReady: (uri: string) => void,
+  onReady: (source: { uri: string; headers: Record<string, string> }) => void,
   onFailure: (cause: unknown, retry: () => void) => void,
 ): void {
   if (!isCurrent()) return;
@@ -241,10 +241,10 @@ export function DocumentPreviewHost({ children }: { children: ReactNode }) {
     loadImagePreviewWithRetry(
       request,
       isCurrent,
-      (uri) => openImagePreview({
+      (source) => openImagePreview({
           id: `remote-file:${request.path}`,
           label: request.name,
-          source: { uri },
+          source,
           reference: request.path,
           download: () => downloadFile(request),
         }, fullscreen),
@@ -351,16 +351,13 @@ function FullscreenDocumentPreview({
 }) {
   const resourceOwnerId = useId();
   const [revision, setRevision] = useState(0);
-  const [documentViewportWidth, setDocumentViewportWidth] = useState(0);
   const {
     preferences: { textScale, layoutMode },
     changeTextScale,
     resetTextScale,
     setLayoutMode,
   } = useDocumentViewerPreferences();
-  const markdownScrollRef = useRef<ScrollView | null>(null);
   const diagramViewport = useDiagramPreviewViewportController();
-  const scrolledMarkdownRevisionRef = useRef<number | null>(null);
   const source = request.source ?? { kind: "path" as const, path: request.path };
   const previewResource = useEphemeralAsyncResource<Extract<DocumentPreviewResult, { phase: "ready" }>>(
     `fullscreen-document:${resourceOwnerId}:${privateAssetCacheKey(source)}`,
@@ -388,11 +385,6 @@ function FullscreenDocumentPreview({
   const markdownReviewTarget: ContentReviewTarget | undefined = request.kind === "markdown"
     ? { id: `markdown-document:${request.path}`, label: request.name, reference: request.path }
     : undefined;
-  const scrollToMarkdownTarget = (y: number) => {
-    if (scrolledMarkdownRevisionRef.current === revision) return;
-    scrolledMarkdownRevisionRef.current = revision;
-    requestAnimationFrame(() => markdownScrollRef.current?.scrollTo({ y: Math.max(0, y - spacing.sm), animated: false }));
-  };
   const openNestedDocument = (href: string) => {
     const target = resolvePreviewableDocumentLink(href, remoteDocumentDirectory(request.path));
     if (target === null) return false;
@@ -438,47 +430,20 @@ function FullscreenDocumentPreview({
       )}
       {result.phase === "ready" && request.kind !== "html" && (
         <DiagramPreviewViewportProvider controller={diagramViewport}>
-          <ScrollView
-            key={`markdown:${revision}`}
-            ref={markdownScrollRef}
-            style={styles.scroll}
-            contentContainerStyle={styles.documentScrollContent}
-            keyboardShouldPersistTaps="handled"
-            onScroll={diagramViewport.schedule}
-            scrollEventThrottle={96}
-          >
-            <View
-              style={[
-                styles.document,
-                layoutMode === "reading" && styles.documentReading,
-                layoutMode === "reading" && { maxWidth: documentReadingWidth(textScale) },
-              ]}
-              onLayout={({ nativeEvent }) => {
-                const nextWidth = Math.max(0, Math.floor(nativeEvent.layout.width - spacing.md * 2));
-                setDocumentViewportWidth((current) => current === nextWidth ? current : nextWidth);
-                diagramViewport.schedule();
-              }}
-            >
-              <RichMarkdownTextScaleProvider scale={textScale}>
-                <RichContentWidthProvider width={documentViewportWidth > 0 ? documentViewportWidth : null}>
-                  <MarkdownLocalLinkProvider onOpen={openNestedDocument}>
-                    {result.segments.map((segment, index) => (
-                      <MarkdownPreviewSegment
-                        key={`${revision}:${index}`}
-                        source={segment}
-                        {...(markdownReviewTarget === undefined ? {} : { reviewTarget: markdownReviewTarget, reviewPathPrefix: `segment-${index}` })}
-                        {...(markdownTarget?.segmentIndex === index ? {
-                          targetLine: markdownTarget.line,
-                          onTargetLayout: scrollToMarkdownTarget,
-                        } : {})}
-                      />
-                    ))}
-                  </MarkdownLocalLinkProvider>
-                </RichContentWidthProvider>
-                {result.truncated && <Text style={styles.secondary}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text>}
-              </RichMarkdownTextScaleProvider>
-            </View>
-          </ScrollView>
+          <RichMarkdownTextScaleProvider scale={textScale}>
+            <MarkdownLocalLinkProvider onOpen={openNestedDocument}>
+              <MarkdownDocumentView
+                key={`markdown:${revision}`}
+                segments={result.segments}
+                target={markdownTarget}
+                {...(markdownReviewTarget === undefined ? {} : { reviewTarget: markdownReviewTarget })}
+                {...(layoutMode === "reading" ? { maxWidth: documentReadingWidth(textScale) } : {})}
+                textScale={textScale}
+                onScroll={diagramViewport.schedule}
+                footer={result.truncated ? <Text style={styles.secondary}>Preview limited to {MAX_DOCUMENT_PREVIEW_BYTES.toLocaleString()} bytes. Download the file to read the rest.</Text> : null}
+              />
+            </MarkdownLocalLinkProvider>
+          </RichMarkdownTextScaleProvider>
         </DiagramPreviewViewportProvider>
       )}
       {markdownReviewTarget !== undefined && (
@@ -487,50 +452,6 @@ function FullscreenDocumentPreview({
           <ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />
         </>
       )}
-    </View>
-  );
-}
-
-function MarkdownPreviewSegment({
-  source,
-  targetLine,
-  onTargetLayout,
-  reviewTarget,
-  reviewPathPrefix,
-}: {
-  source: string;
-  targetLine?: number;
-  onTargetLayout?(y: number): void;
-  reviewTarget?: ContentReviewTarget;
-  reviewPathPrefix?: string;
-}) {
-  const segmentYRef = useRef<number | null>(null);
-  const targetYRef = useRef<number | null>(null);
-  const publishedRef = useRef(false);
-  const publish = () => {
-    if (publishedRef.current || onTargetLayout === undefined || segmentYRef.current === null || targetYRef.current === null) return;
-    publishedRef.current = true;
-    onTargetLayout(segmentYRef.current + targetYRef.current);
-  };
-  return (
-    <View
-      onLayout={({ nativeEvent }) => {
-        segmentYRef.current = nativeEvent.layout.y;
-        publish();
-      }}
-    >
-      <RichMarkdown
-        source={source}
-        {...(reviewTarget === undefined ? {} : { reviewTarget })}
-        {...(reviewPathPrefix === undefined ? {} : { reviewPathPrefix })}
-        {...(targetLine === undefined ? {} : { targetLine })}
-        {...(onTargetLayout === undefined ? {} : {
-          onTargetLayout: (y: number) => {
-            targetYRef.current = y;
-            publish();
-          },
-        })}
-      />
     </View>
   );
 }
@@ -675,9 +596,7 @@ const styles = StyleSheet.create({
   retryButton: { minHeight: controlSize.regular, flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.large, backgroundColor: colors.accent, paddingHorizontal: spacing.md },
   retryText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
   scroll: { flex: 1, minHeight: 0, width: "100%" },
-  documentScrollContent: { width: "100%", minWidth: 0, alignItems: "center" },
   document: { width: "100%", minWidth: 0, alignSelf: "center", paddingHorizontal: spacing.md, paddingBottom: spacing.sm, gap: spacing.sm },
-  documentReading: { width: "100%" },
   textPreview: { width: "100%", color: colors.text, ...typeScale.code, fontFamily: "monospace",  },
   webView: { flex: 1, minHeight: 0, width: "100%", backgroundColor: colors.background },
 });

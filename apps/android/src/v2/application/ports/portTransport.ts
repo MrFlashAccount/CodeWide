@@ -33,6 +33,8 @@ export interface PortForwardingDraft {
 }
 
 export type PortForwardingEvent =
+  | { savedServerId: SavedServerId; type: "inventory" }
+  | { savedServerId: SavedServerId; type: "inventoryError" }
   | { profile: PortForwardingProfile; type: "profile" }
   | { profileId: string; type: "removed" };
 
@@ -44,7 +46,7 @@ export interface PortTransport {
   ): Promise<V2TunnelCreateResponse>;
   createProfileId(): string;
   deleteTunnel(savedServerId: SavedServerId, tunnelId: string): Promise<void>;
-  /** Reconciles native listeners with a successful scan before returning its inventory. */
+  /** Reads the latest server-pushed inventory, already reconciled by the native owner. */
   discover(savedServerId: SavedServerId): Promise<V2PortsResponse>;
   list(savedServerId: SavedServerId): Promise<PortForwardingProfile[]>;
   /** Excludes a currently discovered service; inventory eviction is native-owned. */

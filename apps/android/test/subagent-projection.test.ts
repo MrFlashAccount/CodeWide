@@ -8,6 +8,7 @@ import {
   subagentOwnTurns,
   subagentsForThread,
 } from "../src/data/subagent-projection";
+import { threadSummaryDescendantKeys, threadSummaryKey } from "../src/data/thread-summary-projection";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 
@@ -67,6 +68,25 @@ describe("subagent projection", () => {
     ];
 
     expect(subagentsForThread(values, "root").map((row) => row.remoteThreadId)).toEqual(["nested", "direct"]);
+  });
+
+  it("walks a reverse-ordered deep tree once and terminates cycles without including the root", () => {
+    let parentReads = 0;
+    const descendants = Array.from({ length: 128 }, (_, index) => {
+      const parent = index === 0 ? "root" : `child-${index - 1}`;
+      return { ...summary(`child-${index}`, parent, index),
+        get parentThreadId() { parentReads += 1; return parent; },
+      };
+    }).reverse();
+    const rows = [...descendants, summary("root", "child-127", -1), summary("orphan", "missing", 500)];
+    parentReads = 0;
+    expect(subagentsForThread(rows, "root").map((row) => row.remoteThreadId)).toEqual(descendants.map((row) => row.remoteThreadId));
+    // The performance contract is one parent read per input row, independent
+    // of tree depth; the two uninstrumented rows do not contribute reads.
+    expect(parentReads).toBe(descendants.length);
+    parentReads = 0;
+    expect(threadSummaryDescendantKeys(rows, "root")).toEqual(new Set(descendants.map((row) => threadSummaryKey("server", row.remoteThreadId))));
+    expect(parentReads).toBe(descendants.length);
   });
 
   it("uses the app-server nickname as the visible title", () => {

@@ -160,6 +160,15 @@ function parseEvent(raw: unknown): PortForwardingEvent | null {
   }
   if (value === null || typeof value !== "object") return null;
   const type = Reflect.get(value, "type");
+  if (type === "inventory" || type === "inventoryError") {
+    const id = Reflect.get(value, "connectionId");
+    if (typeof id !== "string" || id.length === 0) return null;
+    try {
+      return { savedServerId: savedServerId(id), type };
+    } catch {
+      return null;
+    }
+  }
   if (type === "removed") {
     const profileId = Reflect.get(value, "id");
     return typeof profileId === "string" && PROFILE_ID_PATTERN.test(profileId)

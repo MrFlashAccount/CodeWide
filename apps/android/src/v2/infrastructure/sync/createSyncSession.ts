@@ -16,6 +16,7 @@ export async function createSyncSession(
   const connection = await acquireSharedConnectionLease(savedServerId);
   const session = new SyncV2Session({
     intent: {
+      portInventory: true,
       catalog: { activeLimit: 40, archivedLimit: 40 },
       currentThread:
         currentThreadId === null

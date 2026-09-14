@@ -569,8 +569,8 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toContain("<MarkdownLocalLinkProvider onOpen={openThreadDocumentLink}>");
     expect(screen).toContain("resolvePreviewableDocumentLink(href, sourceCwd)");
     expect(richMarkdown).toContain("useMarkdownLocalLinkHandler()");
-    expect(documentPreviewHost).toContain("<MarkdownPreviewSegment");
-    expect(documentPreviewHost).toContain("targetLine: markdownTarget.line");
+    expect(documentPreviewHost).toContain("<MarkdownDocumentView");
+    expect(documentPreviewHost).toContain("target={markdownTarget}");
     expect(documentPreviewHost).toContain('isOpen={previewSurface === "sheet"}');
     expect(documentPreviewHost).toContain('snapPoints: ["60%", "90%"]');
     expect(documentPreviewHost).toContain('if (surface === "fullscreen")');
@@ -588,7 +588,7 @@ describe("checked-in Android project mirrors app config", () => {
     );
     expect(documentPreviewHost).toContain("startDocumentDownload(request, directory)");
     expect(documentPreviewHost).toContain("void materializePrivateAsset(");
-    expect(documentPreviewHost).toContain("source: { uri }");
+    expect(documentPreviewHost).toContain("source,");
     expect(documentPreviewHost).toContain("openImagePreview({");
     expect(documentPreviewHost).toContain("onDownload");
     expect(imagePreviewHost).toContain('{ id: "download", label: "Download"');
@@ -751,13 +751,14 @@ describe("checked-in Android project mirrors app config", () => {
     );
     expect(screen).not.toContain("refreshIfSelected");
     expect(screen).toContain("reloadSelected = false");
-    expect(screen).toContain("setActiveThreadId(value, navigationId, true, undefined, true);");
+    expect(screen).toContain("setActiveThreadId(value, navigationId, undefined, true);");
     expect(screen).toContain("threadNavigation.select(value, reloadSelected)");
     expect(screen).toContain("if (nextServerId !== undefined) setActiveServerId(nextServerId);");
     expect(screen).not.toContain(
       "setActiveServerId(parsed.connectionId);\n      setActiveThreadId(",
     );
-    expect(screen).toContain("setNewChatDraft(null);");
+    expect(screen).toContain("threadNavigation.openDraft({");
+    expect(screen).not.toContain("setNewChatDraft(");
     expect(screen).not.toContain("active-thread-lifecycle-repair");
     expect(screen).toContain("`composer-seed:${composerScope}`");
     expect(screen).not.toContain("setMobileRemoteSearch");
@@ -1389,9 +1390,9 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toMatch(/\{projectPickerVisible && \(\s*<ProjectPickerSheet/u);
     expect(screen).toMatch(/\{threadRenameVisible && \(\s*<ThreadRenameDialog/u);
     expect(screen).toMatch(/\{threadResourceSheet !== null && \(\s*<ThreadResourcesSheet/u);
-    expect(screen.match(/\{connectionSheetVisible && \(\s*<ConnectionSheet/gu)).toHaveLength(2);
-    expect(screen.match(/\{settingsVisible && \(\s*<ConnectionSettings/gu)).toHaveLength(2);
-    expect(screen.match(/\{newThreadVisible && \(\s*<NewThreadServerSheet/gu)).toHaveLength(2);
+    expect(screen).toMatch(/\{connectionSheetVisible && \(\s*<ConnectionSheet/u);
+    expect(screen).toMatch(/\{settingsVisible && \(\s*<SubscribedConnectionSettings/u);
+    expect(screen).toMatch(/\{newThreadVisible && \(\s*<NewThreadServerSheet/u);
     expect(screen.match(/<ThreadFilterMenu/gu)).toHaveLength(2);
     const threadFilterMenu = screen.slice(
       screen.indexOf("function ThreadFilterMenu("),
@@ -1492,11 +1493,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toMatch(/const reasoningEfforts\s*=\s*model === undefined\s*\? \[\]/u);
     expect(screen).toMatch(/menuScroll: \{[^}]*flex: 1[^}]*minHeight: 0[^}]*\}/u);
     expect(screen).toMatch(
-      /<VoiceAura\s+phase=\{voiceAuraPhase\}\s+controller=\{remote\.voiceController\}\s+scope=\{voiceAuraResource\?\.scope \?\? null\}\s+reducedMotion=\{reduceVoiceMotion\}\s*>/u,
-    );
-    expect(screen).toContain('resource?.phase === "recording") ?? null');
-    expect(screen).not.toContain(
-      'resource?.phase === "recording" || resource?.phase === "finishing"',
+      /<WorkspaceVoiceAura\s+resources=\{remote\.resourceDatabase\}\s+controller=\{remote\.voiceController\}\s*>/u,
     );
     expect(screen).toContain("function VoiceCaptureStatus({");
     expect(screen).toContain(
@@ -1614,7 +1611,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(screen).toMatch(/\?\s*threadSelectionKey\(serverThreads\[0\]\)/);
     expect(screen).toContain("threadNavigation.select(defaultDesktopThreadId)");
     expect(screen).toContain('scope="desktop-default-thread"');
-    expect(screen).toContain("revision={defaultDesktopThreadId}");
+    expect(screen).toContain('revision={destination.kind === "empty" ? defaultDesktopThreadId : null}');
     expect(screen).toContain("onCommit={commitDefaultDesktopThread}");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
     expect(screen).toContain("const windowLayout = useWindowLayout()");
@@ -1797,7 +1794,8 @@ describe("checked-in Android project mirrors app config", () => {
     expect(documentPreviewHost).toContain(
       'document: { width: "100%", minWidth: 0, alignSelf: "center"',
     );
-    expect(documentPreviewHost).toContain('documentReading: { width: "100%" }');
+    expect(readFileSync(new URL("../src/rendering/MarkdownDocumentView.tsx", import.meta.url), "utf8"))
+      .toContain('block: { width: "100%", alignSelf: "center"');
     expect(documentPreviewHost).toContain("maxWidth: documentReadingWidth(textScale)");
     expect(screen).toContain("function ConversationHistorySubtitle(");
     expect(screen).toContain("const activity = useThreadHistoryActivity(model, resourceId)");
@@ -2385,11 +2383,7 @@ describe("checked-in Android project mirrors app config", () => {
     expect(richMarkdown).not.toContain(
       "listBody: { minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: 0",
     );
-    expect(privateImageCache).toContain("codex-remote-private-images-v2");
-    expect(privateImageCache).toContain("downloadAsync(uri, partialUri");
-    expect(privateImageCache).toContain("moveAsync({ from: partialUri, to: fileUri })");
-    expect(privateImageCache).toContain("deleteAsync(partialUri, { idempotent: true })");
-    expect(privateImageCache).toContain("headers === undefined ? {} : { headers }");
+    expect(privateImageCache).toContain("cacheInlineAttachment");
     expect(imagePreviewHost).toContain("const [decodeState, setDecodeState]");
     expect(imagePreviewHost).toContain("Image decode failed");
     expect(screen).toMatch(/<PrivateImageAccessProvider\s+scope=\{composerScope\}/);
@@ -2504,9 +2498,7 @@ describe("checked-in Android project mirrors app config", () => {
     );
     expect(screen).not.toContain('recordTiming("thread_cached_visible_ms"');
     expect(screen).not.toContain('recordTiming("thread_fresh_visible_ms"');
-    expect(screen).toMatch(
-      /const activeConnectionAvailable =\s*activeConnectionState === "live" \|\|\s*activeConnectionState === "syncing"/,
-    );
+    expect(screen).toContain("threadResourceRevision={activeConnectionState}");
     expect(screen).not.toContain("const hydrationTaskKey");
     expect(screen).not.toContain("byThread.delete(hydration.key)");
     expect(screen).not.toContain("mergeVisibleThread(");

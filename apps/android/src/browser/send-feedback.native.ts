@@ -1,3 +1,4 @@
+import { checkAborted } from "../native/check-aborted";
 import { toByteArray } from "base64-js";
 import type { RemoteFileAttachment } from "@codewide/sync-client";
 import { randomUUID } from "expo-crypto";
@@ -14,19 +15,19 @@ export async function sendBrowserFeedback(remote: RemoteWorkspace, target: Feedb
   const uploads: SelectedUpload[] = [];
   const attachments: RemoteFileAttachment[] = [];
   try {
-    signal.throwIfAborted();
+    checkAborted(signal);
     uploads.push(createTextUpload("browser-feedback.md", "text/markdown", browserFeedbackMarkdown(submission)));
     if (submission.screenshot !== null) uploads.push(createBinaryUpload("browser-element.png", "image/png", toByteArray(submission.screenshot)));
     for (const upload of uploads) {
       const path = attachmentUploadPath(target.threadId, upload.name);
-      signal.throwIfAborted();
+      checkAborted(signal);
       const transfer = startUpload(() => remote.transferAccess(target.connectionId), upload, ATTACHMENT_ROOT_ID, path, false, ignoreProgress);
       signal.addEventListener("abort", transfer.cancel, { once: true });
       try { await transfer.promise; }
       finally { signal.removeEventListener("abort", transfer.cancel); }
       attachments.push({ id: randomUUID(), rootId: ATTACHMENT_ROOT_ID, path, name: upload.name, kind: upload.mimeType === "image/png" ? "image" : "file" });
     }
-    signal.throwIfAborted();
+    checkAborted(signal);
     await remote.sendText(target.connectionId, target.threadId, submission.prompt, { type: "queue" }, { attachments });
   } finally {
     // These cache files were created by this send attempt, never selected user files.

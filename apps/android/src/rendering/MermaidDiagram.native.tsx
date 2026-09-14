@@ -23,9 +23,9 @@ import { NativeCodeBlock } from "./NativeCodeBlock";
 import { NativeRevealSurface } from "./NativeRevealSurface";
 import { FluidLayoutFrame } from "./FluidLayoutFrame";
 import { DiagramSvgPreview } from "./DiagramSvgPreview.native";
+import { INLINE_MEDIA_PREVIEW_HEIGHT } from "./InlineMediaFrame";
 
 const MAX_SOURCE_CHARS = 128 * 1024;
-const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 440;
 
 type DiagramEngine = {
@@ -92,7 +92,6 @@ export function AsciiDiagram({ source }: { source: string }) {
 function LocalDiagram({ engine, source, reviewTarget, diagramId, reveal = false }: { engine: DiagramEngine; source: string; reviewTarget?: ContentReviewTarget; diagramId?: string; reveal?: boolean }) {
   const fullscreenOverlay = useAppFullscreenOverlay();
   const inlineWebView = useRef<WebView>(null);
-  const [height, setHeight] = useState(MIN_HEIGHT);
   const [copied, setCopied] = useState(false);
   const [renderedKey, setRenderedKey] = useState<string | null>(null);
   const tooLarge = source.length > MAX_SOURCE_CHARS;
@@ -147,8 +146,7 @@ function LocalDiagram({ engine, source, reviewTarget, diagramId, reveal = false 
           mode="inline"
           source={boundedSource}
           webViewRef={inlineWebView}
-          style={{ height }}
-          onHeight={setHeight}
+          style={{ height: INLINE_MEDIA_PREVIEW_HEIGHT }}
           onSettled={() => setRenderedKey(renderKey)}
         />}
       </View>
@@ -225,7 +223,6 @@ function DiagramSurface({
   source,
   webViewRef,
   style,
-  onHeight,
   onSettled,
   annotationEnabled = false,
   reviewPoints = [],
@@ -237,7 +234,6 @@ function DiagramSurface({
   source: string;
   webViewRef: RefObject<WebView | null>;
   style: ViewStyle;
-  onHeight?(height: number): void;
   onSettled?(): void;
   annotationEnabled?: boolean;
   reviewPoints?: readonly ContentReviewPoint[];
@@ -277,10 +273,6 @@ function DiagramSurface({
   }, [mode, reviewPointsKey, webViewRef]);
 
   const fail = (message: string) => {
-    if (engine.kind === "ascii") {
-      const sourceHeight = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, source.split("\n").length * 16 + 52));
-      onHeight?.(sourceHeight);
-    }
     setError(message);
     setStatus("error");
     onSettled?.();
@@ -309,9 +301,6 @@ function DiagramSurface({
       if (mode === "fullscreen") {
         inject(webViewRef, `window.diagramSetAnnotationMode(${annotationEnabled ? "true" : "false"});true;`);
         inject(webViewRef, `window.diagramSetReviewPoints(${reviewPointsKey});true;`);
-      }
-      if (typeof message.height === "number") {
-        onHeight?.(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(message.height))));
       }
       setStatus("rendered");
       onSettled?.();
@@ -379,7 +368,7 @@ function DiagramSurface({
             <Text numberOfLines={2} style={styles.asciiFallbackText}>Could not render diagram · showing source</Text>
             <DiagramIconButton accessibilityLabel="Retry ASCII diagram" icon="refresh" onPress={render} />
           </View>
-          <NativeCodeBlock value={source} language="text" maxHeight={MAX_HEIGHT - 48} />
+          <NativeCodeBlock value={source} language="text" maxHeight={mode === "inline" ? INLINE_MEDIA_PREVIEW_HEIGHT - 64 : MAX_HEIGHT - 48} />
         </View>
       )}
       {status === "error" && engine.kind !== "ascii" && (

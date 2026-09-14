@@ -43,7 +43,7 @@ describe("port forwarding manager", () => {
   it("keeps unavailable distinct from stopped and transport errors", () => {
     expect(manager).toContain('"stopped" | "connecting" | "live" | "unavailable" | "error"');
     expect(manager).toContain('unavailable ? "Unavailable"');
-    expect(nativeManager).toContain("inventoryReconciler.reconcile(saved.id, inventory)");
+    expect(nativeManager).toContain("inventoryReconciler.reconcile(pending.serverId, inventory)");
     expect(manager).not.toContain("Saved ports");
     expect(manager).toContain("const currentProfiles = props.profiles.filter");
     expect(nativeManager).toContain("profile.serviceKey != currentKey");

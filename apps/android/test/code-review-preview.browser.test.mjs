@@ -73,3 +73,22 @@ test("still renders a complete source file and a reconstructed diff", async () =
     await expect(page.getByText("currentValue", { exact: true }).filter({ visible: true })).toBeVisible();
   } finally { await page.close(); }
 });
+
+test("renders suppressed blank context and retains authoritative line references", async () => {
+  const page = await openReview();
+  try {
+    await send(page, "workspace", { files, revision: "files-blank", selectedPath: "file.ts", sidebarOpen: false, compact: true });
+    for (const mode of ["unified", "split"]) {
+      await send(page, "settings", { mode, wrapLines: false });
+      await send(page, "document", { requestId: 2, document: {
+        path: "file.ts", source: "", revision: "blank-context",
+        patches: [{ kind: "update", diff: "@@ -20,3 +20,3 @@\n\n-beforeBlank\n+afterBlank\n \n" }],
+      } });
+      await expect(page.getByText("beforeBlank", { exact: true })).toBeVisible();
+      await expect(page.getByText("afterBlank", { exact: true })).toBeVisible();
+      await page.locator('[data-column-number="21"][data-line-type="change-addition"]').click();
+      await expect.poll(() => page.evaluate(() => window.reviewEvents.filter((event) => event.type === "lineTap").at(-1)?.reference)).toMatchObject({ path: "file.ts", line: 21, side: "new", coordinate: "file" });
+    }
+    assert.equal(await page.evaluate(() => window.reviewEvents.some((event) => event.type === "error")), false);
+  } finally { await page.close(); }
+});

@@ -24,11 +24,15 @@
     "typecheck:v2": "tsc --project tsconfig.v2.json",
     "test:v2:render": "jest --config jest.v2.config.cjs --runInBand",
     "test:markup": "jest --config jest.markup.config.cjs --runInBand",
+    "test:web-platform": "node --test test/web-platform.browser.test.mjs",
     "test:diagram-preview": "node --test test/diagram-preview.browser.test.mjs",
     "test:review-preview": "pnpm sync:code-review && node --test test/code-review-preview.browser.test.mjs test/footer-layout.browser.test.mjs",
     "compile:v2:android": "sh ../../scripts/validate-android-v2-bundle.sh",
     "validate:v2": "pnpm format:v2:check && pnpm typecheck:v2 && pnpm lint:v2 && pnpm lint:v2:dead-code && pnpm lint:v2:dependencies",
-    "typecheck": "tsc --noEmit",
+    "typecheck:native": "tsc --noEmit",
+    "typecheck:compatibility": "tsc --project tsconfig.compatibility.json --noEmit",
+    "typecheck:web": "tsc --project tsconfig.web.json --noEmit",
+    "typecheck": "pnpm typecheck:native && pnpm typecheck:web && pnpm typecheck:compatibility",
     "build": "expo export --platform web"
   },
   "dependencies": {

@@ -39,7 +39,8 @@ describe("conversation transition parity", () => {
     // Main-chat navigation now reveals cached data or a skeleton immediately;
     // retaining the previous destination until hydration is no longer its UX contract.
     expect(mainSelection).not.toContain("startThreadTransition(");
-    expect(mainSelection).toContain("setThreadSelection(nextSelection)");
+    expect(mainSelection).toContain("threadNavigation.select(value, reloadSelected)");
+    expect(mainSelection).not.toContain("setThreadSelection(");
     const fallback = screen.slice(screen.indexOf("function ConversationNavigationLoader"), screen.indexOf("function ConversationNavigationFallback"));
     expect(fallback).toContain("<MessageListSkeleton />");
     expect(fallback).not.toContain("<ActivityIndicator");
@@ -76,7 +77,7 @@ describe("conversation transition parity", () => {
     expect(screen).toContain('viewId: `conversation:${connectionId}:${threadId}`');
     const workspaceVoiceRuntime = screen.slice(
       screen.indexOf("const voiceInputRuntime: AppVoiceInputRuntime"),
-      screen.indexOf("const openActiveLoopbackLink"),
+      screen.indexOf("type SelectWorkspaceThread"),
     );
     expect(workspaceVoiceRuntime).not.toContain("threadDetails?.getThread");
     expect(workspaceVoiceRuntime).toContain("thread: null,");

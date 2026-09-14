@@ -31,9 +31,12 @@ internal class V2NotificationProjection(restoredState: String? = null) {
   fun observe(
     text: String,
     persistState: ((String) -> Unit)? = null,
-  ): List<V2NotificationEffect> {
+  ): List<V2NotificationEffect> = observeValidatedFrame(SyncV2ContractGenerated.parseServerFrame(text), persistState)
+
+  /** The transport adapter has already validated this frame with the generated contract. */
+  @Synchronized
+  fun observeValidatedFrame(frame: JSONObject, persistState: ((String) -> Unit)? = null): List<V2NotificationEffect> {
     dirty = false
-    val frame = SyncV2ContractGenerated.parseServerFrame(text)
     val effects = mutableListOf<V2NotificationEffect>()
     when (frame.getString("type")) {
       "snapshot" -> applySnapshot(frame, effects)

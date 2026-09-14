@@ -10,9 +10,9 @@
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; height: 100%; background: #171b20; color: #eef2f6; overflow: hidden; overscroll-behavior: none; }
     #root { position: relative; width: 100%; height: 100%; overflow: hidden; }
-    #root[data-mode="inline"] { height: auto; min-height: 1px; padding: 10px; }
-    #root[data-mode="inline"] #stage, #root[data-mode="inline"] #canvas { width: 100%; height: auto; }
-    #root[data-mode="inline"] #canvas svg { display: block; width: 100%; max-width: none; height: auto; }
+    #root[data-mode="inline"] { height: 100%; box-sizing: border-box; padding: 10px; }
+    #root[data-mode="inline"] #stage, #root[data-mode="inline"] #canvas { width: 100%; height: 100%; }
+    #root[data-mode="inline"] #canvas svg { display: block; width: 100%; max-width: none; height: 100%; }
     #root[data-mode="fullscreen"] { touch-action: none; }
     #root[data-mode="fullscreen"] #stage { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; overflow: hidden; touch-action: none; }
     #root[data-mode="fullscreen"] #canvas { flex: 0 0 auto; touch-action: none; will-change: transform; transform-origin: 50% 50%; }
@@ -173,10 +173,10 @@
   function layoutInline(svg, requestId) {
     destroyPanzoom();
     canvas.style.width = '100%';
-    canvas.style.height = 'auto';
-    const size = viewBoxSize(svg);
-    const availableWidth = Math.max(1, root.clientWidth - 20);
-    reportSize(requestId, availableWidth * size.height / size.width + 20);
+    canvas.style.height = '100%';
+    viewBoxSize(svg);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    reportSize(requestId, root.clientHeight);
   }
 
   function fullscreenFitScale() {

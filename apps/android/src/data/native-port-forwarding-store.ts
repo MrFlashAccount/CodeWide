@@ -15,12 +15,12 @@ import {
 
 type Listener = () => void;
 
-const EMPTY_PORT_FORWARDING_SNAPSHOT: NativePortForwardingSnapshot = Object.freeze({
-  profiles: Object.freeze([]),
-  discoveredPorts: Object.freeze([]),
+const EMPTY_PORT_FORWARDING_SNAPSHOT: NativePortForwardingSnapshot = {
+  profiles: [],
+  discoveredPorts: [],
   discoveryStatus: "idle",
   discoveryError: null,
-});
+};
 const subscribeToNothing = (_listener: Listener): (() => void) => () => undefined;
 const readEmptyPortForwardingSnapshot = (): NativePortForwardingSnapshot => EMPTY_PORT_FORWARDING_SNAPSHOT;
 
@@ -32,7 +32,7 @@ class PortForwardScope {
   #loading: Promise<void> | null = null;
   #discoveryLoading: Promise<void> | null = null;
   #discoveredAt = 0;
-  #pollTimer: ReturnType<typeof setInterval> | null = null;
+  #discoveryDirty = false;
 
   constructor(connectionId: string) {
     this.connectionId = connectionId;
@@ -42,17 +42,21 @@ class PortForwardScope {
     this.#listeners.add(listener);
     void this.load();
     if (Date.now() - this.#discoveredAt > DISCOVERY_STALE_MS) void this.refreshDiscovery();
-    this.#pollTimer ??= setInterval(() => void this.refreshDiscovery(), DISCOVERY_POLL_MS);
     return () => {
       this.#listeners.delete(listener);
-      if (this.#listeners.size === 0 && this.#pollTimer !== null) {
-        clearInterval(this.#pollTimer);
-        this.#pollTimer = null;
-      }
     };
   };
 
   readonly getSnapshot = (): NativePortForwardingSnapshot => this.#snapshot;
+
+  inventoryUpdated(): void {
+    this.#discoveryDirty = this.#discoveryLoading !== null;
+    void this.refreshDiscovery();
+  }
+
+  inventoryFailed(): void {
+    this.#replace({ ...this.#snapshot, discoveryStatus: "error", discoveryError: "Could not update server ports" });
+  }
 
   async load(force = false): Promise<void> {
     if (this.connectionId === "" || (this.#loaded && !force)) return;
@@ -73,10 +77,10 @@ class PortForwardScope {
     this.#discoveryLoading = discoverNativePorts(this.connectionId)
       .then(async ({ ports, scannedAt }) => {
         this.#discoveredAt = scannedAt;
-        // Discovery reconciles the native inventory before returning. Reload
+        // The native push worker reconciles before notifying us. Reload
         // current forwards so missed bridge events cannot retain dead profiles.
         const profiles = await listNativePortForwards(this.connectionId);
-        this.#replace({ ...this.#snapshot, profiles, discoveredPorts: ports, discoveryStatus: "ready", discoveryError: null });
+        this.#replace({ ...this.#snapshot, profiles, discoveredPorts: ports, discoveryStatus: scannedAt === 0 ? "loading" : "ready", discoveryError: null });
       })
       .catch((cause: unknown) => {
         this.#replace({
@@ -85,7 +89,13 @@ class PortForwardScope {
           discoveryError: cause instanceof Error ? cause.message : "Could not discover open ports",
         });
       })
-      .finally(() => { this.#discoveryLoading = null; });
+      .finally(() => {
+        this.#discoveryLoading = null;
+        if (this.#discoveryDirty) {
+          this.#discoveryDirty = false;
+          void this.refreshDiscovery();
+        }
+      });
     await this.#discoveryLoading;
   }
 
@@ -165,7 +175,6 @@ export type NativePortForwardingSnapshot = {
 };
 
 const DISCOVERY_STALE_MS = 60_000;
-const DISCOVERY_POLL_MS = 5_000;
 
 class NativePortForwardingStore {
   #scopes = new Map<string, PortForwardScope>();
@@ -174,7 +183,9 @@ class NativePortForwardingStore {
   constructor() {
     subscribeNativePortForwards((event) => {
       if (event.type === "profile") this.scope(event.profile.connectionId).apply(event.profile);
-      else for (const scope of this.#scopes.values()) scope.remove(event.id);
+      else if (event.type === "removed") for (const scope of this.#scopes.values()) scope.remove(event.id);
+      else if (event.type === "inventory") this.scope(event.connectionId).inventoryUpdated();
+      else this.scope(event.connectionId).inventoryFailed();
     });
   }
 

@@ -67,7 +67,7 @@ describe("document preview surfaces", () => {
     expect(bubble).not.toContain("<Pressable");
     expect(documentPreview).toContain('if (surface === "fullscreen")');
     expect(documentPreview).toContain("presentFullscreenDocument(fullscreen, request, downloadFile)");
-    expect(documentPreview).toContain("<ScrollView");
+    expect(documentPreview).toContain("<MarkdownDocumentView");
     expect(documentPreview).toContain("paddingBottom: spacing.sm");
   });
 });

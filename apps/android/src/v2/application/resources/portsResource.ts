@@ -38,15 +38,13 @@ const EMPTY: PortsProjection = {
   profiles: [],
   scannedAt: 0,
 };
-const DISCOVERY_POLL_MS = 5000;
 
 export class PortsResource extends ObservableResource<PortsProjection> {
   readonly #transport: PortTransport;
   readonly #savedServerId: SavedServerId;
   readonly #unsubscribe: () => void;
-  #pollTimer: ReturnType<typeof setInterval> | null = null;
+  #refreshDirty = false;
   #refreshing: Promise<void> | null = null;
-  #subscribers = 0;
   #stopped = false;
 
   constructor(transport: PortTransport, savedServerId: SavedServerId) {
@@ -65,24 +63,7 @@ export class PortsResource extends ObservableResource<PortsProjection> {
     await this.#transport.deleteTunnel(this.#savedServerId, tunnelId);
   }
 
-  override subscribe = (listener: () => void): (() => void) => {
-    this.#subscribers += 1;
-    if (this.#pollTimer === null && !this.#stopped) {
-      this.#pollTimer = setInterval(
-        () => void this.refresh().catch(() => undefined),
-        DISCOVERY_POLL_MS,
-      );
-    }
-    const remove = this.addListener(listener);
-    return () => {
-      remove();
-      this.#subscribers -= 1;
-      if (this.#subscribers === 0 && this.#pollTimer !== null) {
-        clearInterval(this.#pollTimer);
-        this.#pollTimer = null;
-      }
-    };
-  };
+  override subscribe = (listener: () => void): (() => void) => this.addListener(listener);
 
   async create(input: CreatePortProfileInput): Promise<PortProfile> {
     await this.refresh();
@@ -189,10 +170,6 @@ export class PortsResource extends ObservableResource<PortsProjection> {
   stopResource(): void {
     if (this.#stopped) return;
     this.#stopped = true;
-    if (this.#pollTimer !== null) {
-      clearInterval(this.#pollTimer);
-      this.#pollTimer = null;
-    }
     this.#unsubscribe();
   }
 
@@ -200,6 +177,10 @@ export class PortsResource extends ObservableResource<PortsProjection> {
     if (this.#refreshing !== null) return this.#refreshing;
     this.#refreshing = this.#refresh().finally(() => {
       this.#refreshing = null;
+      if (this.#refreshDirty && !this.#stopped) {
+        this.#refreshDirty = false;
+        void this.refresh().catch(() => undefined);
+      }
     });
     return this.#refreshing;
   }
@@ -227,7 +208,7 @@ export class PortsResource extends ObservableResource<PortsProjection> {
     try {
       const discovered = await this.#transport.discover(this.#savedServerId);
       if (this.#stopped) return;
-      // The native inventory owner creates/removes forwards during discovery.
+      // The native inventory owner creates/removes forwards before publishing.
       // Reload after it commits; JavaScript must not run a second reconciler.
       try {
         const profiles = await this.#transport.list(this.#savedServerId);
@@ -243,7 +224,7 @@ export class PortsResource extends ObservableResource<PortsProjection> {
         value: {
           ...value,
           discoveryError: null,
-          discoveryStatus: "ready",
+          discoveryStatus: discovered.scannedAt === 0 ? "loading" : "ready",
           ports: discovered.ports,
           profileError,
           scannedAt: discovered.scannedAt,
@@ -266,6 +247,22 @@ export class PortsResource extends ObservableResource<PortsProjection> {
 
   readonly #portEvent = (event: PortForwardingEvent): void => {
     if (this.#stopped) return;
+    if (event.type === "inventory" || event.type === "inventoryError") {
+      if (event.savedServerId !== this.#savedServerId) return;
+      if (event.type === "inventory") {
+        this.#refreshDirty = this.#refreshing !== null;
+        void this.refresh().catch(() => undefined);
+      } else
+        this.publish({
+          status: "ready",
+          value: {
+            ...this.snapshot().value,
+            discoveryStatus: "error",
+            discoveryError: "Could not update server ports",
+          },
+        });
+      return;
+    }
     if (event.type === "removed") {
       this.#removeProfile(event.profileId);
       return;

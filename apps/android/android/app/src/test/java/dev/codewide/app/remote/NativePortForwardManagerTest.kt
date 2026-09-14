@@ -32,22 +32,6 @@ class NativePortForwardManagerTest {
   }
 
   @Test
-  fun derivesHttpDiscoveryEndpointFromSyncEndpoint() {
-    assertEquals(
-      "https://codex.example.test/v2/ports",
-      NativePortForwardManager.portDiscoveryEndpoint("wss://codex.example.test/v1/sync"),
-    )
-    assertEquals(
-      "http://10.0.2.2:8765/v2/ports",
-      NativePortForwardManager.portDiscoveryEndpoint("ws://10.0.2.2:8765/v1/sync"),
-    )
-    assertEquals(
-      "https://codex.example.test/v2/ports",
-      NativePortForwardManager.portDiscoveryEndpoint("wss://codex.example.test/v2/sync"),
-    )
-  }
-
-  @Test
   fun rejectsInvalidEndpointAndPort() {
     assertThrows(IllegalStateException::class.java) {
       NativePortForwardManager.portForwardEndpoint("wss://codex.example.test/not-sync", 3000)

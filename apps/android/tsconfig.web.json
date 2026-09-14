@@ -1,0 +1,38 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2024",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "react"
+    ],
+    "moduleSuffixes": [
+      ".web",
+      ""
+    ],
+    "customConditions": [
+      "browser"
+    ]
+  },
+  "files": [],
+  "exclude": [
+    "node_modules",
+    "android",
+    "dist",
+    "**/*.native.ts",
+    "**/*.native.tsx",
+    "**/*.android.ts",
+    "**/*.android.tsx"
+  ],
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "src/**/*.web.ts",
+    "src/**/*.web.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
+}

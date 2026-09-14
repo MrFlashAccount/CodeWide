@@ -1,14 +1,17 @@
-import type { ThreadUiStateDatabase } from "./thread-ui-state-database.native";
+import { localOnlyCollectionOptions } from "@tanstack/db";
+import { createCollection } from "@tanstack/react-db";
+import type { ThreadUiStateDatabase } from "./thread-ui-state-database-contract";
 import { observable, type Observable } from "@legendapp/state";
 import type { ThreadUiStateRow } from "./thread-ui-state-types";
 
-export type { ThreadUiStateDatabase } from "./thread-ui-state-database.native";
+export type { ThreadUiStateDatabase } from "./thread-ui-state-database-contract";
 
 export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
   const reads = new Map<string, Promise<Awaited<ReturnType<ThreadUiStateDatabase["getOrCreate"]>>>>();
   const rows = new Map<string, Observable<ThreadUiStateRow | null>>();
+  const collection = createCollection(localOnlyCollectionOptions<ThreadUiStateRow, string>({ id: "thread-ui-state-web", getKey: (row) => row.id }));
   return {
-    collection: null as never,
+    collection,
     get() { return null; },
     row$(connectionId, threadId) {
       const key = `${connectionId}\u0000${threadId}`;
@@ -57,6 +60,6 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
         if (key.startsWith(`${connectionId}\u0000`)) rows.delete(key);
       }
     },
-    close() { reads.clear(); rows.clear(); },
+    close() { reads.clear(); rows.clear(); void collection.cleanup(); },
   };
 }

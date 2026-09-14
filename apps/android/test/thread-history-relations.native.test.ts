@@ -9,8 +9,8 @@ import type { TurnUsageProjection } from "@codewide/sync-client";
 import { contextUsageFromProjection } from "../src/data/account-rate-limits";
 import { threadFailureNotice } from "../src/data/thread-current-outcome";
 
-const platform = vi.hoisted((): { database: DatabaseSync | null; failSql: string; plans: string[] | null; transactionTail: Promise<void> } => ({
-  database: null, failSql: "", plans: null, transactionTail: Promise.resolve(),
+const platform = vi.hoisted((): { database: DatabaseSync | null; failSql: string; plans: string[] | null; transactionTail: Promise<void>; sqlGate: { match: string; entered: () => void; released: Promise<void> } | null } => ({
+  database: null, failSql: "", plans: null, transactionTail: Promise.resolve(), sqlGate: null,
 }));
 
 function sqlValue(value: unknown): SQLInputValue {
@@ -24,6 +24,12 @@ function database(): DatabaseSync {
 }
 
 async function execute(sql: string, params: readonly unknown[] = []) {
+  const gate = platform.sqlGate;
+  if (gate !== null && sql.includes(gate.match)) {
+    platform.sqlGate = null;
+    gate.entered();
+    await gate.released;
+  }
   if (platform.failSql !== "" && sql.includes(platform.failSql)) throw new Error("Injected SQLite interruption");
   if (platform.plans !== null && sql.startsWith("SELECT") && sql.includes("ORDER BY")) {
     platform.plans.push(...database().prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params.map(sqlValue)).map(({ detail }) => String(detail)));
@@ -165,7 +171,7 @@ async function readThread(storage: ReturnType<typeof createThreadDetailSqlite>) 
   return materializeThreadDetail([...window.turnRows, ...window.detailRows, ...window.liveRows], "server", "thread", "session");
 }
 
-beforeEach(() => { platform.database = new DatabaseSync(":memory:"); database().exec("PRAGMA foreign_keys=ON"); platform.failSql = ""; platform.plans = null; platform.transactionTail = Promise.resolve(); });
+beforeEach(() => { platform.database = new DatabaseSync(":memory:"); database().exec("PRAGMA foreign_keys=ON"); platform.failSql = ""; platform.plans = null; platform.transactionTail = Promise.resolve(); platform.sqlGate = null; });
 afterEach(() => { database().close(); platform.database = null; });
 
 describe("sidebar access paths", () => {
@@ -1046,5 +1052,42 @@ describe("relational thread history", () => {
     expect(loaded.liveRows).toContainEqual(pending());
     expect(await storage.loadThreadMeta("server", "thread")).toMatchObject({ historyHadTurns: true });
     await storage.close();
+  });
+});
+
+
+describe("resident navigation isolation", () => {
+  it("opens a resident chat while another chat waits for disk, preserving both after restart", async () => {
+    const details = createThreadDetailDatabase();
+    await details.prepare();
+    await details.importThreadSnapshot("server", { ...thread(), turns: [turn("a-old")] }, "initial", null);
+    await details.importThreadSnapshot("server", { ...thread(), id: "b", turns: [turn("b-turn")] }, "initial", null);
+    const request = { connectionId: "server", threadId: "b", anchorTurnId: null };
+    await details.loadWindow(request);
+    const entered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    platform.sqlGate = { match: "INSERT INTO codewide_history_content", entered: entered.resolve, released: released.promise };
+    const writing = details.importThreadSnapshot("server", { ...thread(), turns: [turn("a-new")] }, "recovery", null);
+    let opening: Promise<void> | null = null;
+    try {
+      await entered.promise;
+      let opened = false;
+      opening = details.loadWindow(request).then(() => { opened = true; });
+      await vi.waitFor(() => expect(opened).toBe(true));
+      expect(details.getThread("server", "b")?.turns.map((value) => value.id)).toEqual(["b-turn"]);
+    } finally {
+      released.resolve();
+      await writing;
+      await opening;
+      await details.close();
+    }
+    const restarted = createThreadDetailDatabase();
+    try {
+      await restarted.prepare();
+      await restarted.loadWindow(request);
+      expect(restarted.getThread("server", "b")?.turns.map((value) => value.id)).toEqual(["b-turn"]);
+      await restarted.loadWindow({ ...request, threadId: "thread" });
+      expect(restarted.getThread("server", "thread")?.turns.map((value) => value.id)).toEqual(["a-new"]);
+    } finally { await restarted.close(); }
   });
 });

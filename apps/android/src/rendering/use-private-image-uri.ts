@@ -5,7 +5,7 @@ import {
   type PrivateAssetSource,
 } from "../data/private-transfer";
 import { materializePrivateAsset } from "./private-asset";
-import { useAsyncResource } from "./async-resource-store";
+import { useEphemeralAsyncResource } from "./async-resource-store";
 import { privateImageResourceKey } from "./private-image-resource-key";
 import { incrementMetric, recordTiming } from "../data/operational-metrics";
 
@@ -60,9 +60,9 @@ export function usePrivateAssetUri(source: PrivateAssetSource | null, revision =
   const key = source === null
     ? null
     : `private-asset:${accessScope}:${revision}:${privateImageResourceKey(source)}`;
-  const resource = useAsyncResource<PrivateImageSource>(key, key ?? "none", async (_publish, signal) => {
+  const resource = useEphemeralAsyncResource<PrivateImageSource>(key, key ?? "none", async (_publish, signal) => {
     if (source === null) return EMPTY_PRIVATE_IMAGE;
-    const materialize = materializePrivateAsset(source, getAccess, recoverMissing ?? undefined).then((uri): ResolvedImageSource => ({ uri }));
+    const materialize = materializePrivateAsset(source, getAccess, recoverMissing ?? undefined, signal);
     const materializeStartedAt = performance.now();
     return await materialize.then((resolved) => {
       if (!signal.aborted) recordTiming("image_materialize_ms", performance.now() - materializeStartedAt);

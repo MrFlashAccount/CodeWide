@@ -138,7 +138,7 @@ describe("document preview", () => {
     expect(documentPreview).toContain('{ id: "layout-reading", label: "Reading width"');
     expect(documentPreview).toContain('{ id: "layout-wide", label: "Full width"');
     expect(documentPreview).toContain("<RichMarkdownTextScaleProvider scale={textScale}>");
-    expect(documentPreview).toContain("layoutMode === \"reading\" && styles.documentReading");
+    expect(documentPreview).toContain('layoutMode === "reading" ? { maxWidth: documentReadingWidth(textScale) }');
     expect(documentPreview).toContain("documentReadingWidth(textScale)");
     expect(documentPreview).toContain("useDocumentViewerPreferences()");
   });

@@ -1,3 +1,32 @@
+diff --git a/package.json b/package.json
+index 34f390ba3b189dce44210e39e3ac888bf7047c15..ea3a573182c4fa47c45e02a2e53bde803da9b695 100644
+--- a/package.json
++++ b/package.json
+@@ -32,18 +32,18 @@
+     "./react-native": {
+       "types": "./react-native.d.ts",
+       "browser": {
+-        "import": "./react-native.web.mjs",
+-        "require": "./react-native.web.js",
+-        "default": "./react-native.web.js"
++        "import": "./react-native.mjs",
++        "require": "./react-native.js",
++        "default": "./react-native.js"
+       },
+       "react-native": {
+         "import": "./react-native.mjs",
+         "require": "./react-native.js",
+         "default": "./react-native.js"
+       },
+-      "import": "./react-native.web.mjs",
+-      "require": "./react-native.web.js",
+-      "default": "./react-native.web.js"
++      "import": "./react-native.mjs",
++      "require": "./react-native.js",
++      "default": "./react-native.js"
+     },
+     "./section-list": {
+       "types": "./section-list.d.ts",
 diff --git a/react-native.js b/react-native.js
 index b3c5a306b293f797a8b338adfca3060c0f6db22b..5b2aa762d96bd38391f67625039c06ab032b8daf 100644
 --- a/react-native.js
@@ -192,3 +221,6 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..eb1d7ae21ebac62b220fb223a87722d1
        shouldMaintainScrollAtEnd = true;
      }
      onItemSizeChanged == null ? void 0 : onItemSizeChanged({
+diff --git a/react-native.web.d.ts b/react-native.web.d.ts
+deleted file mode 100644
+index b6c7481603f4119495551b3e4c1c071984c144af..0000000000000000000000000000000000000000

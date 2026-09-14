@@ -1,3 +1,4 @@
+import type { NativeDomainProjection, NativeConnectionStateProjection, NativeEngineSupervisorOptions } from "./native-engine-contract";
 import {
   RpcResponseError,
   type RemoteConnection,
@@ -15,7 +16,7 @@ import {
   recordTelemetryEvent,
   type TelemetryEventInput,
 } from "../data/telemetry";
-import type { ThreadEventProjection } from "../data/thread-projection-store";
+
 import { OrderedProjectionAcknowledger } from "./ordered-projection-acknowledger";
 import { nativeEngineErrorDiagnostic } from "./native-engine-error-diagnostic";
 import { parseNativeCommandDelivery, type NativeCommandDelivery } from "./native-transport.native";
@@ -39,19 +40,6 @@ type NativeEngineState = {
 type NativeEngineResult<T> =
   | { ok: true; result: T }
   | { ok: false; message: string; code?: number };
-
-type NativeDomainProjection = {
-  applySnapshot(connectionId: string, threads: SyncSnapshotThread[], cursor: number): Promise<void>;
-  applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
-};
-type NativeConnectionStateProjection = {
-  setConnectionState(
-    connectionId: string,
-    state: RemoteConnectionState,
-    diagnostic?: string | null,
-    rpcAvailable?: boolean,
-  ): void | Promise<void>;
-};
 
 type NativeBridge = {
   attachSocket(connectionId: string): Promise<void>;
@@ -539,12 +527,7 @@ export class NativeEngineSupervisor {
   readonly #fingerprints = new Map<string, string>();
   readonly #subscription: { remove(): void } | null;
 
-  constructor(options: {
-    connectionState: NativeConnectionStateProjection;
-    projection: NativeDomainProjection;
-    onPendingRequests?(connectionId: string, requests: SyncServerRequest[]): void;
-    onOutboxChange?(delivery: NativeCommandDelivery): void;
-  }) {
+  constructor(options: NativeEngineSupervisorOptions) {
     this.#connectionState = options.connectionState;
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;

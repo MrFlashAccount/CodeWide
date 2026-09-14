@@ -1,18 +1,10 @@
-import type { SyncServerRequest } from "@codewide/sync-client";
-import type { Collection } from "@tanstack/react-db";
+import type { PendingRequestDatabase } from "./pending-request-database-contract";
+export type { PendingRequestDatabase } from "./pending-request-database-contract";
 
 import { cloneProtocolValue } from "./clone-protocol-value";
 import { createPersistentCollectionModel } from "./persistent-collection.native";
 import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
 import type { PendingServerRequest } from "./pending-request-types";
-
-export type PendingRequestDatabase = {
-  collection: Collection<PendingServerRequest, string>;
-  replace(connectionId: string, requests: SyncServerRequest[]): void;
-  claim(connectionId: string, requestKey: string): boolean;
-  release(connectionId: string, requestKey: string): void;
-  close(): void;
-};
 
 const USER_SERVER_REQUESTS = new Set([
   "item/commandExecution/requestApproval",

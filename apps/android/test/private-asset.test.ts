@@ -1,18 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { materializePrivateImageUri } = vi.hoisted(() => ({
-  materializePrivateImageUri: vi.fn(async (uri: string) => uri),
-}));
-
-vi.mock("../src/rendering/private-image-cache", () => ({ materializePrivateImageUri }));
-
 import { fetchPrivateAsset, fetchScopedUpload, readPrivateAssetText } from "../src/data/private-transfer";
-import { materializePrivateAsset } from "../src/rendering/private-asset";
+import { recoverPrivateAsset } from "../src/rendering/private-asset-recovery";
 
 describe("private asset transport", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    materializePrivateImageUri.mockImplementation(async (uri: string) => uri);
   });
 
   it("uses one ranged path reader and refreshes an expired session once", async () => {
@@ -162,36 +155,29 @@ describe("private asset transport", () => {
 });
 
 describe("private asset recovery", () => {
-  beforeEach(() => {
-    materializePrivateImageUri.mockReset();
-  });
-
-  it("rehydrates a missing projected content asset before retrying the download", async () => {
-    materializePrivateImageUri
-      .mockRejectedValueOnce(new Error("Private image download failed (404)"))
-      .mockResolvedValueOnce("file:///cache/image.png");
-    const recover = vi.fn().mockResolvedValue(undefined);
-
-    await expect(materializePrivateAsset(
-      { kind: "content", id: "a".repeat(64) },
-      async () => ({ baseUrl: "https://companion.test", authorization: "Bearer session" }),
-      recover,
-    )).resolves.toBe("file:///cache/image.png");
-
+  it("restores missing content once before retrying", async () => {
+    const materialize = vi.fn()
+      .mockRejectedValueOnce(new Error("Private attachment unavailable (404)"))
+      .mockResolvedValueOnce({ uri: "file:///cache/image.bin", headers: {} });
+    const recover = vi.fn(async () => undefined);
+    await expect(recoverPrivateAsset(materialize, recover)).resolves.toEqual({ uri: "file:///cache/image.bin", headers: {} });
     expect(recover).toHaveBeenCalledOnce();
-    expect(materializePrivateImageUri).toHaveBeenCalledTimes(2);
+    expect(materialize).toHaveBeenCalledTimes(2);
   });
 
-  it("does not hide an unrelated private image failure behind turn hydration", async () => {
-    materializePrivateImageUri.mockRejectedValue(new Error("Image decoder failed"));
-    const recover = vi.fn().mockResolvedValue(undefined);
-
-    await expect(materializePrivateAsset(
-      { kind: "content", id: "b".repeat(64) },
-      async () => ({ baseUrl: "https://companion.test", authorization: "Bearer session" }),
-      recover,
-    )).rejects.toThrow("Image decoder failed");
-
+  it("does not hide an unrelated failure behind hydration", async () => {
+    const materialize = vi.fn(async () => { throw new Error("Image decoder failed"); });
+    const recover = vi.fn(async () => undefined);
+    await expect(recoverPrivateAsset(materialize, recover)).rejects.toThrow("Image decoder failed");
     expect(recover).not.toHaveBeenCalled();
+  });
+
+  it("refreshes authorization without changing the attachment identity", async () => {
+    const materialize = vi.fn(async (refresh: boolean) => {
+      if (!refresh) throw new Error("Private attachment unavailable (401)");
+      return { uri: "file:///cache/image.bin", headers: {} };
+    });
+    await expect(recoverPrivateAsset(materialize, null)).resolves.toEqual({ uri: "file:///cache/image.bin", headers: {} });
+    expect(materialize.mock.calls).toEqual([[false], [true]]);
   });
 });

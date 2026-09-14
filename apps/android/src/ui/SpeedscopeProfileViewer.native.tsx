@@ -1,3 +1,4 @@
+import { fromByteArray } from "base64-js";
 import { Ionicons } from "@expo/vector-icons";
 import { useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
@@ -148,13 +149,7 @@ export function SpeedscopeProfileViewer({ title, fileName, content, onClose }: {
 }
 
 function utf8Base64(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  const chunkSize = 32_768;
-  const chunks: string[] = [];
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + chunkSize)));
-  }
-  return btoa(chunks.join(""));
+  return fromByteArray(new TextEncoder().encode(value));
 }
 
 const styles = StyleSheet.create({

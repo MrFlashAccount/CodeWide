@@ -1,6 +1,6 @@
 import { svgbobWasmBase64 } from "./svgbob-wasm.generated";
 
-type SvgbobExports = {
+interface SvgbobExports extends WebAssembly.Exports {
   memory: WebAssembly.Memory;
   render(returnPointer: number, sourcePointer: number, sourceLength: number): void;
   __wbindgen_add_to_stack_pointer(offset: number): number;
@@ -8,6 +8,17 @@ type SvgbobExports = {
   __wbindgen_realloc(pointer: number, oldSize: number, newSize: number): number;
   __wbindgen_free(pointer: number, size: number): void;
 };
+
+// The bundled, generated module owns this ABI. Check its exported primitives
+// before exposing the renderer contract; no foreign WASM module is accepted.
+function isSvgbobExports(value: WebAssembly.Exports): value is SvgbobExports {
+  return value["memory"] instanceof WebAssembly.Memory
+    && typeof value["render"] === "function"
+    && typeof value["__wbindgen_add_to_stack_pointer"] === "function"
+    && typeof value["__wbindgen_malloc"] === "function"
+    && typeof value["__wbindgen_realloc"] === "function"
+    && typeof value["__wbindgen_free"] === "function";
+}
 
 let wasm: SvgbobExports | null = null;
 let wasmPromise: Promise<SvgbobExports> | null = null;
@@ -20,7 +31,10 @@ async function svgbobExports(): Promise<SvgbobExports> {
   if (wasm !== null) return wasm;
   wasmPromise ??= WebAssembly.compile(decodeBase64(svgbobWasmBase64))
     .then((module) => WebAssembly.instantiate(module, {}))
-    .then((instance) => instance.exports as unknown as SvgbobExports);
+    .then((instance) => {
+      if (!isSvgbobExports(instance.exports)) throw new Error("Invalid bundled Svgbob exports");
+      return instance.exports;
+    });
   wasm = await wasmPromise;
   return wasm;
 }

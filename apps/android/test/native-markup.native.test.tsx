@@ -1,6 +1,7 @@
 import { buildTREFromConfig, type TNode } from "@native-html/render";
 import { fireEvent, render } from "@testing-library/react-native";
-import { Text } from "react-native";
+import { Image, Text } from "react-native";
+import { InlineMediaFrame } from "../src/rendering/InlineMediaFrame";
 
 import { NativeMarkup } from "../src/rendering/NativeMarkup";
 import { NativeRevealSurface } from "../src/rendering/NativeRevealSurface";
@@ -31,6 +32,28 @@ function view(html: string) {
 }
 
 beforeEach(() => jest.clearAllMocks());
+
+it("keeps inline media geometry through loading, decode, error and retry", () => {
+  const result = render(<InlineMediaFrame><Text>Loading</Text></InlineMediaFrame>);
+  for (const content of [
+    <Image key="tall" source={{ uri: "data:image/png;base64,fixture", width: 10, height: 2000 }} />,
+    <Text key="error">{"Decode failed\n".repeat(100)}</Text>,
+    <Text key="retry">Loading again</Text>,
+    <Image key="wide" source={{ uri: "data:image/png;base64,fixture", width: 2000, height: 10 }} />,
+  ]) {
+    result.rerender(<InlineMediaFrame>{content}</InlineMediaFrame>);
+    expect(result.getByTestId("inline-media-frame")).toHaveStyle({ height: 220, overflow: "hidden" });
+  }
+});
+
+it("reserves metadata-sized media before loading and changes only with explicit geometry", () => {
+  const result = render(<InlineMediaFrame height={180} />);
+  expect(result.getByTestId("inline-media-frame")).toHaveStyle({ height: 180 });
+  result.rerender(<InlineMediaFrame height={180}><Text>Decoded</Text></InlineMediaFrame>);
+  expect(result.getByTestId("inline-media-frame")).toHaveStyle({ height: 180 });
+  result.rerender(<InlineMediaFrame height={300}><Text>After viewport resize</Text></InlineMediaFrame>);
+  expect(result.getByTestId("inline-media-frame")).toHaveStyle({ height: 300 });
+});
 
 it("keeps completion metadata and localized time in one footer row", () => {
   const result = render(<MessageFooterRow time="1:05 PM"><Text>Completed · 2s</Text></MessageFooterRow>);

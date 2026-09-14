@@ -1,8 +1,11 @@
-import { batch, observable, type Observable } from "@legendapp/state";
+import { batch, observable, opaqueObject, type Observable } from "@legendapp/state";
 
 import { replaceEqualDeep } from "./replace-equal-deep";
 import { threadSummaryKey } from "./thread-summary-projection";
 import type { StoredThreadSummary } from "./thread-summary-types";
+import { updateThreadSummaryView, reprojectThreadSummaryChanges } from "./thread-summary-view";
+
+export { projectThreadSummaryView } from "./thread-summary-view";
 
 export type ThreadSummaryViewRequest = {
   /** Independent presentation owner; list and detail ranges must not replace each other. */
@@ -70,11 +73,14 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
   }>();
   let closed = false;
 
+  // Views are atomic snapshots: consumers subscribe to the root, and this owner
+  // retains unchanged row identities. Deep observable traversal would compare
+  // every field of every shifted row when recency moves a chat to the front.
   const view$ = (request: ThreadSummaryViewRequest): Observable<ThreadSummaryViewSnapshot> => {
     const key = threadSummaryViewKey(request);
     let node = views.get(key);
     if (node === undefined) {
-      node = observable<ThreadSummaryViewSnapshot>(emptyThreadSummaryView());
+      node = observable<ThreadSummaryViewSnapshot>(opaqueObject(emptyThreadSummaryView()));
       views.set(key, node);
     }
     return node;
@@ -114,7 +120,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
     return Promise.resolve().then(loader).then((loaded) => {
       const current = resources.get(key);
       if (closed || current === undefined || current.generation !== generation || current.requestRevision !== requestRevision) return false;
-      const projected = applySummaryChanges(loaded, current.pendingChanges, request);
+      const projected = reprojectThreadSummaryChanges(loaded, current.pendingChanges, request);
       current.pendingChanges = [];
       current.loadingRevision = null;
       current.hasReadySnapshot = true;
@@ -130,7 +136,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
         ...content,
         revision: previous.revision + (contentChanged ? 1 : 0),
       });
-      if (next !== previous) node.set(next);
+      if (next !== previous) node.set(opaqueObject(next));
       return true;
     }).catch((cause: unknown) => {
       const current = resources.get(key);
@@ -143,11 +149,11 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       current.initialFailed = initial;
       const node = view$(request);
       const previous = node.peek();
-      node.set({
+      node.set(opaqueObject<ThreadSummaryViewSnapshot>({
         ...previous,
         phase: hasSummaryRows(previous) ? "ready" : "error",
         error: cause instanceof Error ? cause.message : "Could not load chats",
-      });
+      }));
       if (initial) throw cause;
       const retryDelay = Math.min(250 * (2 ** current.retryAttempt), 5_000);
       current.retryTimer = setTimeout(() => {
@@ -221,11 +227,11 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       const previous = node.peek();
       const next = replaceEqualDeep<ThreadSummaryViewSnapshot>(previous, {
         ...previous,
-        requestKey: key,
+        requestKey: previous.requestKey ?? key,
         phase: hasSummaryRows(previous) ? "ready" : "loading",
         error: null,
       });
-      if (next !== previous) node.set(next);
+      if (next !== previous) node.set(opaqueObject(next));
       return generation;
     },
     commitView(request, generation, loaded) {
@@ -236,13 +242,13 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       const content = reconcileSummaryContent(previous, loaded);
       const contentChanged = summaryContentChanged(previous, content);
       const next = replaceEqualDeep<ThreadSummaryViewSnapshot>(previous, {
-        requestKey: key,
+        requestKey: threadSummaryViewRequestKey(request),
         phase: "ready",
         error: null,
         ...content,
         revision: previous.revision + (contentChanged ? 1 : 0),
       });
-      if (next !== previous) node.set(next);
+      if (next !== previous) node.set(opaqueObject(next));
       return true;
     },
     failView(request, generation, cause) {
@@ -255,7 +261,7 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
         phase: hasSummaryRows(previous) ? "ready" : "error",
         error: cause instanceof Error ? cause.message : "Could not load chats",
       });
-      if (next !== previous) node.set(next);
+      if (next !== previous) node.set(opaqueObject(next));
     },
     publish(changes) {
       if (closed || changes.length === 0) return;
@@ -266,16 +272,13 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
           const resource = resources.get(key);
           if (resource !== undefined && resource.loadingRevision !== null) resource.pendingChanges.push(...changes);
           const previous = node.peek();
-          const residents = new Map<string, StoredThreadSummary>();
-          for (const row of summaryRows(previous)) residents.set(threadSummaryKey(row.connectionId, row.remoteThreadId), row);
-          for (const change of changes) {
-            if (change.type === "delete") residents.delete(change.key);
-            else residents.set(threadSummaryKey(change.value.connectionId, change.value.remoteThreadId), change.value);
-          }
-          const projected = projectThreadSummaryView([...residents.values()], request);
-          const content = reconcileSummaryContent(previous, projected);
+          // A pending request can change membership before its replacement rows
+          // arrive. Reproject that transition; settled views consume only deltas.
+          const content = resource?.loadingRevision != null || previous.requestKey !== threadSummaryViewRequestKey(request)
+            ? reconcileSummaryContent(previous, reprojectThreadSummaryChanges(previous, changes, request))
+            : updateThreadSummaryView(previous, changes, request);
           if (!summaryContentChanged(previous, content)) continue;
-          node.set({ ...previous, ...content, revision: previous.revision + 1 });
+          node.set(opaqueObject<ThreadSummaryViewSnapshot>({ ...previous, ...content, revision: previous.revision + 1 }));
         }
       });
     },
@@ -294,28 +297,6 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
   };
 }
 
-export function projectThreadSummaryView(
-  rows: readonly StoredThreadSummary[],
-  request: ThreadSummaryViewRequest,
-): LoadedThreadSummaryView {
-  const inConnection = (row: StoredThreadSummary): boolean => request.connectionId === null || row.connectionId === request.connectionId;
-  const root = (row: StoredThreadSummary): boolean => row.parentThreadId === null && row.deleteCommandId === null && inConnection(row)
-    && (request.projectCwd === undefined || row.cwd === request.projectCwd);
-  const pinned = rows.filter((row) => root(row) && !row.archived && row.pinned).sort(compareRecency);
-  const recent = rows.filter((row) => root(row) && !row.archived && !row.pinned).sort(compareRecency).slice(0, request.recentLimit);
-  const archived = rows.filter((row) => root(row) && row.archived).sort(compareArchived).slice(0, request.archivedLimit);
-  const selected = request.selectedConnectionId === null || request.selectedThreadId === null
-    ? []
-    : rows.filter((row) => row.connectionId === request.selectedConnectionId && row.remoteThreadId === request.selectedThreadId);
-  const subagents = request.subagentConnectionId === null
-    ? []
-    : rows
-        .filter((row) => row.connectionId === request.subagentConnectionId && row.parentThreadId !== null && row.deleteCommandId === null)
-        .sort(compareRecency)
-        .slice(0, request.subagentLimit);
-  return { pinned, recent, archived, selected, subagents };
-}
-
 export function threadSummaryViewKey(request: ThreadSummaryViewRequest): string {
   return `${request.viewId ?? "default"}\u0000${request.connectionId ?? "*"}`;
 }
@@ -332,23 +313,6 @@ export function threadSummaryViewRequestKey(request: ThreadSummaryViewRequest): 
     request.subagentConnectionId ?? "",
     request.subagentLimit,
   ].join("\u0000");
-}
-
-function applySummaryChanges(
-  loaded: LoadedThreadSummaryView,
-  changes: readonly ({ type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string })[],
-  request: ThreadSummaryViewRequest,
-): LoadedThreadSummaryView {
-  if (changes.length === 0) return loaded;
-  const rows = new Map<string, StoredThreadSummary>();
-  for (const row of [...loaded.pinned, ...loaded.recent, ...loaded.archived, ...loaded.selected, ...loaded.subagents]) {
-    rows.set(threadSummaryKey(row.connectionId, row.remoteThreadId), row);
-  }
-  for (const change of changes) {
-    if (change.type === "delete") rows.delete(change.key);
-    else rows.set(threadSummaryKey(change.value.connectionId, change.value.remoteThreadId), change.value);
-  }
-  return projectThreadSummaryView([...rows.values()], request);
 }
 
 function emptyThreadSummaryView(): ThreadSummaryViewSnapshot {
@@ -403,13 +367,4 @@ function summaryViewSatisfiesSelection(snapshot: ThreadSummaryViewSnapshot, requ
   return summaryRows(snapshot).some((row) =>
     row.connectionId === request.selectedConnectionId && row.remoteThreadId === request.selectedThreadId,
   );
-}
-
-function compareRecency(left: StoredThreadSummary, right: StoredThreadSummary): number {
-  return (right.recencyAt ?? right.updatedAt) - (left.recencyAt ?? left.updatedAt)
-    || threadSummaryKey(left.connectionId, left.remoteThreadId).localeCompare(threadSummaryKey(right.connectionId, right.remoteThreadId));
-}
-
-function compareArchived(left: StoredThreadSummary, right: StoredThreadSummary): number {
-  return Number(right.pinned) - Number(left.pinned) || compareRecency(left, right);
 }

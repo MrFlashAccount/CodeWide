@@ -39,6 +39,6 @@ module.exports = {
       { babelrc: false, configFile: false, presets: ["module:@react-native/babel-preset"] },
     ],
   },
-  // WHY: Private icon resources use the real ESM-only hash implementation in native adapter tests.
-  transformIgnorePatterns: ["node_modules/(?!.*(?:react-native|@react-native|expo|@expo|heroui-native|uniwind|@noble[+/]hashes))"],
+  // WHY: Private icons use ESM-only hashes; real TanStack collections depend on ESM-only fractional-indexing.
+  transformIgnorePatterns: ["node_modules/(?!.*(?:react-native|@react-native|expo|@expo|heroui-native|uniwind|@noble[+/]hashes|fractional-indexing))"],
 };

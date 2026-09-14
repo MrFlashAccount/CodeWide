@@ -12,6 +12,7 @@ import {
   type OnLineClickProps,
 } from "@pierre/diffs";
 import { FileTree, themeToTreeStyles, type GitStatusEntry, type TreeThemeInput } from "@pierre/trees";
+import { canonicalPatch } from "./canonicalPatch";
 
 import {
   CODE_REVIEW_BRIDGE_VERSION,
@@ -472,19 +473,6 @@ function materializeBeforeSource(payload: CodeReviewDocument): string | null {
   }
 }
 
-function canonicalPatch(path: string, patch: CodeReviewDocument["patches"][number]): string {
-  const raw = patch.diff.trimEnd();
-  if (/^---\s/m.test(raw) && /^\+\+\+\s/m.test(raw)) return raw;
-  const normalizedPath = path.replace(/^\/+/, "");
-  if (/^@@\s/m.test(raw)) return `--- a/${normalizedPath}\n+++ b/${normalizedPath}\n${raw}`;
-  if (patch.kind === "update") throw new Error("Headerless update patch is not authoritative");
-  const lines = logicalLines(raw);
-  if (patch.kind === "add") {
-    return `--- /dev/null\n+++ b/${normalizedPath}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join("\n")}`;
-  }
-  return `--- a/${normalizedPath}\n+++ /dev/null\n@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join("\n")}`;
-}
-
 function reversePatch(lines: string[], metadata: FileDiffMetadata): boolean {
   for (let hunkIndex = metadata.hunks.length - 1; hunkIndex >= 0; hunkIndex -= 1) {
     const hunk = metadata.hunks[hunkIndex];
@@ -504,13 +492,6 @@ function sameLines(lines: readonly string[], start: number, expected: readonly s
 
 function stripLineEnding(value: string): string {
   return value.replace(/\r?\n$/, "");
-}
-
-function logicalLines(value: string): string[] {
-  if (value === "") return [];
-  const lines = value.split("\n");
-  if (lines.at(-1) === "") lines.pop();
-  return lines;
 }
 
 function rememberMaterialized(revision: string, source: string | null): void {

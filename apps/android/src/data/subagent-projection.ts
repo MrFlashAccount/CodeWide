@@ -1,3 +1,4 @@
+import { threadSummaryDescendants } from "./thread-summary-descendants";
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import { projectCodexVisibleTurn } from "./codex-contextual-user-message";
@@ -40,18 +41,7 @@ export function subagentsForThread(
   summaries: readonly StoredThreadSummary[],
   rootThreadId: string,
 ): StoredThreadSummary[] {
-  const descendants = new Set([rootThreadId]);
-  const result: StoredThreadSummary[] = [];
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const summary of summaries) {
-      if (summary.parentThreadId == null || !descendants.has(summary.parentThreadId) || descendants.has(summary.remoteThreadId)) continue;
-      descendants.add(summary.remoteThreadId);
-      result.push(summary);
-      changed = true;
-    }
-  }
+  const result = threadSummaryDescendants(summaries, rootThreadId);
   return result.sort(compareSubagentRecency);
 }
 

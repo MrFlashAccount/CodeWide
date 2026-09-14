@@ -93,9 +93,9 @@ describe("CodeWide effect ownership", () => {
     expect(workspace).not.toContain("useTunnelRow(");
     expect(workspace).not.toContain("useNativePortForwarding(");
     expect(workspace).not.toContain("new SubagentListProjection");
-    expect(workspace).toContain("const activeVoiceQuery = useLiveQuery(");
+    expect(workspace).not.toContain("useLiveQuery(");
     expect(codeReview).toContain("useVoiceInputResource(voiceRuntime, voiceScope)");
-    expect(workspace).toContain("const voiceInputsQuery = useLiveQuery(");
+    expect(workspace).toContain("<WorkspaceVoiceAura");
     expect(screen).toContain("function ComposerControlChips(");
     expect(screen).toContain("const resource = useTurnControlsRow(resources, resourceId);");
     expect(screen).toContain("function ComposerPortContextChipLoaded(");
@@ -114,6 +114,17 @@ describe("CodeWide effect ownership", () => {
     );
     expect(shell).toContain("createThreadNavigationModel");
     expect(shell).not.toContain("useSelector(");
+    const workspace = screen.slice(
+      screen.indexOf("function CodeWideWorkspaceContent("),
+      screen.indexOf("function workspaceConversationScope("),
+    );
+    expect(workspace).not.toContain("setThreadSelection(");
+    expect(workspace).not.toContain("setNewChatDraft(");
+    expect(workspace).not.toContain("threadNavigation.destination$.get()");
+    expect(workspace).not.toContain("threadNavigation.selection$.get()");
+    expect(workspace).toContain("<WorkspaceConversationHost");
+    expect(workspace).not.toContain("const activeConversationRoute");
+    expect(workspace).not.toContain("const conversationActions");
     expect(screen).toContain("function ThreadSidebar(");
     expect(screen).toContain("function SelectableThreadRow(");
     expect(screen).toContain("navigation.selection$.id.get() === selectionKey");

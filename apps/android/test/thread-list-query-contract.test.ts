@@ -42,7 +42,8 @@ describe("thread list query contract", () => {
     expect(screen).toContain("? threadSelectionKey(serverThreads[0])");
     expect(screen).toContain("threadNavigation.select(defaultDesktopThreadId)");
     expect(screen).toContain('scope="desktop-default-thread"');
-    expect(screen).toContain("revision={defaultDesktopThreadId}");
+    expect(screen).toContain('revision={destination.kind === "empty" ? defaultDesktopThreadId : null}');
+    expect(screen).toContain('threadNavigation.destination$.peek().kind !== "empty"');
     expect(screen).toContain("onCommit={commitDefaultDesktopThread}");
     expect(screen).toContain("? selectedThread : null;");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");

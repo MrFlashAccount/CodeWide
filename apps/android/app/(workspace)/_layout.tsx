@@ -4,7 +4,7 @@ import { useUiGenerationSnapshot } from "../../src/boot/useUiGenerationSnapshot"
 import { ServerWorkspaceChrome } from "../../src/v2/features/workspace/ServerWorkspaceChrome";
 import { RecoverableRenderBoundary } from "../../src/v2/ui/RecoverableRenderBoundary";
 
-export const unstable_settings = { initialRouteName: "servers" };
+export const unstable_settings = { initialRouteName: "servers/index" };
 const SCREEN_OPTIONS = { animation: "none", headerShown: false } as const;
 
 export default function WorkspaceLayout(): React.JSX.Element {

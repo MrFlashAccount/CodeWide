@@ -1,0 +1,43 @@
+diff --git a/build/StatusBar.web.d.ts b/build/StatusBar.web.d.ts
+index 86a748f154619941726400d47ec7209b23f9d4a7..ab7ee158b1273291cbda9e33d4d5b2e9311a4c47 100644
+--- a/build/StatusBar.web.d.ts
++++ b/build/StatusBar.web.d.ts
+@@ -1,8 +1,10 @@
+-export declare function StatusBar(): null;
++import type { StatusBarProps, StatusBarStyle, StatusBarAnimation } from "./types";
++export type { StatusBarProps, StatusBarStyle, StatusBarAnimation } from "./types";
++export declare function StatusBar(props: StatusBarProps): null;
+ export declare namespace StatusBar {
+-    var setStyle: () => void;
+-    var setHidden: () => void;
++    var setStyle: (style: StatusBarStyle, animated?: boolean) => void;
++    var setHidden: (hidden: boolean, animation?: StatusBarAnimation) => void;
+ }
+-export declare function setStatusBarStyle(): void;
+-export declare function setStatusBarHidden(): void;
++export declare function setStatusBarStyle(style: StatusBarStyle, animated?: boolean): void;
++export declare function setStatusBarHidden(hidden: boolean, animation?: StatusBarAnimation): void;
+ //# sourceMappingURL=StatusBar.web.d.ts.map
+\ No newline at end of file
+diff --git a/src/StatusBar.web.ts b/src/StatusBar.web.ts
+index d98cf5d796b9935dc1b15fcb1054c21bf8dc7436..c97d19b2c387007e9a5f6caecafc507fed24da54 100644
+--- a/src/StatusBar.web.ts
++++ b/src/StatusBar.web.ts
+@@ -1,9 +1,12 @@
+-export function StatusBar() {
++import type { StatusBarProps, StatusBarStyle, StatusBarAnimation } from "./types";
++export type { StatusBarProps, StatusBarStyle, StatusBarAnimation } from "./types";
++
++export function StatusBar(_props: StatusBarProps) {
+   return null;
+ }
+ 
+-StatusBar.setStyle = () => {};
+-StatusBar.setHidden = () => {};
++StatusBar.setStyle = (_style: StatusBarStyle, _animated?: boolean) => {};
++StatusBar.setHidden = (_hidden: boolean, _animation?: StatusBarAnimation) => {};
+ 
+-export function setStatusBarStyle() {}
+-export function setStatusBarHidden() {}
++export function setStatusBarStyle(_style: StatusBarStyle, _animated?: boolean) {}
++export function setStatusBarHidden(_hidden: boolean, _animation?: StatusBarAnimation) {}

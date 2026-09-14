@@ -3,7 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
 import { parseDiagramPreviewResult, type DiagramPreviewResult } from "./diagram-preview-result";
-import { checkAborted } from "./check-aborted";
+import { checkAborted } from "../native/check-aborted";
 
 let sequence = 0;
 const MAX_RENDER_ATTEMPTS = 3;

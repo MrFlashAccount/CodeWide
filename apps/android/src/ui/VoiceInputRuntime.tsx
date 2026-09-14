@@ -27,7 +27,7 @@ export function useVoiceInputResource(runtime: AppVoiceInputRuntime | null, scop
 }
 
 /** Observe only the recording owned by one input, never the global microphone. */
-export function useScopedVoiceInputResource(resources: WorkspaceResourceDatabase | null, scope: string | null): VoiceInputRow | null {
+export function useScopedVoiceInputResource(resources: Pick<WorkspaceResourceDatabase, "voiceInputs"> | null, scope: string | null): VoiceInputRow | null {
   return useSyncExternalStore(
     (notify) => {
       if (resources === null || scope === null) return () => {};

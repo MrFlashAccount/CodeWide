@@ -9,7 +9,6 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
-import org.json.JSONTokener
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -109,11 +108,11 @@ internal class NativePortForwardManager(
   // shared connection service (and unrelated chat traffic) from starting.
   private val policies by lazy { NativePortForwardPolicyStore(context) }
   private val inventoryLock = Any()
-  private val inventoryEpochs = mutableMapOf<String, Long>()
-  private val suspended = mutableSetOf<String>()
-  private var closed = false
-  private val discoveryLocks = CredentialLockRegistry()
-  private val inventoryMonitor = PortForwardInventoryMonitor { discover(it) }
+  private val inventoryEpochs = ConcurrentHashMap<String, Long>()
+  private val suspended = ConcurrentHashMap.newKeySet<String>()
+  @Volatile private var closed = false
+  private val inventorySnapshots = ConcurrentHashMap<String, String>()
+  private val inventoryWorker = PortInventoryWorker(::applyInventory)
   private val runtimes = ConcurrentHashMap<String, Runtime>()
   private val projections = ConcurrentHashMap<String, PortForwardProjection>()
   private val availablePorts = ConcurrentHashMap<String, Map<Int, String>>()
@@ -148,15 +147,37 @@ internal class NativePortForwardManager(
     .sortedWith(compareByDescending<CurrentPortForward> { it.enabled }.thenByDescending { it.updatedAt })
     .map { profile -> projections[profile.id] ?: PortForwardProjection(profile, null, if (profile.enabled) "connecting" else "stopped", null) }
 
-  fun discover(connectionId: String): String {
-    return synchronized(discoveryLocks.lockFor(connectionId)) {
-      val (saved, epoch) = synchronized(inventoryLock) {
-        check(!closed && connectionId !in suspended) { "Port inventory is suspended" }
-        val current = credentialsStore.get(connectionId) ?: error("Saved server credentials are missing")
-        require(current.enabled) { "Server connection is disabled" }
-        current to (inventoryEpochs[connectionId] ?: 0L)
+  /** Reads the last pushed snapshot; never performs network discovery. */
+  fun discover(connectionId: String): String = inventorySnapshots[connectionId]
+    ?: "{\"ports\":[],\"scannedAt\":0}"
+
+  fun receiveInventory(connectionId: String, payload: String) {
+    if (closed || connectionId in suspended) return
+    val generation = inventoryEpochs[connectionId] ?: 0L
+    inventoryWorker.submit(PendingPortInventory(connectionId, generation, payload))
+  }
+
+  private fun applyInventory(pending: PendingPortInventory) {
+    runCatching {
+      require(SyncV2ContractGenerated.validateDefinitionJson("portsResponse", pending.payload)) {
+        "Port inventory is invalid"
       }
-      discover(saved, allowCredentialRetry = true, epoch)
+      val envelope = JSONObject(pending.payload)
+      val inventory = parsePortForwardInventory(envelope.getJSONArray("ports"))
+      val discoveredByPort = inventory.associate { it.port to it.serviceKey }
+      synchronized(inventoryLock) {
+        if (closed || pending.serverId in suspended ||
+          (inventoryEpochs[pending.serverId] ?: 0L) != pending.generation) return
+        availablePorts[pending.serverId] = discoveredByPort
+        inventoryReconciler.reconcile(pending.serverId, inventory)
+        inventorySnapshots[pending.serverId] = pending.payload
+      }
+      CodeWideModule.emitPortForwardEvent(JSONObject().put("type", "inventory")
+        .put("connectionId", pending.serverId).toString())
+    }.onFailure {
+      // Wire data and native exceptions can contain user metadata. Emit only a bounded event.
+      CodeWideModule.emitPortForwardEvent(JSONObject().put("type", "inventoryError")
+        .put("connectionId", pending.serverId).toString())
     }
   }
 
@@ -341,16 +362,15 @@ internal class NativePortForwardManager(
 
   fun resumeConnection(connectionId: String) {
     synchronized(inventoryLock) { suspended.remove(connectionId) }
-    inventoryMonitor.start(connectionId)
   }
 
   fun suspendConnection(connectionId: String) {
-    inventoryMonitor.stop(connectionId)
     synchronized(inventoryLock) {
       suspended.add(connectionId)
       inventoryEpochs[connectionId] = (inventoryEpochs[connectionId] ?: 0L) + 1
       store.list(connectionId).forEach { removeCurrent(it.id) }
       availablePorts.remove(connectionId)
+      inventorySnapshots.remove(connectionId)
     }
     credentialCache.remove(connectionId)
   }
@@ -364,7 +384,7 @@ internal class NativePortForwardManager(
   }
 
   fun close() {
-    inventoryMonitor.close()
+    inventoryWorker.close()
     synchronized(inventoryLock) { closed = true }
     startGate.close()
     runtimes.keys.toList().forEach { stopRuntime(it, persistDisabled = false) }
@@ -527,40 +547,6 @@ internal class NativePortForwardManager(
     }
   }
 
-  private fun discover(saved: StoredNativeSession, allowCredentialRetry: Boolean, epoch: Long): String {
-    val credential = credential(saved)
-    val request = Request.Builder()
-      .url(InnerTlsTransport.url(saved, portDiscoveryEndpoint(saved.endpoint)))
-      .header("Authorization", "Bearer ${credential.token}")
-      .get()
-      .build()
-    val clientForServer = InnerTlsTransport.client(baseClient, saved).newBuilder()
-      .callTimeout(DISCOVERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-      .readTimeout(DISCOVERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-      .build()
-    clientForServer.newCall(request).execute().use { response ->
-      if ((response.code == 401 || response.code == 403) && allowCredentialRetry) {
-        credentialCache.remove(saved.id)
-        return discover(saved, allowCredentialRetry = false, epoch)
-      }
-      check(response.isSuccessful) { "Port discovery failed (${response.code})" }
-      val body = response.body?.string() ?: error("Port discovery returned an empty response")
-      require(body.length <= MAX_DISCOVERY_RESPONSE_CHARS) { "Port discovery response is too large" }
-      val envelope = JSONTokener(body).nextValue() as? JSONObject ?: error("Port discovery response is invalid")
-      val rows = envelope.optJSONArray("ports") ?: error("Port discovery response is invalid")
-      val inventory = parsePortForwardInventory(rows)
-      val discoveredByPort = inventory.associate { it.port to it.serviceKey }
-      synchronized(inventoryLock) {
-        check(!closed && saved.id !in suspended && (inventoryEpochs[saved.id] ?: 0L) == epoch) {
-          "Port inventory was superseded"
-        }
-        availablePorts[saved.id] = discoveredByPort
-        inventoryReconciler.reconcile(saved.id, inventory)
-      }
-      return body
-    }
-  }
-
   private fun stopRuntime(profileId: String, persistDisabled: Boolean) {
     startGate.revoke(profileId) {
       if (persistDisabled) store.setEnabled(profileId, false)
@@ -637,8 +623,6 @@ internal class NativePortForwardManager(
     private const val MAX_WEBSOCKET_QUEUE_BYTES = 4L * 1024 * 1024
     private const val CREDENTIAL_TIMEOUT_MS = 20_000L
     private const val CREDENTIAL_EXPIRY_LEAD_MS = 30_000L
-    private const val DISCOVERY_TIMEOUT_MS = 10_000L
-    private const val MAX_DISCOVERY_RESPONSE_CHARS = 256 * 1024
     internal const val FORWARDING_KEY_HEADER = "X-CodeWide-Forwarding-Key"
     internal const val FORWARDING_MODE_HEADER = "X-CodeWide-Forwarding-Mode"
 
@@ -648,19 +632,6 @@ internal class NativePortForwardManager(
       return when {
         syncEndpoint.endsWith("/v1/sync") -> syncEndpoint.removeSuffix("/v1/sync") + suffix
         syncEndpoint.endsWith("/v2/sync") -> syncEndpoint.removeSuffix("/v2/sync") + suffix
-        else -> error("Server endpoint is invalid")
-      }
-    }
-
-    internal fun portDiscoveryEndpoint(syncEndpoint: String): String {
-      val httpEndpoint = when {
-        syncEndpoint.startsWith("wss://") -> "https://${syncEndpoint.removePrefix("wss://")}"
-        syncEndpoint.startsWith("ws://") -> "http://${syncEndpoint.removePrefix("ws://")}"
-        else -> error("Server endpoint is invalid")
-      }
-      return when {
-        httpEndpoint.endsWith("/v1/sync") -> httpEndpoint.removeSuffix("/v1/sync") + "/v2/ports"
-        httpEndpoint.endsWith("/v2/sync") -> httpEndpoint.removeSuffix("/v2/sync") + "/v2/ports"
         else -> error("Server endpoint is invalid")
       }
     }

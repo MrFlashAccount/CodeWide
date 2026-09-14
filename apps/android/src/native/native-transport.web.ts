@@ -1,68 +1,30 @@
-export async function claimNativePairing(): Promise<{ deviceId: string; capabilityToken: string }> {
+import type { NativeVoiceEvent, PcmAudioChunk, OpusAudioChunk, CapturedAudioChunk, PcmCaptureInfo, NativeConnectionConfig, NativeBrowserDevToolsBridge, NativeBrowserTrace, NativePortForwardProfile, NativePortForwardingPreference, NativePortForwardEvent, NativeTerminalEvent, NativeTerminalOutput, NativeDiscoveredPort, NativeCommandDelivery, MicrophonePermission, NativeCommandMethod } from "./native-transport-contract";
+export type { NativeVoiceEvent, PcmAudioChunk, OpusAudioChunk, CapturedAudioChunk, PcmCaptureInfo, NativeConnectionConfig, NativeBrowserDevToolsBridge, NativeBrowserTrace, NativePortForwardProfile, NativePortForwardingPreference, NativePortForwardEvent, NativeTerminalEvent, NativeTerminalOutput, NativeDiscoveredPort, NativeCommandDelivery, MicrophonePermission, NativeCommandMethod } from "./native-transport-contract";
+export async function claimNativePairing(input: {
+  savedServerId: string;
+  endpoint: string;
+  pairingToken: string;
+  deviceName: string;
+  tlsPinSha256: string;
+}): Promise<{ deviceId: string; capabilityToken: string }> {
   throw new Error("Native secure pairing is available on Android only");
 }
 
-export async function mintNativeSession(): Promise<{ sessionToken: string; expiresAt: number }> {
+export async function mintNativeSession(connectionId: string): Promise<{ sessionToken: string; expiresAt: number }> {
   throw new Error("Native session proof is available on Android only");
 }
 
-export async function saveNativeConnectionCredentials(): Promise<void> {
+export async function saveNativeConnectionCredentials(input: {
+  connectionId: string;
+  endpoint: string;
+  token?: string;
+  tlsPinSha256?: string;
+  enabled: boolean;
+  deviceId?: string;
+}): Promise<void> {
   throw new Error("Native credential storage is available on Android only");
 }
 
-export type NativeConnectionConfig = {
-  connectionId: string;
-  savedServerId: string;
-  endpoint: string;
-  tlsPinSha256: string | null;
-  enabled: boolean;
-  deviceId: string | null;
-};
-export type NativeBrowserDevToolsBridge = { host: "127.0.0.1"; port: number; token: string; tracingSupported: boolean };
-export type NativeBrowserTrace = { path: string; size: number };
-export type NativePortForwardProfile = {
-  id: string;
-  connectionId: string;
-  label: string;
-  remoteHost: "127.0.0.1";
-  remotePort: number;
-  preferredLocalPort: number | null;
-  serviceKey: string | null;
-  preference: NativePortForwardingPreference;
-  localPort: number | null;
-  enabled: boolean;
-  status: "stopped" | "connecting" | "live" | "unavailable" | "error";
-  previewUrl: string | null;
-  error: string | null;
-  updatedAt: number;
-};
-export type NativePortForwardingPreference = "automatic" | "included" | "excluded";
-export type NativePortForwardEvent =
-  | { type: "profile"; profile: NativePortForwardProfile }
-  | { type: "removed"; id: string };
-export type NativeTerminalEvent = {
-  sessionId: string;
-  connectionId: string;
-  threadId: string;
-  type: "connecting" | "open" | "output" | "closed" | "error" | "removed";
-  data?: string;
-  code?: number;
-  message?: string;
-  offset?: number;
-};
-export type NativeTerminalOutput = { data: string; nextOffset: number; hasMore: boolean; finished: boolean };
-export type NativeDiscoveredPort = {
-  port: number;
-  name: string;
-  group: string;
-  details: string;
-  process: string | null;
-  pid: number | null;
-  cwd: string | null;
-  kind: "docker" | "hermes" | "kubernetes" | "minikube" | "vite" | "node" | "python" | "zrok" | "process" | "system";
-  forwardingKey: string;
-  defaultForwardingEnabled: boolean;
-};
 export async function listNativeConnectionConfigs(): Promise<NativeConnectionConfig[]> { return []; }
 export async function nativeCompanionHttpOrigin(_connectionId: string, endpoint: string): Promise<string> {
   const url = new URL(endpoint);
@@ -77,60 +39,56 @@ export async function startNativeBrowserDevToolsBridge(): Promise<NativeBrowserD
 export function stopNativeBrowserDevToolsBridge(): void {}
 export async function startNativeBrowserTracing(): Promise<void> { throw new Error("Browser tracing is available on Android only"); }
 export async function stopNativeBrowserTracing(): Promise<NativeBrowserTrace> { throw new Error("Browser tracing is available on Android only"); }
-export async function deleteNativeConnection(): Promise<void> { throw new Error("Android only"); }
+export async function deleteNativeConnection(connectionId: string): Promise<void> { throw new Error("Android only"); }
 
-export async function setNativeConnectionEnabled(): Promise<void> {
+export async function setNativeConnectionEnabled(connectionId: string, enabled: boolean): Promise<void> {
   throw new Error("Native connection lifecycle is available on Android only");
 }
 
 export function reconnectNativeConnection(_connectionId: string): void { throw new Error("Android only"); }
 export function wakeNativeConnection(_connectionId: string): void {}
-export async function listNativePortForwards(): Promise<NativePortForwardProfile[]> { return []; }
-export async function discoverNativePorts(): Promise<{ ports: NativeDiscoveredPort[]; scannedAt: number }> { return { ports: [], scannedAt: Date.now() }; }
-export async function upsertNativePortForward(): Promise<NativePortForwardProfile> { throw new Error("Android only"); }
-export async function startNativePortForward(): Promise<NativePortForwardProfile> { throw new Error("Android only"); }
-export async function stopNativePortForward(): Promise<NativePortForwardProfile> { throw new Error("Android only"); }
-export async function removeNativePortForward(): Promise<void> { throw new Error("Android only"); }
-export function subscribeNativePortForwards(): () => void { return () => {}; }
-export async function openNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
-export async function writeNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
-export async function resizeNativeTerminal(): Promise<void> { throw new Error("Terminal is available on Android only"); }
-export async function readNativeTerminalOutput(): Promise<NativeTerminalOutput> { throw new Error("Terminal is available on Android only"); }
-export function closeNativeTerminal(): void {}
+export async function listNativePortForwards(connectionId: string): Promise<NativePortForwardProfile[]> { return []; }
+export async function discoverNativePorts(connectionId: string): Promise<{ ports: NativeDiscoveredPort[]; scannedAt: number }> { return { ports: [], scannedAt: Date.now() }; }
+export async function upsertNativePortForward(input: {
+  connectionId: string;
+  profileId: string;
+  label: string;
+  remotePort: number;
+  preferredLocalPort: number | null;
+  serviceKey?: string | null;
+  preference?: NativePortForwardingPreference;
+}): Promise<NativePortForwardProfile> { throw new Error("Android only"); }
+export async function startNativePortForward(profileId: string): Promise<NativePortForwardProfile> { throw new Error("Android only"); }
+export async function stopNativePortForward(profileId: string): Promise<NativePortForwardProfile> { throw new Error("Android only"); }
+export async function removeNativePortForward(profileId: string): Promise<void> { throw new Error("Android only"); }
+export function subscribeNativePortForwards(listener: (event: NativePortForwardEvent) => void): () => void { return () => {}; }
+export async function openNativeTerminal(input: {
+  sessionId: string;
+  connectionId: string;
+  threadId: string;
+  cwd: string | null;
+  cols: number;
+  rows: number;
+}): Promise<void> { throw new Error("Terminal is available on Android only"); }
+export async function writeNativeTerminal(sessionId: string, base64: string): Promise<void> { throw new Error("Terminal is available on Android only"); }
+export async function resizeNativeTerminal(sessionId: string, cols: number, rows: number): Promise<void> { throw new Error("Terminal is available on Android only"); }
+export async function readNativeTerminalOutput(sessionId: string, offset: number, maxBytes = 256 * 1024): Promise<NativeTerminalOutput> { throw new Error("Terminal is available on Android only"); }
+export function closeNativeTerminal(sessionId: string): void {}
 export function startLegacyNativeRuntimeResources(): Promise<void> { return Promise.resolve(); }
 export function stopLegacyNativeRuntimeResources(): Promise<void> { return Promise.resolve(); }
-export function subscribeNativeTerminal(): () => void { return () => {}; }
-export type NativeCommandMethod =
-  | "turn/start" | "turn/steer" | "thread/name/set" | "thread/archive" | "thread/unarchive" | "thread/delete"
-  | "thread/settings/update" | "turn/interrupt" | "serverRequest/respond"
-  | "companion/queue/put" | "companion/queue/edit" | "companion/queue/cancel"
-  | "companion/queue/move" | "companion/queue/retry" | "companion/queue/steer";
-export async function enqueueNativeCommand(): Promise<void> { throw new Error("Android only"); }
-export type NativeCommandDelivery = {
-  connectionId: string;
-  commandId: string;
-  method: string;
-  threadId: string | null;
-  targetCommandId: string | null;
-  text: string;
-  attachments: import("@codewide/sync-client").RemoteFileAttachment[];
-  workspaceRequestId?: string | null;
-  state: "queued" | "sending" | "accepted" | "uncertain" | "failed" | "delivered";
-  attempts: number;
-  lastError: string | null;
-  createdAt: number;
-  updatedAt: number;
-};
-export async function listNativeCommands(): Promise<NativeCommandDelivery[]> { return []; }
-export async function retryNativeCommand(): Promise<NativeCommandDelivery> { throw new Error("Android only"); }
-export async function acknowledgeNativeCommandReceipt(): Promise<void> {}
+export function subscribeNativeTerminal(listener: (event: NativeTerminalEvent) => void): () => void { return () => {}; }
 
-export type MicrophonePermission = "granted" | "denied" | "blocked";
+export async function enqueueNativeCommand(connectionId: string, commandId: string, method: NativeCommandMethod, params: Record<string, unknown>): Promise<void> { throw new Error("Android only"); }
+
+export async function listNativeCommands(): Promise<NativeCommandDelivery[]> { return []; }
+export async function retryNativeCommand(connectionId: string, commandId: string): Promise<NativeCommandDelivery> { throw new Error("Android only"); }
+export async function acknowledgeNativeCommandReceipt(connectionId: string, commandId: string): Promise<void> {}
+
 export function getMicrophonePermission(): MicrophonePermission { return "granted"; }
 export function subscribeMicrophonePermission(_notify: () => void): () => void { return () => {}; }
 export async function requestMicrophonePermission(): Promise<MicrophonePermission> { return "granted"; }
 
-export async function startVoiceRecognition(): Promise<() => void> {
+export async function startVoiceRecognition(onEvent: (event: NativeVoiceEvent) => void, localeTag: string | null = null): Promise<() => void> {
   throw new Error("Native voice input is available on Android only");
 }
 
@@ -138,27 +96,7 @@ export function cancelVoiceRecognition(): void {}
 
 export function setNativeVoiceAuraOrigin(_reactTag: number | null): void {}
 
-export type PcmAudioChunk = {
-  encoding?: "pcm_s16le";
-  data: string;
-  sampleRate: number;
-  numChannels: number;
-  samplesPerChannel: number;
-  level: number;
-};
-
-export type OpusAudioChunk = {
-  encoding: "opus";
-  data: string;
-  sampleRate: number;
-  numChannels: number;
-  samplesPerChannel: number;
-  level: number;
-};
-
-export type CapturedAudioChunk = PcmAudioChunk | OpusAudioChunk;
-
-export async function startPcmCapture(): Promise<{ stop(): Promise<void>; info: null }> {
+export async function startPcmCapture(onChunk: (chunk: CapturedAudioChunk) => void, onError: (message: string) => void): Promise<{ stop(): Promise<void>; info: PcmCaptureInfo }> {
   throw new Error("Native audio capture is available on Android only");
 }
 

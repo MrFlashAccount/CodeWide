@@ -8,6 +8,35 @@ let browser;
 before(async () => { browser = await chromium.launch({ headless: true }); });
 after(async () => { await browser?.close(); });
 
+test('inline ASCII previews keep the viewport height and contain tall and wide diagrams', async () => {
+  const page = await browser.newPage({ viewport: { width: 360, height: 220 } });
+  try {
+    await page.addInitScript(() => {
+      window.__diagramMessages = [];
+      window.ReactNativeWebView = { postMessage(value) { window.__diagramMessages.push(JSON.parse(value)); } };
+    });
+    await page.goto(new URL('../android/app/src/main/assets/ascii-diagram-renderer.html', import.meta.url).href);
+    await page.waitForFunction(() => window.__diagramMessages.some(message => message.type === 'ready'));
+    for (const source of ['A --> B', 'A\n|\nv\n'.repeat(30), 'A' + '-'.repeat(150) + '> B']) {
+      await page.evaluate(source => window.renderAsciiDiagram(source, 1, 'inline'), source);
+      const geometry = await page.evaluate(() => {
+        const svg = document.querySelector('#canvas svg');
+        const box = svg.getBBox();
+        const matrix = svg.getScreenCTM();
+        const start = new DOMPoint(box.x, box.y).matrixTransform(matrix);
+        const end = new DOMPoint(box.x + box.width, box.y + box.height).matrixTransform(matrix);
+        return { height: document.querySelector('#root').getBoundingClientRect().height,
+          top: start.y, left: start.x, right: end.x, bottom: end.y };
+      });
+      assert.equal(geometry.height, 220);
+      assert.ok(geometry.top >= -1 && geometry.left >= -1, JSON.stringify(geometry));
+      assert.ok(geometry.bottom <= 221 && geometry.right <= 361, JSON.stringify(geometry));
+    }
+    await page.setViewportSize({ width: 720, height: 220 });
+    assert.equal(await page.locator('#root').evaluate(node => node.getBoundingClientRect().height), 220);
+  } finally { await page.close(); }
+});
+
 const flowchart = `flowchart TD
   A[Идея жителя] --> B[Обсуждение замысла]
   B --> C[Проверка ресурсов]

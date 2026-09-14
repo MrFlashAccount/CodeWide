@@ -12,7 +12,7 @@ const MAX_SOURCE_CHARS = 128 * 1024;
 // Start fetching the renderer as soon as the Markdown surface is loaded, but
 // keep Mermaid's diagram engines out of the main web bundle.
 const mermaidModule = import("mermaid");
-const svgbobModule = import("./svgbob-wasm-runtime.web");
+const svgbobModule = import("@codewide/rendering-core/ascii");
 
 export function MermaidDiagram({ source, reviewTarget: _reviewTarget, diagramId: _diagramId, reveal: _reveal = false }: { source: string; reviewTarget?: ContentReviewTarget; diagramId?: string; reveal?: boolean }) {
   const reactId = useId().replace(/[^a-zA-Z0-9_-]/gu, "");

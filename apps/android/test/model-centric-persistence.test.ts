@@ -38,7 +38,8 @@ describe("model-centric persistence boundary", () => {
   it("publishes composer state through a key-scoped Legend resource", () => {
     const database = readFileSync(new URL("thread-ui-state-database.native.ts", dataDirectory), "utf8");
     const hook = readFileSync(new URL("use-thread-ui-state.ts", dataDirectory), "utf8");
-    expect(database).toContain("row$(connectionId: string, threadId: string)");
+    const contract = readFileSync(new URL("thread-ui-state-database-contract.ts", dataDirectory), "utf8");
+    expect(contract).toContain("row$(connectionId: string, threadId: string)");
     expect(database).toContain("collection.subscribeChanges");
     expect(hook).toContain("database.row$(connectionId, threadId).get()");
     expect(hook).not.toContain("useLiveQuery");

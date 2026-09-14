@@ -349,7 +349,7 @@ class CodexConnectionService : Service() {
 
   internal fun listPortForwards(connectionId: String): List<PortForwardProjection> = portForwardManager.list(connectionId)
 
-  @Synchronized
+  // Compatibility bridge name; this is a cache read, never a network scan.
   internal fun discoverPorts(connectionId: String): String = portForwardManager.discover(connectionId)
 
   @Synchronized
@@ -732,7 +732,7 @@ class CodexConnectionService : Service() {
       retireHeadlessV2(savedServerId, subscription, reconnect = true)
       return
     }
-    observeV2NotificationState(savedServerId, text)
+    observeV2Frame(savedServerId, frame)
     when (frame.getString("type")) {
       "snapshot" -> {
         headlessV2ReconnectPolicy.reset(savedServerId)
@@ -821,6 +821,7 @@ class CodexConnectionService : Service() {
     .put(
       "intent",
       JSONObject()
+        .put("portInventory", true)
         .put(
           "catalog",
           JSONObject()
@@ -993,12 +994,21 @@ class CodexConnectionService : Service() {
   }
 
   private fun observeV2NotificationState(savedServerId: String, text: String) {
+    val frame = runCatching { SyncV2ContractGenerated.parseServerFrame(text) }.getOrNull() ?: return
+    observeV2Frame(savedServerId, frame)
+  }
+
+  private fun observeV2Frame(savedServerId: String, frame: JSONObject) {
+    if (frame.getString("type") == "portInventory") {
+      portForwardManager.receiveInventory(savedServerId, frame.getJSONObject("inventory").toString())
+      return
+    }
     val effects = runCatching {
       v2NotificationProjections
         .computeIfAbsent(savedServerId) {
           V2NotificationProjection(v2NotificationProjectionStore.read(savedServerId))
         }
-        .observe(text) { state ->
+        .observeValidatedFrame(frame) { state ->
           if (!v2NotificationProjectionStore.write(savedServerId, state)) {
             Log.w(LOG_TAG, "Could not persist V2 notification state")
           }
@@ -1046,6 +1056,7 @@ class CodexConnectionService : Service() {
       sendFrame = { payload -> socket?.send(payload) == true },
       resetTransport = { reason -> resetTransport("protocol:$reason") },
       onLive = { handler.post { drainOutbox() } },
+      onPortInventory = { payload -> portForwardManager.receiveInventory(id, payload) },
       telemetry = NativeTelemetryRecorder(::emitTelemetry),
     )
 

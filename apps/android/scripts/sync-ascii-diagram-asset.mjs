@@ -10,7 +10,7 @@ const destinationDirectory = path.join(androidRoot, "android/app/src/main/assets
 const glueSource = require.resolve("svgbob-wasm/svgbob_wasm_bg.js");
 const wasmSource = require.resolve("svgbob-wasm/svgbob_wasm_bg.wasm");
 const htmlSource = path.join(androidRoot, "assets/ascii-diagram-renderer.html");
-const webModuleDestination = path.join(androidRoot, "src/rendering/svgbob-wasm.generated.ts");
+const webModuleDestination = path.join(androidRoot, "../../packages/rendering-core/src/svgbob-wasm.generated.ts");
 
 const glue = await readFile(glueSource, "utf8");
 const wasmBase64 = (await readFile(wasmSource)).toString("base64");

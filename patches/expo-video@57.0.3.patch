@@ -1,0 +1,38 @@
+diff --git a/build/VideoPlayer.web.d.ts b/build/VideoPlayer.web.d.ts
+index fab66c22b38ec098f23f14cbad667070663fb50b..0fa557887e197144b00d4c0f3a640a038b1471e3 100644
+--- a/build/VideoPlayer.web.d.ts
++++ b/build/VideoPlayer.web.d.ts
+@@ -1,9 +1,9 @@
+ import type { BufferOptions, PlayerError, VideoPlayerStatus, VideoSource, VideoPlayer, SubtitleTrack, AudioMixingMode, VideoTrack, AudioTrack, ScrubbingModeOptions, SeekTolerance } from './VideoPlayer.types';
+ import type { VideoPlayerEvents } from './VideoPlayerEvents.types';
+ import type { VideoThumbnail } from './VideoThumbnail';
+-export declare function useVideoPlayer(source: VideoSource, setup?: (player: VideoPlayer) => void): VideoPlayer;
++export declare function useVideoPlayer(source: VideoSource, setup?: (player: VideoPlayer) => void): VideoPlayerWeb;
+ export declare function getSourceUri(source?: VideoSource): string | null;
+-export declare function createVideoPlayer(source: VideoSource): VideoPlayer;
++export declare function createVideoPlayer(source: VideoSource): VideoPlayerWeb;
+ export default class VideoPlayerWeb extends globalThis.expo.SharedObject<VideoPlayerEvents> implements VideoPlayer {
+     constructor(source: VideoSource);
+     src: VideoSource;
+diff --git a/src/VideoPlayer.web.tsx b/src/VideoPlayer.web.tsx
+index 5cfdf596c5e0d4f3ecfbf96074d732e25e18b23c..623a2b8ddd9dd6ced0a6afc1bc6d0039d1873612 100644
+--- a/src/VideoPlayer.web.tsx
++++ b/src/VideoPlayer.web.tsx
+@@ -20,7 +20,7 @@ import resolveAssetSource from './resolveAssetSource';
+ export function useVideoPlayer(
+   source: VideoSource,
+   setup?: (player: VideoPlayer) => void
+-): VideoPlayer {
++): VideoPlayerWeb {
+   const parsedSource = typeof source === 'string' ? { uri: source } : source;
+ 
+   return useMemo(() => {
+@@ -44,7 +44,7 @@ export function getSourceUri(source?: VideoSource): string | null {
+   return source?.uri ?? null;
+ }
+ 
+-export function createVideoPlayer(source: VideoSource): VideoPlayer {
++export function createVideoPlayer(source: VideoSource): VideoPlayerWeb {
+   const parsedSource = typeof source === 'string' ? { uri: source } : source;
+ 
+   return new VideoPlayerWeb(parsedSource);

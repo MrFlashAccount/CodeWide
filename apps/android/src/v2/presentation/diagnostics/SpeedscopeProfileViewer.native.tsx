@@ -1,3 +1,4 @@
+import { fromByteArray } from "base64-js";
 import { useRef, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -131,12 +132,7 @@ function profileLoaderScript(fileName: string, content: string): string {
 }
 
 function utf8Base64(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  const chunks: string[] = [];
-  for (let offset = 0; offset < bytes.length; offset += 32_768) {
-    chunks.push(String.fromCodePoint(...bytes.subarray(offset, offset + 32_768)));
-  }
-  return btoa(chunks.join(""));
+  return fromByteArray(new TextEncoder().encode(value));
 }
 
 const styles = StyleSheet.create({

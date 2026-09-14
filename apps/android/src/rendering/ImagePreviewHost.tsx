@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { retainCachedAttachment } from "../native/attachment-cache/cached-transfer";
 import { useEvent } from "../react/useEvent";
 import Animated, {
   Easing,
@@ -140,6 +141,10 @@ function ImagePreviewSession({
 }) {
   const dialog = useAppDialog();
   const [session, setSession] = useState(initialSession);
+  useEffect(() => {
+    const releases = initialSession.items.map((item) => retainCachedAttachment(item.source.uri));
+    return () => { for (const release of releases) release(); };
+  }, [initialSession]);
   const [preparingAnnotation, setPreparingAnnotation] = useState(false);
   const annotate = async () => {
     const annotationHandler = getAnnotationHandler();

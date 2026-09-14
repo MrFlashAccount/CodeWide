@@ -734,6 +734,30 @@ describe("Legend thread chat model", () => {
     model.close();
   });
 
+  it("reports resident membership through updates, deletion, reinsertion, eviction and close", () => {
+    const reports: number[] = [];
+    const model = createThreadChatModel({ onResidentRowCountChange: (count) => { reports.push(count); } });
+    model.row$("unloaded");
+    expect(model.residentRowCount()).toBe(0);
+    const first = row("a", 0);
+    const second = row("b", 1);
+    model.commitWindow(request, model.startWindow(request), loaded([first, second]));
+    expect(model.residentRowCount()).toBe(2);
+    reports.length = 0;
+    model.publishChanges([{ type: "update", value: { ...first, lastOpenedAt: 10 } }]);
+    expect(reports).toEqual([]);
+    model.publishChanges([{ type: "delete", key: first.id }, { type: "delete", key: first.id }]);
+    expect(model.residentRowCount()).toBe(1);
+    model.publishChanges([{ type: "insert", value: first }]);
+    expect(model.residentRowCount()).toBe(2);
+    for (let index = 0; index < 4; index += 1) model.startWindow({ ...request, threadId: `other-${index}` });
+    expect(model.residentRowCount()).toBe(0);
+    model.publishChanges([{ type: "insert", value: second }]);
+    model.close();
+    expect(model.residentRowCount()).toBe(0);
+    expect(reports).toEqual([1, 2, 0, 1, 0]);
+  });
+
   it("drops cached row objects after eviction, not merely after leaving the chat", async () => {
     const model = createThreadChatModel();
     const release = model.retainWindow(request.connectionId, request.threadId);

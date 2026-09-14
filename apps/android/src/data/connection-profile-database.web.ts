@@ -1,10 +1,14 @@
-import type { ConnectionProfileDatabase } from "./connection-profile-database.native";
+import type { ConnectionProfileRow } from "./connection-profile-types";
+import { localOnlyCollectionOptions } from "@tanstack/db";
+import { createCollection } from "@tanstack/react-db";
+import type { ConnectionProfileDatabase } from "./connection-profile-database-contract";
 
-export type { ConnectionProfileDatabase } from "./connection-profile-database.native";
+export type { ConnectionProfileDatabase } from "./connection-profile-database-contract";
 
 export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
+  const collection = createCollection(localOnlyCollectionOptions<ConnectionProfileRow, string>({ id: "connection-profiles-web", getKey: (row) => row.id }));
   return {
-    collection: null as never,
+    collection,
     project() { return []; },
     async importLegacyUiCache() {},
     async importLegacy() {},
@@ -18,6 +22,6 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
     async updateProfile() {},
     async update() { throw new Error("Android only"); },
     async move() {},
-    close() {},
+    close() { void collection.cleanup(); },
   };
 }

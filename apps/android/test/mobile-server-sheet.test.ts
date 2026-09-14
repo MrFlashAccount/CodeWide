@@ -74,7 +74,7 @@ describe("unified thread filters", () => {
     expect(screen.match(/activeServerId === ALL_SERVERS_ID && servers\.length > 1/gu)).toHaveLength(2);
     expect(screen).toContain('accessibilityLabel={`Server ${server.name}`}');
     expect(screen).toContain('initialOffset={mobileThreadOffset.read(sidebarScopeKey)}');
-    expect(screen).toContain('onOffsetChange={(offset) => mobileThreadOffset.write(sidebarScopeKey, offset)}');
+    expect(screen).toMatch(/onOffsetChange=\{\(offset\) =>\s*mobileThreadOffset\.write\(sidebarScopeKey, offset\)\s*\}/u);
     expect(screen).toContain('`${activeServerId}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`');
   });
 
@@ -92,8 +92,9 @@ describe("unified thread filters", () => {
       screen.indexOf("function ThreadFilterMenu("),
     );
 
-    expect(menu).toContain("<UsagePopover");
-    expect(menu).toContain("accountSources={accountSources}");
+    expect(menu).toContain("<WorkspaceAccountUsagePopover");
+    expect(menu).toContain("database={accountDatabase}");
+    expect(menu).toContain("servers={accountServers}");
     expect(menu).not.toContain('id: "accounts"');
     expect(menu).not.toContain("onPress: onOpenAccounts");
     expect(menu).toContain('label: archived ? "Active threads" : "Archived threads"');
@@ -114,11 +115,15 @@ describe("unified thread filters", () => {
     expect(screen).toContain('accessibilityLabel={projectName === null ? "New thread" : `New thread in ${projectName}`}');
   });
 
-  it("passes the same account sources to folded and unfolded thread lists", () => {
-    expect(screen.match(/accountSources=\{threadListAccountSources\}/gu)).toHaveLength(2);
-    expect(screen).toContain(
-      "activeServerId === ALL_SERVERS_ID ? null : activeServerId",
-    );
+  it("scopes account subscriptions identically in folded and unfolded thread lists", () => {
+    for (const [start, end] of [
+      ["function ThreadSidebar(", "function SelectableThreadRow("],
+      ["function MobileThreads(", "function NewThreadFloatingButton("],
+    ]) {
+      const body = screen.slice(screen.indexOf(start), screen.indexOf(end));
+      expect(body).toContain("accountDatabase={remote.accountRateLimitsDatabase}");
+      expect(body).toContain("accountServers={servers.filter((server) => activeServerId === ALL_SERVERS_ID || server.id === activeServerId)}");
+    }
   });
 
   it("places project breadcrumbs in the title row and keeps archive in the scope menu on both layouts", () => {

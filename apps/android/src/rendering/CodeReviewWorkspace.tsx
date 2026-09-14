@@ -426,7 +426,7 @@ async function loadCodeReviewResource(
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
   const source = diff?.source ?? fallbackSource;
   const patches = diff?.patches
-    .map((patch) => ({ kind: patch.kind, diff: patch.diff.trimEnd() }))
+    .map((patch) => ({ kind: patch.kind, diff: patch.diff }))
     .filter((patch) => patch.diff !== "") ?? [];
   const displayState: CodeReviewDocument["displayState"] = deleted
     ? "deleted"

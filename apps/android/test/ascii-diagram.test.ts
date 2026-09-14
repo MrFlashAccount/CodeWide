@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { looksLikeAsciiDiagram, repairSvgbobUnicodeText, themedAsciiDiagramSvg } from "../src/rendering/ascii-diagram";
-import { renderSvgbob } from "../src/rendering/svgbob-wasm-runtime.web";
+import { renderSvgbob } from "@codewide/rendering-core/ascii";
 
 const generatedArchitecture = `                 TypeScript source
                         │

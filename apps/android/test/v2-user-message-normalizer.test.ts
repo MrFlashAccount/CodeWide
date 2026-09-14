@@ -5,6 +5,26 @@ import { timelineTurnsDisplayModel } from "../src/v2/features/conversation/timel
 import { normalizeUserMessage } from "../src/v2/features/conversation/userMessageNormalizer";
 
 describe("V2 user message normalization", () => {
+  it.each(["\n", "\r\n"])("strips the Desktop browser wrapper but preserves authored headings (%j)", (newline) => {
+    const source = [
+      "", '<in-app-browser-context source="ambient-ui-state">', "Automatically supplied UI state.", "# In app browser:", "",
+      "https://example.invalid/review", "</in-app-browser-context>", "", "## My request:", "",
+      "Проверь страницу.", "", "## My request:", "Этот заголовок — часть моего текста.",
+    ].join(newline);
+    expect(normalizeUserMessage(source)).toEqual({
+      files: [], text: ["Проверь страницу.", "", "## My request:", "Этот заголовок — часть моего текста."].join(newline),
+    });
+  });
+
+  it.each([
+    "## My request:\n\nKeep my heading.",
+    "An example:\n\n# In app browser:\n\n## My request:\nKeep this example.",
+    "# In app browser:\n\n## My request:\nNo browser envelope here.",
+    "```markdown\n## My request:\nDo not strip this code.\n```",
+  ])("preserves a short request heading without a proven Desktop envelope", (source) => {
+    expect(normalizeUserMessage(source)).toEqual({ files: [], text: source });
+  });
+
   it("shows only authored text and extracts exact transport-envelope file metadata", () => {
     const source = [
       "# Files mentioned by the user:",

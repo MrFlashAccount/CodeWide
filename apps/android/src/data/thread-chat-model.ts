@@ -102,6 +102,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   }>();
   let closed = false;
   let reportedResidentRowCount = -1;
+  // Only this owner installs, deletes or evicts row values. Metadata updates
+  // leave residency unchanged and must not scan every retained chat.
+  let residentRowCount = 0;
   let presentationSequence = 0;
   // The last requested resource owns its window independently of React's
   // passive effects. A responsive remount can release every component owner
@@ -111,11 +114,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
 
   const reportResidentRowCount = (): void => {
     if (options.onResidentRowCountChange === undefined) return;
-    let count = 0;
-    for (const node of rowNodes.values()) if (node.peek() !== null) count += 1;
-    if (count === reportedResidentRowCount) return;
-    reportedResidentRowCount = count;
-    options.onResidentRowCountChange(count);
+    if (residentRowCount === reportedResidentRowCount) return;
+    reportedResidentRowCount = residentRowCount;
+    options.onResidentRowCountChange(residentRowCount);
   };
 
   const row$ = (rowId: string): Observable<ThreadDetailRow | null> => {
@@ -170,7 +171,10 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       for (const rowId of [...snapshot.turnRowIds, ...snapshot.detailRowIds, ...snapshot.liveRowIds]) retainedRowIds.add(rowId);
     }
     for (const rowId of rowNodes.keys()) {
-      if (!retainedRowIds.has(rowId)) rowNodes.delete(rowId);
+      if (!retainedRowIds.has(rowId)) {
+        if (rowNodes.get(rowId)?.peek() != null) residentRowCount -= 1;
+        rowNodes.delete(rowId);
+      }
     }
     reportResidentRowCount();
   };
@@ -198,6 +202,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const previous = node.peek();
       const next = previous === null ? row : replaceEqualDeep(previous, row);
       if (next === previous) continue;
+      if (previous === null) residentRowCount += 1;
       node.set(next);
       changed = true;
     }
@@ -552,6 +557,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
             const previous = node.peek();
             if (previous === null) continue;
             recordChangedRow(previous);
+            residentRowCount -= 1;
             node.set(null);
             continue;
           }
@@ -560,6 +566,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           const next = previous === null ? change.value : replaceEqualDeep(previous, change.value);
           if (next === previous) continue;
           recordChangedRow(change.value);
+          if (previous === null) residentRowCount += 1;
           node.set(next);
         }
       });
@@ -575,9 +582,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       refreshThreadNow(connectionId, threadId, rows);
     },
     residentRowCount() {
-      let count = 0;
-      for (const node of rowNodes.values()) if (node.peek() !== null) count += 1;
-      return count;
+      return residentRowCount;
     },
     close() {
       residentResourceScope = null;
@@ -594,6 +599,7 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       windowLayoutSignatures.clear();
       changedRowIdsByScope.clear();
       rowNodes.clear();
+      residentRowCount = 0;
       reportResidentRowCount();
     },
   };

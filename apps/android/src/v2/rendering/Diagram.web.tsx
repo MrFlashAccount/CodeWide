@@ -38,7 +38,7 @@ interface DiagramResultProps extends DiagramFallbackProps {
 }
 
 const mermaidModule = import("mermaid");
-const svgbobModule = import("svgbob-wasm");
+const svgbobModule = import("@codewide/rendering-core/ascii");
 
 export function MermaidDiagram(props: DiagramProps): React.JSX.Element {
   const { source } = props;
@@ -119,8 +119,8 @@ async function renderMermaid(source: string, renderId: string): Promise<Rendered
 }
 
 async function renderAscii(source: string): Promise<RenderedDiagram> {
-  const { render } = await svgbobModule;
-  const svg = render(source).replace("</style>", `${ASCII_THEME}</style>`);
+  const { renderSvgbob } = await svgbobModule;
+  const svg = (await renderSvgbob(source)).replace("</style>", `${ASCII_THEME}</style>`);
   return svgDiagram(svg);
 }
 

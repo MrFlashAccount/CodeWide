@@ -1,17 +1,18 @@
 {
-  "extends": ["expo/tsconfig.base", "@sergeigarin/hygene/tsconfig.base.json"],
+  "extends": ["./tsconfig.native.base.json", "@sergeigarin/hygene/tsconfig.base.json"],
   "compilerOptions": {
     "target": "ES2024",
-    "lib": ["ES2024", "DOM"],
+    "lib": ["ES2024"],
     "jsx": "react-jsx",
     "module": "Preserve",
     "moduleResolution": "Bundler",
     "noPropertyAccessFromIndexSignature": false,
     "customConditions": ["react-native"],
-    "moduleSuffixes": [".native", ""],
+    "moduleSuffixes": [".android", ".native", ""],
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "types": ["react-native"]
   },
   "include": [
     "app/**/*.ts",
@@ -25,5 +26,5 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ],
-  "exclude": ["app/legacy.tsx"]
+  "exclude": ["app/legacy.tsx", "node_modules", "android", "dist", "**/*.web.ts", "**/*.web.tsx"]
 }

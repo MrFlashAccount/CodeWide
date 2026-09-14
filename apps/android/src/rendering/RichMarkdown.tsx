@@ -17,10 +17,13 @@ import { safeImageUri } from "./image-source";
 import { useImagePreview, useImagePreviewGroup, useRegisterImagePreviewItem } from "./ImagePreviewHost";
 import { useMarkdownLocalLinkHandler } from "./MarkdownLinkHandler";
 import { markdownTableLayout } from "./markdown-table-layout";
+import { collectMarkdownImageOrder } from "./markdown-image-order";
+import type { MarkdownDocumentBlock } from "./markdown-document-blocks";
 import { AsciiDiagram, MermaidDiagram } from "./MermaidDiagram";
 import { NativeCodeBlock } from "./NativeCodeBlock";
 import { CodeBlockHeader } from "./CodeBlockHeader";
 import { NativeRevealSurface } from "./NativeRevealSurface";
+import { InlineMediaFrame, INLINE_MEDIA_PREVIEW_HEIGHT } from "./InlineMediaFrame";
 import type { MarkupImageDimensions } from "./markup-image-dimensions";
 import { useContentReview, useContentReviewHighlights } from "./ContentReviewHost";
 import type { ContentReviewTarget } from "./content-review";
@@ -145,7 +148,7 @@ export function RichMarkdown({
   }
   // Streaming revisions belong to this mounted view, not the completed-text cache.
   const parsed = parseDiagnosticRichMarkdown(source, !streaming);
-  const imageOrder = collectImageOrder(parsed.root);
+  const imageOrder = collectMarkdownImageOrder(parsed.root);
   if (maxLines !== undefined) {
     return (
       <RichMarkdownReviewContext.Provider value={reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: reviewPathPrefix }}>
@@ -179,6 +182,23 @@ export function RichMarkdown({
             </View>
           )}
         </View>
+      </RichMarkdownReviewContext.Provider>
+    </RichMarkdownRevealContext.Provider>
+  );
+}
+
+/** Renders one document viewport item with the same review address as the full renderer. */
+export function RichMarkdownDocumentBlockView({ block, reviewTarget }: {
+  block: MarkdownDocumentBlock;
+  reviewTarget?: ContentReviewTarget;
+}) {
+  const plainText = usePerformanceExperiment("plainTextMarkdown");
+  return (
+    <RichMarkdownRevealContext.Provider value={false}>
+      <RichMarkdownReviewContext.Provider value={reviewTarget === undefined ? null : { target: reviewTarget, pathPrefix: block.reviewPathPrefix }}>
+        {plainText
+          ? <Text selectable reviewBlockPath={block.path} style={styles.paragraph}>{plainRichMarkdownRootText(block.node)}</Text>
+          : <BlockNode node={block.node} path={block.path} extensions={{}} imageOrder={block.imageOrder} />}
       </RichMarkdownReviewContext.Provider>
     </RichMarkdownRevealContext.Provider>
   );
@@ -374,9 +394,10 @@ function MarkdownImage({ url, alt, target = url, order, reveal = false, dimensio
   const [loadedUri, setLoadedUri] = useState<string | null>(null);
   const [failedUri, setFailedUri] = useState<string | null>(null);
   const availableWidth = useRichContentWidth();
-  const imageStyle = dimensions !== undefined && availableWidth !== null
-    ? [styles.markdownImage, { height: Math.max(48, Math.min(440, availableWidth * dimensions.height / dimensions.width)) }]
-    : styles.markdownImage;
+  const imageHeight = dimensions !== undefined && availableWidth !== null
+    ? Math.max(48, Math.min(440, availableWidth * dimensions.height / dimensions.width))
+    : INLINE_MEDIA_PREVIEW_HEIGHT;
+  const imageStyle = [styles.markdownImage, { height: imageHeight }];
   const safeTarget = isSafeLink(target) ? target : null;
   const previewItem = {
     id: groupId === null ? previewId : `${groupId}:${url}:${alt}`,
@@ -396,10 +417,15 @@ function MarkdownImage({ url, alt, target = url, order, reveal = false, dimensio
       </Pressable>
     );
   }
-  if (imageUri === null || privateImage.failed || (privateImage.uri !== null && failedUri === privateImage.uri)) return <Text selectable style={styles.secondary}>[Image: {alt}]</Text>;
-  if (privateImage.uri === null) return <View style={imageStyle} />;
+  if (imageUri === null) return <Text selectable style={styles.secondary}>[Image: {alt}]</Text>;
+  if (privateImage.failed || (privateImage.uri !== null && failedUri === privateImage.uri)) return (
+    <InlineMediaFrame height={imageHeight}><View style={imageStyle}>
+      <Text selectable numberOfLines={3} style={styles.secondary}>[Image: {alt}]</Text>
+    </View></InlineMediaFrame>
+  );
+  if (privateImage.uri === null) return <InlineMediaFrame height={imageHeight}><View style={imageStyle} /></InlineMediaFrame>;
   return (
-    <View style={imageStyle}>
+    <InlineMediaFrame height={imageHeight}>
     <NativeRevealSurface animate={reveal} ready={!reveal || loadedUri === privateImage.uri} revealKey={`image:${privateImage.uri}`}>
       <Pressable
         accessibilityRole="imagebutton"
@@ -410,24 +436,8 @@ function MarkdownImage({ url, alt, target = url, order, reveal = false, dimensio
         <Image accessibilityLabel={alt} source={privateImage.source ?? { uri: privateImage.uri }} resizeMode="contain" resizeMethod="resize" style={imageStyle} onLoad={() => setLoadedUri(privateImage.uri)} onError={() => setFailedUri(privateImage.uri)} />
       </Pressable>
     </NativeRevealSurface>
-    </View>
+    </InlineMediaFrame>
   );
-}
-
-function collectImageOrder(root: Nodes): WeakMap<object, number> {
-  const order = new WeakMap<object, number>();
-  let index = 0;
-  const visit = (node: Nodes): void => {
-    if (node.type === "image") {
-      order.set(node, index);
-      index += 1;
-    }
-    if ("children" in node && Array.isArray(node.children)) {
-      for (const child of node.children) visit(child as Nodes);
-    }
-  };
-  visit(root);
-  return order;
 }
 
 function MarkdownTable({ table, path }: { table: Table; path: string }) {

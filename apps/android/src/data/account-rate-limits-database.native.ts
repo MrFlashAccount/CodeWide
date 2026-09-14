@@ -1,23 +1,11 @@
-import type { AccountRateLimitsUpdatedNotification, GetAccountRateLimitsResponse } from "@codewide/codex-protocol/v0.147.0/v2";
-import type { Collection } from "@tanstack/react-db";
+import type { AccountRateLimitsDatabase } from "./account-rate-limits-database-contract";
+export type { AccountRateLimitsDatabase } from "./account-rate-limits-database-contract";
 
 import { mergeAccountPoolRateLimits, mergeAccountRateLimits, type AccountRateLimitsRow } from "./account-rate-limits";
-import type { AccountPoolSnapshot } from "./account-pool";
+
 import { cloneProtocolValue } from "./clone-protocol-value";
 import { createPersistentCollectionModel } from "./persistent-collection.native";
 import { getUiCacheSqliteDatabase } from "./ui-cache-persistence.native";
-
-export type AccountRateLimitsDatabase = {
-  collection: Collection<AccountRateLimitsRow, string>;
-  get(connectionId: string): AccountRateLimitsRow | null;
-  markLoading(connectionId: string): void;
-  putSnapshot(connectionId: string, snapshot: GetAccountRateLimitsResponse): void;
-  putAccountPool(connectionId: string, accountPool: AccountPoolSnapshot): void;
-  mergeUpdate(connectionId: string, update: AccountRateLimitsUpdatedNotification): void;
-  markError(connectionId: string, error: string): void;
-  remove(connectionId: string): void;
-  close(): void;
-};
 
 export function createAccountRateLimitsDatabase(): AccountRateLimitsDatabase {
   let source = new Map<string, AccountRateLimitsRow>();

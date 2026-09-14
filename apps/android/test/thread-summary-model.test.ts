@@ -1,9 +1,11 @@
+import { observe } from "@legendapp/state";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   createThreadSummaryModel,
   projectThreadSummaryView,
   type ThreadSummaryViewRequest,
+  type ThreadSummaryViewSnapshot,
 } from "../src/data/thread-summary-model";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 
@@ -41,6 +43,79 @@ function summary(id: string, overrides: Partial<StoredThreadSummary> = {}): Stor
 }
 
 describe("Legend thread summary model", () => {
+  it("publishes one atomic snapshot and preserves moved, unchanged rows", () => {
+    const model = createThreadSummaryModel();
+    const rows = [summary("first", { recencyAt: 3 }), summary("second", { recencyAt: 2 }), summary("pin", { pinned: true })];
+    model.commitView(request, model.startView(request), projectThreadSummaryView(rows, request));
+    const node = model.view$(request);
+    const previous = node.peek();
+    const snapshots: ThreadSummaryViewSnapshot[] = [];
+    const dispose = observe(() => { snapshots.push(node.get()); });
+    model.publish([{ type: "update", value: summary("second", { recencyAt: 4, preview: "updated" }) }]);
+    const next = node.peek();
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[1]).toBe(next);
+    expect(next.recent.map((row) => row.remoteThreadId)).toEqual(["second", "first"]);
+    expect(next.recent[0]?.preview).toBe("updated");
+    expect(next.recent[1]).toBe(previous.recent[0]);
+    expect(next.pinned).toBe(previous.pinned);
+    expect(previous.recent.map((row) => row.remoteThreadId)).toEqual(["first", "second"]);
+    model.publish([{ type: "update", value: summary("second", { recencyAt: 4, preview: "updated" }) }]);
+    expect(node.peek()).toBe(next);
+    expect(snapshots).toHaveLength(2);
+    dispose();
+    model.close();
+  });
+
+  it("replays rank, membership, deletion and repeated-key batches like a complete projection", () => {
+    const scoped = { ...request, projectCwd: "/repo" };
+    const initial = [summary("a", { recencyAt: 5 }), summary("b", { recencyAt: 4 }),
+      summary("selected", { recencyAt: 3 }), summary("pin", { pinned: true }),
+      summary("archive", { archived: true }), summary("child", { parentThreadId: "a" })];
+    const model = createThreadSummaryModel();
+    model.commitView(scoped, model.startView(scoped), projectThreadSummaryView(initial, scoped));
+    const batches: Parameters<typeof model.publish>[0][] = [
+      [{ type: "update", value: summary("b", { recencyAt: 0 }) }],
+      [{ type: "update", value: summary("a", { pinned: true }) }],
+      [{ type: "update", value: summary("pin", { archived: true, pinned: true }) }],
+      [{ type: "update", value: summary("selected", { cwd: "/other" }) }],
+      [{ type: "update", value: summary("child", { parentThreadId: null, recencyAt: 20 }) }],
+      [{ type: "insert", value: summary("new", { recencyAt: 30 }) },
+        { type: "update", value: summary("new", { recencyAt: 0 }) },
+        { type: "update", value: summary("child", { recencyAt: -1 }) }],
+      [{ type: "delete", key: "server\u0000a" }, { type: "delete", key: "server\u0000selected" }],
+    ];
+    for (const changes of batches) {
+      const before = model.view$(scoped).peek();
+      const residents = new Map<string, StoredThreadSummary>();
+      for (const partition of [before.pinned, before.recent, before.archived, before.selected, before.subagents]) {
+        for (const row of partition) residents.set(`${row.connectionId}\u0000${row.remoteThreadId}`, row);
+      }
+      for (const change of changes) {
+        if (change.type === "delete") residents.delete(change.key);
+        else residents.set(`${change.value.connectionId}\u0000${change.value.remoteThreadId}`, change.value);
+      }
+      const expected = projectThreadSummaryView([...residents.values()], scoped);
+      model.publish(changes);
+      const next = model.view$(scoped).peek();
+      for (const partition of ["pinned", "recent", "archived", "selected", "subagents"] as const) {
+        expect(next[partition]).toEqual(expected[partition]);
+      }
+    }
+    model.close();
+  });
+
+  it("applies a changed view scope to intervening events before its disk read completes", () => {
+    const model = createThreadSummaryModel();
+    const rows = [summary("a", { cwd: "/a" }), summary("b", { cwd: "/b" })];
+    model.commitView(request, model.startView(request), projectThreadSummaryView(rows, request));
+    const scoped = { ...request, projectCwd: "/a" };
+    model.startView(scoped);
+    model.publish([{ type: "update", value: summary("a", { cwd: "/a", preview: "live" }) }]);
+    expect(model.view$(scoped).peek().recent.map((row) => [row.remoteThreadId, row.preview])).toEqual([["a", "live"]]);
+    model.close();
+  });
+
   it("starts one lazy Legend resource and resolves it into the live view", async () => {
     const model = createThreadSummaryModel();
     let loads = 0;

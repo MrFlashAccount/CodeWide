@@ -114,7 +114,7 @@ export function startUpload(
   let transferStartedAt: number | null = null;
   const promise = (async () => {
     // Publish the local attachment before hashing can occupy the JS thread.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const hash = await hashFile(
       file.native,
       (transferred) => onProgress({ transferred, total: file.size, phase: "hashing" }),
@@ -256,7 +256,7 @@ async function uploadStatus(
 }
 
 async function delay(milliseconds: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, milliseconds));
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 export function startDownload(
@@ -490,7 +490,7 @@ async function copyFileContents(
       output.writeBytes(chunk);
       copied += chunk.length;
       progress(copied);
-      if (copied % (8 * 1024 * 1024) === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      if (copied % (8 * 1024 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   } finally {
     input.close();
@@ -536,7 +536,7 @@ async function hashFile(
       hash.update(chunk);
       read += chunk.length;
       progress(read);
-      if (read % (8 * 1024 * 1024) === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+      if (read % (8 * 1024 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   } finally {
     handle.close();

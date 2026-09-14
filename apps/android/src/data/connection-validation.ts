@@ -40,12 +40,12 @@ export function validateConnectionInput(input: ConnectionInput): ConnectionInput
   if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
     throw new Error("Endpoint must not contain credentials, query parameters, or fragments");
   }
-  if (url.pathname === "/" || url.pathname === "") url.pathname = "/v1/sync";
-  if (url.pathname !== "/v1/sync") throw new Error("Endpoint path must be /v1/sync");
+  const pathname = url.pathname === "/" || url.pathname === "" ? "/v1/sync" : url.pathname;
+  if (pathname !== "/v1/sync") throw new Error("Endpoint path must be /v1/sync");
   if (tlsPinSha256 === undefined || !/^sha256\/[A-Za-z0-9+/]{43}=$/.test(tlsPinSha256)) {
     throw new Error("TLS pin must be an OkHttp sha256/base64 certificate pin");
   }
-  return { displayName, emoji, endpoint: url.toString(), token, tlsPinSha256 };
+  return { displayName, emoji, endpoint: (pathname === url.pathname ? url : new URL(pathname, url)).toString(), token, tlsPinSha256 };
 }
 
 export function validateConnectionUpdateInput(input: ConnectionUpdateInput, currentToken: string): ConnectionInput {

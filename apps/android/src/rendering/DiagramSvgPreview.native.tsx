@@ -9,8 +9,8 @@ import { AppText } from "../ui/Typography";
 import { useAsyncResource } from "./async-resource-store";
 import { diagramPreviewKey, renderDiagramPreview } from "./diagram-preview.native";
 import type { DiagramPreviewResult } from "./diagram-preview-result";
-import { useRichContentWidth } from "./RichContentLayout";
-import { checkAborted } from "./check-aborted";
+import { InlineMediaFrame } from "./InlineMediaFrame";
+import { checkAborted } from "../native/check-aborted";
 import { DiagramPreviewVisibility } from "./DiagramPreviewViewport";
 
 interface DiagramSvgPreviewProps {
@@ -34,7 +34,6 @@ function DiagramImagePreview({
   near,
   activated,
 }: DiagramSvgPreviewProps & { readonly near: boolean; readonly activated: boolean }) {
-  const availableWidth = useRichContentWidth();
   const key = diagramPreviewKey(source);
   const [copied, setCopied] = useState(false);
   const resource = useAsyncResource<DiagramPreviewResult>(
@@ -56,12 +55,9 @@ function DiagramImagePreview({
   const result = resource.value;
   const preview = result?.status === "ready" ? result.preview : null;
   const error = result?.status === "error" ? result.message : null;
-  const height = preview === null ? 120 : Math.max(120, Math.min(440,
-    (availableWidth ?? preview.width) * preview.height / preview.width,
-  ));
   if (error !== null) {
     return (
-      <View accessibilityRole="alert" style={[styles.preview, styles.errorPreview]}>
+      <InlineMediaFrame><View accessibilityRole="alert" style={[styles.preview, styles.errorPreview]}>
         <View style={styles.errorHeader}>
           <AppText style={styles.errorTitle}>Could not render diagram</AppText>
           <Pressable
@@ -78,23 +74,23 @@ function DiagramImagePreview({
           </Pressable>
         </View>
         <AppText selectable numberOfLines={4} style={styles.errorMessage}>{error}</AppText>
-      </View>
+      </View></InlineMediaFrame>
     );
   }
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Open diagram fullscreen" onPress={onOpen} style={[styles.preview, { height }]}>
+    <InlineMediaFrame><Pressable accessibilityRole="button" accessibilityLabel="Open diagram fullscreen" onPress={onOpen} style={styles.preview}>
       {!near || preview === null ? (
         <View style={styles.placeholder}>
           <Ionicons name="git-network-outline" size={iconSize.inline} color={colors.textMuted} />
           <AppText style={styles.hint}>{near ? "Rendering diagram…" : "Diagram preview"}</AppText>
         </View>
       ) : <Image source={{ uri: preview.uri }} resizeMode="contain" style={styles.image} />}
-    </Pressable>
+    </Pressable></InlineMediaFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  preview: { width: "100%", padding: spacing.xs, backgroundColor: colors.surfaceRaised },
+  preview: { flex: 1, width: "100%", padding: spacing.xs, backgroundColor: colors.surfaceRaised },
   placeholder: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs },
   image: { width: "100%", height: "100%" },
   hint: { color: colors.textMuted, ...typeScale.label },

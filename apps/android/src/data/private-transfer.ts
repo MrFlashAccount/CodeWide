@@ -1,6 +1,7 @@
 import { companionHttpUrl } from "./companion-http-url";
+import { cachedAttachmentFetch } from "../native/attachment-cache/cached-transfer";
 
-export type TransferAccess = { baseUrl: string; authorization: string };
+export type TransferAccess = { baseUrl: string; authorization: string; cacheScope?: string };
 export type GetTransferAccess = (forceRefresh?: boolean) => Promise<TransferAccess>;
 
 export type PrivateAssetSource =
@@ -52,19 +53,25 @@ export async function fetchPrivateAsset(
   init: RequestInit = {},
 ): Promise<Response> {
   if (source.kind === "direct") {
-    return await fetch(source.uri, {
+    return await cachedAttachmentFetch(source.uri, {
       ...init,
       headers: mergeHeaders(source.headers, init.headers),
-    });
+    }, { scope: "direct", identity: source.uri });
   }
   if (getAccess === null) throw new Error("Private asset access is unavailable");
   const resolved = source.kind === "remote"
     ? await materializeRemoteAsset(source.url, getAccess)
     : source;
-  return await fetchAuthenticatedTransfer(getAccess, (access) => ({
-    uri: privateAssetUrl(resolved, access),
-    init,
-  }));
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const access = await getAccess(attempt > 0);
+    const response = await cachedAttachmentFetch(privateAssetUrl(resolved, access), {
+      ...init,
+      headers: mergeHeaders({ authorization: access.authorization }, init.headers),
+    }, { scope: access.cacheScope ?? access.baseUrl, identity: privateAssetCacheKey(resolved) });
+    if (attempt === 0 && isAuthorizationStatus(response.status)) continue;
+    return response;
+  }
+  throw new Error("Private attachment authorization did not recover");
 }
 
 export async function fetchScopedUpload(
@@ -125,7 +132,7 @@ export async function resolvePrivateAssetRequest(
   source: Exclude<PrivateAssetSource, { kind: "direct" }>,
   getAccess: GetTransferAccess,
   forceRefresh = false,
-): Promise<{ uri: string; headers: Record<string, string> }> {
+): Promise<{ uri: string; headers: Record<string, string>; cacheScope: string; cacheIdentity: string }> {
   const resolved = source.kind === "remote"
     ? await materializeRemoteAsset(source.url, getAccess)
     : source;
@@ -133,6 +140,8 @@ export async function resolvePrivateAssetRequest(
   return {
     uri: privateAssetUrl(resolved, access),
     headers: { authorization: access.authorization },
+    cacheScope: access.cacheScope ?? access.baseUrl,
+    cacheIdentity: privateAssetCacheKey(resolved),
   };
 }
 

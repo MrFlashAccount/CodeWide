@@ -78,4 +78,4 @@ export async function purgeNativeAllocator(_exhaustive: boolean): Promise<Memory
   throw new Error("Memory experiment is available only in the Android app");
 }
 
-export type { PerformanceMetricsSnapshot } from "./performance-metrics.native";
+export type { HermesHeapSnapshot, MemoryCheckpoint, MemoryReclamationActionResult, PerformanceMetricPoint, PerformanceMetricsSnapshot } from "./performance-metrics.native";

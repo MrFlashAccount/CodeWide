@@ -1,5 +1,5 @@
 import type { V2PortDescriptor, V2PortsResponse } from "@codewide/sync-client/v2";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   PortForwardingDraft,
@@ -44,7 +44,12 @@ class PersistentPortTransport implements PortTransport {
     this.deletedTunnels.push(tunnelId);
   }
 
+  reads = 0;
+
+  publishInventory(): void { this.#emit({ type: "inventory", savedServerId: SERVER }); }
+
   async discover(): Promise<V2PortsResponse> {
+    this.reads += 1;
     return this.discovery;
   }
 
@@ -384,3 +389,26 @@ function discoveredPort(): V2PortDescriptor {
     process: "node",
   };
 }
+
+
+it("updates from pushed inventory without periodic discovery", async () => {
+  vi.useFakeTimers();
+  const transport = new PersistentPortTransport();
+  const resource = new PortsResource(transport, SERVER);
+  const remove = resource.subscribe(() => {});
+  try {
+    await resource.refresh();
+    const reads = transport.reads;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(transport.reads).toBe(reads);
+    transport.discovery = { ports: [], scannedAt: 2 };
+    transport.publishInventory();
+    await resource.refresh();
+    expect(resource.snapshot().value.ports).toEqual([]);
+    expect(resource.snapshot().value.scannedAt).toBe(2);
+  } finally {
+    remove();
+    resource.stopResource();
+    vi.useRealTimers();
+  }
+});

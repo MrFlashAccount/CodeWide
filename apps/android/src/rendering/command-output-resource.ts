@@ -2,7 +2,7 @@ import type { CommandOutputReference } from "@codewide/sync-client";
 
 import { readPrivateAssetText, type GetTransferAccess, type PrivateAssetTextResult } from "../data/private-transfer";
 import { getAsyncResource } from "./async-resource-store";
-import { checkAborted } from "./check-aborted";
+import { checkAborted } from "../native/check-aborted";
 
 export const COMMAND_OUTPUT_PAGE_BYTES = 64 * 1024;
 

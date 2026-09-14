@@ -1,0 +1,13 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "lib": ["ES2024"],
+    "types": ["react-native"],
+    "moduleSuffixes": [".android", ".native", ""],
+    "customConditions": ["react-native"]
+  },
+  "files": ["./types/native-runtime.d.ts"],
+  // The unsuffixed native-transport file is a Node/test fallback exporting the
+  // web stub. Metro Android selects native-transport.native.ts instead.
+  "exclude": ["node_modules", "android", "dist", "**/*.web.ts", "**/*.web.tsx", "src/native/native-transport.ts"]
+}

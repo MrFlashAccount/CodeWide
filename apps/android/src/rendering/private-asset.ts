@@ -1,4 +1,7 @@
+import { checkAborted } from "../native/check-aborted";
+import { recoverPrivateAsset } from "./private-asset-recovery";
 import { materializePrivateImageUri } from "./private-image-cache";
+import { cachedAttachmentSource, retainCachedAttachment } from "../native/attachment-cache/cached-transfer";
 import {
   resolvePrivateAssetRequest,
   type GetTransferAccess,
@@ -7,50 +10,29 @@ import {
 
 /**
  * One private asset pipeline for inline images, host paths, projected binary
- * tool results and remote HTTPS media. Every authenticated source is copied to
- * app-private storage before React Native Image sees it, and an expired
+ * tool results and remote HTTPS media. Cacheable sources share bounded
+ * app-private storage; oversized media can stream with headers, and an expired
  * companion session is refreshed once at the transport boundary.
  */
 export async function materializePrivateAsset(
   source: PrivateAssetSource,
   getAccess: GetTransferAccess | null,
   recoverMissing?: () => Promise<void>,
-): Promise<string> {
-  if (source.kind === "direct") return await materializePrivateImageUri(source.uri, source.headers);
-  if (getAccess === null) throw new Error("Private asset access is unavailable");
-  let refreshedAuthorization = false;
-  let recoveredMissingContent = false;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const request = await resolvePrivateAssetRequest(source, getAccess, refreshedAuthorization);
-      return await materializePrivateImageUri(request.uri, request.headers);
-    } catch (cause) {
-      if (!refreshedAuthorization && isAuthorizationFailure(cause)) {
-        refreshedAuthorization = true;
-        continue;
-      }
-      if (
-        !recoveredMissingContent
-        && source.kind === "content"
-        && recoverMissing !== undefined
-        && isMissingContent(cause)
-      ) {
-        recoveredMissingContent = true;
-        await recoverMissing();
-        continue;
-      }
-      throw cause;
+  signal?: AbortSignal,
+): Promise<{ uri: string; headers: Record<string, string> }> {
+  if (source.kind === "direct") {
+    if (/^https?:/u.test(source.uri)) return cachedAttachmentSource(source.uri, source.headers ?? {}, { scope: "direct", identity: source.uri }, signal);
+    const uri = await materializePrivateImageUri(source.uri, source.headers);
+    if (signal !== undefined) {
+      checkAborted(signal);
+      const release = retainCachedAttachment(uri);
+      signal.addEventListener("abort", release, { once: true });
     }
+    return { uri, headers: {} };
   }
-  throw new Error("Private asset could not be materialized");
-}
-
-function isAuthorizationFailure(cause: unknown): boolean {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return /\((?:401|403)\)/u.test(message) || /unauthori[sz]ed|forbidden|session.*expired/iu.test(message);
-}
-
-function isMissingContent(cause: unknown): boolean {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return /\b404\b/u.test(message) || /content[_ ]not[_ ]found/iu.test(message);
+  if (getAccess === null) throw new Error("Private asset access is unavailable");
+  return recoverPrivateAsset(async (refresh) => {
+    const request = await resolvePrivateAssetRequest(source, getAccess, refresh);
+    return cachedAttachmentSource(request.uri, request.headers, { scope: request.cacheScope, identity: request.cacheIdentity }, signal);
+  }, source.kind === "content" ? recoverMissing ?? null : null);
 }

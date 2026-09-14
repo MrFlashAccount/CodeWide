@@ -23,6 +23,7 @@ internal class NativeProtocolEngine(
   private val sendFrame: (String) -> Boolean,
   private val resetTransport: (String) -> Unit,
   private val onLive: () -> Unit,
+  private val onPortInventory: (String) -> Unit,
   private val telemetry: NativeTelemetryRecorder,
 ) {
   private data class PendingRpc(
@@ -79,6 +80,7 @@ internal class NativeProtocolEngine(
     val hello = JSONObject()
       .put("type", "hello")
       .put("protocolVersion", 1)
+      .put("portInventory", true)
       .put("cursor", frameStore.syncCursor(connectionId) ?: JSONObject.NULL)
     val helloText = hello.toString()
     telemetry.record(NativeTelemetryMetric(
@@ -144,6 +146,7 @@ internal class NativeProtocolEngine(
     }
     val frameBytes = text.toByteArray(Charsets.UTF_8).size
     when (envelope.optString("type")) {
+      "portInventory" -> envelope.optJSONObject("inventory")?.let { onPortInventory(it.toString()) }
       "status" -> handleStatus(envelope, frameBytes)
       "hello" -> handleHello(envelope, frameBytes)
       "rpc" -> resolveRpc(envelope.optJSONObject("response"), frameBytes)

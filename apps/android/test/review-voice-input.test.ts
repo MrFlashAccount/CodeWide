@@ -41,8 +41,7 @@ describe("review voice input", () => {
     expect(imagePreviewHost).not.toContain("annotationDraft");
   });
 
-  it("lets any recording review scope drive the shared native glow", () => {
-    expect(screen).toContain('voiceInputsQuery.data?.find((resource) => resource?.phase === "recording") ?? null');
+  it("connects review voice capture and fullscreen overlays to the shared native glow", () => {
     expect(screen).toContain("voiceRuntime={appVoiceInputRuntime}");
     expect(fullscreenModal).toContain("setNativeVoiceAuraTarget(reactTag)");
   });

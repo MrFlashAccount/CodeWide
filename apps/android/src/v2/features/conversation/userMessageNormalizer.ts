@@ -9,6 +9,9 @@ export interface NormalizedUserMessage {
 }
 
 const REQUEST_HEADING = /^## My request for Codex:\s*$/m;
+// The short heading is ordinary Markdown unless preceded by Desktop's complete browser envelope.
+const DESKTOP_BROWSER_REQUEST =
+  /^\s*<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>\s*## My request:[ \t]*(?:\r?\n|$)/u;
 const FILES_HEADING = /^# Files mentioned by the user:\s*$/m;
 const AMBIENT_CONTEXT = /<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>/giu;
 const IMAGE_TAG = /<\/?image(?:\s[^>]*)?>/giu;
@@ -20,7 +23,7 @@ const FILE_ENTRY = /^##\s+(.+?):\s*(?:`([^`\n]+)`|([^\n]+))\s*$/gmu;
  * the resulting file entries without reordering the surrounding source blocks.
  */
 export function normalizeUserMessage(source: string): NormalizedUserMessage {
-  const request = REQUEST_HEADING.exec(source);
+  const request = DESKTOP_BROWSER_REQUEST.exec(source) ?? REQUEST_HEADING.exec(source);
   const filesHeading = FILES_HEADING.exec(source);
   const metadataEnd = request?.index ?? source.length;
   const files =

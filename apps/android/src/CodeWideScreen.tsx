@@ -61,7 +61,7 @@ import {
   type OutputFootprintProjection,
   type TurnUsageProjection,
 } from "@codewide/sync-client";
-import { eq, useLiveQuery } from "@tanstack/react-db";
+import { useLiveQuery } from "@tanstack/react-db";
 import {
   Gesture,
   GestureDetector,
@@ -95,7 +95,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  useTransition,
 } from "react";
 import {
   ActivityIndicator,
@@ -289,7 +288,6 @@ import {
 } from "./data/thread-navigation-metrics";
 import {
   usePerformanceExperiment,
-  usePerformanceExperiments,
 } from "./data/performance-experiments";
 import { beginNavigationFrameTrace, endNavigationFrameTrace } from "./native/performance-metrics";
 import { humanPairingError } from "./data/pairing-error";
@@ -321,6 +319,7 @@ import {
 import { ThreadListProjection } from "./data/thread-list-projection";
 import {
   createThreadNavigationModel,
+  type ConversationDestination as ConversationNavigationDestination,
   type ThreadNavigationModel,
 } from "./data/thread-navigation-model";
 import { SubagentListProjection } from "./data/subagent-projection";
@@ -331,7 +330,6 @@ import {
   tunnelResourceKey,
   turnControlsResourceKey,
   type BackgroundTerminalsRow,
-  type FileTransferRow,
   type ThreadAttachmentResource,
   type ThreadChangeResource,
   type ThreadChangeScope,
@@ -516,16 +514,19 @@ import {
   useAppVoiceInputRuntime,
   useVoiceInputLevel,
   useVoiceInputResource,
+  useScopedVoiceInputResource,
   type AppVoiceInputRuntime,
 } from "./ui/VoiceInputRuntime";
-import { VoiceAura } from "./ui/VoiceAura";
+import { WorkspaceVoiceAura } from "./ui/WorkspaceVoiceAura";
+import { WorkspaceConversationHost, WorkspaceThreadListVisibility } from "./ui/WorkspaceConversationHost";
 import { WaveText } from "./ui/WaveText";
 import { ThreadRenameDialog } from "./ui/ThreadRenameDialog";
 import { SwipeDiscardAction } from "./ui/SwipeDiscardAction";
 import { ComposerDeliveryMenu } from "./ui/ComposerDeliveryMenu";
-import { ContextRing, UsagePopover } from "./ui/UsagePopover";
-import type { AccountUsageSource } from "./data/account-usage-presentation";
-import { threadListAccountUsageSources } from "./data/thread-list-account-usage";
+import { ContextRing } from "./ui/UsagePopover";
+import { WorkspaceAccountUsagePopover } from "./ui/WorkspaceAccountUsagePopover";
+import type { AccountRateLimitsDatabase } from "./data/account-rate-limits-database";
+import type { AccountUsageServer } from "./data/thread-list-account-usage";
 import { CostBreakdownPopover } from "./ui/CostBreakdownPopover";
 import { SettingsVersion } from "./ui/SettingsVersion";
 import { SettingsSection, SettingsSheet } from "./ui/SettingsSheet";
@@ -581,13 +582,6 @@ type ThreadListItem = {
   archived?: boolean;
   unread: number;
   state?: "running" | "approval" | "failed";
-};
-
-type NewChatDraft = {
-  id: string;
-  serverId: string;
-  cwd: string | null;
-  workspaceMode: NewChatWorkspaceMode;
 };
 
 const COLLAPSED_BODY_CHARS = 360;
@@ -1855,7 +1849,6 @@ function nativePortForwardingManagerProps(
 }
 
 export function CodeWideScreen() {
-  usePerformanceExperiments();
   const windowLayout = useWindowLayout();
   const insets = useSafeAreaInsets();
   const remote = useRemoteWorkspace();
@@ -1905,18 +1898,10 @@ function CodeWideWorkspaceContent({
   remote: RemoteWorkspace;
   threadNavigation: ThreadNavigationModel;
 }) {
-  const [, startThreadTransition] = useTransition();
-  const accountRateLimitsQuery = useLiveQuery(
-    () => remote.accountRateLimitsDatabase?.collection,
-    [remote.accountRateLimitsDatabase],
-  );
-  const accountRateLimits = accountRateLimitsQuery.data ?? [];
   const dialog = useAppDialog();
-  const reduceVoiceMotion = useReducedMotionPreference();
   const [connectionSheetVisible, setConnectionSheetVisible] = useState(false);
   const [pendingPairingCode, setPendingPairingCode] = useState<string | null>(null);
   const [newThreadVisible, setNewThreadVisible] = useState(false);
-  const [newChatDraft, setNewChatDraft] = useState<NewChatDraft | null>(null);
   const newChatCounterRef = useRef(0);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [loopbackBrowser, setLoopbackBrowser] = useState<{ title: string; url: string } | null>(
@@ -1945,14 +1930,9 @@ function CodeWideWorkspaceContent({
       : servers.some((server) => server.id === requestedServerId)
         ? requestedServerId
         : ALL_SERVERS_ID;
-  const [threadSelection, setThreadSelection] = useState(() => threadNavigation.current());
   const searchSessionId = useId();
   const [searchSession] = useState(() => new SearchSession(searchSessionId));
   const [searchVisible, setSearchVisible] = useState(false);
-  const [searchWindow, setSearchWindow] = useState<SearchConversationWindow | null>(null);
-  const requestedThreadId = threadSelection.id;
-  const requestedThreadTarget = parseThreadSelectionKey(requestedThreadId);
-  const threadOpenGeneration = threadSelection.generation;
   const [threadListLimit, setThreadListLimit] = useState(THREAD_LIST_PAGE_SIZE);
   const [threadListProjection] = useState(() => new ThreadListProjection());
   const [threadListItemProjection] = useState(() => new ThreadListItemProjection());
@@ -1986,11 +1966,7 @@ function CodeWideWorkspaceContent({
   const serverThreads = threadScope.active;
   const archivedThreads = threadScope.archived;
   const defaultDesktopThreadId =
-    desktop &&
-    desktopDefaultThreadEnabled &&
-    newChatDraft === null &&
-    threadSelection.id === null &&
-    serverThreads[0] !== undefined
+    desktop && desktopDefaultThreadEnabled && serverThreads[0] !== undefined
       ? threadSelectionKey(serverThreads[0])
       : null;
   const loadMoreThreads = () => {
@@ -2001,66 +1977,62 @@ function CodeWideWorkspaceContent({
     if (loadedCount < threadListLimit) return;
     setThreadListLimit((current) => current + THREAD_LIST_PAGE_SIZE);
   };
-  const setActiveThreadId = (
-    value: string | null,
-    navigationId?: string,
-    closeDraft = false,
-    nextServerId?: string,
-    reloadSelected = false,
-  ) => {
-    const requestedThreadId = threadNavigation.current().id;
-    const selectedTarget = parseThreadSelectionKey(value);
-    if (selectedTarget !== null) {
-      void remote
-        .observeThread(selectedTarget.connectionId, selectedTarget.threadId)
-        .catch((cause: unknown) => {
-          console.warn(
-            "Could not attach thread observer:",
-            cause instanceof Error ? cause.message : "unknown error",
-          );
-        });
-    }
-    if (value !== requestedThreadId) {
-      // A focused search field or composer keeps the Android IME session alive
-      // when the visible surface is replaced. End that session at the navigation
-      // boundary so the newly selected conversation never inherits keyboard focus.
-      KeyboardController.dismiss({ animated: false, keepFocus: false });
-      const target = parseThreadSelectionKey(value);
-      if (target !== null)
-        remote.threadDetails?.chat.beginPresentation(target.connectionId, target.threadId);
-    }
-    // Selection is urgent: reveal the destination's cached content or its
-    // local skeleton immediately. Background hydration stays model-owned.
-    const startedAt = performance.now();
-    const nextSelection = threadNavigation.select(value, reloadSelected);
-    if (nextServerId !== undefined) setActiveServerId(nextServerId);
-    if (closeDraft) setNewChatDraft(null);
-    setThreadSelection(nextSelection);
-    requestAnimationFrame(() => {
-      const elapsed = performance.now() - startedAt;
-      recordTiming("thread_selection_next_frame_ms", elapsed);
-      const target = parseThreadSelectionKey(value);
-      if (target !== null && navigationId !== undefined) {
-        markThreadNavigationStage(
-          target.connectionId,
-          target.threadId,
-          "selection_next_frame",
-          {
-            values: { animationFrameDelayMs: elapsed },
-          },
-          navigationId,
-        );
+  const setActiveThreadId = useEvent(
+    (
+      value: string | null,
+      navigationId?: string,
+      nextServerId?: string,
+      reloadSelected = false,
+      searchWindow: SearchConversationWindow | null = null,
+    ) => {
+      const requestedThreadId = threadNavigation.current().id;
+      const selectedTarget = parseThreadSelectionKey(value);
+      if (selectedTarget !== null) {
+        void remote
+          .observeThread(selectedTarget.connectionId, selectedTarget.threadId)
+          .catch((cause: unknown) => {
+            console.warn(
+              "Could not attach thread observer:",
+              cause instanceof Error ? cause.message : "unknown error",
+            );
+          });
       }
-      if (__DEV__)
-        console.log(`[CodeWide perf] thread_selection_next_frame_ms=${Math.round(elapsed)}`);
-    });
-  };
-  const commitDefaultDesktopThread = useEvent(() => {
-    if (defaultDesktopThreadId === null || threadNavigation.current().id !== null) return;
-    setThreadSelection(threadNavigation.select(defaultDesktopThreadId));
-  });
+      if (value !== requestedThreadId) {
+        // A focused search field or composer keeps the Android IME session alive
+        // when the visible surface is replaced. End that session at the navigation
+        // boundary so the newly selected conversation never inherits keyboard focus.
+        KeyboardController.dismiss({ animated: false, keepFocus: false });
+        const target = parseThreadSelectionKey(value);
+        if (target !== null)
+          remote.threadDetails?.chat.beginPresentation(target.connectionId, target.threadId);
+      }
+      // Selection is urgent: reveal the destination's cached content or its
+      // local skeleton immediately. Background hydration stays model-owned.
+      const startedAt = performance.now();
+      if (value !== null && searchWindow !== null) threadNavigation.openSearch(value, searchWindow);
+      else threadNavigation.select(value, reloadSelected);
+      if (nextServerId !== undefined) setActiveServerId(nextServerId);
+      requestAnimationFrame(() => {
+        const elapsed = performance.now() - startedAt;
+        recordTiming("thread_selection_next_frame_ms", elapsed);
+        const target = parseThreadSelectionKey(value);
+        if (target !== null && navigationId !== undefined) {
+          markThreadNavigationStage(
+            target.connectionId,
+            target.threadId,
+            "selection_next_frame",
+            {
+              values: { animationFrameDelayMs: elapsed },
+            },
+            navigationId,
+          );
+        }
+        if (__DEV__)
+          console.log(`[CodeWide perf] thread_selection_next_frame_ms=${Math.round(elapsed)}`);
+      });
+    },
+  );
   const selectThread = useEvent((value: string) => {
-    setSearchWindow(null);
     const target = parseThreadSelectionKey(value);
     let navigationId: string | undefined;
     if (target !== null) {
@@ -2069,7 +2041,7 @@ function CodeWideWorkspaceContent({
     }
     // Keep repeated selection as an explicit diagnostic reload path: it runs
     // through the same navigation, hydration, and profiling stages.
-    setActiveThreadId(value, navigationId, true, undefined, true);
+    setActiveThreadId(value, navigationId, undefined, true);
   });
   const preloadThread = useEvent((value: string): (() => void) | undefined => {
     const threadSelection = threadNavigation.current();
@@ -2100,17 +2072,16 @@ function CodeWideWorkspaceContent({
     });
   });
   const openSearchThread = useEvent((target: LocatedSearchHit, query: string) => {
-    setSearchWindow(
+    const searchWindow =
       target.hit.kind === "thread"
         ? null
-        : new SearchConversationWindow(target, query, remote.searchConversation),
-    );
+        : new SearchConversationWindow(target, query, remote.searchConversation);
     setActiveThreadId(
       threadSelectionKey({ id: target.hit.threadId, serverId: target.connectionId }),
       undefined,
-      true,
       target.connectionId,
       true,
+      searchWindow,
     );
   });
   const openGlobalSearch = useEvent(() => {
@@ -2118,7 +2089,6 @@ function CodeWideWorkspaceContent({
     setSearchVisible(true);
   });
   const closeGlobalSearch = useEvent(() => setSearchVisible(false));
-  const exitSearchHistory = useEvent(() => setSearchWindow(null));
   const sendFeedback = useEvent(
     async (submission: BrowserFeedbackSubmission, signal: AbortSignal) => {
       const target = parseThreadSelectionKey(submission.destination);
@@ -2130,20 +2100,13 @@ function CodeWideWorkspaceContent({
       await sendBrowserFeedback(remote, target, submission, signal);
     },
   );
-  const browserFeedback: BrowserFeedbackCapability = {
+  const browserFeedback: Omit<BrowserFeedbackCapability, "initialDestination"> = {
     destinations: scopedThreads.map((thread) => ({
       id: threadSelectionKey(thread),
       label: `${servers.find((server) => server.id === thread.serverId)?.name ?? "Server"} · ${thread.title}`,
     })),
-    initialDestination: threadSelection.id ?? "",
     send: sendFeedback,
   };
-  const loadTurnChanges = useEvent(async (target: TurnChangesTarget) =>
-    turnItemChanges(
-      await remote.loadTurnItems(target.connectionId, target.threadId, target.turnId),
-    ),
-  );
-
   const normalizedMobileThreadQuery = mobileThreadQuery.trim().toLocaleLowerCase();
   const mobileSearchKey = `${activeServerId}\u0000${normalizedMobileThreadQuery}`;
   const mobileRemoteSearchResource = useAsyncResource<ThreadListItem[]>(
@@ -2169,31 +2132,10 @@ function CodeWideWorkspaceContent({
     mobileNativeSearch === null
       ? archivedThreads
       : mobileNativeSearch.filter((thread) => thread.archived);
-  const selectedThread =
-    requestedThreadId === null
-      ? null
-      : (scopedThreads.find((thread) => threadSelectionKey(thread) === requestedThreadId) ?? null);
-  const pendingThreadSelection = requestedThreadId !== null && selectedThread === null;
-  const activeThread = newChatDraft === null ? selectedThread : null;
-  const activeThreadId =
-    activeThread === null
-      ? pendingThreadSelection
-        ? requestedThreadId
-        : null
-      : threadSelectionKey(activeThread);
-  const activeThreadKey =
-    activeThread === null ? requestedThreadId : threadSelectionKey(activeThread);
-  const activeConnectionId =
-    newChatDraft?.serverId ??
-    activeThread?.serverId ??
-    requestedThreadTarget?.connectionId ??
-    (activeServerId === ALL_SERVERS_ID ? "" : activeServerId);
   const projectCatalogConnections =
     newThreadVisible || searchVisible || activeServerId === ALL_SERVERS_ID
       ? remote.connections
-      : remote.connections.filter(
-          (connection) => connection.id === activeConnectionId || connection.id === activeServerId,
-        );
+      : remote.connections.filter((connection) => connection.id === activeServerId);
   const projectCatalog = useRemoteProjectCatalog(
     remote.native,
     projectCatalogConnections,
@@ -2320,13 +2262,6 @@ function CodeWideWorkspaceContent({
       ...limits,
       [projectLimitKey]: (limits[projectLimitKey] ?? THREAD_LIST_PAGE_SIZE) + THREAD_LIST_PAGE_SIZE,
     }));
-  const activeAccountRateLimits =
-    accountRateLimits.find((row) => row.connectionId === activeConnectionId) ?? null;
-  const threadListAccountSources = threadListAccountUsageSources(
-    servers,
-    activeServerId === ALL_SERVERS_ID ? null : activeServerId,
-    accountRateLimits,
-  );
   const refreshThreadListAccountRateLimits = useEvent(async (): Promise<void> => {
     const refreshableServers =
       activeServerId === ALL_SERVERS_ID
@@ -2336,11 +2271,534 @@ function CodeWideWorkspaceContent({
       refreshableServers.map((server) => remote.refreshAccountRateLimits(server.id)),
     );
   });
+  useDeepLinkListener((raw) => {
+    if (raw === null) return;
+    if (raw.startsWith("codewide://pair") || raw.startsWith("codexremote://pair")) {
+      setPendingPairingCode(raw);
+      setConnectionSheetVisible(true);
+      return;
+    }
+    const parsed = parseThreadDeepLink(raw);
+    if (parsed !== null) {
+      setActiveThreadId(
+        threadSelectionKey({ serverId: parsed.connectionId, id: parsed.threadId }),
+        undefined,
+        parsed.connectionId,
+      );
+    }
+  });
+
+  const selectServer = (serverId: string) => {
+    setThreadListLimit(THREAD_LIST_PAGE_SIZE);
+    setDesktopDefaultThreadEnabled(false);
+    setActiveServerId(serverId);
+  };
+
+  const openConnectionSheet = () => {
+    setConnectionSheetVisible(true);
+  };
+
+  const saveConnection = async (input: ConnectionInput): Promise<void> => {
+    const added = await remote.addConnection(input);
+    if (threadNavigation.destination$.peek().kind === "draft") {
+      setActiveServerId(added.id);
+      return;
+    }
+    setActiveThreadId(null, undefined, added.id);
+  };
+
+  const toggleConnection = async (connectionId: string, enabled: boolean): Promise<void> =>
+    await remote.setConnectionEnabled(connectionId, enabled);
+
+  const reconnectSavedConnection = async (connectionId: string): Promise<void> =>
+    await remote.reconnectConnection(connectionId);
+
+  const deleteSavedConnection = async (connectionId: string): Promise<void> =>
+    await remote.deleteConnection(connectionId);
+
+  const updateSavedConnection = async (
+    connectionId: string,
+    input: ConnectionUpdateInput,
+  ): Promise<void> => {
+    const current = settingsConnections.find((connection) => connection.id === connectionId);
+    if (current === undefined) throw new Error("Connection not found");
+    if (isProfileOnlyConnectionUpdate(input, current)) {
+      const profile = validateConnectionProfile(input.displayName, input.emoji);
+      return await remote.updateConnectionProfile(connectionId, profile.displayName, profile.emoji);
+    }
+    await remote.updateConnection(connectionId, input);
+  };
+
+  const moveSavedConnection = async (connectionId: string, direction: -1 | 1): Promise<void> =>
+    await remote.moveConnection(connectionId, direction);
+
+  const defaultProjectCwd = (serverId: string): string | null =>
+    projectsByConnection[serverId]?.[0]?.path ?? null;
+
+  const createSidebarThread = (): void => {
+    if (sidebarProject !== null) {
+      void openNewChat(sidebarProject.connectionId, sidebarProject.path);
+      return;
+    }
+    const route = resolveNewThreadRoute({
+      activeServerId,
+      allServersId: ALL_SERVERS_ID,
+      serverIds: servers.map(({ id }) => id),
+    });
+    if (route.type === "connect-server") {
+      openConnectionSheet();
+      return;
+    }
+    if (route.type === "choose-server") {
+      setNewThreadVisible(true);
+      return;
+    }
+    void openNewChat(route.serverId, defaultProjectCwd(route.serverId));
+  };
+
+  const openNewChat = async (requestedServerId: string, cwd: string | null): Promise<void> => {
+    if (requestedServerId === "") return;
+    newChatCounterRef.current += 1;
+    threadNavigation.openDraft({
+      id: `new-chat-${Date.now()}-${newChatCounterRef.current}`,
+      serverId: requestedServerId,
+      cwd,
+      workspaceMode: "current",
+    });
+    setActiveServerId(requestedServerId);
+    setNewThreadVisible(false);
+  };
+
+  const createRepairThread = async (title: string, prompt: string): Promise<void> => {
+    const { connectionId: activeConnectionId, threadId: activeRemoteThreadId } =
+      workspaceConversationScope(threadNavigation.destination$.peek(), activeServerId);
+    if (activeConnectionId === "") throw new Error("No server selected");
+    const currentCwd = loadedThreadSummaries.find(
+      (candidate) =>
+        candidate.connectionId === activeConnectionId &&
+        candidate.remoteThreadId === activeRemoteThreadId,
+    )?.cwd;
+    const threadId = await remote.startThread(activeConnectionId, currentCwd);
+    await remote.renameThread(activeConnectionId, threadId, title);
+    await remote.sendText(activeConnectionId, threadId, prompt, { type: "start" });
+    setActiveThreadId(
+      threadSelectionKey({ serverId: activeConnectionId, id: threadId }),
+      undefined,
+      activeConnectionId,
+    );
+  };
+
+  const createUnsupportedFixThread = async (block: RenderBlock): Promise<void> => {
+    const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
+    const raw = JSON.stringify(block.raw, null, 2) ?? "{}";
+    const prompt = [
+      `Implement support for the Codex protocol block \`${rawType}\` in this remote client.`,
+      "Inspect the renderer registry, add a compact safe renderer, preserve unknown-field compatibility, and add regression tests.",
+      "Raw block:",
+      "```json",
+      raw.slice(0, 12_000),
+      "```",
+    ].join("\n\n");
+    await createRepairThread(`Support ${rawType}`, prompt);
+  };
+
+  const createRenderFailureFixThread = async (failure: RecoverableRenderFailure): Promise<void> => {
+    const { connectionId: activeConnectionId, threadId: activeRemoteThreadId } =
+      workspaceConversationScope(threadNavigation.destination$.peek(), activeServerId);
+    const activeCwd =
+      loadedThreadSummaries.find(
+        (row) =>
+          row.connectionId === activeConnectionId && row.remoteThreadId === activeRemoteThreadId,
+      )?.cwd ?? "/workspace";
+    const threadContext =
+      activeRemoteThreadId === null
+        ? "No thread selected"
+        : `Connection: ${activeConnectionId}\nThread: ${activeRemoteThreadId}\nCWD: ${activeCwd}`;
+    await createRepairThread(
+      `Fix ${failure.label}`.slice(0, 80),
+      renderRecoveryPrompt({
+        ...failure,
+        context: [threadContext, failure.context]
+          .filter((value): value is string => value !== undefined && value !== "")
+          .join("\n"),
+      }),
+    );
+  };
+
+  const toggleListThreadPin = async (thread: ThreadListItem): Promise<void> => {
+    await remote.setThreadPinned(thread.serverId, thread.id, !thread.pinned);
+  };
+
+  const archiveListThread = async (thread: ThreadListItem): Promise<void> => {
+    await remote.archiveThread(thread.serverId, thread.id);
+    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
+  };
+
+  const unarchiveListThread = async (thread: ThreadListItem): Promise<void> => {
+    await remote.unarchiveThread(thread.serverId, thread.id);
+    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
+  };
+
+  const markListThreadRead = async (thread: ThreadListItem): Promise<void> => {
+    await remote.markThreadRead(thread.serverId, thread.id);
+  };
+  return (
+    <RenderRecoveryProvider onFix={createRenderFailureFixThread}>
+      <WorkspaceConversationProviders
+        navigation={threadNavigation}
+        remote={remote}
+        fallbackServerId={activeServerId}
+        feedback={browserFeedback}
+      >
+        {loopbackBrowser !== null ? (
+          <ForwardedLoopbackBrowser
+            title={loopbackBrowser.title}
+            url={loopbackBrowser.url}
+            topInset={insets.top}
+            bottomInset={insets.bottom}
+            onClose={() => setLoopbackBrowser(null)}
+          />
+        ) : (
+          <WorkspaceVoiceAura
+            resources={remote.resourceDatabase}
+            controller={remote.voiceController}
+          >
+            <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+              <View style={desktop ? styles.desktopWorkspace : styles.flex}>
+                <WorkspaceThreadListVisibility navigation={threadNavigation} desktop={desktop}>
+                  {desktop ? (
+                    <RecoverableRenderBoundary
+                      scope="surface"
+                      label="Chat list"
+                      resetKey={`desktop-chat-list:${sidebarScopeKey}`}
+                      {...(sidebarProject === null ? {} : { onDismiss: closeSidebarProject })}
+                    >
+                      <Suspense fallback={<ThreadListSuspenseFallback />}>
+                        <ThreadSidebar
+                          remote={remote}
+                          projectLimit={projectLimit}
+                          onLoadMoreProject={loadMoreProjectThreads}
+                          initialOffset={mobileThreadOffset.read(sidebarScopeKey)}
+                          onOffsetChange={(offset) =>
+                            mobileThreadOffset.write(sidebarScopeKey, offset)
+                          }
+                          project={sidebarProject}
+                          projects={pinnedSidebarProjects}
+                          onOpenProject={openSidebarProject}
+                          onBackToProjects={closeSidebarProject}
+                          onManageProjects={() => setProjectsSheetVisible(true)}
+                          catalogState={
+                            normalizedMobileThreadQuery === ""
+                              ? sidebarCatalogState
+                              : sidebarListState(
+                                  mobileRemoteSearchResource.status,
+                                  mobileRemoteSearchResource.error,
+                                  false,
+                                )
+                          }
+                          width={desktopThreadSidebarWidth(viewportWidth)}
+                          servers={servers}
+                          activeServerId={activeServerId}
+                          threads={serverThreads}
+                          archivedThreads={archivedThreads}
+                          mode={sidebarMode}
+                          filter={sidebarFilter}
+                          navigation={threadNavigation}
+                          onModeChange={changeSidebarMode}
+                          onFilterChange={changeSidebarFilter}
+                          onLoadMore={loadMoreThreads}
+                          onSelect={selectThread}
+                          onOpenSearch={openGlobalSearch}
+                          searchContent={sidebarSearch}
+                          onPreload={preloadThread}
+                          onSelectServer={selectServer}
+                          onSettings={() => setSettingsVisible(true)}
+                          onNewThread={createSidebarThread}
+                          onTogglePin={toggleListThreadPin}
+                          onArchive={archiveListThread}
+                          onUnarchive={unarchiveListThread}
+                          onMarkRead={markListThreadRead}
+                          onRefreshAccountRateLimits={refreshThreadListAccountRateLimits}
+                        />
+                      </Suspense>
+                    </RecoverableRenderBoundary>
+                  ) : (
+                    <RecoverableRenderBoundary
+                      scope="surface"
+                      label="Chat list"
+                      resetKey={`mobile-chat-list:${sidebarScopeKey}`}
+                      {...(sidebarProject === null ? {} : { onDismiss: closeSidebarProject })}
+                    >
+                      <Suspense fallback={<ThreadListSuspenseFallback />}>
+                        <MobileThreads
+                          remote={remote}
+                          projectLimit={projectLimit}
+                          onLoadMoreProject={loadMoreProjectThreads}
+                          project={sidebarProject}
+                          projects={pinnedSidebarProjects}
+                          onOpenProject={openSidebarProject}
+                          onBackToProjects={closeSidebarProject}
+                          onManageProjects={() => setProjectsSheetVisible(true)}
+                          catalogState={sidebarCatalogState}
+                          servers={servers}
+                          activeServerId={activeServerId}
+                          threads={mobileVisibleThreads}
+                          archivedThreads={mobileVisibleArchivedThreads}
+                          mode={sidebarMode}
+                          filter={sidebarFilter}
+                          query={mobileThreadQuery}
+                          onQueryChange={setMobileThreadQuery}
+                          onOpenSearch={openGlobalSearch}
+                          searchContent={sidebarSearch}
+                          onModeChange={changeSidebarMode}
+                          onFilterChange={changeSidebarFilter}
+                          onLoadMore={loadMoreThreads}
+                          initialOffset={mobileThreadOffset.read(sidebarScopeKey)}
+                          onOffsetChange={(offset) =>
+                            mobileThreadOffset.write(sidebarScopeKey, offset)
+                          }
+                          onSelectThread={selectThread}
+                          onPreloadThread={preloadThread}
+                          onSelectServer={selectServer}
+                          onNewThread={createSidebarThread}
+                          onTogglePin={toggleListThreadPin}
+                          onArchive={archiveListThread}
+                          onUnarchive={unarchiveListThread}
+                          onMarkRead={markListThreadRead}
+                          onSettings={() => setSettingsVisible(true)}
+                          onRefreshAccountRateLimits={refreshThreadListAccountRateLimits}
+                        />
+                      </Suspense>
+                    </RecoverableRenderBoundary>
+                  )}
+                </WorkspaceThreadListVisibility>
+                <WorkspaceConversationHost
+                  navigation={threadNavigation}
+                  renderConversation={(destination) => (
+                    <ActiveWorkspaceConversation
+                      destination={destination}
+                      remote={remote}
+                      threadNavigation={threadNavigation}
+                      desktop={desktop}
+                      activeServerId={activeServerId}
+                      servers={servers}
+                      scopedThreads={scopedThreads}
+                      loadedThreadSummaries={loadedThreadSummaries}
+                      defaultDesktopThreadId={defaultDesktopThreadId}
+                      onSelectThread={setActiveThreadId}
+                      onOpenBrowser={(title, url) => setLoopbackBrowser({ title, url })}
+                      onManageProjects={() => setProjectsSheetVisible(true)}
+                      onShowActiveThreads={() => setThreadListMode("active")}
+                      onFixUnsupportedBlock={createUnsupportedFixThread}
+                    />
+                  )}
+                />
+              </View>
+              {connectionSheetVisible && (
+                <ConnectionSheet
+                  visible={connectionSheetVisible}
+                  localReady={remote.ready && remote.error === null}
+                  localError={remote.error}
+                  onRetryStartup={remote.retryStartup}
+                  onClose={() => {
+                    setConnectionSheetVisible(false);
+                    setPendingPairingCode(null);
+                  }}
+                  onSave={saveConnection}
+                  initialCode={pendingPairingCode}
+                />
+              )}
+              {projectManagementSheet}
+              {settingsVisible && (
+                <SubscribedConnectionSettings
+                  connections={settingsConnections}
+                  onClose={() => setSettingsVisible(false)}
+                  onAddServer={() => {
+                    setSettingsVisible(false);
+                    openConnectionSheet();
+                  }}
+                  onToggle={toggleConnection}
+                  onReconnect={reconnectSavedConnection}
+                  onDelete={deleteSavedConnection}
+                  onUpdate={updateSavedConnection}
+                  onMove={moveSavedConnection}
+                  accountRateLimitsDatabase={remote.accountRateLimitsDatabase}
+                  {...(!remote.native
+                    ? {}
+                    : {
+                        onRefreshAccountPool: remote.refreshAccountPool,
+                        onStartAccountLogin: remote.startAccountLogin,
+                        onCancelAccountLogin: remote.cancelAccountLogin,
+                        onActivateAccountProfile: remote.activateAccountProfile,
+                        onUpdateAccountProfile: remote.updateAccountProfile,
+                        onRemoveAccountProfile: remote.removeAccountProfile,
+                      })}
+                />
+              )}
+              {newThreadVisible && (
+                <NewThreadServerSheet
+                  visible={newThreadVisible}
+                  servers={servers}
+                  onClose={() => setNewThreadVisible(false)}
+                  onSelect={async (serverId) =>
+                    await openNewChat(serverId, defaultProjectCwd(serverId))
+                  }
+                />
+              )}
+            </View>
+          </WorkspaceVoiceAura>
+        )}
+      </WorkspaceConversationProviders>
+    </RenderRecoveryProvider>
+  );
+}
+
+function workspaceConversationScope(
+  destination: ConversationNavigationDestination,
+  fallbackServerId: string,
+) {
+  const draft = destination.kind === "draft" ? destination.draft : null;
+  const target = destination.kind === "thread" ? parseThreadSelectionKey(destination.key) : null;
+  return {
+    connectionId:
+      draft?.serverId ??
+      target?.connectionId ??
+      (fallbackServerId === ALL_SERVERS_ID ? "" : fallbackServerId),
+    threadId: target?.threadId ?? null,
+    composerThreadId: draft?.id ?? target?.threadId ?? null,
+  };
+}
+
+/** Selected-input context updates must not recreate the workspace children. */
+function WorkspaceConversationProviders({
+  navigation,
+  remote,
+  fallbackServerId,
+  feedback,
+  children,
+}: {
+  navigation: ThreadNavigationModel;
+  remote: RemoteWorkspace;
+  fallbackServerId: string;
+  feedback: Omit<BrowserFeedbackCapability, "initialDestination">;
+  children: ReactNode;
+}) {
+  const destination = useSelector(() => navigation.destination$.get());
+  const { connectionId: activeConnectionId, composerThreadId } = workspaceConversationScope(
+    destination,
+    fallbackServerId,
+  );
+  const voiceInputRuntime: AppVoiceInputRuntime = {
+    controller: remote.voiceController,
+    resources: remote.resourceDatabase,
+    scopePrefix: `${activeConnectionId || "local"}\u0000${composerThreadId ?? "workspace"}`,
+    // The workspace provider never materializes a selected chat. Each
+    // ConversationPane installs its own thread-scoped provider below Suspense.
+    thread: null,
+    ...(remote.native && activeConnectionId !== ""
+      ? {
+          startRemote: async (listener, options) =>
+            await remote.startVoiceTranscription(
+              activeConnectionId,
+              composerThreadId ?? "",
+              listener,
+              options,
+            ),
+        }
+      : {}),
+  };
+
+  return (
+    <BrowserFeedbackContext.Provider
+      value={{
+        ...feedback,
+        initialDestination: destination.kind === "thread" ? destination.key : "",
+      }}
+    >
+      <AppVoiceInputProvider runtime={voiceInputRuntime}>{children}</AppVoiceInputProvider>
+    </BrowserFeedbackContext.Provider>
+  );
+}
+
+type SelectWorkspaceThread = (
+  value: string | null,
+  navigationId?: string,
+  nextServerId?: string,
+  reloadSelected?: boolean,
+) => void;
+
+/** Owns destination-dependent reads and actions, never the sidebar or global sheets. */
+function ActiveWorkspaceConversation({
+  destination,
+  remote,
+  threadNavigation,
+  desktop,
+  activeServerId,
+  servers,
+  scopedThreads,
+  loadedThreadSummaries,
+  defaultDesktopThreadId,
+  onSelectThread: setActiveThreadId,
+  onOpenBrowser,
+  onManageProjects,
+  onShowActiveThreads,
+  onFixUnsupportedBlock,
+}: {
+  destination: ConversationNavigationDestination;
+  remote: RemoteWorkspace;
+  threadNavigation: ThreadNavigationModel;
+  desktop: boolean;
+  activeServerId: string;
+  servers: ThreadListServer[];
+  scopedThreads: ThreadListItem[];
+  loadedThreadSummaries: StoredThreadSummary[];
+  defaultDesktopThreadId: string | null;
+  onSelectThread: SelectWorkspaceThread;
+  onOpenBrowser(title: string, url: string): void;
+  onManageProjects(): void;
+  onShowActiveThreads(): void;
+  onFixUnsupportedBlock(block: RenderBlock): Promise<void>;
+}) {
+  const newChatDraft = destination.kind === "draft" ? destination.draft : null;
+  const searchWindow = destination.kind === "thread" ? destination.searchWindow : null;
+  const requestedThreadId = destination.kind === "thread" ? destination.key : null;
+  const requestedThreadTarget = parseThreadSelectionKey(requestedThreadId);
+  const threadOpenGeneration = destination.generation;
+  const exitSearchHistory = useEvent(() => threadNavigation.exitSearch());
+  const commitDefaultDesktopThread = useEvent(() => {
+    if (defaultDesktopThreadId === null || threadNavigation.destination$.peek().kind !== "empty")
+      return;
+    threadNavigation.select(defaultDesktopThreadId);
+  });
+  const selectedThread =
+    requestedThreadId === null
+      ? null
+      : (scopedThreads.find((thread) => threadSelectionKey(thread) === requestedThreadId) ?? null);
+  const pendingThreadSelection = requestedThreadId !== null && selectedThread === null;
+  const activeThread = newChatDraft === null ? selectedThread : null;
+  const activeThreadId =
+    activeThread === null
+      ? pendingThreadSelection
+        ? requestedThreadId
+        : null
+      : threadSelectionKey(activeThread);
+  const activeThreadKey =
+    activeThread === null ? requestedThreadId : threadSelectionKey(activeThread);
+  const activeConnectionId =
+    newChatDraft?.serverId ??
+    activeThread?.serverId ??
+    requestedThreadTarget?.connectionId ??
+    (activeServerId === ALL_SERVERS_ID ? "" : activeServerId);
+
+  const projectCatalog = useRemoteProjectCatalog(
+    remote.native,
+    remote.connections.filter((connection) => connection.id === activeConnectionId),
+    remote.listProjects,
+  );
+  const { projectsByConnection, errorsByConnection: projectErrorsByConnection } = projectCatalog;
   const activeConnectionState =
     remote.connections.find((connection) => connection.id === activeConnectionId)?.state ??
     "offline";
-  const activeConnectionAvailable =
-    activeConnectionState === "live" || activeConnectionState === "syncing";
   const activeRemoteThreadId = activeThread?.id ?? requestedThreadTarget?.threadId ?? null;
   const composerThreadId = newChatDraft?.id ?? activeRemoteThreadId;
   const visibleConversationThread: ThreadListItem | null =
@@ -2402,61 +2860,12 @@ function CodeWideWorkspaceContent({
       : threadResourceKey(activeConnectionId, activeRemoteThreadId);
   const activeTunnelResourceId =
     activeConnectionId === "" ? null : tunnelResourceKey(activeConnectionId);
-  const activeVoiceScope =
-    activeConnectionId === "" || composerThreadId === null
-      ? null
-      : `${activeConnectionId}\u0000${composerThreadId}`;
-  const activeVoiceQuery = useLiveQuery(
-    (query) =>
-      remote.resourceDatabase === null || activeVoiceScope === null
-        ? undefined
-        : query
-            .from({ resource: remote.resourceDatabase.voiceInputs })
-            .where(({ resource }) => eq(resource.id, activeVoiceScope)),
-    [activeVoiceScope, remote.resourceDatabase],
-  );
-  const activeVoiceResource = activeVoiceQuery.data?.[0] ?? null;
-  const voiceInputsQuery = useLiveQuery(
-    (query) =>
-      remote.resourceDatabase === null
-        ? undefined
-        : query.from({ resource: remote.resourceDatabase.voiceInputs }),
-    [remote.resourceDatabase],
-  );
-  const activeFileTransferQuery = useLiveQuery(
-    (query) =>
-      remote.resourceDatabase === null || activeVoiceScope === null
-        ? undefined
-        : query
-            .from({ resource: remote.resourceDatabase.fileTransfers })
-            .where(({ resource }) => eq(resource.id, activeVoiceScope)),
-    [activeVoiceScope, remote.resourceDatabase],
-  );
-  const activeFileTransferResource = activeFileTransferQuery.data?.[0] ?? null;
-  const activeThreadLifecycleActive = isThreadLifecycleActive(activeThread?.state);
   const activePendingRequests = remote.pendingRequests.filter(
     (request) =>
       request.connectionId === activeConnectionId &&
       request.params.threadId === activeRemoteThreadId,
   );
   const activePendingRequest = activePendingRequests[0] ?? null;
-  useDeepLinkListener((raw) => {
-    if (raw === null) return;
-    if (raw.startsWith("codewide://pair") || raw.startsWith("codexremote://pair")) {
-      setPendingPairingCode(raw);
-      setConnectionSheetVisible(true);
-      return;
-    }
-    const parsed = parseThreadDeepLink(raw);
-    if (parsed !== null) {
-      setActiveThreadId(
-        threadSelectionKey({ serverId: parsed.connectionId, id: parsed.threadId }),
-        undefined,
-        true,
-        parsed.connectionId,
-      );
-    }
-  });
 
   const forkCurrentThread = async (options: ThreadForkOptions): Promise<void> => {
     if (activeThread === null || activeRemoteThreadId === null || activeConnectionId === "")
@@ -2470,92 +2879,9 @@ function CodeWideWorkspaceContent({
     void remote.markThreadRead(activeConnectionId, activeRemoteThreadId).catch(() => undefined);
   };
 
-  const selectServer = (serverId: string) => {
-    setThreadListLimit(THREAD_LIST_PAGE_SIZE);
-    setDesktopDefaultThreadEnabled(false);
-    setActiveServerId(serverId);
-  };
-
-  const openConnectionSheet = () => {
-    setConnectionSheetVisible(true);
-  };
-
-  const saveConnection = async (input: ConnectionInput): Promise<void> => {
-    const added = await remote.addConnection(input);
-    setActiveThreadId(null, undefined, false, added.id);
-  };
-
-  const toggleConnection = async (connectionId: string, enabled: boolean): Promise<void> =>
-    await remote.setConnectionEnabled(connectionId, enabled);
-
-  const reconnectSavedConnection = async (connectionId: string): Promise<void> =>
-    await remote.reconnectConnection(connectionId);
-
-  const deleteSavedConnection = async (connectionId: string): Promise<void> =>
-    await remote.deleteConnection(connectionId);
-
-  const updateSavedConnection = async (
-    connectionId: string,
-    input: ConnectionUpdateInput,
-  ): Promise<void> => {
-    const current = settingsConnections.find((connection) => connection.id === connectionId);
-    if (current === undefined) throw new Error("Connection not found");
-    if (isProfileOnlyConnectionUpdate(input, current)) {
-      const profile = validateConnectionProfile(input.displayName, input.emoji);
-      return await remote.updateConnectionProfile(connectionId, profile.displayName, profile.emoji);
-    }
-    await remote.updateConnection(connectionId, input);
-  };
-
-  const moveSavedConnection = async (connectionId: string, direction: -1 | 1): Promise<void> =>
-    await remote.moveConnection(connectionId, direction);
-
-  const defaultProjectCwd = (serverId: string): string | null =>
-    projectsByConnection[serverId]?.[0]?.path ?? null;
-
-  const createSidebarThread = (): void => {
-    if (sidebarProject !== null) {
-      void openNewChat(sidebarProject.connectionId, sidebarProject.path);
-      return;
-    }
-    const route = resolveNewThreadRoute({
-      activeServerId,
-      allServersId: ALL_SERVERS_ID,
-      serverIds: servers.map(({ id }) => id),
-    });
-    if (route.type === "connect-server") {
-      openConnectionSheet();
-      return;
-    }
-    if (route.type === "choose-server") {
-      setNewThreadVisible(true);
-      return;
-    }
-    void openNewChat(route.serverId, defaultProjectCwd(route.serverId));
-  };
-
-  const openNewChat = async (requestedServerId: string, cwd: string | null): Promise<void> => {
-    if (requestedServerId === "") return;
-    newChatCounterRef.current += 1;
-    const nextSelection = threadNavigation.select(null, true);
-    startThreadTransition(() => {
-      setNewChatDraft({
-        id: `new-chat-${Date.now()}-${newChatCounterRef.current}`,
-        serverId: requestedServerId,
-        cwd,
-        workspaceMode: "current",
-      });
-      setActiveServerId(requestedServerId);
-      setThreadSelection(nextSelection);
-      setNewThreadVisible(false);
-    });
-  };
-
   const changeEmptyThreadProject = async (cwd: string | null): Promise<void> => {
     if (newChatDraft !== null) {
-      setNewChatDraft((current) =>
-        current?.id === newChatDraft.id ? { ...current, cwd, workspaceMode: "current" } : current,
-      );
+      threadNavigation.changeDraftProject(newChatDraft.id, cwd);
       return;
     }
     if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null) return;
@@ -2572,7 +2898,6 @@ function CodeWideWorkspaceContent({
     setActiveThreadId(
       threadSelectionKey({ id: nextThreadId, serverId: activeConnectionId }),
       undefined,
-      false,
       activeConnectionId,
     );
     await remote.deleteThread(activeConnectionId, previousThreadId);
@@ -2590,71 +2915,12 @@ function CodeWideWorkspaceContent({
     return await remote.readDirectory(activeConnectionId, path);
   };
 
-  const createRepairThread = async (title: string, prompt: string): Promise<void> => {
-    if (activeConnectionId === "") throw new Error("No server selected");
-    const currentCwd = loadedThreadSummaries.find(
-      (candidate) =>
-        candidate.connectionId === activeConnectionId &&
-        candidate.remoteThreadId === activeRemoteThreadId,
-    )?.cwd;
-    const threadId = await remote.startThread(activeConnectionId, currentCwd);
-    await remote.renameThread(activeConnectionId, threadId, title);
-    await remote.sendText(activeConnectionId, threadId, prompt, { type: "start" });
-    setActiveThreadId(
-      threadSelectionKey({ serverId: activeConnectionId, id: threadId }),
-      undefined,
-      false,
-      activeConnectionId,
-    );
-  };
+  const loadTurnChanges = useEvent(async (target: TurnChangesTarget) =>
+    turnItemChanges(
+      await remote.loadTurnItems(target.connectionId, target.threadId, target.turnId),
+    ),
+  );
 
-  const createUnsupportedFixThread = async (block: RenderBlock): Promise<void> => {
-    const rawType = typeof block.raw.type === "string" ? block.raw.type : block.kind;
-    const raw = JSON.stringify(block.raw, null, 2) ?? "{}";
-    const prompt = [
-      `Implement support for the Codex protocol block \`${rawType}\` in this remote client.`,
-      "Inspect the renderer registry, add a compact safe renderer, preserve unknown-field compatibility, and add regression tests.",
-      "Raw block:",
-      "```json",
-      raw.slice(0, 12_000),
-      "```",
-    ].join("\n\n");
-    await createRepairThread(`Support ${rawType}`, prompt);
-  };
-
-  const createRenderFailureFixThread = async (failure: RecoverableRenderFailure): Promise<void> => {
-    const threadContext =
-      activeRemoteThreadId === null
-        ? "No thread selected"
-        : `Connection: ${activeConnectionId}\nThread: ${activeRemoteThreadId}\nCWD: ${activeCwd}`;
-    await createRepairThread(
-      `Fix ${failure.label}`.slice(0, 80),
-      renderRecoveryPrompt({
-        ...failure,
-        context: [threadContext, failure.context]
-          .filter((value): value is string => value !== undefined && value !== "")
-          .join("\n"),
-      }),
-    );
-  };
-
-  const toggleListThreadPin = async (thread: ThreadListItem): Promise<void> => {
-    await remote.setThreadPinned(thread.serverId, thread.id, !thread.pinned);
-  };
-
-  const archiveListThread = async (thread: ThreadListItem): Promise<void> => {
-    await remote.archiveThread(thread.serverId, thread.id);
-    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
-  };
-
-  const unarchiveListThread = async (thread: ThreadListItem): Promise<void> => {
-    await remote.unarchiveThread(thread.serverId, thread.id);
-    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
-  };
-
-  const markListThreadRead = async (thread: ThreadListItem): Promise<void> => {
-    await remote.markThreadRead(thread.serverId, thread.id);
-  };
   const activeConversationNavigationKey =
     newChatDraft !== null
       ? `new-chat:${newChatDraft.serverId}:${newChatDraft.id}`
@@ -2705,7 +2971,6 @@ function CodeWideWorkspaceContent({
             setActiveThreadId(
               threadSelectionKey({ id: threadId, serverId: draftChat.serverId }),
               undefined,
-              true,
               draftChat.serverId,
             );
             return commandId;
@@ -2818,30 +3083,6 @@ function CodeWideWorkspaceContent({
               ),
           };
 
-  // Recording state intentionally remains workspace-owned. It coordinates the
-  // global aura and the active composer and is outside resource-isolation work.
-  const voiceAuraResource =
-    voiceInputsQuery.data?.find((resource) => resource?.phase === "recording") ?? null;
-  const voiceAuraPhase = voiceAuraResource === null ? "idle" : "recording";
-  const voiceInputRuntime: AppVoiceInputRuntime = {
-    controller: remote.voiceController,
-    resources: remote.resourceDatabase,
-    scopePrefix: `${activeConnectionId || "local"}\u0000${composerThreadId ?? "workspace"}`,
-    // The workspace provider never materializes a selected chat. Each
-    // ConversationPane installs its own thread-scoped provider below Suspense.
-    thread: null,
-    ...(remote.native && activeConnectionId !== ""
-      ? {
-          startRemote: async (listener, options) =>
-            await remote.startVoiceTranscription(
-              activeConnectionId,
-              composerThreadId ?? "",
-              listener,
-              options,
-            ),
-        }
-      : {}),
-  };
   const openActiveLoopbackLink =
     remote.native && activeConnectionId !== ""
       ? async (target: LoopbackLinkTarget) => {
@@ -2850,556 +3091,152 @@ function CodeWideWorkspaceContent({
             remotePort: target.remotePort,
             label: `localhost:${target.remotePort}`,
           });
-          setLoopbackBrowser({
-            title: profile.label,
-            url: forwardedLoopbackUrl(target, profile),
-          });
+          onOpenBrowser(profile.label, forwardedLoopbackUrl(target, profile));
         }
       : undefined;
   const closeActiveConversation = () => {
-    setNewChatDraft(null);
     setActiveThreadId(null);
   };
 
-  if (loopbackBrowser !== null) {
-    return (
-      <BrowserFeedbackContext.Provider value={browserFeedback}>
-        <AppVoiceInputProvider runtime={voiceInputRuntime}>
-          <ForwardedLoopbackBrowser
-            title={loopbackBrowser.title}
-            url={loopbackBrowser.url}
-            topInset={insets.top}
-            bottomInset={insets.bottom}
-            onClose={() => setLoopbackBrowser(null)}
-          />
-        </AppVoiceInputProvider>
-      </BrowserFeedbackContext.Provider>
-    );
-  }
-
-  if (!desktop) {
-    return (
-      <RenderRecoveryProvider onFix={createRenderFailureFixThread}>
-        <BrowserFeedbackContext.Provider value={browserFeedback}>
-          <AppVoiceInputProvider runtime={voiceInputRuntime}>
-            <VoiceAura
-              phase={voiceAuraPhase}
-              controller={remote.voiceController}
-              scope={voiceAuraResource?.scope ?? null}
-              reducedMotion={reduceVoiceMotion}
-            >
-              <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-                {activeThreadId === null && newChatDraft === null ? (
-                  <RecoverableRenderBoundary
-                    scope="surface"
-                    label="Chat list"
-                    resetKey={`mobile-chat-list:${sidebarScopeKey}`}
-                    {...(sidebarProject === null ? {} : { onDismiss: closeSidebarProject })}
-                  >
-                    <Suspense fallback={<ThreadListSuspenseFallback />}>
-                      <MobileThreads
-                        remote={remote}
-                        projectLimit={projectLimit}
-                        onLoadMoreProject={loadMoreProjectThreads}
-                        project={sidebarProject}
-                        projects={pinnedSidebarProjects}
-                        onOpenProject={openSidebarProject}
-                        onBackToProjects={closeSidebarProject}
-                        onManageProjects={() => setProjectsSheetVisible(true)}
-                        catalogState={sidebarCatalogState}
-                        servers={servers}
-                        activeServerId={activeServerId}
-                        threads={mobileVisibleThreads}
-                        archivedThreads={mobileVisibleArchivedThreads}
-                        mode={sidebarMode}
-                        filter={sidebarFilter}
-                        query={mobileThreadQuery}
-                        onQueryChange={setMobileThreadQuery}
-                        onOpenSearch={openGlobalSearch}
-                        searchContent={sidebarSearch}
-                        onModeChange={changeSidebarMode}
-                        onFilterChange={changeSidebarFilter}
-                        onLoadMore={loadMoreThreads}
-                        initialOffset={mobileThreadOffset.read(sidebarScopeKey)}
-                        onOffsetChange={(offset) =>
-                          mobileThreadOffset.write(sidebarScopeKey, offset)
-                        }
-                        onSelectThread={selectThread}
-                        onPreloadThread={preloadThread}
-                        onSelectServer={selectServer}
-                        onNewThread={createSidebarThread}
-                        onTogglePin={toggleListThreadPin}
-                        onArchive={archiveListThread}
-                        onUnarchive={unarchiveListThread}
-                        onMarkRead={markListThreadRead}
-                        onSettings={() => setSettingsVisible(true)}
-                        accountSources={threadListAccountSources}
-                        onRefreshAccountRateLimits={refreshThreadListAccountRateLimits}
-                      />
-                    </Suspense>
-                  </RecoverableRenderBoundary>
-                ) : (
-                  <RecoverableRenderBoundary
-                    scope="surface"
-                    label="Conversation"
-                    context={`Connection: ${activeConnectionId}\nThread: ${composerThreadId ?? "none"}`}
-                    resetKey={`${activeConnectionId}:${composerThreadId ?? "none"}`}
-                    onDismiss={closeActiveConversation}
-                  >
-                    <Suspense
-                      fallback={
-                        <ConversationNavigationFallback
-                          connectionId={activeConnectionId}
-                          threadId={activeRemoteThreadId}
-                          navigationKey={activeConversationNavigationKey}
-                          thread={visibleConversationThread}
-                          server={servers.find((server) => server.id === activeConnectionId)}
-                          cwd={activeCwd}
-                          compact
-                          onBack={closeActiveConversation}
-                        />
-                      }
-                    >
-                      {activeConversationRoute === null ? null : (
-                        <ConversationDestination
-                          searchWindow={searchWindow}
-                          onExitSearchHistory={exitSearchHistory}
-                          route={activeConversationRoute}
-                          navigationKey={activeConversationNavigationKey}
-                          thread={visibleConversationThread}
-                          newChat={newChatDraft !== null}
-                          onLoadTurnChanges={loadTurnChanges}
-                          server={servers.find((server) => server.id === activeConnectionId)}
-                          onBack={closeActiveConversation}
-                          compact
-                          accountRateLimits={activeAccountRateLimits}
-                          {...(activeConnectionId === ""
-                            ? {}
-                            : {
-                                onRefreshAccountRateLimits: async () =>
-                                  await remote.refreshAccountRateLimits(activeConnectionId),
-                              })}
-                          workspaceResources={remote.resourceDatabase}
-                          controlsResourceId={activeControlsResourceId}
-                          backgroundTerminalsResourceId={activeThreadResourceId}
-                          threadResourcesModel={remote.resourceDatabase?.threadResources ?? null}
-                          threadResourceId={activeThreadResourceId}
-                          threadResourceRevision={activeConnectionState}
-                          goalResourceId={activeThreadResourceId}
-                          tunnelResourceId={activeTunnelResourceId}
-                          portForwardingConnectionId={
-                            remote.native && activeConnectionId !== "" ? activeConnectionId : null
-                          }
-                          portForwardingServerName={
-                            servers.find((server) => server.id === activeConnectionId)?.name ??
-                            "Server"
-                          }
-                          onOpenPortForward={(title, url) => setLoopbackBrowser({ title, url })}
-                          {...(openActiveLoopbackLink === undefined
-                            ? {}
-                            : { onOpenLoopbackLink: openActiveLoopbackLink })}
-                          voiceResource={activeVoiceResource}
-                          voiceController={remote.voiceController}
-                          fileTransferResource={activeFileTransferResource}
-                          fileTransferController={remote.fileTransferController}
-                          subagentSummaryDatabase={remote.threadSummaryDatabase}
-                          subagentThreadDetails={remote.threadDetails}
-                          onRefreshSubagents={async (rootThreadId: string) =>
-                            await remote.refreshSubagents(activeConnectionId, rootThreadId)
-                          }
-                          loadDraft={remote.loadDraft}
-                          saveDraft={remote.saveDraft}
-                          saveDraftAttachments={remote.saveDraftAttachments}
-                          upsertDraftAttachment={remote.upsertDraftAttachment}
-                          removeDraftAttachment={remote.removeDraftAttachment}
-                          loadScrollOffset={remote.loadScrollOffset}
-                          saveScrollOffset={remote.saveScrollOffset}
-                          saveComposerPreferences={remote.saveComposerPreferences}
-                          pendingRequest={activePendingRequest}
-                          pendingRequestCount={activePendingRequests.length}
-                          pinned={activeThread?.pinned ?? false}
-                          unread={activeThread?.unread ?? 0}
-                          onViewedLatest={markActiveThreadRead}
-                          cwd={activeCwd}
-                          projects={activeProjects}
-                          discoveredProjects={activeDiscoveredProjects}
-                          projectLoadError={activeProjectError}
-                          onChangeProject={changeEmptyThreadProject}
-                          workspaceSupport={activeWorkspaceSupport}
-                          workspaceMode={newChatDraft?.workspaceMode ?? "current"}
-                          onChangeWorkspaceMode={(workspaceMode) => {
-                            setNewChatDraft((current) =>
-                              current === null ? null : { ...current, workspaceMode },
-                            );
-                          }}
-                          onAddProject={addActiveProject}
-                          onManageProjects={() => setProjectsSheetVisible(true)}
-                          onReadDirectory={readActiveDirectory}
-                          onRename={async (name) => {
-                            if (activeRemoteThreadId !== null)
-                              await remote.renameThread(
-                                activeConnectionId,
-                                activeRemoteThreadId,
-                                name,
-                              );
-                          }}
-                          onArchive={async () => {
-                            if (activeRemoteThreadId !== null)
-                              await remote.archiveThread(activeConnectionId, activeRemoteThreadId);
-                            setActiveThreadId(null);
-                          }}
-                          onUnarchive={async () => {
-                            if (activeRemoteThreadId !== null)
-                              await remote.unarchiveThread(
-                                activeConnectionId,
-                                activeRemoteThreadId,
-                              );
-                            setThreadListMode("active");
-                            setActiveThreadId(null);
-                          }}
-                          archived={activeThread?.archived ?? false}
-                          onDelete={async () => {
-                            if (activeRemoteThreadId !== null)
-                              await remote.deleteThread(activeConnectionId, activeRemoteThreadId);
-                            setActiveThreadId(null);
-                          }}
-                          onFork={forkCurrentThread}
-                          onFixUnsupportedBlock={createUnsupportedFixThread}
-                          onTogglePin={async () => {
-                            if (activeRemoteThreadId === null || activeThreadId === null) return;
-                            await remote.setThreadPinned(
-                              activeConnectionId,
-                              activeRemoteThreadId,
-                              !(activeThread?.pinned ?? false),
-                            );
-                          }}
-                          {...conversationActions}
-                        />
-                      )}
-                    </Suspense>
-                  </RecoverableRenderBoundary>
-                )}
-                {connectionSheetVisible && (
-                  <ConnectionSheet
-                    visible={connectionSheetVisible}
-                    localReady={remote.ready && remote.error === null}
-                    localError={remote.error}
-                    onRetryStartup={remote.retryStartup}
-                    onClose={() => {
-                      setConnectionSheetVisible(false);
-                      setPendingPairingCode(null);
-                    }}
-                    onSave={saveConnection}
-                    initialCode={pendingPairingCode}
-                  />
-                )}
-                {projectManagementSheet}
-                {settingsVisible && (
-                  <ConnectionSettings
-                    connections={settingsConnections}
-                    onClose={() => setSettingsVisible(false)}
-                    onAddServer={() => {
-                      setSettingsVisible(false);
-                      openConnectionSheet();
-                    }}
-                    onToggle={toggleConnection}
-                    onReconnect={reconnectSavedConnection}
-                    onDelete={deleteSavedConnection}
-                    onUpdate={updateSavedConnection}
-                    onMove={moveSavedConnection}
-                    accountRateLimits={accountRateLimits}
-                    {...(!remote.native
-                      ? {}
-                      : {
-                          onRefreshAccountPool: remote.refreshAccountPool,
-                          onStartAccountLogin: remote.startAccountLogin,
-                          onCancelAccountLogin: remote.cancelAccountLogin,
-                          onActivateAccountProfile: remote.activateAccountProfile,
-                          onUpdateAccountProfile: remote.updateAccountProfile,
-                          onRemoveAccountProfile: remote.removeAccountProfile,
-                        })}
-                  />
-                )}
-                {newThreadVisible && (
-                  <NewThreadServerSheet
-                    visible={newThreadVisible}
-                    servers={servers}
-                    onClose={() => setNewThreadVisible(false)}
-                    onSelect={async (serverId) =>
-                      await openNewChat(serverId, defaultProjectCwd(serverId))
-                    }
-                  />
-                )}
-              </View>
-            </VoiceAura>
-          </AppVoiceInputProvider>
-        </BrowserFeedbackContext.Provider>
-      </RenderRecoveryProvider>
-    );
-  }
-
+  if (!desktop && destination.kind === "empty") return null;
   return (
-    <RenderRecoveryProvider onFix={createRenderFailureFixThread}>
-      <BrowserFeedbackContext.Provider value={browserFeedback}>
-        <AppVoiceInputProvider runtime={voiceInputRuntime}>
-          <VoiceAura
-            phase={voiceAuraPhase}
-            controller={remote.voiceController}
-            scope={voiceAuraResource?.scope ?? null}
-            reducedMotion={reduceVoiceMotion}
-          >
-            <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-              <CommitOnChangeProbe
-                scope="desktop-default-thread"
-                revision={defaultDesktopThreadId}
-                onCommit={commitDefaultDesktopThread}
-              />
-              <View style={styles.desktopWorkspace}>
-                <RecoverableRenderBoundary
-                  scope="surface"
-                  label="Chat list"
-                  resetKey={`desktop-chat-list:${sidebarScopeKey}`}
-                  {...(sidebarProject === null ? {} : { onDismiss: closeSidebarProject })}
-                >
-                  <Suspense fallback={<ThreadListSuspenseFallback />}>
-                    <ThreadSidebar
-                      remote={remote}
-                      projectLimit={projectLimit}
-                      onLoadMoreProject={loadMoreProjectThreads}
-                      initialOffset={mobileThreadOffset.read(sidebarScopeKey)}
-                      onOffsetChange={(offset) => mobileThreadOffset.write(sidebarScopeKey, offset)}
-                      project={sidebarProject}
-                      projects={pinnedSidebarProjects}
-                      onOpenProject={openSidebarProject}
-                      onBackToProjects={closeSidebarProject}
-                      onManageProjects={() => setProjectsSheetVisible(true)}
-                      catalogState={
-                        normalizedMobileThreadQuery === ""
-                          ? sidebarCatalogState
-                          : sidebarListState(
-                              mobileRemoteSearchResource.status,
-                              mobileRemoteSearchResource.error,
-                              false,
-                            )
-                      }
-                      width={desktopThreadSidebarWidth(viewportWidth)}
-                      servers={servers}
-                      activeServerId={activeServerId}
-                      threads={serverThreads}
-                      archivedThreads={archivedThreads}
-                      mode={sidebarMode}
-                      filter={sidebarFilter}
-                      navigation={threadNavigation}
-                      onModeChange={changeSidebarMode}
-                      onFilterChange={changeSidebarFilter}
-                      onLoadMore={loadMoreThreads}
-                      onSelect={selectThread}
-                      onOpenSearch={openGlobalSearch}
-                      searchContent={sidebarSearch}
-                      onPreload={preloadThread}
-                      onSelectServer={selectServer}
-                      onSettings={() => setSettingsVisible(true)}
-                      onNewThread={createSidebarThread}
-                      onTogglePin={toggleListThreadPin}
-                      onArchive={archiveListThread}
-                      onUnarchive={unarchiveListThread}
-                      onMarkRead={markListThreadRead}
-                      accountSources={threadListAccountSources}
-                      onRefreshAccountRateLimits={refreshThreadListAccountRateLimits}
-                    />
-                  </Suspense>
-                </RecoverableRenderBoundary>
-                <RecoverableRenderBoundary
-                  scope="surface"
-                  label="Conversation"
-                  context={`Connection: ${activeConnectionId}\nThread: ${composerThreadId ?? "none"}`}
-                  resetKey={`${activeConnectionId}:${composerThreadId ?? "none"}`}
-                  onDismiss={closeActiveConversation}
-                >
-                  <Suspense
-                    fallback={
-                      <ConversationNavigationFallback
-                        connectionId={activeConnectionId}
-                        threadId={activeRemoteThreadId}
-                        navigationKey={activeConversationNavigationKey}
-                        thread={visibleConversationThread}
-                        server={servers.find((server) => server.id === activeConnectionId)}
-                        cwd={activeCwd}
-                        compact={false}
-                        onBack={undefined}
-                      />
-                    }
-                  >
-                    {activeConversationRoute === null ? null : (
-                      <ConversationDestination
-                        searchWindow={searchWindow}
-                        onExitSearchHistory={exitSearchHistory}
-                        route={activeConversationRoute}
-                        navigationKey={activeConversationNavigationKey}
-                        thread={visibleConversationThread}
-                        newChat={newChatDraft !== null}
-                        onLoadTurnChanges={loadTurnChanges}
-                        server={servers.find((server) => server.id === activeConnectionId)}
-                        accountRateLimits={activeAccountRateLimits}
-                        {...(activeConnectionId === ""
-                          ? {}
-                          : {
-                              onRefreshAccountRateLimits: async () =>
-                                await remote.refreshAccountRateLimits(activeConnectionId),
-                            })}
-                        workspaceResources={remote.resourceDatabase}
-                        controlsResourceId={activeControlsResourceId}
-                        backgroundTerminalsResourceId={activeThreadResourceId}
-                        threadResourcesModel={remote.resourceDatabase?.threadResources ?? null}
-                        threadResourceId={activeThreadResourceId}
-                        threadResourceRevision={activeConnectionState}
-                        goalResourceId={activeThreadResourceId}
-                        tunnelResourceId={activeTunnelResourceId}
-                        portForwardingConnectionId={
-                          remote.native && activeConnectionId !== "" ? activeConnectionId : null
-                        }
-                        portForwardingServerName={
-                          servers.find((server) => server.id === activeConnectionId)?.name ??
-                          "Server"
-                        }
-                        onOpenPortForward={(title, url) => setLoopbackBrowser({ title, url })}
-                        {...(openActiveLoopbackLink === undefined
-                          ? {}
-                          : { onOpenLoopbackLink: openActiveLoopbackLink })}
-                        voiceResource={activeVoiceResource}
-                        voiceController={remote.voiceController}
-                        fileTransferResource={activeFileTransferResource}
-                        fileTransferController={remote.fileTransferController}
-                        subagentSummaryDatabase={remote.threadSummaryDatabase}
-                        subagentThreadDetails={remote.threadDetails}
-                        onRefreshSubagents={async (rootThreadId: string) =>
-                          await remote.refreshSubagents(activeConnectionId, rootThreadId)
-                        }
-                        loadDraft={remote.loadDraft}
-                        saveDraft={remote.saveDraft}
-                        saveDraftAttachments={remote.saveDraftAttachments}
-                        upsertDraftAttachment={remote.upsertDraftAttachment}
-                        removeDraftAttachment={remote.removeDraftAttachment}
-                        loadScrollOffset={remote.loadScrollOffset}
-                        saveScrollOffset={remote.saveScrollOffset}
-                        saveComposerPreferences={remote.saveComposerPreferences}
-                        pendingRequest={activePendingRequest}
-                        pendingRequestCount={activePendingRequests.length}
-                        pinned={activeThread?.pinned ?? false}
-                        unread={activeThread?.unread ?? 0}
-                        onViewedLatest={markActiveThreadRead}
-                        cwd={activeCwd}
-                        projects={activeProjects}
-                        discoveredProjects={activeDiscoveredProjects}
-                        projectLoadError={activeProjectError}
-                        onChangeProject={changeEmptyThreadProject}
-                        workspaceSupport={activeWorkspaceSupport}
-                        workspaceMode={newChatDraft?.workspaceMode ?? "current"}
-                        onChangeWorkspaceMode={(workspaceMode) => {
-                          setNewChatDraft((current) =>
-                            current === null ? null : { ...current, workspaceMode },
-                          );
-                        }}
-                        onAddProject={addActiveProject}
-                        onManageProjects={() => setProjectsSheetVisible(true)}
-                        onReadDirectory={readActiveDirectory}
-                        onRename={async (name) => {
-                          if (activeRemoteThreadId !== null)
-                            await remote.renameThread(
-                              activeConnectionId,
-                              activeRemoteThreadId,
-                              name,
-                            );
-                        }}
-                        onArchive={async () => {
-                          if (activeRemoteThreadId !== null)
-                            await remote.archiveThread(activeConnectionId, activeRemoteThreadId);
-                          setActiveThreadId(null);
-                        }}
-                        onUnarchive={async () => {
-                          if (activeRemoteThreadId !== null)
-                            await remote.unarchiveThread(activeConnectionId, activeRemoteThreadId);
-                          setThreadListMode("active");
-                          setActiveThreadId(null);
-                        }}
-                        archived={activeThread?.archived ?? false}
-                        onDelete={async () => {
-                          if (activeRemoteThreadId !== null)
-                            await remote.deleteThread(activeConnectionId, activeRemoteThreadId);
-                          setActiveThreadId(null);
-                        }}
-                        onFork={forkCurrentThread}
-                        onFixUnsupportedBlock={createUnsupportedFixThread}
-                        onTogglePin={async () => {
-                          if (activeRemoteThreadId === null || activeThreadId === null) return;
-                          await remote.setThreadPinned(
-                            activeConnectionId,
-                            activeRemoteThreadId,
-                            !(activeThread?.pinned ?? false),
-                          );
-                        }}
-                        {...conversationActions}
-                      />
-                    )}
-                  </Suspense>
-                </RecoverableRenderBoundary>
-              </View>
-              {connectionSheetVisible && (
-                <ConnectionSheet
-                  visible={connectionSheetVisible}
-                  localReady={remote.ready && remote.error === null}
-                  localError={remote.error}
-                  onRetryStartup={remote.retryStartup}
-                  onClose={() => {
-                    setConnectionSheetVisible(false);
-                    setPendingPairingCode(null);
-                  }}
-                  onSave={saveConnection}
-                  initialCode={pendingPairingCode}
-                />
-              )}
-              {projectManagementSheet}
-              {settingsVisible && (
-                <ConnectionSettings
-                  connections={settingsConnections}
-                  onClose={() => setSettingsVisible(false)}
-                  onAddServer={() => {
-                    setSettingsVisible(false);
-                    openConnectionSheet();
-                  }}
-                  onToggle={toggleConnection}
-                  onReconnect={reconnectSavedConnection}
-                  onDelete={deleteSavedConnection}
-                  onUpdate={updateSavedConnection}
-                  onMove={moveSavedConnection}
-                  accountRateLimits={accountRateLimits}
-                  {...(!remote.native
-                    ? {}
-                    : {
-                        onRefreshAccountPool: remote.refreshAccountPool,
-                        onStartAccountLogin: remote.startAccountLogin,
-                        onCancelAccountLogin: remote.cancelAccountLogin,
-                        onActivateAccountProfile: remote.activateAccountProfile,
-                        onUpdateAccountProfile: remote.updateAccountProfile,
-                        onRemoveAccountProfile: remote.removeAccountProfile,
-                      })}
-                />
-              )}
-              {newThreadVisible && (
-                <NewThreadServerSheet
-                  visible={newThreadVisible}
-                  servers={servers}
-                  onClose={() => setNewThreadVisible(false)}
-                  onSelect={async (serverId) =>
-                    await openNewChat(serverId, defaultProjectCwd(serverId))
-                  }
-                />
-              )}
-            </View>
-          </VoiceAura>
-        </AppVoiceInputProvider>
-      </BrowserFeedbackContext.Provider>
-    </RenderRecoveryProvider>
+    <>
+      {desktop && (
+        <CommitOnChangeProbe
+          scope="desktop-default-thread"
+          revision={destination.kind === "empty" ? defaultDesktopThreadId : null}
+          onCommit={commitDefaultDesktopThread}
+        />
+      )}
+      <RecoverableRenderBoundary
+        scope="surface"
+        label="Conversation"
+        context={`Connection: ${activeConnectionId}\nThread: ${composerThreadId ?? "none"}`}
+        resetKey={`${activeConnectionId}:${composerThreadId ?? "none"}`}
+        onDismiss={closeActiveConversation}
+      >
+        <Suspense
+          fallback={
+            <ConversationNavigationFallback
+              connectionId={activeConnectionId}
+              threadId={activeRemoteThreadId}
+              navigationKey={activeConversationNavigationKey}
+              thread={visibleConversationThread}
+              server={servers.find((server) => server.id === activeConnectionId)}
+              cwd={activeCwd}
+              compact={!desktop}
+              onBack={desktop ? undefined : closeActiveConversation}
+            />
+          }
+        >
+          {activeConversationRoute === null ? null : (
+            <ConversationDestination
+              searchWindow={searchWindow}
+              onExitSearchHistory={exitSearchHistory}
+              route={activeConversationRoute}
+              navigationKey={activeConversationNavigationKey}
+              thread={visibleConversationThread}
+              newChat={newChatDraft !== null}
+              onLoadTurnChanges={loadTurnChanges}
+              server={servers.find((server) => server.id === activeConnectionId)}
+              compact={!desktop}
+              {...(desktop ? {} : { onBack: closeActiveConversation })}
+              accountRateLimitsDatabase={remote.accountRateLimitsDatabase}
+              {...(activeConnectionId === ""
+                ? {}
+                : {
+                    onRefreshAccountRateLimits: async () =>
+                      await remote.refreshAccountRateLimits(activeConnectionId),
+                  })}
+              workspaceResources={remote.resourceDatabase}
+              controlsResourceId={activeControlsResourceId}
+              backgroundTerminalsResourceId={activeThreadResourceId}
+              threadResourcesModel={remote.resourceDatabase?.threadResources ?? null}
+              threadResourceId={activeThreadResourceId}
+              threadResourceRevision={activeConnectionState}
+              goalResourceId={activeThreadResourceId}
+              tunnelResourceId={activeTunnelResourceId}
+              portForwardingConnectionId={
+                remote.native && activeConnectionId !== "" ? activeConnectionId : null
+              }
+              portForwardingServerName={
+                servers.find((server) => server.id === activeConnectionId)?.name ?? "Server"
+              }
+              onOpenPortForward={onOpenBrowser}
+              {...(openActiveLoopbackLink === undefined
+                ? {}
+                : { onOpenLoopbackLink: openActiveLoopbackLink })}
+              voiceController={remote.voiceController}
+              fileTransferController={remote.fileTransferController}
+              subagentSummaryDatabase={remote.threadSummaryDatabase}
+              subagentThreadDetails={remote.threadDetails}
+              onRefreshSubagents={async (rootThreadId: string) =>
+                await remote.refreshSubagents(activeConnectionId, rootThreadId)
+              }
+              loadDraft={remote.loadDraft}
+              saveDraft={remote.saveDraft}
+              saveDraftAttachments={remote.saveDraftAttachments}
+              upsertDraftAttachment={remote.upsertDraftAttachment}
+              removeDraftAttachment={remote.removeDraftAttachment}
+              loadScrollOffset={remote.loadScrollOffset}
+              saveScrollOffset={remote.saveScrollOffset}
+              saveComposerPreferences={remote.saveComposerPreferences}
+              pendingRequest={activePendingRequest}
+              pendingRequestCount={activePendingRequests.length}
+              pinned={activeThread?.pinned ?? false}
+              unread={activeThread?.unread ?? 0}
+              onViewedLatest={markActiveThreadRead}
+              cwd={activeCwd}
+              projects={activeProjects}
+              discoveredProjects={activeDiscoveredProjects}
+              projectLoadError={activeProjectError}
+              onChangeProject={changeEmptyThreadProject}
+              workspaceSupport={activeWorkspaceSupport}
+              workspaceMode={newChatDraft?.workspaceMode ?? "current"}
+              onChangeWorkspaceMode={(workspaceMode) => {
+                if (newChatDraft !== null)
+                  threadNavigation.changeDraftWorkspaceMode(newChatDraft.id, workspaceMode);
+              }}
+              onAddProject={addActiveProject}
+              onManageProjects={onManageProjects}
+              onReadDirectory={readActiveDirectory}
+              onRename={async (name) => {
+                if (activeRemoteThreadId !== null)
+                  await remote.renameThread(activeConnectionId, activeRemoteThreadId, name);
+              }}
+              onArchive={async () => {
+                if (activeRemoteThreadId !== null)
+                  await remote.archiveThread(activeConnectionId, activeRemoteThreadId);
+                setActiveThreadId(null);
+              }}
+              onUnarchive={async () => {
+                if (activeRemoteThreadId !== null)
+                  await remote.unarchiveThread(activeConnectionId, activeRemoteThreadId);
+                onShowActiveThreads();
+                setActiveThreadId(null);
+              }}
+              archived={activeThread?.archived ?? false}
+              onDelete={async () => {
+                if (activeRemoteThreadId !== null)
+                  await remote.deleteThread(activeConnectionId, activeRemoteThreadId);
+                setActiveThreadId(null);
+              }}
+              onFork={forkCurrentThread}
+              onFixUnsupportedBlock={onFixUnsupportedBlock}
+              onTogglePin={async () => {
+                if (activeRemoteThreadId === null || activeThreadId === null) return;
+                await remote.setThreadPinned(
+                  activeConnectionId,
+                  activeRemoteThreadId,
+                  !(activeThread?.pinned ?? false),
+                );
+              }}
+              {...conversationActions}
+            />
+          )}
+        </Suspense>
+      </RecoverableRenderBoundary>
+    </>
   );
 }
 
@@ -3678,7 +3515,6 @@ function ThreadSidebar({
   onArchive,
   onUnarchive,
   onMarkRead,
-  accountSources,
   onRefreshAccountRateLimits,
 }: {
   width: number;
@@ -3705,7 +3541,6 @@ function ThreadSidebar({
   onArchive(thread: ThreadListItem): Promise<void>;
   onUnarchive(thread: ThreadListItem): Promise<void>;
   onMarkRead(thread: ThreadListItem): Promise<void>;
-  accountSources: readonly AccountUsageSource[];
   onRefreshAccountRateLimits?(): Promise<unknown>;
 } & SidebarProjectsNavigation) {
   const projectSource = useProjectSidebarThreads(
@@ -3789,7 +3624,8 @@ function ThreadSidebar({
               }}
               archived={mode === "archived"}
               includeArchiveCount={project === null}
-              accountSources={accountSources}
+              accountDatabase={remote.accountRateLimitsDatabase}
+              accountServers={servers.filter((server) => activeServerId === ALL_SERVERS_ID || server.id === activeServerId)}
               {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
             />
           </View>
@@ -3915,7 +3751,8 @@ function ThreadListMenu({
   catalogConnectionIds,
   onToggleArchive,
   archived,
-  accountSources,
+  accountDatabase,
+  accountServers,
   includeArchiveCount = true,
   onRefreshAccountRateLimits,
 }: {
@@ -3924,7 +3761,8 @@ function ThreadListMenu({
   catalogConnectionIds: string[];
   onToggleArchive(): void;
   archived: boolean;
-  accountSources: readonly AccountUsageSource[];
+  accountDatabase: AccountRateLimitsDatabase | null;
+  accountServers: readonly AccountUsageServer[];
   includeArchiveCount?: boolean;
   onRefreshAccountRateLimits?(): Promise<unknown>;
 }) {
@@ -3932,8 +3770,9 @@ function ThreadListMenu({
     includeArchiveCount && !archived ? catalogSummaryModel.count(catalogConnectionIds) : null,
   );
   return (
-    <UsagePopover
-      accountSources={accountSources}
+    <WorkspaceAccountUsagePopover
+      database={accountDatabase}
+      servers={accountServers}
       {...(onRefreshAccountRateLimits === undefined
         ? {}
         : { onRefresh: onRefreshAccountRateLimits })}
@@ -3961,7 +3800,7 @@ function ThreadListMenu({
       <Pressable accessibilityLabel="Thread list menu" style={styles.headerIcon}>
         <Ionicons name="ellipsis-vertical" size={iconSize.navigation} color={colors.text} />
       </Pressable>
-    </UsagePopover>
+    </WorkspaceAccountUsagePopover>
   );
 }
 
@@ -4545,7 +4384,6 @@ function MobileThreads({
   onArchive,
   onUnarchive,
   onMarkRead,
-  accountSources,
   onRefreshAccountRateLimits,
 }: {
   servers: ThreadListServer[];
@@ -4572,7 +4410,6 @@ function MobileThreads({
   onArchive(thread: ThreadListItem): Promise<void>;
   onUnarchive(thread: ThreadListItem): Promise<void>;
   onMarkRead(thread: ThreadListItem): Promise<void>;
-  accountSources: readonly AccountUsageSource[];
   onRefreshAccountRateLimits?(): Promise<unknown>;
 } & SidebarProjectsNavigation) {
   const projectSource = useProjectSidebarThreads(
@@ -4659,7 +4496,8 @@ function MobileThreads({
             }}
             archived={mode === "archived"}
             includeArchiveCount={project === null}
-            accountSources={accountSources}
+            accountDatabase={remote.accountRateLimitsDatabase}
+            accountServers={servers.filter((server) => activeServerId === ALL_SERVERS_ID || server.id === activeServerId)}
             {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
           />
         </View>
@@ -5247,7 +5085,7 @@ function ConversationPane({
   remoteThread,
   currentUsage = null,
   currentOutcome = null,
-  accountRateLimits = null,
+  accountRateLimitsDatabase = null,
   onRefreshAccountRateLimits,
   remoteSealedTurns,
   remoteLiveTurns,
@@ -5275,7 +5113,6 @@ function ConversationPane({
   portForwardingServerName = "Server",
   onOpenPortForward,
   onOpenLoopbackLink,
-  voiceResource = null,
   voiceController = null,
   fileTransferController = null,
   subagentSummaryDatabase = null,
@@ -5348,7 +5185,7 @@ function ConversationPane({
   remoteThread?: Thread | null;
   currentUsage?: TurnUsageProjection | null;
   currentOutcome?: ThreadCurrentOutcome | null;
-  accountRateLimits?: AccountRateLimitsRow | null;
+  accountRateLimitsDatabase?: AccountRateLimitsDatabase | null;
   onRefreshAccountRateLimits?(): Promise<unknown>;
   remoteSealedTurns?: readonly Thread["turns"][number][];
   searchWindow?: SearchConversationWindow | null;
@@ -5378,9 +5215,7 @@ function ConversationPane({
   portForwardingServerName?: string;
   onOpenPortForward?(title: string, url: string): void;
   onOpenLoopbackLink?(target: LoopbackLinkTarget): Promise<void>;
-  voiceResource?: VoiceInputRow | null;
   voiceController?: VoiceInputController | null;
-  fileTransferResource?: FileTransferRow | null;
   fileTransferController?: FileTransferController | null;
   subagentSummaryDatabase?: ThreadSummaryDatabase | null;
   subagentThreadDetails?: ThreadDetailDatabase | null;
@@ -5485,6 +5320,10 @@ function ConversationPane({
   // the visual baseline; only post-live deltas belong to the reveal animation.
   const animateLiveUpdates = server?.status === "live" && !liveTextRecovery;
   const composerScope = `${draftConnectionId ?? "no-connection"}\u0000${draftThreadId ?? "no-thread"}`;
+  const voiceResource = useScopedVoiceInputResource(
+    workspaceResources,
+    draftConnectionId === null || draftThreadId === null ? null : composerScope,
+  );
   const appVoiceInputRuntime: AppVoiceInputRuntime = {
     controller: parentVoiceInputRuntime?.controller ?? voiceController,
     resources: parentVoiceInputRuntime?.resources ?? null,
@@ -7879,15 +7718,15 @@ function ConversationPane({
                       </Pressable>
                     )}
                     {!newChat && (
-                      <UsagePopover
+                      <WorkspaceAccountUsagePopover
                         thread={remoteThread ?? null}
                         currentUsage={currentUsage}
                         compactionCount={sessionCompactionCount}
-                        accountSources={[
+                        database={accountRateLimitsDatabase}
+                        servers={[
                           {
-                            id: accountRateLimits?.connectionId ?? server?.id ?? "active-server",
+                            id: server?.id ?? "active-server",
                             name: server?.name ?? "Server",
-                            rateLimits: accountRateLimits,
                           },
                         ]}
                         placement="bottom"
@@ -7905,7 +7744,7 @@ function ConversationPane({
                             size={iconSize.action}
                           />
                         </Pressable>
-                      </UsagePopover>
+                      </WorkspaceAccountUsagePopover>
                     )}
                     {!readOnly && !newChat && (
                       <ThreadHeaderMenu
@@ -15346,7 +15185,7 @@ function ConnectionSheetSession({
     try {
       await onSave(input);
       setMode("success");
-      await new Promise((resolve) => setTimeout(resolve, 650));
+      await new Promise<void>((resolve) => setTimeout(resolve, 650));
       setSaving(false);
       onClose();
       return;
@@ -15740,6 +15579,14 @@ function PairingQrScanner({
       )}
     </View>
   );
+}
+
+function SubscribedConnectionSettings({ accountRateLimitsDatabase, ...props }:
+  Omit<Parameters<typeof ConnectionSettings>[0], "accountRateLimits"> & {
+    accountRateLimitsDatabase: AccountRateLimitsDatabase | null;
+  }) {
+  const query = useLiveQuery(() => accountRateLimitsDatabase?.collection, [accountRateLimitsDatabase]);
+  return <ConnectionSettings {...props} accountRateLimits={query.data ?? []} />;
 }
 
 function ConnectionSettings({

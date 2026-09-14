@@ -1,3 +1,4 @@
+import { threadSummaryDescendants } from "./thread-summary-descendants";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import { threadProjectionPatchFromEvent, type ThreadProjectionPatchV1 } from "@codewide/sync-client";
 
@@ -25,17 +26,9 @@ export function threadSummaryDescendantKeys(
   rows: readonly StoredThreadSummary[],
   rootThreadId: string,
 ): Set<string> {
-  const descendantIds = new Set([rootThreadId]);
   const keys = new Set<string>();
-  let discovered = true;
-  while (discovered) {
-    discovered = false;
-    for (const row of rows) {
-      if (row.parentThreadId === null || !descendantIds.has(row.parentThreadId) || descendantIds.has(row.remoteThreadId)) continue;
-      descendantIds.add(row.remoteThreadId);
-      keys.add(threadSummaryKey(row.connectionId, row.remoteThreadId));
-      discovered = true;
-    }
+  for (const row of threadSummaryDescendants(rows, rootThreadId)) {
+    keys.add(threadSummaryKey(row.connectionId, row.remoteThreadId));
   }
   return keys;
 }
