@@ -1,12 +1,17 @@
 {
-  "extends": "./tsconfig.native.base.json",
+  "extends": ["./tsconfig.native.base.json", "@sergeigarin/hygene/tsconfig.base.json"],
   "compilerOptions": {
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "paths": {
       "@/*": ["./src/*"]
-    }
+    },
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "noPropertyAccessFromIndexSignature": false
   },
   "include": ["app/**/*.tsx", "src/**/*.ts", "src/**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }

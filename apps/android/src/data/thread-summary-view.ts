@@ -1,7 +1,7 @@
 import { replaceEqualDeep } from "./replace-equal-deep";
 import { threadSummaryKey } from "./thread-summary-projection";
 import type { StoredThreadSummary } from "./thread-summary-types";
-import type { LoadedThreadSummaryView, ThreadSummaryViewRequest } from "./thread-summary-model";
+import type { LoadedThreadSummaryView, ThreadSummaryViewRequest } from "./thread-summary-view-types";
 
 type Partition = keyof LoadedThreadSummaryView;
 type SummaryChange = { type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string };

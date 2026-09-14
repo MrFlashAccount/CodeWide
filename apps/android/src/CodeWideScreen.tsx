@@ -55,7 +55,6 @@ import { projectCompleteMarkdown, projectMarkdownStream } from "@codewide/render
 import { toRenderBlock, type RenderBlock, type RenderContentReference } from "@codewide/renderers";
 import {
   MAX_TURN_ATTACHMENTS,
-  MAX_TURN_TEXT_CHARS,
   projectedThreadExecutionSettings,
   projectedTurnMetadata,
   type OutputFootprintProjection,
@@ -85,7 +84,6 @@ import Constants from "expo-constants";
 import {
   createContext,
   Fragment,
-  memo,
   startTransition,
   Suspense,
   type ReactNode,
@@ -162,7 +160,6 @@ import { useThreadUiState } from "./data/use-thread-ui-state";
 import { composerUploads } from "./data/composer-uploads";
 import { randomUUID } from "expo-crypto";
 import { ComposerAttachmentTray } from "./rendering/ComposerAttachmentTray";
-import { AttachmentCard } from "./rendering/AttachmentCard";
 import { MessageAttachmentCard } from "./rendering/MessageAttachmentCard";
 import { MessageAttachmentGrid } from "./rendering/MessageAttachmentTile";
 import { MessageFooterRow, MessageFooterStatus } from "./rendering/MessageFooterRow";
@@ -232,7 +229,6 @@ import type { DraftSelection } from "./data/voice-draft";
 import {
   isProfileOnlyConnectionUpdate,
   validateConnectionProfile,
-  validateConnectionUpdateInput,
   type ConnectionInput,
   type ConnectionUpdateInput,
 } from "./data/connection-validation";
@@ -393,7 +389,6 @@ import {
   remoteFileKind,
   resolvePreviewableDocumentLink,
   resolveRemoteDocumentPath,
-  type DocumentPreviewKind,
 } from "./rendering/document-preview";
 import { MarkdownLocalLinkProvider } from "./rendering/MarkdownLinkHandler";
 import {
@@ -1898,7 +1893,6 @@ function CodeWideWorkspaceContent({
   remote: RemoteWorkspace;
   threadNavigation: ThreadNavigationModel;
 }) {
-  const dialog = useAppDialog();
   const [connectionSheetVisible, setConnectionSheetVisible] = useState(false);
   const [pendingPairingCode, setPendingPairingCode] = useState<string | null>(null);
   const [newThreadVisible, setNewThreadVisible] = useState(false);
@@ -1907,7 +1901,6 @@ function CodeWideWorkspaceContent({
   const [loopbackBrowser, setLoopbackBrowser] = useState<{ title: string; url: string } | null>(
     null,
   );
-  const workspaceOverlay = useAppFullscreenOverlay();
   const [mobileThreadQuery, setMobileThreadQuery] = useState("");
   const [mobileThreadOffset] = useState(() => new ScrollOffsetMemory());
   const [threadListMode, setThreadListMode] = useState<ThreadListMode>("active");
@@ -5126,7 +5119,6 @@ function ConversationPane({
   saveDraftAttachments,
   upsertDraftAttachment,
   removeDraftAttachment,
-  loadScrollOffset,
   saveScrollOffset,
   saveComposerPreferences,
   onRename,
@@ -5351,7 +5343,6 @@ function ConversationPane({
     workspaceResources === null || controlsResourceId === null
       ? null
       : (workspaceResources.turnControls.get(controlsResourceId) ?? null);
-  const controlsResource = currentControlsResource();
   const goalResource = useThreadGoalRow(workspaceResources, goalResourceId);
   useAsyncResource<ThreadGoal | null>(
     onGetGoal === undefined || goalResourceId === null ? null : "conversation-thread-goal",
@@ -5405,7 +5396,6 @@ function ConversationPane({
   const voiceError = voiceResource?.error ?? null;
   const voiceRetryAvailable = voiceResource?.retryAvailable ?? false;
   const pendingVoiceSelection = voiceResource?.pendingSelection ?? null;
-  const controls = controlsResource?.value ?? EMPTY_TURN_CONTROLS;
   const [controlError, setControlError] = useConversationState<string | null>(
     composerScope,
     () => null,
@@ -5774,16 +5764,6 @@ function ConversationPane({
     saveScrollOffset,
   }));
   const newItemCount = awayFromLatest ? unread : 0;
-  const serverExecution =
-    remoteThread === null || remoteThread === undefined
-      ? null
-      : projectedThreadExecutionSettings(remoteThread);
-  const { model: effectiveModel } = composerModelSettings(
-    newChat,
-    serverExecution,
-    { model: selectedModel, effort: selectedEffort },
-    controls,
-  );
 
   const requestControls = () => {
     const current = currentControlsResource();
@@ -5918,13 +5898,6 @@ function ConversationPane({
   const failureNotice = threadFailureNotice(currentOutcome, remoteThread);
   const currentTurnId = threadLifecycleActive ? activeTurnId(remoteThread) : null;
   const liveTurnPlan = selectLiveTurnPlan(remoteThread, currentTurnId);
-  const latestTimelineTurnId = (() => {
-    for (let index = timeline.length - 1; index >= 0; index -= 1) {
-      const item = timeline[index];
-      if (item?.kind === "turn") return item.id;
-    }
-    return null;
-  })();
   const latestUnreadAgentTurnId = measureThreadNavigationWork(
     draftConnectionId ?? "",
     draftThreadId,
@@ -6769,7 +6742,7 @@ function ConversationPane({
   const closeControls = () => {
     setMenuVisible(false);
   };
-  const openQuickControlMenu = (scope: "model-menu" | "permissions-menu") => {
+  const openQuickControlMenu = (_scope: "model-menu" | "permissions-menu") => {
     setComposerTrayVisible(false);
     dismissComposerKeyboardForOverlay();
     const current = currentControlsResource();
@@ -9368,70 +9341,6 @@ function ThreadResourcesSheet({
   );
 }
 
-function ThreadChangeResourceRow({
-  change,
-  cwd,
-  onPress,
-}: {
-  change: ThreadChangeResource;
-  cwd: string;
-  onPress(): void;
-}) {
-  const missing = change.availability === "deleted";
-  const unavailable = change.availability === "unavailable";
-  const icon = missing
-    ? "trash-outline"
-    : change.kind === "add"
-      ? "add-circle-outline"
-      : change.kind === "delete"
-        ? "remove-circle-outline"
-        : "document-text-outline";
-  const color =
-    missing || change.kind === "delete"
-      ? colors.red
-      : change.kind === "add"
-        ? colors.green
-        : colors.textMuted;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open changed file ${change.path}`}
-      onPress={onPress}
-      style={({ pressed }) => [styles.threadResourceRow, pressed && styles.pressed]}
-    >
-      <View style={styles.threadResourceIcon}>
-        <Ionicons name={icon} size={iconSize.action} color={color} />
-      </View>
-      <View style={styles.threadResourceText}>
-        <Text numberOfLines={1} ellipsizeMode="middle" style={styles.threadResourceTitle}>
-          {changedFileDisplayPath(change.path, cwd, 64)}
-        </Text>
-        <View style={styles.threadResourceMeta}>
-          {change.binary ? (
-            <Text style={styles.threadResourceStat}>Binary</Text>
-          ) : (
-            <>
-              <Text style={[styles.threadResourceStat, styles.diffStatAdd]}>
-                +{change.additions}
-              </Text>
-              <Text style={[styles.threadResourceStat, styles.diffStatDelete]}>
-                −{change.deletions}
-              </Text>
-            </>
-          )}
-          {missing && <Text style={styles.threadResourceDeleted}>File was deleted</Text>}
-          {unavailable && <Text style={styles.threadResourceUnavailable}>File unavailable</Text>}
-        </View>
-      </View>
-      <InlineIcon
-        name={missing ? "trash-outline" : unavailable ? "alert-circle-outline" : "chevron-forward"}
-        role="label"
-        color={missing ? colors.red : colors.textDim}
-      />
-    </Pressable>
-  );
-}
-
 function ThreadAttachmentResourceRow({
   attachment,
   position,
@@ -10478,7 +10387,6 @@ function ComposerMenu({
   activeTurnId,
   terminalsResource,
   goalResource,
-  thread,
   voiceScope,
   tunnelResource,
   portForwarding,
@@ -10502,7 +10410,6 @@ function ComposerMenu({
   onTerminateTerminal,
   onSetGoal,
   onClearGoal,
-  onStartVoiceTranscription,
   onStartReview,
   onCreateTunnel,
   onRevokeTunnel,
@@ -11769,10 +11676,6 @@ function TurnTimelineItem({
   if (latestAgentProjection !== null && latestAgentBlock !== null) {
     liveMarkdownProjections.set(latestAgentBlock.key, latestAgentProjection);
   }
-  const visibleLatestAgentBlock =
-    latestAgentProjection === null || latestAgentBlock === null
-      ? latestAgentBlock
-      : { ...latestAgentBlock, body: latestAgentProjection.visibleSource };
   const latestAgentTextReference = latestAgentBlock?.content?.fields["/text"];
   const hasGeneratedAgentResponse =
     (latestAgentBlock?.body ?? "").trim().length > 0 ||
@@ -16462,26 +16365,6 @@ function formatClockTime(timestamp: number): string {
   return formatDeviceTime(timestamp);
 }
 
-function completedTurnSignature(turn: Thread["turns"][number]): string | null {
-  if (turn.status === "inProgress") return null;
-  const lastItem = turn.items.at(-1) as { id?: unknown; type?: unknown } | undefined;
-  const metadata = projectedTurnMetadata(turn);
-  return JSON.stringify([
-    turn.status,
-    turn.itemsView,
-    turn.items.length,
-    turn.completedAt,
-    turn.durationMs,
-    turn.error,
-    lastItem?.id ?? null,
-    lastItem?.type ?? null,
-    metadata?.usage ?? null,
-    metadata?.execution ?? null,
-    metadata?.plan ?? null,
-    textFingerprint(metadata?.diff ?? ""),
-  ]);
-}
-
 function turnMetadataBlocks(scope: string, turn: Thread["turns"][number]): RenderBlock[] {
   const metadata = projectedTurnMetadata(turn);
   if (metadata === null) return [];
@@ -16548,17 +16431,6 @@ function parseThreadSelectionKey(
   const separator = value.indexOf("\u0000");
   if (separator <= 0 || separator === value.length - 1) return null;
   return { connectionId: value.slice(0, separator), threadId: value.slice(separator + 1) };
-}
-
-function moveItem<T extends { id: string }>(items: T[], id: string, direction: -1 | 1): T[] {
-  const index = items.findIndex((item) => item.id === id);
-  const target = index + direction;
-  if (index < 0 || target < 0 || target >= items.length) return items;
-  const next = [...items];
-  const [moved] = next.splice(index, 1);
-  if (moved === undefined) return items;
-  next.splice(target, 0, moved);
-  return next;
 }
 
 function leadingEmoji(value: string): string | null {

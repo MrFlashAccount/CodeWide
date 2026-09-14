@@ -35,7 +35,8 @@
     "security:scan-secrets": "tsx scripts/scan-secrets.ts",
     "release:gate": "sh scripts/cargo-target-budget.sh && export CODEWIDE_CARGO_TARGET_BUDGET_CHECKED=1 CARGO_TARGET_DIR=target CARGO_INCREMENTAL=0 && pnpm validate:sync:v2 && pnpm typecheck && pnpm test && pnpm test:companion && cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all -- --check && pnpm build:companion && pnpm bench:fixtures && pnpm bench:large-content && pnpm test:ota && pnpm security:scan-artifacts && pnpm security:scan-secrets",
     "test:watch": "vitest",
-    "protocol:generate": "codex app-server generate-ts --experimental --out packages/codex-protocol/src/generated/0.147.0 && codex app-server generate-json-schema --experimental --out packages/codex-protocol/schema/0.147.0"
+    "protocol:generate": "codex app-server generate-ts --experimental --out packages/codex-protocol/src/generated/0.147.0 && codex app-server generate-json-schema --experimental --out packages/codex-protocol/schema/0.147.0",
+    "validate:android:v1": "pnpm --filter @codewide/android validate:v1"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

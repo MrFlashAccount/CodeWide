@@ -1,3 +1,5 @@
+import type { ThreadResourcesRow } from "./thread-resource-types";
+export type { ThreadChangeResource, ThreadChangeScope, ThreadResourceKind, ThreadAttachmentResource, ThreadResourcesValue, ThreadResourcesRow } from "./thread-resource-types";
 import { localOnlyCollectionOptions } from "@tanstack/db";
 import { createCollection, type Collection } from "@tanstack/react-db";
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
@@ -72,55 +74,6 @@ export type FileTransferRow = {
   progress: { transferred: number; total: number; phase: "hashing" | "transferring" | "verifying" } | null;
   result: string | null;
   error: string | null;
-  updatedAt: number;
-};
-
-export type ThreadChangeResource = {
-  path: string;
-  kind: "add" | "delete" | "update";
-  availability: "available" | "deleted" | "unavailable" | "unknown";
-  additions: number;
-  deletions: number;
-  binary?: boolean;
-  turnId: string;
-  itemId: string;
-};
-
-export type ThreadChangeScope = "session" | "lastTurn" | "staged" | "unstaged" | "branch";
-
-export type ThreadResourceKind = "changes" | "attachments";
-
-export type ThreadAttachmentResource = {
-  key: string;
-  name: string;
-  kind: "image" | "audio" | "file";
-  path: string | null;
-  url: string | null;
-  origin: "user" | "agent";
-  turnId: string;
-  itemId: string;
-};
-
-export type ThreadResourcesValue = {
-  threadId: string;
-  revision: string;
-  changeScope: ThreadChangeScope;
-  changeScopes: ThreadChangeScope[];
-  changes: ThreadChangeResource[];
-  attachments: ThreadAttachmentResource[];
-};
-
-export type ThreadResourcesRow = {
-  id: string;
-  connectionId: string;
-  threadId: string;
-  status: "loading" | "ready" | "error";
-  value: ThreadResourcesValue | null;
-  error: string | null;
-  /** Resource-specific refresh state. Older persisted rows fall back to `status`. */
-  pendingKinds?: readonly ThreadResourceKind[];
-  readyKinds?: readonly ThreadResourceKind[];
-  resourceErrors?: Partial<Record<ThreadResourceKind, string>>;
   updatedAt: number;
 };
 

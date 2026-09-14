@@ -34,7 +34,6 @@ export function SubagentWorkspace({
   subagents,
   selected,
   onSelect,
-  onBack,
   onClose,
   renderDetail,
 }: {

@@ -1,4 +1,4 @@
-import type { HistoryExecutor } from "./thread-history-relations";
+import type { HistoryExecutor } from "./thread-history-sql-contract";
 
 /** Reconstructs only the requested revision; items keep their own ordered rows. */
 export function historyContentPayload(alias = "c"): string {

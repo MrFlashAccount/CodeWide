@@ -1,3 +1,5 @@
+import type { LoadedThreadSummaryView, ThreadSummaryViewRequest } from "./thread-summary-view-types";
+export type { LoadedThreadSummaryView, ThreadSummaryViewRequest } from "./thread-summary-view-types";
 import { batch, observable, opaqueObject, type Observable } from "@legendapp/state";
 
 import { replaceEqualDeep } from "./replace-equal-deep";
@@ -7,36 +9,12 @@ import { updateThreadSummaryView, reprojectThreadSummaryChanges } from "./thread
 
 export { projectThreadSummaryView } from "./thread-summary-view";
 
-export type ThreadSummaryViewRequest = {
-  /** Independent presentation owner; list and detail ranges must not replace each other. */
-  viewId?: string;
-  connectionId: string | null;
-  /** Exact Companion project directory; omitted for the global catalog. */
-  projectCwd?: string;
-  recentLimit: number;
-  archivedLimit: number;
-  selectedConnectionId: string | null;
-  selectedThreadId: string | null;
-  subagentConnectionId: string | null;
-  subagentLimit: number;
-};
-
-export type ThreadSummaryViewSnapshot = {
+export type ThreadSummaryViewSnapshot = LoadedThreadSummaryView & {
   requestKey: string | null;
   phase: "idle" | "loading" | "ready" | "error";
   error: string | null;
-  pinned: readonly StoredThreadSummary[];
-  recent: readonly StoredThreadSummary[];
-  archived: readonly StoredThreadSummary[];
-  selected: readonly StoredThreadSummary[];
-  subagents: readonly StoredThreadSummary[];
   revision: number;
 };
-
-export type LoadedThreadSummaryView = Pick<
-  ThreadSummaryViewSnapshot,
-  "pinned" | "recent" | "archived" | "selected" | "subagents"
->;
 
 export type ThreadSummaryModel = {
   view$(request: ThreadSummaryViewRequest): Observable<ThreadSummaryViewSnapshot>;

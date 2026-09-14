@@ -1,10 +1,8 @@
 import type { ThreadDetailRow } from "./thread-detail-projection";
 import { historyContentPayload, migrateHistoryV6 } from "./thread-history-schema";
 
-/** SQL boundary shared by native persistence and migration verification. */
-export type HistorySqlValue = string | number | boolean | null | ArrayBuffer | ArrayBufferView;
-/** Callers own the transaction encompassing chain publication and content writes. */
-export type HistoryExecutor = { execute(sql: string, params?: readonly HistorySqlValue[]): Promise<unknown> };
+import type { HistoryExecutor } from "./thread-history-sql-contract";
+export type { HistoryExecutor, HistorySqlValue } from "./thread-history-sql-contract";
 
 const HEADS = "codewide_history_heads";
 const CHAINS = "codewide_history_chains";

@@ -40,7 +40,7 @@ type BoundaryProps = {
 type BoundaryState = { failure: DevToolsFailure | null };
 
 export class DevToolsErrorBoundary extends Component<BoundaryProps, BoundaryState> {
-  state: BoundaryState = { failure: null };
+  override state: BoundaryState = { failure: null };
 
   static getDerivedStateFromError(value: unknown): Partial<BoundaryState> {
     const error = normalizeError(value);
@@ -51,7 +51,7 @@ export class DevToolsErrorBoundary extends Component<BoundaryProps, BoundaryStat
     };
   }
 
-  componentDidCatch(error: Error, info: ErrorInfo): void {
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
     const failure = createDevToolsFailure("react", error.message, {
       ...(error.stack === undefined ? {} : { stack: error.stack }),
       ...(info.componentStack === null ? {} : { componentStack: info.componentStack }),
@@ -62,13 +62,13 @@ export class DevToolsErrorBoundary extends Component<BoundaryProps, BoundaryStat
     this.props.onFailure?.(failure);
   }
 
-  componentDidUpdate(previous: BoundaryProps): void {
+  override componentDidUpdate(previous: BoundaryProps): void {
     if (this.state.failure !== null && previous.resetKey !== this.props.resetKey) {
       this.setState({ failure: null });
     }
   }
 
-  render(): ReactNode {
+  override render(): ReactNode {
     if (this.state.failure === null) return this.props.children;
     return (
       <DevToolsFailurePanel

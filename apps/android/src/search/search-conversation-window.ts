@@ -18,8 +18,15 @@ export class SearchConversationWindow {
   private initialized = false;
   private readonly viewportFill: ThreadHistoryViewportFill;
 
-  constructor(readonly target: LocatedSearchHit, readonly query: string, private readonly load: ReadWindow,
+  readonly target: LocatedSearchHit;
+  readonly query: string;
+  private readonly load: ReadWindow;
+
+  constructor(target: LocatedSearchHit, query: string, load: ReadWindow,
     afterLayout: () => Promise<void> = async () => await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))) {
+    this.target = target;
+    this.query = query;
+    this.load = load;
     this.resolvedMessageItemId = `search-message:${target.hit.messageId}`;
     this.viewportFill = new ThreadHistoryViewportFill({
       loadPage: async (direction) => await this.loadAdjacentPage(direction),

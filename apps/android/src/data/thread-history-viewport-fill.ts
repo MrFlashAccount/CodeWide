@@ -20,7 +20,11 @@ export class ThreadHistoryViewportFill {
   private remaining = MAX_PAGES_PER_VIEWPORT_INTENT;
   private pending: { generation: number; promise: Promise<void> } | null = null;
 
-  constructor(private readonly capabilities: ViewportFillCapabilities) {}
+  private readonly capabilities: ViewportFillCapabilities;
+
+  constructor(capabilities: ViewportFillCapabilities) {
+    this.capabilities = capabilities;
+  }
 
   reportViewport(viewportHeight: number, contentHeight: number): Promise<void> {
     if (!Number.isFinite(viewportHeight) || !Number.isFinite(contentHeight)) return Promise.resolve();

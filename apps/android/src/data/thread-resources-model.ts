@@ -1,7 +1,7 @@
 import { observable, type Observable } from "@legendapp/state";
 
 import { replaceEqualDeep } from "./replace-equal-deep";
-import type { ThreadResourcesRow } from "./workspace-resource-database";
+import type { ThreadResourcesRow } from "./thread-resource-types";
 
 export type ThreadResourcesModel = {
   row$(id: string): Observable<ThreadResourcesRow | null>;

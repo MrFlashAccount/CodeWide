@@ -16,7 +16,7 @@
     "start:dev-client": "expo start --dev-client --localhost",
     "android": "expo run:android",
     "web": "expo start --web",
-    "lint": "eslint app src --max-warnings=0",
+    "lint": "eslint app src --max-warnings=0 && pnpm lint:v1:dependencies",
     "lint:v2": "oxlint --config oxlint.v2.config.mjs --tsconfig tsconfig.v2.json --type-aware --type-check --deny-warnings --report-unused-disable-directives --no-error-on-unmatched-pattern app src/boot src/presentation src/v2",
     "lint:v2:dead-code": "knip --config knip.v2.config.mjs --workspace @codewide/android --include files,exports,nsExports,types,nsTypes,duplicates,unresolved,cycles --treat-config-hints-as-errors",
     "lint:v2:dependencies": "node scripts/validate-v2-dependencies.mjs",
@@ -33,7 +33,9 @@
     "typecheck:compatibility": "tsc --project tsconfig.compatibility.json --noEmit",
     "typecheck:web": "tsc --project tsconfig.web.json --noEmit",
     "typecheck": "pnpm typecheck:native && pnpm typecheck:web && pnpm typecheck:compatibility",
-    "build": "expo export --platform web"
+    "build": "expo export --platform web",
+    "lint:v1:dependencies": "depcruise --config dependency-cruiser.v1.config.mjs --output-type err src",
+    "validate:v1": "pnpm typecheck && pnpm lint"
   },
   "dependencies": {
     "@codewide/codex-protocol": "workspace:*",

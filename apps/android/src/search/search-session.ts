@@ -19,7 +19,11 @@ export class SearchSession {
   private focusRequested = true;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(readonly id: string) {}
+  readonly id: string;
+
+  constructor(id: string) {
+    this.id = id;
+  }
 
   changeText(text: string): void {
     this.text$.set(text);
