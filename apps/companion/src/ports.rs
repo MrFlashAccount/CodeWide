@@ -127,7 +127,7 @@ pub async fn forwarding_key_for_port(port: u16) -> Option<String> {
     .flatten()
 }
 
-fn discover_blocking(excluded: &HashSet<u16>) -> Vec<DiscoveredPort> {
+pub(crate) fn discover_blocking(excluded: &HashSet<u16>) -> Vec<DiscoveredPort> {
     let fingerprint = listener_fingerprint();
     let cache = DISCOVERY_CACHE.get_or_init(|| Mutex::new(DiscoveryCache::default()));
     let mut cache = cache
@@ -1036,6 +1036,45 @@ pub fn unix_time_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn port_inventory_subscription_does_not_wait_for_blocked_discovery()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        };
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let held = Arc::new(AtomicBool::new(false));
+        let worker_held = held.clone();
+        let blocker = std::thread::spawn(move || {
+            let cache = DISCOVERY_CACHE.get_or_init(|| Mutex::new(DiscoveryCache::default()));
+            let _guard = cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            worker_held.store(true, Ordering::Release);
+            let _ = started_tx.send(());
+            // Watchdog only: a regressed blocking subscribe must fail, not hang the suite.
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+            worker_held.store(false, Ordering::Release);
+        });
+        started_rx.recv_timeout(Duration::from_secs(5))?;
+        let inventory = crate::port_inventory::PortInventory::new(HashSet::new());
+        let _subscription = inventory.subscribe();
+        tokio::task::yield_now().await;
+        let continued_while_blocked = held.load(Ordering::Acquire);
+        let _ = release_tx.send(());
+        blocker
+            .join()
+            .map_err(|_| std::io::Error::other("discovery blocker panicked"))?;
+        assert!(
+            continued_while_blocked,
+            "inventory subscription blocked the async executor"
+        );
+        Ok(())
+    }
 
     fn fixture_inventory() -> Inventory {
         let listeners = parse_ss_listeners(

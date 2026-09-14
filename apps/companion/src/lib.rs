@@ -14,6 +14,7 @@ pub mod identity;
 pub mod media;
 pub mod message_search;
 pub mod pairing_qr;
+pub mod port_inventory;
 pub mod ports;
 pub mod projects;
 pub mod remote_inputs;

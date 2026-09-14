@@ -13,3 +13,5 @@ export * from "./aggregate";
 export * from "./deletion-store";
 export * from "./terminal";
 export * from "./voice";
+
+export { V2PortInventoryStore, type V2PortInventory } from "./port-inventory";

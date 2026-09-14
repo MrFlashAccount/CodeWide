@@ -17,6 +17,7 @@ fn context(device_id: &str) -> AuthenticatedContextKey {
 
 fn intent(active_limit: u16, current_thread: Option<&str>) -> OpenIntent {
     OpenIntent {
+        port_inventory: false,
         catalog: CatalogIntent {
             active_limit,
             archived_limit: 0,
@@ -478,6 +479,7 @@ fn partition_transitions_remove_threads_when_target_partition_is_unsubscribed() 
 
     let archived_recipient = id("archived-only");
     let archived_intent = OpenIntent {
+        port_inventory: false,
         catalog: CatalogIntent {
             active_limit: 0,
             archived_limit: 1,

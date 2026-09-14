@@ -33,6 +33,8 @@ pub use transport::*;
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OpenIntent {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub port_inventory: bool,
     pub catalog: CatalogIntent,
     #[serde(deserialize_with = "required_option")]
     pub current_thread: Option<CurrentThreadIntent>,
@@ -874,6 +876,11 @@ pub enum ReinitializeReason {
     rename_all_fields = "camelCase"
 )]
 pub enum ServerFrame {
+    PortInventory {
+        epoch_id: Id,
+        revision: U64,
+        inventory: PortsResponse,
+    },
     Snapshot {
         version: u8,
         source_generation: U64,

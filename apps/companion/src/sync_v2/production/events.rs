@@ -681,6 +681,7 @@ mod queue_tests {
 
     fn intent() -> OpenIntent {
         OpenIntent {
+            port_inventory: false,
             catalog: CatalogIntent {
                 active_limit: 0,
                 archived_limit: 0,

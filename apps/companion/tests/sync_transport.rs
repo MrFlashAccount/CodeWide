@@ -40,6 +40,72 @@ const EXTERNAL_THREAD_ID: &str = "019fe7af-e2fa-70f3-88e8-99d59e10bd63";
 type ClientSocket = WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
+async fn opted_in_inventory_arrives_before_chat_snapshot_acknowledgement()
+-> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let socket_path = directory.path().join("app-server.sock");
+    let (observed, _observed_rx) = mpsc::channel(4);
+    let fake = tokio::spawn(run_idle_thread_app_server(socket_path.clone(), observed));
+    let upstream = UpstreamHandle::spawn(socket_path);
+    wait_for_live(&upstream).await?;
+    let store = Arc::new(IndexStore::open(directory.path().join("state.redb"))?);
+    let history = HistoryService::new(
+        Arc::new(SessionCatalog::scan(directory.path())),
+        store.clone(),
+    );
+    let sync = SyncHub::with_mutations(upstream, store.clone(), history);
+    let (address, server_task) = start_server(store, sync).await?;
+    let mut request = format!("ws://{address}/v1/sync").into_client_request()?;
+    request.headers_mut().insert(
+        "authorization",
+        HeaderValue::from_str(&format!("Bearer {TOKEN}"))?,
+    );
+    let (mut client, _) = connect_async(request).await?;
+    send_json(
+        &mut client,
+        &json!({
+            "type": "hello", "protocolVersion": 1, "cursor": null, "portInventory": true
+        }),
+    )
+    .await?;
+    let hello = receive_type(&mut client, "hello").await?;
+    assert_eq!(hello["snapshotRequired"], true);
+    // The client deliberately has not acknowledged its chat snapshot.
+    let inventory = receive_type(&mut client, "portInventory").await?;
+    assert!(
+        inventory["revision"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    assert!(
+        inventory["inventory"]["scannedAt"]
+            .as_u64()
+            .is_some_and(|value| value > 0)
+    );
+    let ports = inventory["inventory"]["ports"]
+        .as_array()
+        .ok_or("ports missing")?;
+    assert!(
+        ports
+            .iter()
+            .any(|row| row["port"].as_u64() == Some(u64::from(address.port())))
+    );
+    send_json(
+        &mut client,
+        &json!({"type": "ping", "nonce": "inventory-alive"}),
+    )
+    .await?;
+    assert_eq!(
+        receive_type(&mut client, "pong").await?["nonce"],
+        "inventory-alive"
+    );
+    client.close(None).await?;
+    server_task.abort();
+    fake.abort();
+    Ok(())
+}
+
+#[tokio::test]
 async fn idle_sync_session_emits_transport_keepalive() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let socket_path = directory.path().join("app-server.sock");

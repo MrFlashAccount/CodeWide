@@ -210,6 +210,7 @@ mod tests {
 
     fn intent(thread_id: &str) -> OpenIntent {
         OpenIntent {
+            port_inventory: false,
             catalog: CatalogIntent {
                 active_limit: 1,
                 archived_limit: 0,

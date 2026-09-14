@@ -71,6 +71,7 @@ export function validateIntent(intent: V2OpenIntent): V2OpenIntent {
             turnLimit: intent.currentThread.turnLimit,
           },
     pendingRequests: intent.pendingRequests,
+    ...(intent.portInventory === undefined ? {} : { portInventory: intent.portInventory }),
   };
 }
 
@@ -80,7 +81,8 @@ export function sameIntent(left: V2OpenIntent, right: V2OpenIntent): boolean {
     left.catalog.archivedLimit === right.catalog.archivedLimit &&
     left.currentThread?.threadId === right.currentThread?.threadId &&
     left.currentThread?.turnLimit === right.currentThread?.turnLimit &&
-    left.pendingRequests === right.pendingRequests
+    left.pendingRequests === right.pendingRequests &&
+    (left.portInventory ?? false) === (right.portInventory ?? false)
   );
 }
 

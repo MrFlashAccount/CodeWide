@@ -109,6 +109,7 @@ fn witness_eviction_reinitializes_the_affected_recipient() {
         1,
         first.clone(),
         OpenIntent {
+            port_inventory: false,
             catalog: CatalogIntent {
                 active_limit: 0,
                 archived_limit: 0,

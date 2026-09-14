@@ -102,6 +102,7 @@ pub(super) fn command_tag(value: &Command) -> &'static str {
 
 pub(super) fn server_frame_tag(value: &ServerFrame) -> &'static str {
     match value {
+        ServerFrame::PortInventory { .. } => "portInventory",
         ServerFrame::Snapshot { .. } => "snapshot",
         ServerFrame::Change { .. } => "change",
         ServerFrame::Live { .. } => "live",

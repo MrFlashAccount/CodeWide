@@ -41,6 +41,7 @@ const DEFAULT_SEND_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
 pub struct SyncV2Runtime {
+    port_inventory: Option<crate::port_inventory::PortInventory>,
     source: Arc<dyn SemanticSource>,
     ledger: OperationLedger,
     limits: SnapshotLimits,
@@ -78,6 +79,11 @@ impl ContextLifecycle {
 }
 
 impl SyncV2Runtime {
+    #[must_use]
+    pub fn with_port_inventory(mut self, inventory: crate::port_inventory::PortInventory) -> Self {
+        self.port_inventory = Some(inventory);
+        self
+    }
     /// Creates a V2 runtime backed by a durable operation ledger.
     /// # Errors
     /// Returns a ledger error when its durable keyspace cannot be opened.
@@ -91,6 +97,7 @@ impl SyncV2Runtime {
             OperationLedger::open_for_installation(ledger_path, &companion_tls_pin_sha256)?;
         ledger.start_retention_task();
         Ok(Self {
+            port_inventory: None,
             source,
             ledger,
             limits: SnapshotLimits::default(),
@@ -623,6 +630,13 @@ impl SyncV2Runtime {
         lifecycle_revision: u64,
         lifecycle_changes: &mut tokio::sync::watch::Receiver<u64>,
     ) -> bool {
+        let mut port_inventory = if epoch.intent.port_inventory {
+            self.port_inventory
+                .as_ref()
+                .map(crate::port_inventory::PortInventory::subscribe)
+        } else {
+            None
+        };
         loop {
             tokio::select! {
                 biased;
@@ -682,6 +696,21 @@ impl SyncV2Runtime {
                             self.cleanup(epoch).await;
                             return false;
                         }
+                    }
+                }
+                inventory = crate::port_inventory::next_inventory(&mut port_inventory) => {
+                    let Some(_dispatch) = self.current_context_dispatch(context, lifecycle, lifecycle_revision).await else {
+                        self.cleanup(epoch).await;
+                        return false;
+                    };
+                    let frame = ServerFrame::PortInventory {
+                        epoch_id: epoch.id.clone(),
+                        revision: super::scalar::U64::new(inventory.revision),
+                        inventory: super::protocol::PortsResponse::from(inventory.as_ref()),
+                    };
+                    if self.send_frame(socket, &frame).await.is_err() {
+                        self.cleanup(epoch).await;
+                        return false;
                     }
                 }
                 event = source_events.recv() => {

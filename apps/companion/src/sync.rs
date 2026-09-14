@@ -65,6 +65,7 @@ const USER_SERVER_REQUEST_METHODS: [&str; 5] = [
 
 #[derive(Clone)]
 pub struct SyncHub {
+    port_inventory: Option<crate::port_inventory::PortInventory>,
     upstream: UpstreamHandle,
     store: Arc<IndexStore>,
     history: HistoryService,
@@ -113,6 +114,7 @@ struct IngestContext {
 }
 
 struct InitialSession {
+    port_inventory: bool,
     ready: bool,
     snapshot_cursor: Option<u64>,
     snapshot_started_at: Option<Instant>,
@@ -397,6 +399,11 @@ fn spawn_live_replay_task(
 }
 
 impl SyncHub {
+    #[must_use]
+    pub fn with_port_inventory(mut self, inventory: crate::port_inventory::PortInventory) -> Self {
+        self.port_inventory = Some(inventory);
+        self
+    }
     /// Creates a passive event/replay companion that does not execute client RPC.
     #[must_use]
     pub fn new(upstream: UpstreamHandle, store: Arc<IndexStore>, history: HistoryService) -> Self {
@@ -493,6 +500,7 @@ impl SyncHub {
             ));
         }
         Self {
+            port_inventory: None,
             upstream,
             store,
             history,
@@ -782,6 +790,7 @@ impl SyncHub {
         }
 
         Some(InitialSession {
+            port_inventory: hello.get("portInventory").and_then(Value::as_bool) == Some(true),
             ready,
             snapshot_cursor: snapshot_required.then_some(head),
             snapshot_started_at: snapshot_required.then(Instant::now),
@@ -800,6 +809,13 @@ impl SyncHub {
         mut authorization_changes: Option<tokio::sync::broadcast::Receiver<AuthorizationChange>>,
     ) {
         let mut snapshot_cursor = session.snapshot_cursor;
+        let mut port_inventory = if session.port_inventory {
+            self.port_inventory
+                .as_ref()
+                .map(crate::port_inventory::PortInventory::subscribe)
+        } else {
+            None
+        };
         let mut snapshot_started_at = session.snapshot_started_at;
         let mut upstream_status = self.upstream.subscribe_status();
         let rpc_permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_SESSION_RPCS));
@@ -828,6 +844,12 @@ impl SyncHub {
             tokio::select! {
                 _ = keepalive.tick() => {
                     if socket.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+                }
+                inventory = crate::port_inventory::next_inventory(&mut port_inventory) => {
+                    if send_json(&socket, &json!({
+                        "type": "portInventory", "revision": inventory.revision,
+                        "inventory": {"ports": inventory.ports, "scannedAt": inventory.scanned_at}
+                    })).await.is_err() { break; }
                 }
                 message = incoming.next() => {
                     let Some(Ok(message)) = message else { break; };

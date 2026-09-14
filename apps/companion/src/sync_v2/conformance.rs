@@ -217,6 +217,7 @@ fn schema_variant_registries_match_rust_owned_exhaustive_registries() {
     assert_schema_tags(
         "serverFrame",
         &[
+            "portInventory",
             "snapshot",
             "change",
             "live",

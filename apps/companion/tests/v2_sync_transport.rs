@@ -38,6 +38,8 @@ const TEST_PIN: &str = "sha256/test-companion-pin";
 
 #[path = "v2_sync_transport/lifecycle.rs"]
 mod lifecycle;
+#[path = "v2_sync_transport/ports.rs"]
+mod ports;
 mod support;
 
 use support::v2_transport::*;

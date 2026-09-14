@@ -144,6 +144,12 @@ pub fn split_routers_with_registry_and_services(
     sync: SyncHub,
     services: CompanionServices,
 ) -> CompanionRouters {
+    let inventory = crate::port_inventory::PortInventory::new(services.excluded_ports.clone());
+    let sync = sync.with_port_inventory(inventory.clone());
+    let mut services = services;
+    services.sync_v2 = services
+        .sync_v2
+        .map(|runtime| runtime.with_port_inventory(inventory));
     let state = AppState {
         store,
         authorization: Authorization::Registry(registry),
@@ -166,6 +172,12 @@ fn build_router(
     sync: SyncHub,
     services: CompanionServices,
 ) -> Router {
+    let inventory = crate::port_inventory::PortInventory::new(services.excluded_ports.clone());
+    let sync = sync.with_port_inventory(inventory.clone());
+    let mut services = services;
+    services.sync_v2 = services
+        .sync_v2
+        .map(|runtime| runtime.with_port_inventory(inventory));
     let state = AppState {
         store,
         authorization,

@@ -1,5 +1,9 @@
 # Sync API V2 architecture
 
+Port inventory is a separate opt-in latest-value stream on the sync websocket.
+See [Companion-owned port inventory](port-inventory-sync.md) for watcher,
+backpressure, epoch, and native reconciliation ownership.
+
 Status: approved structural contract for the initial V2 implementation.
 
 Sync API V2 is a greenfield semantic product protocol. It gives each connected

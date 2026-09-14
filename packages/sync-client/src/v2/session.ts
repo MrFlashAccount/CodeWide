@@ -1,3 +1,4 @@
+import { V2PortInventoryStore } from "./port-inventory";
 import { fingerprintV2Command, v2SavedServerId, type V2SavedServerId } from "./canonical";
 import type { V2ClientFrame, V2CommandTerminalFrame, V2OpenIntent, V2ServerFrame } from "./frames";
 import type {
@@ -76,6 +77,7 @@ type LiveAuthority = { socket: V2SocketLike; epochId: string };
 
 /** Independent V2 connection epoch with saved-server-partitioned durable state. */
 export class SyncV2Session {
+  readonly portInventory = new V2PortInventoryStore();
   readonly #savedServerId: V2SavedServerId;
   #intent: V2OpenIntent;
   readonly #projectionStore: V2ProjectionStore;
@@ -269,6 +271,7 @@ export class SyncV2Session {
     await this.#applyChain;
     this.#phase = "offline";
     this.#epochId = null;
+    this.portInventory.clear();
     this.#watermark = null;
     this.#setState("offline", null);
   }
@@ -442,6 +445,7 @@ export class SyncV2Session {
     this.#socket = undefined;
     this.#phase = "offline";
     this.#epochId = null;
+    this.portInventory.clear();
     this.#watermark = null;
     this.#recoveringOperations.clear();
     this.#rejectEphemeral("Sync V2 connection closed; generation-bound requests are never retried");
@@ -463,6 +467,7 @@ export class SyncV2Session {
   #beginEpoch(): void {
     this.#phase = "initializing";
     this.#epochId = null;
+    this.portInventory.clear();
     this.#watermark = null;
     this.#armInitializationDeadline("snapshot_timeout");
     try {
@@ -526,6 +531,13 @@ export class SyncV2Session {
       if (this.#heartbeatDeadlineTimer !== undefined) clearTimeout(this.#heartbeatDeadlineTimer);
       this.#heartbeatDeadlineTimer = undefined;
       this.#pendingHeartbeatNonce = null;
+      return;
+    }
+    if (frame.type === "portInventory") {
+      if (this.#intent.portInventory !== true || frame.epochId !== this.#epochId) {
+        return this.#protocolFailure("unexpected_port_inventory");
+      }
+      this.portInventory.publish(frame);
       return;
     }
     if (frame.type === "snapshot") return this.#receiveSnapshot(frame);
@@ -686,6 +698,7 @@ export class SyncV2Session {
     const abandoned = this.#epochId ?? frame.epochId;
     this.#phase = "waitingOpen";
     this.#epochId = null;
+    this.portInventory.clear();
     this.#watermark = null;
     this.#recoveringOperations.clear();
     this.#rejectEphemeral(

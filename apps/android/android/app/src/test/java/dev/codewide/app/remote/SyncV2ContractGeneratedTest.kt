@@ -8,8 +8,21 @@ import org.junit.Test
 
 class SyncV2ContractGeneratedTest {
   @Test
-  fun embedsTheExactExecutableContractFingerprint() {
-    assertEquals("21e47c9f4b0f792aa9bd1637093655ee165ba07f2273be8bd532357b2b9e8803", SyncV2ContractGenerated.CONTRACT_SHA256)
+  fun validatesOptedInPortInventoryAndEpochRevision() {
+    // contract:check verifies generated artifacts against the schema; this tests native wire behavior.
+    SyncV2ContractGenerated.parseClientFrame(
+      """{"type":"open","version":2,"intent":{"catalog":{"activeLimit":0,"archivedLimit":0},"currentThread":null,"pendingRequests":"currentThread","portInventory":true}}""",
+    )
+    val frame = SyncV2ContractGenerated.parseServerFrame(
+      """{"type":"portInventory","epochId":"epoch","revision":"1","inventory":{"ports":[],"scannedAt":1}}""",
+    )
+    assertEquals("portInventory", frame.getString("type"))
+    assertEquals(0, frame.getJSONObject("inventory").getJSONArray("ports").length())
+    expectCloseCode(1008) {
+      SyncV2ContractGenerated.parseServerFrame(
+        """{"type":"portInventory","epochId":"epoch","revision":1,"inventory":{"ports":[],"scannedAt":1}}""",
+      )
+    }
   }
 
   @Test

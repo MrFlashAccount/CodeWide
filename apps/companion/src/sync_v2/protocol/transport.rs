@@ -116,6 +116,30 @@ pub struct PortsResponse {
     pub scanned_at: u64,
 }
 
+impl From<&crate::port_inventory::PortInventorySnapshot> for PortsResponse {
+    fn from(snapshot: &crate::port_inventory::PortInventorySnapshot) -> Self {
+        Self {
+            ports: snapshot
+                .ports
+                .iter()
+                .map(|port| PortDescriptor {
+                    port: port.port,
+                    name: port.name.clone(),
+                    group: port.group.clone(),
+                    details: port.details.clone(),
+                    process: port.process.clone(),
+                    pid: port.pid,
+                    cwd: port.cwd.clone(),
+                    kind: port.kind.to_owned(),
+                    forwarding_key: port.forwarding_key.clone(),
+                    default_forwarding_enabled: port.default_forwarding_enabled,
+                })
+                .collect(),
+            scanned_at: snapshot.scanned_at,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TunnelCreateRequest {
