@@ -6,6 +6,8 @@ import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { subagentSubtitle } from "./SubagentRow";
 import { styles } from "./SubagentWorkspace.styles";
+
+/** Renders the retained status and progress of one pending subagent. */
 export function SubagentPendingDetail({
   summary,
   compact,

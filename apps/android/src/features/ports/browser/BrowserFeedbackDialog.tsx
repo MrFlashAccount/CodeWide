@@ -163,7 +163,10 @@ export function BrowserFeedbackDialog(props: FeedbackDialogProps) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -171,10 +174,24 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.sm,
   },
-  title: { ...typeScale.body, color: colors.text, flex: 1 },
-  label: { ...typeScale.body, color: colors.text },
-  button: { padding: spacing.sm, backgroundColor: colors.surface, borderRadius: radii.medium },
-  content: { padding: spacing.md, gap: spacing.md },
+  title: {
+    ...typeScale.body,
+    color: colors.text,
+    flex: 1,
+  },
+  label: {
+    ...typeScale.body,
+    color: colors.text,
+  },
+  button: {
+    padding: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radii.medium,
+  },
+  content: {
+    padding: spacing.md,
+    gap: spacing.md,
+  },
   input: {
     minHeight: 100,
     padding: spacing.md,
@@ -183,10 +200,22 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radii.medium,
   },
-  screenshot: { height: 240, width: "100%" },
-  code: { ...typeScale.caption, color: colors.textMuted },
-  caption: { ...typeScale.caption, color: colors.textMuted },
-  error: { ...typeScale.caption, color: colors.error },
+  screenshot: {
+    height: 240,
+    width: "100%",
+  },
+  code: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+  },
+  caption: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+  },
+  error: {
+    ...typeScale.caption,
+    color: colors.error,
+  },
   send: {
     padding: spacing.md,
     margin: spacing.md,

@@ -23,37 +23,37 @@ export function startOtaPrefetchRuntime(): void {
   let nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
 
   const prefetch = async (force = false) => {
-      if (checking || AppState.currentState !== "active") return;
-      // A downloaded update waiting for activation must bypass network
-      // throttling. Otherwise one failed/inactive reload can strand the app on
-      // the old bundle until the next 30-minute check.
-      if (!updateReady && !force && Date.now() < nextCheckAt) return;
-      checking = true;
+    if (checking || AppState.currentState !== "active") return;
+    // A downloaded update waiting for activation must bypass network
+    // throttling. Otherwise one failed/inactive reload can strand the app on
+    // the old bundle until the next 30-minute check.
+    if (!updateReady && !force && Date.now() < nextCheckAt) return;
+    checking = true;
 
-      try {
-        if (!updateReady) {
-          const result = await Updates.checkForUpdateAsync();
-          if (result.isAvailable) {
-            const fetched = await Updates.fetchUpdateAsync();
-            updateReady = fetched.isNew || fetched.isRollBackToEmbedded;
-          }
-          nextCheckAt = Date.now() + CHECK_INTERVAL_MS;
+    try {
+      if (!updateReady) {
+        const result = await Updates.checkForUpdateAsync();
+        if (result.isAvailable) {
+          const fetched = await Updates.fetchUpdateAsync();
+          updateReady = fetched.isNew || fetched.isRollBackToEmbedded;
         }
-
-        if (updateReady && AppState.currentState === "active") {
-          // reloadAsync selects the freshly downloaded bundle and recreates
-          // the JS runtime; it does not require killing the Android process.
-          await Updates.reloadAsync();
-        }
-      } catch (error) {
-        // Keep the pending activation flag and retry quickly after a transient
-        // native/network failure. Successful no-update checks remain limited
-        // to once per 30 minutes.
-        nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
-        // A broken update edge must never make the installed app unusable.
-        console.warn("[CodeWide] OTA live reload failed", error);
+        nextCheckAt = Date.now() + CHECK_INTERVAL_MS;
       }
-      checking = false;
+
+      if (updateReady && AppState.currentState === "active") {
+        // reloadAsync selects the freshly downloaded bundle and recreates
+        // the JS runtime; it does not require killing the Android process.
+        await Updates.reloadAsync();
+      }
+    } catch (error) {
+      // Keep the pending activation flag and retry quickly after a transient
+      // native/network failure. Successful no-update checks remain limited
+      // to once per 30 minutes.
+      nextCheckAt = Date.now() + RETRY_INTERVAL_MS;
+      // A broken update edge must never make the installed app unusable.
+      console.warn("[CodeWide] OTA live reload failed", error);
+    }
+    checking = false;
   };
 
   setInterval(() => void prefetch(), RETRY_INTERVAL_MS);

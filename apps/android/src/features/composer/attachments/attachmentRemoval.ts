@@ -3,6 +3,7 @@ import { composerUploads } from "../../../data/composer-uploads";
 import { useEvent } from "../../../react/useEvent";
 import { useAppDialog } from "../../../ui/AppDialog";
 import type { QueuedComposerEdit } from "../composerTypes";
+
 type AttachmentRemovalCapabilities = {
   composerUploadScope: string;
   queuedComposerEdit: QueuedComposerEdit | null;

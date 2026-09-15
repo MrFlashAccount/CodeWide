@@ -1,4 +1,5 @@
 import type { PendingRequestDatabase } from "./pending-request-database-contract";
+
 export type { PendingRequestDatabase } from "./pending-request-database-contract";
 
 import { cloneProtocolValue } from "./clone-protocol-value";
@@ -30,7 +31,9 @@ export function createPendingRequestDatabase(): PendingRequestDatabase {
     ],
     indexes: [["connectionId"]],
     legacyCollectionId: "pending-server-requests-v1",
-    onResidentRows: (rows) => { source = new Map(rows.map((row) => [rowKey(row.connectionId, row.requestKey), row])); },
+    onResidentRows: (rows) => {
+      source = new Map(rows.map((row) => [rowKey(row.connectionId, row.requestKey), row]));
+    },
   });
   const { collection, storage } = model;
 
@@ -42,7 +45,9 @@ export function createPendingRequestDatabase(): PendingRequestDatabase {
     source.set(key, row);
     storage.begin();
     storage.write({ type: previous === undefined ? "insert" : "update", value: row });
-    void storage.commit().catch((cause: unknown) => console.warn("Could not persist pending request", cause));
+    void storage
+      .commit()
+      .catch((cause: unknown) => console.warn("Could not persist pending request", cause));
   };
 
   return {
@@ -50,22 +55,24 @@ export function createPendingRequestDatabase(): PendingRequestDatabase {
     replace(connectionId, requests) {
       if (disposed) return;
       const now = Date.now();
-      const incoming = new Map(requests.flatMap((request) => {
-        if (!USER_SERVER_REQUESTS.has(request.method)) return [];
-        const requestKey = remoteRequestKey(request.id);
-        const key = rowKey(connectionId, requestKey);
-        const previous = source.get(key);
-        const row: PendingServerRequest = {
-          connectionId,
-          requestKey,
-          requestId: request.id,
-          method: request.method,
-          params: cloneProtocolValue(request.params),
-          state: previous?.state ?? "pending",
-          createdAt: previous?.createdAt ?? now,
-        };
-        return [[key, row] as const];
-      }));
+      const incoming = new Map(
+        requests.flatMap((request) => {
+          if (!USER_SERVER_REQUESTS.has(request.method)) return [];
+          const requestKey = remoteRequestKey(request.id);
+          const key = rowKey(connectionId, requestKey);
+          const previous = source.get(key);
+          const row: PendingServerRequest = {
+            connectionId,
+            requestKey,
+            requestId: request.id,
+            method: request.method,
+            params: cloneProtocolValue(request.params),
+            state: previous?.state ?? "pending",
+            createdAt: previous?.createdAt ?? now,
+          };
+          return [[key, row] as const];
+        }),
+      );
       storage.begin();
       for (const [key, row] of source) {
         if (row.connectionId !== connectionId || incoming.has(key)) continue;
@@ -78,7 +85,9 @@ export function createPendingRequestDatabase(): PendingRequestDatabase {
         source.set(key, row);
         storage.write({ type: previous === undefined ? "insert" : "update", value: row });
       }
-      void storage.commit().catch((cause: unknown) => console.warn("Could not reconcile pending requests", cause));
+      void storage
+        .commit()
+        .catch((cause: unknown) => console.warn("Could not reconcile pending requests", cause));
     },
     claim(connectionId, requestKey) {
       const current = source.get(rowKey(connectionId, requestKey));
@@ -106,11 +115,13 @@ function remoteRequestKey(id: string | number): string {
 }
 
 function sameRequest(left: PendingServerRequest, right: PendingServerRequest): boolean {
-  return left.connectionId === right.connectionId
-    && left.requestKey === right.requestKey
-    && left.requestId === right.requestId
-    && left.method === right.method
-    && left.state === right.state
-    && left.createdAt === right.createdAt
-    && JSON.stringify(left.params) === JSON.stringify(right.params);
+  return (
+    left.connectionId === right.connectionId &&
+    left.requestKey === right.requestKey &&
+    left.requestId === right.requestId &&
+    left.method === right.method &&
+    left.state === right.state &&
+    left.createdAt === right.createdAt &&
+    JSON.stringify(left.params) === JSON.stringify(right.params)
+  );
 }

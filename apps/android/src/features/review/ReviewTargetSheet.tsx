@@ -161,7 +161,7 @@ export function ReviewSheet({
   );
 }
 
-export function buildReviewTarget(type: ReviewTarget["type"], rawValue: string): ReviewTarget {
+function buildReviewTarget(type: ReviewTarget["type"], rawValue: string): ReviewTarget {
   const value = rawValue.trim();
   if (type === "uncommittedChanges") return { type };
   if (value === "") throw new Error("Review target is required");

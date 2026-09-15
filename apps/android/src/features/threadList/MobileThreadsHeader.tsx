@@ -8,6 +8,7 @@ import { SidebarProjectHeader } from "../projects/SidebarProjects";
 import { styles } from "./MobileThreads.styles";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
+
 export function MobileThreadsHeader({
   props,
   archivedCount,

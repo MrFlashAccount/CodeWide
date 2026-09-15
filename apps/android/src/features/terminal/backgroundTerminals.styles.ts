@@ -10,7 +10,12 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.large,
   },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
   menuTitleRow: {
     minHeight: touchTarget,
     marginBottom: spacing.xs,
@@ -18,8 +23,18 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.compact,
   },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
-  menuScroll: { flex: 1, minHeight: 0 },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
+  menuScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
   menuScrollContent: { paddingBottom: spacing.sm },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

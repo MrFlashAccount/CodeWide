@@ -9,7 +9,9 @@ export type WindowLayoutSnapshot = Readonly<{
   desktop: boolean;
 }>;
 
-export function windowLayoutSnapshot(window: Readonly<{ width: number; height: number; scale?: number; fontScale?: number }>): WindowLayoutSnapshot {
+export function windowLayoutSnapshot(
+  window: Readonly<{ width: number; height: number; scale?: number; fontScale?: number }>,
+): WindowLayoutSnapshot {
   const scale = finitePositiveOr(window.scale, 1);
   const fontScale = finitePositiveOr(window.fontScale, scale);
   return {
@@ -20,10 +22,6 @@ export function windowLayoutSnapshot(window: Readonly<{ width: number; height: n
     measurementRevision: `${scale}:${fontScale}`,
     desktop: window.width >= DESKTOP_BREAKPOINT && window.height >= 480,
   };
-}
-
-export function desktopThreadSidebarWidth(viewportWidth: number): number {
-  return Math.max(280, Math.min(480, Math.floor(viewportWidth * 0.32)));
 }
 
 function finitePositiveOr(value: number | undefined, fallback: number): number {

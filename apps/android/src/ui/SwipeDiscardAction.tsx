@@ -4,11 +4,22 @@ import type { ComponentProps } from "react";
 import type { GestureResponderEvent, StyleProp, ViewStyle } from "react-native";
 import { Pressable, StyleSheet } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Reanimated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
+import Reanimated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 
 import { colors, radii, touchTarget, iconSize } from "../theme";
 import { useEvent } from "../react/useEvent";
-import { COMPOSER_SWIPE_TARGET, composerSwipeArmed, composerSwipeDirection, composerSwipeTravel, type ComposerSwipeDirection } from "./composer-swipe";
+import {
+  COMPOSER_SWIPE_TARGET,
+  composerSwipeArmed,
+  composerSwipeDirection,
+  composerSwipeTravel,
+  type ComposerSwipeDirection,
+} from "./composer-swipe";
 
 const DIRECTION_LOCK_DISTANCE = 8;
 
@@ -59,9 +70,8 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
     transform: [{ translateX: translationX.get() }, { translateY: translationY.get() }],
   }));
   const targetStyle = useAnimatedStyle(() => {
-    const reveal = direction.get() === "discard"
-      ? Math.min(1, -translationX.get() / COMPOSER_SWIPE_TARGET)
-      : 0;
+    const reveal =
+      direction.get() === "discard" ? Math.min(1, -translationX.get() / COMPOSER_SWIPE_TARGET) : 0;
     return {
       opacity: reveal,
       backgroundColor: armed.get() ? colors.red : colors.surfaceContainerHigh,
@@ -72,7 +82,8 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
     };
   });
   const steerTargetStyle = useAnimatedStyle(() => ({
-    opacity: direction.get() === "steer" ? Math.min(1, -translationY.get() / COMPOSER_SWIPE_TARGET) : 0,
+    opacity:
+      direction.get() === "steer" ? Math.min(1, -translationY.get() / COMPOSER_SWIPE_TARGET) : 0,
     backgroundColor: armed.get() ? colors.primary : colors.surfaceContainerHigh,
     transform: [{ translateY: -COMPOSER_SWIPE_TARGET }],
   }));
@@ -94,14 +105,19 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
       // determine direction. Lock after deliberate movement, including rejected
       // directions; a cancelled/multitouch gesture must not become eligible again.
       if (direction.get() === "pending") {
-        if (Math.max(Math.abs(event.translationX), Math.abs(event.translationY)) < DIRECTION_LOCK_DISTANCE) return;
+        if (
+          Math.max(Math.abs(event.translationX), Math.abs(event.translationY)) <
+          DIRECTION_LOCK_DISTANCE
+        )
+          return;
         const intent = composerSwipeDirection(event.translationX, event.translationY);
         if (intent === "discard" && discardEnabled) direction.set("discard");
         else if (intent === "steer" && steerEnabled && !disabled) direction.set("steer");
         else direction.set("none");
       }
       const intent = direction.get();
-      const distance = intent === "discard" ? -event.translationX : intent === "steer" ? -event.translationY : 0;
+      const distance =
+        intent === "discard" ? -event.translationX : intent === "steer" ? -event.translationY : 0;
       const travel = composerSwipeTravel(distance);
       translationX.set(intent === "discard" ? -travel : 0);
       translationY.set(intent === "steer" ? -travel : 0);
@@ -138,7 +154,13 @@ export function SwipeDiscardAction(props: SwipeDiscardActionProps) {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
-            accessibilityHint={steerEnabled ? "Swipe left to discard, swipe up to steer" : discardEnabled ? "Swipe left to discard" : undefined}
+            accessibilityHint={
+              steerEnabled
+                ? "Swipe left to discard, swipe up to steer"
+                : discardEnabled
+                  ? "Swipe left to discard"
+                  : undefined
+            }
             accessibilityState={{ disabled }}
             accessibilityActions={[
               ...(discardEnabled ? [{ name: "discard", label: "Discard composer contents" }] : []),

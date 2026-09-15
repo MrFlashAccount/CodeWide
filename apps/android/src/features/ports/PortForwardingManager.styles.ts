@@ -11,17 +11,32 @@ import {
   typeWeight,
 } from "../../theme";
 import { GROUP_HEIGHT, PROFILE_ERROR_HEIGHT } from "./portForwardingList";
+
 export const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0, width: "100%" },
+  root: {
+    flex: 1,
+    minHeight: 0,
+    width: "100%",
+  },
   header: {
     minHeight: touchTarget,
     marginBottom: spacing.xs,
     flexDirection: "row",
     alignItems: "center",
   },
-  titleBlock: { flex: 1, minWidth: 0 },
-  title: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold },
-  subtitle: { color: colors.textMuted, ...typeScale.label },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.heading,
+    fontWeight: typeWeight.semibold,
+  },
+  subtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   iconButton: {
     width: touchTarget,
     height: touchTarget,
@@ -29,7 +44,10 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.large,
   },
-  filters: { gap: spacing.xs, paddingBottom: spacing.xs },
+  filters: {
+    gap: spacing.xs,
+    paddingBottom: spacing.xs,
+  },
   segments: {
     minHeight: controlSize.compact,
     flexDirection: "row",
@@ -45,7 +63,11 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
   },
   segmentSelected: { backgroundColor: colors.surfaceHover },
-  segmentText: { color: colors.textMuted, ...typeScale.label, fontWeight: typeWeight.medium },
+  segmentText: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    fontWeight: typeWeight.medium,
+  },
   segmentTextSelected: { color: colors.text },
   searchField: {
     minHeight: controlSize.touch,
@@ -65,7 +87,10 @@ export const styles = StyleSheet.create({
     ...typeScale.body,
   },
   listContent: { paddingBottom: spacing.md },
-  list: { flex: 1, minHeight: 0 },
+  list: {
+    flex: 1,
+    minHeight: 0,
+  },
   groupCell: { height: GROUP_HEIGHT },
   profileErrorCell: { height: PROFILE_ERROR_HEIGHT },
   sectionLabel: {
@@ -97,10 +122,26 @@ export const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.surface,
   },
-  rowText: { flex: 1, minWidth: 0, gap: spacing.optical },
-  rowTitle: { flexShrink: 1, color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
-  rowSubtitle: { color: colors.textMuted, ...typeScale.label, fontVariant: ["tabular-nums"] },
-  menuAnchor: { width: touchTarget, height: touchTarget },
+  rowText: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.optical,
+  },
+  rowTitle: {
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.medium,
+  },
+  rowSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    fontVariant: ["tabular-nums"],
+  },
+  menuAnchor: {
+    width: touchTarget,
+    height: touchTarget,
+  },
   profileError: {
     marginLeft: controlSize.regular + spacing.sm,
     marginRight: spacing.md,
@@ -120,9 +161,18 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: spacing.sm,
   },
-  smallActionText: { color: colors.textMuted, ...typeScale.label },
-  formContent: { padding: spacing.sm, gap: spacing.xs },
-  fieldLabel: { color: colors.textMuted, ...typeScale.label },
+  smallActionText: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  formContent: {
+    padding: spacing.sm,
+    gap: spacing.xs,
+  },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   textInput: {
     minHeight: touchTarget,
     borderRadius: radii.selected,
@@ -171,7 +221,11 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingHorizontal: spacing.sm,
   },
-  errorText: { flex: 1, color: colors.red, ...typeScale.label },
+  errorText: {
+    flex: 1,
+    color: colors.red,
+    ...typeScale.label,
+  },
   formActions: {
     minHeight: touchTarget,
     marginTop: spacing.sm,
@@ -189,14 +243,20 @@ export const styles = StyleSheet.create({
     borderRadius: radii.large,
     backgroundColor: colors.primary,
   },
-  primaryText: { color: colors.onPrimary, ...typeScale.body },
+  primaryText: {
+    color: colors.onPrimary,
+    ...typeScale.body,
+  },
   removeButton: {
     minHeight: touchTarget,
     justifyContent: "center",
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xxs,
   },
-  removeText: { color: colors.red, ...typeScale.body },
+  removeText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   rowPressed: { backgroundColor: colors.surfaceHover },
   pressed: { opacity: 0.64 },
 });

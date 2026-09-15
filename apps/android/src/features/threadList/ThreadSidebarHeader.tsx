@@ -8,6 +8,7 @@ import { SidebarProjectHeader } from "../projects/SidebarProjects";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 import { styles } from "./ThreadSidebar.styles";
 import type { ThreadSidebarProps } from "./ThreadSidebarContract";
+
 export function ThreadSidebarHeader({
   props,
   setQuery,

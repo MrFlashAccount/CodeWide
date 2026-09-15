@@ -1,7 +1,4 @@
-import type {
-  MessageSearchPage,
-  MessageSearchQuery,
-} from "../../data/message-search";
+import type { MessageSearchPage, MessageSearchQuery } from "../../data/message-search";
 
 /** Search requests retain the existing validated lower read authority. */
 export type MessageSearchCapability = {

@@ -9,6 +9,7 @@ const noopcb = () => noop;
 const emptyArray: Readonly<never[]> = [];
 const useEffectEvent = "useEffectEvent" in React ? React.useEffectEvent : noopcb;
 
+/** Returns a stable callback that always invokes the latest supplied implementation. */
 export function useEvent<T extends (...args: any[]) => any>(cb: T | undefined | null | false): T {
   const ref = useLatest<T | undefined | null | false>(cb);
   const dontCallInRenderGuard = useEffectEvent(noop);

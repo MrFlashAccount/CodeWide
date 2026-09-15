@@ -90,7 +90,7 @@ export function Legend({ color, label }: { color: string; label: string }) {
   );
 }
 
-export function linePoints(
+function linePoints(
   values: number[],
   width: number,
   height: number,

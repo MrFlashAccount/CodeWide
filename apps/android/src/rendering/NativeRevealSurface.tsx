@@ -22,10 +22,12 @@ type NativeRevealProps = {
   children?: ReactNode;
 };
 
-const AndroidRevealSurface = Platform.OS === "android" && UIManager.getViewManagerConfig("CodexRevealSurface") != null
-  ? requireNativeComponent<NativeRevealProps>("CodexRevealSurface")
-  : null;
+const AndroidRevealSurface =
+  Platform.OS === "android" && UIManager.getViewManagerConfig("CodexRevealSurface") != null
+    ? requireNativeComponent<NativeRevealProps>("CodexRevealSurface")
+    : null;
 
+/** Reveals native content after readiness while preserving reduced-motion policy. */
 export function NativeRevealSurface({
   children,
   ready = true,
@@ -44,7 +46,11 @@ export function NativeRevealSurface({
   const reduceMotion = useReducedMotionPreference();
   const streamKey = useStreamingRevealKey();
   if (AndroidRevealSurface === null || !animate || reduceMotion) {
-    return <View pointerEvents="box-none" style={style}>{children}</View>;
+    return (
+      <View pointerEvents="box-none" style={style}>
+        {children}
+      </View>
+    );
   }
   return (
     <AndroidRevealSurface
@@ -61,5 +67,8 @@ export function NativeRevealSurface({
 }
 
 const styles = StyleSheet.create({
-  surface: { minWidth: 0, maxWidth: "100%" },
+  surface: {
+    minWidth: 0,
+    maxWidth: "100%",
+  },
 });

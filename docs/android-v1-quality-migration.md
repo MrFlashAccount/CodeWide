@@ -1,53 +1,54 @@
 # Android V1 quality checks
 
 `pnpm validate:android:v1` checks the complete native and web TypeScript graphs,
-platform adapter compatibility, React rules, and V1 dependency boundaries. The
-existing Android release command already runs these type and lint checks.
+platform adapter compatibility, formatting, shared hygiene rules, V1 layout and
+public API documentation, dead code, and dependency boundaries. The existing
+Android release command already runs this gate.
 
 ## Enforced checks
 
-- V1 and V2 extend the same pinned `@sergeigarin/hygene/tsconfig.base.json` preset.
-  Native and browser standard libraries remain separate. V1 now checks unused
-  locals/parameters, implicit returns and overrides, switch fallthrough,
-  unreachable code, side-effect imports, and erasable TypeScript syntax.
-- Dependency Cruiser checks every V1 source module, including imports used only
-  for types. It rejects cycles, unresolved imports, and dependencies on V2 source
-  or the `/v2` sync-client entrypoint. Generation-neutral boot and presentation
-  remain owned by their existing V2 gate.
-- The existing React hook/compiler and presentation-token lint checks remain
-  mandatory. `lint:v1:dependencies` is part of the normal lint command, so release
-  validation cannot omit the dependency check.
+- V1 and V2 use the same pinned `@sergeigarin/hygene` TypeScript and Oxlint
+  presets. The full type-aware V1 audit currently contains 23,604 historical
+  diagnostics. `oxlint.v1.baseline.json` records that debt by exact file and rule;
+  the required gate rejects every increase while allowing the count to decrease.
+  `pnpm --filter @codewide/android lint:v1:hygiene:all` prints the complete report.
+- Oxfmt owns the complete V1 source layout. ESLint additionally requires a blank
+  line after imports, one property per line in multi-property `StyleSheet` objects,
+  and adjacent JSDoc on exported domain contracts, capabilities, and primary
+  application APIs. Leaf UI exports remain exempt from ceremonial documentation.
+- Knip starts from the legacy route, V1 test consumers, and every Metro platform
+  entrypoint. Exact platform-selected module names are documented in its resolver
+  exception. The initial clean-up removed 68 unused export modifiers and four
+  declarations with no runtime or test consumer.
+- Dependency Cruiser checks `app/legacy.tsx` and every V1 source module, including
+  imports used only for types. It rejects cycles, unresolved imports, and
+  dependencies on V2 source or the `/v2` sync-client entrypoint. Generation-neutral
+  boot and presentation remain owned by their existing V2 gate.
+- React hook/compiler and presentation-token checks remain mandatory. The normal
+  `lint` command delegates to the complete V1 lint aggregate, so the hygiene,
+  Knip, and dependency checks cannot be omitted accidentally.
 
 Three type dependency cycles were removed by assigning SQL capabilities, thread
 resource contracts, and summary-view contracts to independent contract modules.
 Existing public type exports remain compatible; persistence formats and runtime
 state machines are unchanged.
 
-## Remaining V2 tools
+## Hygiene debt
 
-This is not full parity with `validate:android:v2`. The initial audit against
-revision `b998497` covered 442 V1/shared source modules:
-
-| Tool | Initial finding | Remaining work |
-| --- | --- | --- |
-| Oxlint | About 3,800 diagnostics with V2's effective common rules | Fix Promise handling and callback/effect ownership first; review each rule against V1's actual boundaries. |
-| Oxfmt | 348 V1 files differ | Apply formatting in a separate change to keep behavioral review readable. |
-| Knip | 87 exports, 44 types, 3 files, and 59 unresolved references reported | Model platform entrypoints and test consumers before treating these as dead code. These counts are preliminary, not confirmed defects. |
-
-The Oxlint estimate excludes V2's raw-style rule because V1 already has a
-separate presentation-token checker. Neither audit-only configs nor suppressions
-were added to the required gate. A green V1 gate does not imply the remaining
-Oxlint, Oxfmt, or Knip migration is complete.
+A green V1 gate means no new shared-hygiene violation was introduced; it does not
+mean the historical Oxlint baseline is empty. The baseline groups diagnostics by
+file and rule so formatting and line movement do not create churn. It is a
+ratchet, not an exemption source: a change that needs a new exception must use the
+narrow rule documented in `AGENTS.md`, while ordinary touched code should reduce
+the baseline count.
 
 ## Migration choices
 
-- **Incremental — PASS:** enable the shared TypeScript preset and dependency
-  checks now. Both produce actionable failures and can be made green without
-  changing product behavior.
-- **Structural — CONDITIONAL:** transfer the rest of Oxlint after separating
-  V1's callback, subscription, and asynchronous-work owners. Start with unhandled
-  Promises and direct effects; renaming modules and changing syntax alone would
-  leave the important defects unresolved.
+- **Incremental — PASS:** the baseline ratchet lets existing files become compliant
+  one rule at a time without admitting new debt.
+- **Structural — PASS:** the required V1 gate now composes separate owners for
+  hygiene, formatting, React/layout rules, Knip, and Dependency Cruiser. Each tool
+  sees the full V1 scope through an explicit configuration.
 - **Radical — CONDITIONAL:** retire V1 and use V2 exclusively. This could remove
   the cost of maintaining two policy surfaces, but completeness and production
   compatibility are not established by static checks. The cheapest experiment

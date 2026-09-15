@@ -13,6 +13,7 @@ import { SkillPickerRow } from "../../../ui/SkillPickerRow";
 import { SkillPluginIcon } from "../../../ui/SkillPluginIcon";
 import { AppTextInput, AppText as Text } from "../../../ui/Typography";
 import { styles } from "./SkillsPicker.styles";
+
 export function SkillsPicker({
   skills,
   loading,

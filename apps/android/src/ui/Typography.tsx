@@ -1,5 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
-import { forwardRef, useEffectEvent, useId, useLayoutEffect, useRef, type ComponentProps, type ForwardedRef } from "react";
+import {
+  forwardRef,
+  useEffectEvent,
+  useId,
+  useLayoutEffect,
+  useRef,
+  type ComponentProps,
+  type ForwardedRef,
+} from "react";
 import {
   ActivityIndicator,
   findNodeHandle,
@@ -35,57 +43,70 @@ export type AppTextInputProps = ComponentProps<typeof NativeTextInput> & {
   onLargePaste?(event: LargePasteEvent): void;
 };
 
-export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(function AppTextInput({
-  style,
-  compact = false,
-  voiceInput,
-  voiceScope,
-  largePasteThreshold,
-  onLargePaste,
-  value,
-  defaultValue,
-  editable,
-  secureTextEntry,
-  keyboardType,
-  inputMode,
-  allowFontScaling = true,
-  maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
-  selection,
-  onChangeText,
-  onSelectionChange,
-  ...props
-}, forwardedRef) {
+export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(function AppTextInput(
+  {
+    style,
+    compact = false,
+    voiceInput,
+    voiceScope,
+    largePasteThreshold,
+    onLargePaste,
+    value,
+    defaultValue,
+    editable,
+    secureTextEntry,
+    keyboardType,
+    inputMode,
+    allowFontScaling = true,
+    maxFontSizeMultiplier = APP_MAX_FONT_SIZE_MULTIPLIER,
+    selection,
+    onChangeText,
+    onSelectionChange,
+    ...props
+  },
+  forwardedRef,
+) {
   const runtime = useAppVoiceInputRuntime();
   const generatedId = useId();
   const inputRef = useRef<NativeTextInput | null>(null);
   const uncontrolledValueRef = useRef(defaultValue ?? "");
-  const selectionRef = useRef<{ start: number; end: number } | null>(selection === undefined
-    ? null
-    : { start: selection.start, end: selection.end ?? selection.start });
-  const enabled = runtime?.controller !== null && runtime?.controller !== undefined && shouldEnableVoiceInput({
-    ...(voiceInput === undefined ? {} : { voiceInput }),
-    ...(editable === undefined ? {} : { editable }),
-    ...(secureTextEntry === undefined ? {} : { secureTextEntry }),
-    ...(keyboardType === undefined ? {} : { keyboardType }),
-    ...(inputMode === undefined ? {} : { inputMode }),
-  });
-  const scope = enabled ? voiceScope ?? `${runtime.scopePrefix}\u0000input\u0000${generatedId}` : null;
+  const selectionRef = useRef<{ start: number; end: number } | null>(
+    selection === undefined
+      ? null
+      : { start: selection.start, end: selection.end ?? selection.start },
+  );
+  const enabled =
+    runtime?.controller !== null &&
+    runtime?.controller !== undefined &&
+    shouldEnableVoiceInput({
+      ...(voiceInput === undefined ? {} : { voiceInput }),
+      ...(editable === undefined ? {} : { editable }),
+      ...(secureTextEntry === undefined ? {} : { secureTextEntry }),
+      ...(keyboardType === undefined ? {} : { keyboardType }),
+      ...(inputMode === undefined ? {} : { inputMode }),
+    });
+  const scope = enabled
+    ? (voiceScope ?? `${runtime.scopePrefix}\u0000input\u0000${generatedId}`)
+    : null;
   const mountedScopeRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     mountedScopeRef.current = scope;
-    return () => { mountedScopeRef.current = null; };
+    return () => {
+      mountedScopeRef.current = null;
+    };
   }, [scope]);
   const voice = useVoiceInputResource(runtime, scope);
   const voicePhase = voice?.phase ?? "idle";
   const retryAvailable = voice?.retryAvailable ?? false;
   const pendingSelection = voice?.pendingSelection ?? null;
-  const currentValue = () => typeof value === "string" ? value : uncontrolledValueRef.current;
+  const currentValue = () => (typeof value === "string" ? value : uncontrolledValueRef.current);
   const updateValue = (next: string) => {
     uncontrolledValueRef.current = next;
     if (typeof value !== "string") inputRef.current?.setNativeProps({ text: next });
     onChangeText?.(next);
   };
-  const currentSelection = () => selectionRef.current ?? { start: currentValue().length, end: currentValue().length };
+  const currentSelection = () =>
+    selectionRef.current ?? { start: currentValue().length, end: currentValue().length };
   const bindVoice = () => {
     if (runtime?.controller === null || runtime?.controller === undefined || scope === null) return;
     runtime.controller.bind({
@@ -95,8 +116,12 @@ export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(funct
       thread: runtime.thread,
       // Keep the starting field's callback, not a useEvent callback that can
       // retarget a pending transcript to a replacement input after navigation.
-      updateDraft: (next) => { if (mountedScopeRef.current === scope) updateValue(next); },
-      send: (next) => { if (mountedScopeRef.current === scope) updateValue(next); },
+      updateDraft: (next) => {
+        if (mountedScopeRef.current === scope) updateValue(next);
+      },
+      send: (next) => {
+        if (mountedScopeRef.current === scope) updateValue(next);
+      },
       ...(runtime.startRemote === undefined ? {} : { startRemote: runtime.startRemote }),
     });
   };
@@ -119,21 +144,31 @@ export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(funct
     if (!largePasteEnabled || largePasteThreshold === undefined) return;
     const reactTag = findNodeHandle(inputRef.current);
     if (reactTag === null) return;
-    return installLargePasteInterceptor(reactTag, largePasteToken, largePasteThreshold, handleLargePaste) ?? undefined;
+    return (
+      installLargePasteInterceptor(
+        reactTag,
+        largePasteToken,
+        largePasteThreshold,
+        handleLargePaste,
+      ) ?? undefined
+    );
   }, [largePasteEnabled, largePasteThreshold, largePasteToken]);
   const handleChangeText = (next: string) => {
     uncontrolledValueRef.current = next;
     onChangeText?.(next);
   };
-  const handleSelectionChange: NonNullable<ComponentProps<typeof NativeTextInput>["onSelectionChange"]> = (event) => {
+  const handleSelectionChange: NonNullable<
+    ComponentProps<typeof NativeTextInput>["onSelectionChange"]
+  > = (event) => {
     selectionRef.current = event.nativeEvent.selection;
     onSelectionChange?.(event);
     if (
-      scope !== null
-      && pendingSelection !== null
-      && pendingSelection.start === event.nativeEvent.selection.start
-      && pendingSelection.end === event.nativeEvent.selection.end
-    ) runtime?.controller?.clearPendingSelection(scope);
+      scope !== null &&
+      pendingSelection !== null &&
+      pendingSelection.start === event.nativeEvent.selection.start &&
+      pendingSelection.end === event.nativeEvent.selection.end
+    )
+      runtime?.controller?.clearPendingSelection(scope);
   };
   const input = (
     <NativeTextInput
@@ -150,14 +185,24 @@ export const AppTextInput = forwardRef<NativeTextInput, AppTextInputProps>(funct
       selection={pendingSelection ?? selection}
       onChangeText={handleChangeText}
       onSelectionChange={handleSelectionChange}
-      style={enabled ? [voiceInputTextStyle(style), compact && voiceStyles.compactInput] : [style, productFontStyle(style)]}
+      style={
+        enabled
+          ? [voiceInputTextStyle(style), compact && voiceStyles.compactInput]
+          : [style, productFontStyle(style)]
+      }
     />
   );
   if (!enabled) return input;
   return (
     <View style={voiceInputContainerStyle(style)}>
       {input}
-      <InputVoiceButton compact={compact} phase={voicePhase} retryAvailable={retryAvailable} error={voice?.error ?? null} onPress={pressVoice} />
+      <InputVoiceButton
+        compact={compact}
+        phase={voicePhase}
+        retryAvailable={retryAvailable}
+        error={voice?.error ?? null}
+        onPress={pressVoice}
+      />
     </View>
   );
 });
@@ -175,32 +220,80 @@ function InputVoiceButton(props: InputVoiceButtonProps) {
   const access = useMicrophoneAccess();
   const finishing = props.phase === "finishing" && !props.retryAvailable;
   const needsPermission = props.phase === "idle" && !props.retryAvailable && !access.granted;
-  return <Pressable
-    ref={microphoneButtonRef}
-    accessibilityRole="button"
-    accessibilityLabel={props.retryAvailable ? "Retry voice input" : props.phase === "idle" ? access.granted ? "Voice input" : "Allow microphone access" : "Stop voice input"}
-    disabled={finishing}
-    hitSlop={props.compact ? controlHitSlop.compact : controlHitSlop.regular}
-    onPressIn={() => {
-      if (props.phase === "idle" && access.granted) setNativeVoiceAuraOrigin(findNodeHandle(microphoneButtonRef.current));
-    }}
-    onPress={() => {
-      if (props.phase === "idle" && !props.retryAvailable && !access.allowCapture()) return;
-      void props.onPress();
-    }}
-    style={({ pressed }) => [voiceStyles.button, props.compact && voiceStyles.compactButton, pressed && voiceStyles.buttonPressed, (needsPermission || finishing) && voiceStyles.buttonDisabled]}
-  >
-    {props.phase === "starting" || finishing
-      ? <ActivityIndicator size="small" color={colors.accent} />
-      : <Ionicons name={props.retryAvailable ? "refresh" : props.phase === "idle" ? "mic-outline" : "stop"} size={iconSize.action} color={props.phase === "recording" || props.error !== null ? colors.red : colors.textMuted} />}
-  </Pressable>;
+  return (
+    <Pressable
+      ref={microphoneButtonRef}
+      accessibilityRole="button"
+      accessibilityLabel={
+        props.retryAvailable
+          ? "Retry voice input"
+          : props.phase === "idle"
+            ? access.granted
+              ? "Voice input"
+              : "Allow microphone access"
+            : "Stop voice input"
+      }
+      disabled={finishing}
+      hitSlop={props.compact ? controlHitSlop.compact : controlHitSlop.regular}
+      onPressIn={() => {
+        if (props.phase === "idle" && access.granted)
+          setNativeVoiceAuraOrigin(findNodeHandle(microphoneButtonRef.current));
+      }}
+      onPress={() => {
+        if (props.phase === "idle" && !props.retryAvailable && !access.allowCapture()) return;
+        void props.onPress();
+      }}
+      style={({ pressed }) => [
+        voiceStyles.button,
+        props.compact && voiceStyles.compactButton,
+        pressed && voiceStyles.buttonPressed,
+        (needsPermission || finishing) && voiceStyles.buttonDisabled,
+      ]}
+    >
+      {props.phase === "starting" || finishing ? (
+        <ActivityIndicator size="small" color={colors.accent} />
+      ) : (
+        <Ionicons
+          name={props.retryAvailable ? "refresh" : props.phase === "idle" ? "mic-outline" : "stop"}
+          size={iconSize.action}
+          color={
+            props.phase === "recording" || props.error !== null ? colors.red : colors.textMuted
+          }
+        />
+      )}
+    </Pressable>
+  );
 }
 
 const INPUT_LAYOUT_KEYS: ReadonlyArray<keyof ViewStyle> = [
-  "alignSelf", "bottom", "end", "flex", "flexBasis", "flexGrow", "flexShrink", "height", "left",
-  "margin", "marginBottom", "marginEnd", "marginHorizontal", "marginLeft", "marginRight", "marginStart",
-  "marginTop", "marginVertical", "maxHeight", "maxWidth", "minHeight", "minWidth", "position", "right",
-  "start", "top", "width", "zIndex",
+  "alignSelf",
+  "bottom",
+  "end",
+  "flex",
+  "flexBasis",
+  "flexGrow",
+  "flexShrink",
+  "height",
+  "left",
+  "margin",
+  "marginBottom",
+  "marginEnd",
+  "marginHorizontal",
+  "marginLeft",
+  "marginRight",
+  "marginStart",
+  "marginTop",
+  "marginVertical",
+  "maxHeight",
+  "maxWidth",
+  "minHeight",
+  "minWidth",
+  "position",
+  "right",
+  "start",
+  "top",
+  "width",
+  "zIndex",
 ];
 
 function voiceInputContainerStyle(style: StyleProp<TextStyle>): StyleProp<ViewStyle> {
@@ -216,23 +309,45 @@ function voiceInputContainerStyle(style: StyleProp<TextStyle>): StyleProp<ViewSt
 function voiceInputTextStyle(style: StyleProp<TextStyle>): StyleProp<TextStyle> {
   const flattened = { ...(StyleSheet.flatten(style) ?? {}) };
   for (const key of INPUT_LAYOUT_KEYS) delete flattened[key as keyof typeof flattened];
-  const currentRightPadding = typeof flattened.paddingRight === "number"
-    ? flattened.paddingRight
-    : typeof flattened.paddingHorizontal === "number"
-      ? flattened.paddingHorizontal
-      : typeof flattened.padding === "number" ? flattened.padding : 0;
-  return [flattened, productFontStyle(style), voiceStyles.input, { paddingRight: Math.max(currentRightPadding, controlSize.regular + spacing.xxs) }];
+  const currentRightPadding =
+    typeof flattened.paddingRight === "number"
+      ? flattened.paddingRight
+      : typeof flattened.paddingHorizontal === "number"
+        ? flattened.paddingHorizontal
+        : typeof flattened.padding === "number"
+          ? flattened.padding
+          : 0;
+  return [
+    flattened,
+    productFontStyle(style),
+    voiceStyles.input,
+    { paddingRight: Math.max(currentRightPadding, controlSize.regular + spacing.xxs) },
+  ];
 }
 
-function assignForwardedRef(ref: ForwardedRef<NativeTextInput>, value: NativeTextInput | null): void {
+function assignForwardedRef(
+  ref: ForwardedRef<NativeTextInput>,
+  value: NativeTextInput | null,
+): void {
   if (typeof ref === "function") ref(value);
   else if (ref !== null) ref.current = value;
 }
 
 const voiceStyles = StyleSheet.create({
-  compactInput: { minHeight: controlSize.regular, paddingRight: controlSize.compact + spacing.xxs },
-  compactButton: { width: controlSize.compact, height: controlSize.compact },
-  input: { flex: 1, width: "100%", minWidth: 0, minHeight: controlSize.touch },
+  compactInput: {
+    minHeight: controlSize.regular,
+    paddingRight: controlSize.compact + spacing.xxs,
+  },
+  compactButton: {
+    width: controlSize.compact,
+    height: controlSize.compact,
+  },
+  input: {
+    flex: 1,
+    width: "100%",
+    minWidth: 0,
+    minHeight: controlSize.touch,
+  },
   button: {
     position: "absolute",
     right: spacing.optical,

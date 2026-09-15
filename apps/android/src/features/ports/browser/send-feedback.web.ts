@@ -1,5 +1,6 @@
 import type { BrowserFeedbackSubmission } from "./feedback";
 import type { FeedbackDelivery, FeedbackTarget } from "./feedbackDelivery";
+
 export async function sendBrowserFeedback(
   _remote: FeedbackDelivery,
   _target: FeedbackTarget,

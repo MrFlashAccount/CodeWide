@@ -12,9 +12,17 @@ import {
 
 export const styles = StyleSheet.create({
   flex: { flex: 1 },
-  rawLink: { color: colors.accent, ...typeScale.label, fontWeight: typeWeight.semibold },
+  rawLink: {
+    color: colors.accent,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
   disabled: { opacity: 0.42 },
-  fieldLabel: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.xxs },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.xxs,
+  },
   fieldInput: {
     minHeight: touchTarget,
     color: colors.text,
@@ -25,7 +33,10 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     ...typeScale.body,
   },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   sheetActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -41,7 +52,10 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.outline,
   },
-  secondaryButtonText: { color: colors.text, fontWeight: typeWeight.semibold },
+  secondaryButtonText: {
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
+  },
   primaryButton: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.md,
@@ -50,11 +64,25 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.primary,
   },
-  primaryButtonText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  primaryButtonText: {
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
   connectionEditor: { minWidth: 0 },
-  connectionEditorForm: { paddingVertical: spacing.sm, gap: spacing.xs },
-  connectionIdentityFields: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  connectionRow: { minHeight: layoutSize.row, paddingVertical: spacing.xs, gap: spacing.xxs },
+  connectionEditorForm: {
+    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+  },
+  connectionIdentityFields: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  connectionRow: {
+    minHeight: layoutSize.row,
+    paddingVertical: spacing.xs,
+    gap: spacing.xxs,
+  },
   connectionMiniButton: {
     width: touchTarget,
     height: touchTarget,
@@ -62,7 +90,11 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.medium,
   },
-  connectionActionMenuAnchor: { width: touchTarget, height: touchTarget, flexShrink: 0 },
+  connectionActionMenuAnchor: {
+    width: touchTarget,
+    height: touchTarget,
+    flexShrink: 0,
+  },
   connectionEmojiInput: {
     width: 52,
     minHeight: controlSize.touch,
@@ -89,7 +121,11 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  connectionStateDot: { width: 7, height: 7, borderRadius: radii.pill },
+  connectionStateDot: {
+    width: 7,
+    height: 7,
+    borderRadius: radii.pill,
+  },
   connectionStateText: {
     minWidth: 0,
     flexShrink: 1,
@@ -103,19 +139,33 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.errorContainer,
   },
-  connectionDiagnosticHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.xs },
-  connectionDiagnosticSummary: { flex: 1, color: colors.onErrorContainer, ...typeScale.label },
+  connectionDiagnosticHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.xs,
+  },
+  connectionDiagnosticSummary: {
+    flex: 1,
+    color: colors.onErrorContainer,
+    ...typeScale.label,
+  },
   connectionDiagnosticMeta: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
     paddingLeft: spacing.lg,
   },
-  connectionDiagnosticTime: { color: colors.textMuted, ...typeScale.caption },
+  connectionDiagnosticTime: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
   connectionDiagnosticRaw: {
     color: colors.onErrorContainer,
     ...typeScale.code,
-    fontFamily: Platform.select({ android: "monospace", default: "Courier" }),
+    fontFamily: Platform.select({
+      android: "monospace",
+      default: "Courier",
+    }),
     paddingLeft: spacing.lg,
   },
 });

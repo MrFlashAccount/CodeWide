@@ -121,8 +121,16 @@ export function createConnectionStateModel(): ConnectionStateModel {
         ...current,
         state,
         rpcAvailable: rpcAvailable ?? current.rpcAvailable,
-        lastError: clearError ? null : diagnostic === undefined ? current.lastError : diagnostic.slice(0, MAX_CONNECTION_DIAGNOSTIC_CHARS),
-        lastErrorAt: clearError ? null : diagnostic === undefined ? current.lastErrorAt : Date.now(),
+        lastError: clearError
+          ? null
+          : diagnostic === undefined
+            ? current.lastError
+            : diagnostic.slice(0, MAX_CONNECTION_DIAGNOSTIC_CHARS),
+        lastErrorAt: clearError
+          ? null
+          : diagnostic === undefined
+            ? current.lastErrorAt
+            : Date.now(),
       });
     },
     remove(connectionId) {
@@ -155,9 +163,11 @@ export function connectionDisplayState(
 }
 
 function sameState(left: ConnectionStateRow, right: ConnectionStateRow): boolean {
-  return left.enabled === right.enabled
-    && left.state === right.state
-    && left.rpcAvailable === right.rpcAvailable
-    && left.lastError === right.lastError
-    && left.lastErrorAt === right.lastErrorAt;
+  return (
+    left.enabled === right.enabled &&
+    left.state === right.state &&
+    left.rpcAvailable === right.rpcAvailable &&
+    left.lastError === right.lastError &&
+    left.lastErrorAt === right.lastErrorAt
+  );
 }

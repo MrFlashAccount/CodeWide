@@ -4,6 +4,7 @@ import type { RenderBlock } from "@codewide/renderers";
 import { boundedJsonStringify } from "../../../rendering/bounded-json";
 import { normalizeUserMessage } from "../../../rendering/user-message-normalizer";
 
+/** Converts a rendered protocol block into the user-visible text copied from it. */
 export function protocolCopyText(block: RenderBlock): string {
   if (
     block.kind === "agentMessage" ||

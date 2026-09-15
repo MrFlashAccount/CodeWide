@@ -6,6 +6,7 @@ import {
   containsSkillInvocation,
 } from "./skills/composer-skill-suggestions";
 import type { ComposerSuggestionsCapabilities } from "./suggestionsCapabilities";
+
 export function useComposerSuggestions({
   latestComposerPreferencesRef,
   updateComposerPreferences,

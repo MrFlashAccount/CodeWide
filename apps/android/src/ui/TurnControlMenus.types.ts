@@ -2,7 +2,7 @@ import type { Personality } from "@codewide/codex-protocol/v0.147.0";
 import type { ReactNode } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 
-export type ModelControl = {
+type ModelControl = {
   id: string;
   label: string;
   defaultEffort: string;
@@ -10,7 +10,7 @@ export type ModelControl = {
   supportsPersonality: boolean;
 };
 
-export type PermissionControl = {
+type PermissionControl = {
   id: string;
   description: string | null;
   allowed: boolean;

@@ -33,7 +33,10 @@ export type ThreadChatWindowSnapshot = {
   revision: number;
 };
 
-export type LoadedThreadChatWindow = Omit<ThreadChatWindowSnapshot, "status" | "backendRefreshing" | "error" | "layoutRevision" | "revision"> & {
+export type LoadedThreadChatWindow = Omit<
+  ThreadChatWindowSnapshot,
+  "status" | "backendRefreshing" | "error" | "layoutRevision" | "revision"
+> & {
   rows: readonly ThreadDetailRow[];
 };
 
@@ -47,7 +50,11 @@ export type ThreadChatModel = {
   finishPresentation(connectionId: string, threadId: string): void;
   startWindow(request: ThreadChatWindowRequest): number;
   beginBackendRefresh(connectionId: string, threadId: string): () => void;
-  commitWindow(request: ThreadChatWindowRequest, generation: number, loaded: LoadedThreadChatWindow): boolean;
+  commitWindow(
+    request: ThreadChatWindowRequest,
+    generation: number,
+    loaded: LoadedThreadChatWindow,
+  ): boolean;
   commitRange(
     connectionId: string,
     threadId: string,
@@ -55,7 +62,12 @@ export type ThreadChatModel = {
     loaded: LoadedThreadChatWindow,
   ): boolean;
   failWindow(request: ThreadChatWindowRequest, generation: number, cause: unknown): void;
-  publishChanges(changes: readonly ({ type: "insert" | "update"; value: ThreadDetailRow } | { type: "delete"; key: string })[]): void;
+  publishChanges(
+    changes: readonly (
+      | { type: "insert" | "update"; value: ThreadDetailRow }
+      | { type: "delete"; key: string }
+    )[],
+  ): void;
   refreshThread(connectionId: string, threadId: string, rows: readonly ThreadDetailRow[]): void;
   residentRowCount(): number;
   close(): void;
@@ -85,21 +97,32 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const backendRefreshCounts = new Map<string, number>();
   const windowLayoutSignatures = new Map<string, string>();
   const changedRowIdsByScope = new Map<string, Set<string>>();
-  const presentations = new Map<string, {
-    hasCommittedWindow: boolean;
-    pendingWindow: { sequence: number; request: ThreadChatWindowRequest; generation: number; loaded: LoadedThreadChatWindow } | null;
-    pendingRows: { sequence: number; rows: readonly ThreadDetailRow[] } | null;
-  }>();
-  const resources = new Map<string, {
-    ready$: Observable<boolean>;
-    requestKey: string | null;
-    loadingKey: string | null;
-    token: number;
-    committedToken: number;
-    hasReadySnapshot: boolean;
-    retryAttempt: number;
-    retryTimer: ReturnType<typeof setTimeout> | null;
-  }>();
+  const presentations = new Map<
+    string,
+    {
+      hasCommittedWindow: boolean;
+      pendingWindow: {
+        sequence: number;
+        request: ThreadChatWindowRequest;
+        generation: number;
+        loaded: LoadedThreadChatWindow;
+      } | null;
+      pendingRows: { sequence: number; rows: readonly ThreadDetailRow[] } | null;
+    }
+  >();
+  const resources = new Map<
+    string,
+    {
+      ready$: Observable<boolean>;
+      requestKey: string | null;
+      loadingKey: string | null;
+      token: number;
+      committedToken: number;
+      hasReadySnapshot: boolean;
+      retryAttempt: number;
+      retryTimer: ReturnType<typeof setTimeout> | null;
+    }
+  >();
   let closed = false;
   let reportedResidentRowCount = -1;
   // Only this owner installs, deletes or evicts row values. Metadata updates
@@ -130,14 +153,17 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
 
   // Empty/meta-only windows never mount the timeline and cannot acknowledge
   // its first draw. Only an actual timeline row can hold later publications.
-  const hasTimelineRows = (snapshot: ThreadChatWindowSnapshot): boolean => (
-    snapshot.turnRowIds.length > 0 || snapshot.liveRowIds.some((id) => {
+  const hasTimelineRows = (snapshot: ThreadChatWindowSnapshot): boolean =>
+    snapshot.turnRowIds.length > 0 ||
+    snapshot.liveRowIds.some((id) => {
       const kind = rowNodes.get(id)?.peek()?.kind;
       return kind === "turn" || kind === "pending";
-    })
-  );
+    });
 
-  const window$ = (connectionId: string, threadId: string): Observable<ThreadChatWindowSnapshot> => {
+  const window$ = (
+    connectionId: string,
+    threadId: string,
+  ): Observable<ThreadChatWindowSnapshot> => {
     const scope = threadChatScope(connectionId, threadId);
     let node = windowNodes.get(scope);
     if (node === undefined) {
@@ -151,7 +177,8 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const evictWindow = (scope: string): void => {
     const identity = windowIdentities.get(scope);
     const resource = resources.get(scope);
-    if (resource?.retryTimer !== null && resource?.retryTimer !== undefined) clearTimeout(resource.retryTimer);
+    if (resource?.retryTimer !== null && resource?.retryTimer !== undefined)
+      clearTimeout(resource.retryTimer);
     windowNodes.delete(scope);
     activeRequests.delete(scope);
     retainCounts.delete(scope);
@@ -168,7 +195,12 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     const retainedRowIds = new Set<string>();
     for (const node of windowNodes.values()) {
       const snapshot = node.peek();
-      for (const rowId of [...snapshot.turnRowIds, ...snapshot.detailRowIds, ...snapshot.liveRowIds]) retainedRowIds.add(rowId);
+      for (const rowId of [
+        ...snapshot.turnRowIds,
+        ...snapshot.detailRowIds,
+        ...snapshot.liveRowIds,
+      ])
+        retainedRowIds.add(rowId);
     }
     for (const rowId of rowNodes.keys()) {
       if (!retainedRowIds.has(rowId)) {
@@ -182,13 +214,23 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
   const evictUnretainedWindows = (protectedScope: string | null): void => {
     let inactiveCount = 0;
     for (const scope of windowNodes.keys()) {
-      if (scope !== protectedScope && scope !== residentResourceScope && (retainCounts.get(scope) ?? 0) === 0) inactiveCount += 1;
+      if (
+        scope !== protectedScope &&
+        scope !== residentResourceScope &&
+        (retainCounts.get(scope) ?? 0) === 0
+      )
+        inactiveCount += 1;
     }
     // Map insertion order is navigation recency; live updates never promote a
     // background conversation ahead of one the user actually selected.
     for (const scope of windowNodes.keys()) {
       if (inactiveCount <= INACTIVE_WINDOW_LIMIT) break;
-      if (scope === protectedScope || scope === residentResourceScope || (retainCounts.get(scope) ?? 0) > 0) continue;
+      if (
+        scope === protectedScope ||
+        scope === residentResourceScope ||
+        (retainCounts.get(scope) ?? 0) > 0
+      )
+        continue;
       evictWindow(scope);
       inactiveCount -= 1;
     }
@@ -223,7 +265,12 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     loaded: LoadedThreadChatWindow,
   ): boolean => {
     const scope = threadChatScope(request.connectionId, request.threadId);
-    if (closed || generations.get(scope) !== generation || threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)) return false;
+    if (
+      closed ||
+      generations.get(scope) !== generation ||
+      threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)
+    )
+      return false;
     batch(() => {
       const rowsChanged = installRows(loaded.rows);
       const node = window$(request.connectionId, request.threadId);
@@ -256,7 +303,11 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     return true;
   };
 
-  const refreshThreadNow = (connectionId: string, threadId: string, rows: readonly ThreadDetailRow[]): void => {
+  const refreshThreadNow = (
+    connectionId: string,
+    threadId: string,
+    rows: readonly ThreadDetailRow[],
+  ): void => {
     const scope = threadChatScope(connectionId, threadId);
     const publishedChanges = changedRowIdsByScope.get(scope);
     changedRowIdsByScope.delete(scope);
@@ -278,14 +329,18 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       ...next.detailRowIds,
       ...next.liveRowIds,
     ]);
-    const publishedContentChanged = publishedChanges !== undefined
-      && [...publishedChanges].some((rowId) => residentRowIds.has(rowId));
+    const publishedContentChanged =
+      publishedChanges !== undefined &&
+      [...publishedChanges].some((rowId) => residentRowIds.has(rowId));
     batch(() => {
       const rowsChanged = installRows(rows.filter((row) => residentRowIds.has(row.id)));
       const nextSnapshot = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...previous,
         ...next,
-        status: previous.status === "initial-loading" || previous.status === "initial-error" ? "ready" : previous.status,
+        status:
+          previous.status === "initial-loading" || previous.status === "initial-error"
+            ? "ready"
+            : previous.status,
         error: null,
         layoutRevision: previous.layoutRevision + (layoutChanged ? 1 : 0),
         revision: previous.revision + (publishedContentChanged || rowsChanged ? 1 : 0),
@@ -313,37 +368,54 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       record.token = token;
       record.retryAttempt = retryAttempt;
     }
-    return Promise.resolve().then(loader).then(() => {
-      const current = resources.get(scope);
-      if (closed || current === undefined || current !== record || current.token !== token || current.requestKey !== requestKey) return false;
-      current.loadingKey = null;
-      // A superseded press can finish without installing its SQLite window.
-      // Live rows (or a previous opening) do not prove this load completed.
-      // Invalidate only its request so the next consumer retries normally.
-      if (current.committedToken !== token) {
-        current.requestKey = null;
+    return Promise.resolve()
+      .then(loader)
+      .then(() => {
+        const current = resources.get(scope);
+        if (
+          closed ||
+          current === undefined ||
+          current !== record ||
+          current.token !== token ||
+          current.requestKey !== requestKey
+        )
+          return false;
+        current.loadingKey = null;
+        // A superseded press can finish without installing its SQLite window.
+        // Live rows (or a previous opening) do not prove this load completed.
+        // Invalidate only its request so the next consumer retries normally.
+        if (current.committedToken !== token) {
+          current.requestKey = null;
+          return false;
+        }
+        current.retryAttempt = 0;
+        return true;
+      })
+      .catch((cause: unknown) => {
+        const current = resources.get(scope);
+        const ownsLoad =
+          !closed &&
+          current !== undefined &&
+          current === record &&
+          current.token === token &&
+          current.requestKey === requestKey;
+        if (!ownsLoad) return false;
+        current.loadingKey = null;
+        if (initial) throw cause;
+        const retryDelay = Math.min(250 * 2 ** current.retryAttempt, 5_000);
+        current.retryTimer = setTimeout(() => {
+          const latest = resources.get(scope);
+          if (
+            closed ||
+            latest !== current ||
+            latest.requestKey !== requestKey ||
+            latest.loadingKey !== null
+          )
+            return;
+          void beginResourceLoad(request, loader, false, current.retryAttempt + 1);
+        }, retryDelay);
         return false;
-      }
-      current.retryAttempt = 0;
-      return true;
-    }).catch((cause: unknown) => {
-      const current = resources.get(scope);
-      const ownsLoad = !closed
-        && current !== undefined
-        && current === record
-        && current.token === token
-        && current.requestKey === requestKey;
-      if (!ownsLoad) return false;
-      current.loadingKey = null;
-      if (initial) throw cause;
-      const retryDelay = Math.min(250 * (2 ** current.retryAttempt), 5_000);
-      current.retryTimer = setTimeout(() => {
-        const latest = resources.get(scope);
-        if (closed || latest !== current || latest.requestKey !== requestKey || latest.loadingKey !== null) return;
-        void beginResourceLoad(request, loader, false, current.retryAttempt + 1);
-      }, retryDelay);
-      return false;
-    });
+      });
   };
 
   return {
@@ -373,14 +445,17 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
           retryTimer: null,
         };
         resources.set(scope, holder);
-        holder.ready$ = observable(beginResourceLoad(request, loader, true)) as unknown as Observable<boolean>;
+        holder.ready$ = observable(
+          beginResourceLoad(request, loader, true),
+        ) as unknown as Observable<boolean>;
         record = holder;
       } else if (record.requestKey !== requestKey && record.loadingKey !== requestKey) {
         // Window changes preserve the current rows. The SQLite page is merged
         // into the active resident set atomically, so pagination never removes
         // the visible anchor or the mutable head.
         const load = beginResourceLoad(request, loader, !record.hasReadySnapshot);
-        if (!record.hasReadySnapshot) record.ready$ = observable(load) as unknown as Observable<boolean>;
+        if (!record.hasReadySnapshot)
+          record.ready$ = observable(load) as unknown as Observable<boolean>;
         else void load;
       }
       return { ready$: record.ready$, window$: window$(request.connectionId, request.threadId) };
@@ -423,7 +498,10 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       if (presentations.has(scope)) return;
       const snapshot = windowNodes.get(scope)?.peek();
       presentations.set(scope, {
-        hasCommittedWindow: snapshot !== undefined && threadLoadHasResidentSnapshot(snapshot.status) && hasTimelineRows(snapshot),
+        hasCommittedWindow:
+          snapshot !== undefined &&
+          threadLoadHasResidentSnapshot(snapshot.status) &&
+          hasTimelineRows(snapshot),
         pendingWindow: null,
         pendingRows: null,
       });
@@ -454,14 +532,17 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       evictUnretainedWindows(scope);
       const previous = node.peek();
       const requestKey = threadChatRequestKey(request);
-      const hasResidentSnapshot = resources.get(scope)?.hasReadySnapshot === true
-        || threadLoadHasResidentSnapshot(previous.status);
+      const hasResidentSnapshot =
+        resources.get(scope)?.hasReadySnapshot === true ||
+        threadLoadHasResidentSnapshot(previous.status);
       const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...previous,
         requestKey,
         backendRefreshing: (backendRefreshCounts.get(scope) ?? 0) > 0,
         status: hasResidentSnapshot
-          ? previous.requestKey === requestKey ? "background-updating" : "loading-history"
+          ? previous.requestKey === requestKey
+            ? "background-updating"
+            : "loading-history"
           : "initial-loading",
         error: null,
         residentTurnLimit: previous.residentTurnLimit || THREAD_RESIDENT_TURN_LIMIT,
@@ -493,17 +574,30 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     },
     commitWindow(request, generation, loaded) {
       const scope = threadChatScope(request.connectionId, request.threadId);
-      if (closed || generations.get(scope) !== generation || threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)) return false;
+      if (
+        closed ||
+        generations.get(scope) !== generation ||
+        threadChatRequestKey(activeRequests.get(scope)) !== threadChatRequestKey(request)
+      )
+        return false;
       const presentation = presentations.get(scope);
       if (presentation?.hasCommittedWindow) {
-        presentation.pendingWindow = { sequence: ++presentationSequence, request, generation, loaded };
+        presentation.pendingWindow = {
+          sequence: ++presentationSequence,
+          request,
+          generation,
+          loaded,
+        };
         const resource = resources.get(scope);
-        if (resource?.requestKey === threadChatRequestKey(request)) resource.committedToken = resource.token;
+        if (resource?.requestKey === threadChatRequestKey(request))
+          resource.committedToken = resource.token;
         return true;
       }
       const committed = commitWindowNow(request, generation, loaded);
       if (committed && presentation !== undefined) {
-        presentation.hasCommittedWindow = hasTimelineRows(window$(request.connectionId, request.threadId).peek());
+        presentation.hasCommittedWindow = hasTimelineRows(
+          window$(request.connectionId, request.threadId).peek(),
+        );
       }
       return committed;
     },
@@ -512,13 +606,19 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const node = windowNodes.get(scope);
       if (closed || node === undefined) return false;
       const before = node.peek();
-      if (before.historyEpoch !== expected.historyEpoch
-        || before.layoutRevision !== expected.layoutRevision) return false;
+      if (
+        before.historyEpoch !== expected.historyEpoch ||
+        before.layoutRevision !== expected.layoutRevision
+      )
+        return false;
       batch(() => {
         const rowsChanged = installRows(loaded.rows);
         const previous = node.peek();
-        if (previous.historyEpoch !== expected.historyEpoch
-          || previous.layoutRevision !== expected.layoutRevision) return;
+        if (
+          previous.historyEpoch !== expected.historyEpoch ||
+          previous.layoutRevision !== expected.layoutRevision
+        )
+          return;
         const signature = threadLayoutSignature(loaded.rows, loaded);
         const layoutChanged = windowLayoutSignatures.get(scope) !== signature;
         const { rows: _rows, ...loadedWindow } = loaded;
@@ -543,7 +643,9 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
       const previous = node.peek();
       const next = replaceEqualDeep<ThreadChatWindowSnapshot>(previous, {
         ...previous,
-        status: threadLoadHasResidentSnapshot(previous.status) ? "background-retrying" : "initial-error",
+        status: threadLoadHasResidentSnapshot(previous.status)
+          ? "background-retrying"
+          : "initial-error",
         error: cause instanceof Error ? cause.message : "Could not load messages",
       });
       if (next !== previous) node.set(next);
@@ -587,7 +689,8 @@ export function createThreadChatModel(options: ThreadChatModelOptions = {}): Thr
     close() {
       residentResourceScope = null;
       closed = true;
-      for (const resource of resources.values()) if (resource.retryTimer !== null) clearTimeout(resource.retryTimer);
+      for (const resource of resources.values())
+        if (resource.retryTimer !== null) clearTimeout(resource.retryTimer);
       activeRequests.clear();
       retainCounts.clear();
       generations.clear();
@@ -651,17 +754,22 @@ function threadLayoutSignature(
     | "liveRowIds"
   >,
 ): string {
-  const residentRowIds = new Set([...window.turnRowIds, ...window.detailRowIds, ...window.liveRowIds]);
+  const residentRowIds = new Set([
+    ...window.turnRowIds,
+    ...window.detailRowIds,
+    ...window.liveRowIds,
+  ]);
   const rowSignature = rows
     .filter((row) => residentRowIds.has(row.id))
     .map((row) => {
-      const lifecycle = row.kind === "thread"
-        ? JSON.stringify(row.thread?.status ?? null)
-        : row.kind === "turn"
-          ? JSON.stringify(row.turn?.status ?? null)
-          : row.kind === "pending"
-            ? `${row.pending?.presentation ?? ""}:${row.pending?.state ?? ""}`
-            : "";
+      const lifecycle =
+        row.kind === "thread"
+          ? JSON.stringify(row.thread?.status ?? null)
+          : row.kind === "turn"
+            ? JSON.stringify(row.turn?.status ?? null)
+            : row.kind === "pending"
+              ? `${row.pending?.presentation ?? ""}:${row.pending?.state ?? ""}`
+              : "";
       return `${row.id}\u0001${row.kind}\u0001${row.historyEpoch}\u0001${row.ordinal}\u0001${row.sealed ? 1 : 0}\u0001${lifecycle}`;
     })
     .sort()
@@ -679,8 +787,17 @@ function projectResidentRows(
   rows: readonly ThreadDetailRow[],
   window: ThreadChatWindowSnapshot,
   turnLimit: number,
-): Pick<ThreadChatWindowSnapshot, "historyEpoch" | "turnRowIds" | "detailRowIds" | "liveRowIds" | "latestSealedOrdinal" | "earliestSealedOrdinal"> {
-  const currentEpoch = rows.find((row) => row.kind === "thread")?.historyEpoch ?? window.historyEpoch;
+): Pick<
+  ThreadChatWindowSnapshot,
+  | "historyEpoch"
+  | "turnRowIds"
+  | "detailRowIds"
+  | "liveRowIds"
+  | "latestSealedOrdinal"
+  | "earliestSealedOrdinal"
+> {
+  const currentEpoch =
+    rows.find((row) => row.kind === "thread")?.historyEpoch ?? window.historyEpoch;
   const epochChanged = currentEpoch !== window.historyEpoch;
   const epochRows = rows.filter((row) => row.historyEpoch === currentEpoch);
   const allSealedTurns = epochRows
@@ -689,38 +806,57 @@ function projectResidentRows(
   const currentTurnIds = new Set(window.turnRowIds);
   const currentTurns = allSealedTurns.filter((row) => currentTurnIds.has(row.id));
   const residentMaximum = currentTurns.reduce<number | null>(
-    (maximum, row) => maximum === null ? row.ordinal : Math.max(maximum, row.ordinal),
+    (maximum, row) => (maximum === null ? row.ordinal : Math.max(maximum, row.ordinal)),
     null,
   );
   const previousLiveIds = new Set(window.liveRowIds);
   const completedResidentLiveTurn = allSealedTurns.some((row) => previousLiveIds.has(row.id));
-  const rangeIncludesLatest = window.latestSealedOrdinal === null
-    || (residentMaximum !== null && residentMaximum >= window.latestSealedOrdinal)
-    || (residentMaximum === null && completedResidentLiveTurn);
+  const rangeIncludesLatest =
+    window.latestSealedOrdinal === null ||
+    (residentMaximum !== null && residentMaximum >= window.latestSealedOrdinal) ||
+    (residentMaximum === null && completedResidentLiveTurn);
   // A live completion advances a range only when that range already contains
   // the previous newest turn. Position still belongs exclusively to LegendList.
-  const visibleTurns = epochChanged || (residentMaximum === null && window.latestSealedOrdinal === null)
-    ? allSealedTurns.slice(0, turnLimit)
-    : rangeIncludesLatest
-      ? advanceResidentTail(allSealedTurns, currentTurnIds, currentTurns.length,
-          previousLiveIds, residentMaximum, turnLimit)
-      : currentTurns;
-  const minOrdinal = visibleTurns.length === 0 ? null : Math.min(...visibleTurns.map(({ ordinal }) => ordinal));
-  const maxOrdinal = visibleTurns.length === 0 ? null : Math.max(...visibleTurns.map(({ ordinal }) => ordinal));
+  const visibleTurns =
+    epochChanged || (residentMaximum === null && window.latestSealedOrdinal === null)
+      ? allSealedTurns.slice(0, turnLimit)
+      : rangeIncludesLatest
+        ? advanceResidentTail(
+            allSealedTurns,
+            currentTurnIds,
+            currentTurns.length,
+            previousLiveIds,
+            residentMaximum,
+            turnLimit,
+          )
+        : currentTurns;
+  const minOrdinal =
+    visibleTurns.length === 0 ? null : Math.min(...visibleTurns.map(({ ordinal }) => ordinal));
+  const maxOrdinal =
+    visibleTurns.length === 0 ? null : Math.max(...visibleTurns.map(({ ordinal }) => ordinal));
   return {
     historyEpoch: currentEpoch,
     turnRowIds: visibleTurns.map(({ id }) => id),
-    detailRowIds: minOrdinal === null || maxOrdinal === null ? [] : epochRows
-      .filter((row) => row.sealed && (row.kind === "turnMeta" || row.kind === "activity") && row.ordinal >= minOrdinal && row.ordinal <= maxOrdinal)
-      .map(({ id }) => id),
+    detailRowIds:
+      minOrdinal === null || maxOrdinal === null
+        ? []
+        : epochRows
+            .filter(
+              (row) =>
+                row.sealed &&
+                (row.kind === "turnMeta" || row.kind === "activity") &&
+                row.ordinal >= minOrdinal &&
+                row.ordinal <= maxOrdinal,
+            )
+            .map(({ id }) => id),
     liveRowIds: rows
       .filter((row) => !row.sealed && (row.kind === "pending" || row.historyEpoch === currentEpoch))
       .map(({ id }) => id),
     latestSealedOrdinal: epochChanged
-      ? allSealedTurns[0]?.ordinal ?? null
+      ? (allSealedTurns[0]?.ordinal ?? null)
       : maximumNullable(window.latestSealedOrdinal, allSealedTurns[0]?.ordinal ?? null),
     earliestSealedOrdinal: epochChanged
-      ? allSealedTurns.at(-1)?.ordinal ?? null
+      ? (allSealedTurns.at(-1)?.ordinal ?? null)
       : minimumNullable(window.earliestSealedOrdinal, allSealedTurns.at(-1)?.ordinal ?? null),
   };
 }
@@ -746,8 +882,12 @@ function advanceResidentTail(
   const result: ThreadDetailRow[] = [];
   for (const turn of sealedTurns) {
     if (result.length === capacity) break;
-    if (residentIds.has(turn.id) || (maximum !== null && turn.ordinal <= maximum
-      && (residentMaximum === null ? previousLiveIds.has(turn.id) : turn.ordinal > residentMaximum))) {
+    if (
+      residentIds.has(turn.id) ||
+      (maximum !== null &&
+        turn.ordinal <= maximum &&
+        (residentMaximum === null ? previousLiveIds.has(turn.id) : turn.ordinal > residentMaximum))
+    ) {
       result.push(turn);
     }
   }

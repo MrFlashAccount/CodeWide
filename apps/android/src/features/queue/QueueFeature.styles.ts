@@ -19,7 +19,12 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.large,
   },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
   menuTitleRow: {
     minHeight: touchTarget,
     marginBottom: spacing.xs,
@@ -48,10 +53,24 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  queueBody: { flex: 1, minWidth: 0, paddingVertical: spacing.xxs },
-  queueText: { color: colors.text, ...typeScale.body },
-  queueMetaRow: { flexDirection: "row", alignItems: "center", minWidth: 0 },
-  queueTime: { color: colors.textDim, ...typeScale.label },
+  queueBody: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: spacing.xxs,
+  },
+  queueText: {
+    color: colors.text,
+    ...typeScale.body,
+  },
+  queueMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
+  },
+  queueTime: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
   queueSteerButton: {
     minHeight: controlSize.compact,
     flexDirection: "row",
@@ -61,9 +80,23 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.accent,
   },
-  queueSteerLabel: { color: colors.onPrimary, ...typeScale.body, fontWeight: typeWeight.semibold },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
-  menuScroll: { flex: 1, minHeight: 0 },
+  queueSteerLabel: {
+    color: colors.onPrimary,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
+  menuScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
   menuScrollContent: { paddingBottom: spacing.sm },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

@@ -6,6 +6,7 @@ import { useConversationOwner } from "../../ui/use-conversation-owner";
 import { useAppVoiceInputRuntime, type AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 import { useWindowLayout } from "../workspace/useWindowLayout";
 import { useConversationPaneGeometry } from "./timeline/timelineViewport";
+
 export function useConversationActivation({
   surfaceInputs,
   readInputs,

@@ -2,7 +2,7 @@ import type { PrivateAssetSource } from "./private-transfer";
 
 export type SkillSource = "repo" | "user" | "system" | "admin";
 export type SkillPlugin = { id: string; label: string; icon: PrivateAssetSource | null };
-export type SkillPluginLink =
+type SkillPluginLink =
   | { status: "resolved"; plugin: SkillPlugin | null }
   | { status: "unavailable" };
 

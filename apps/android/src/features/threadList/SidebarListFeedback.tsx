@@ -51,6 +51,13 @@ export function SidebarListFeedback({
 }
 
 const styles = StyleSheet.create({
-  root: { padding: spacing.lg, alignItems: "center" },
-  text: { color: colors.textMuted, ...typeScale.body, textAlign: "center" },
+  root: {
+    padding: spacing.lg,
+    alignItems: "center",
+  },
+  text: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    textAlign: "center",
+  },
 });

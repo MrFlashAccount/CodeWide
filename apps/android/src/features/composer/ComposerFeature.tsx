@@ -12,6 +12,8 @@ import { styles } from "./ComposerFeature.styles";
 import type { ComposerFeatureProps } from "./ComposerFeatureContract";
 import { ComposerMicrophone } from "./ComposerMicrophone";
 import { ComposerSubmitAction } from "./ComposerSubmitAction";
+
+/** Composes the V1 message editor, context controls, and submission actions. */
 export function ComposerFeature(props: ComposerFeatureProps) {
   return (
     <View testID="composer-dock" style={styles.composerDock}>

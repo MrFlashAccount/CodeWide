@@ -1,10 +1,10 @@
 import * as LocalAuthentication from "expo-local-authentication";
 
-export type DeviceAuthenticationResult =
-  | { success: true }
-  | { success: false; message: string };
+export type DeviceAuthenticationResult = { success: true } | { success: false; message: string };
 
-export async function authenticateWithDevice(promptMessage: string): Promise<DeviceAuthenticationResult> {
+export async function authenticateWithDevice(
+  promptMessage: string,
+): Promise<DeviceAuthenticationResult> {
   const [hasHardware, enrolled] = await Promise.all([
     LocalAuthentication.hasHardwareAsync(),
     LocalAuthentication.isEnrolledAsync(),
@@ -22,11 +22,18 @@ export async function authenticateWithDevice(promptMessage: string): Promise<Dev
     disableDeviceFallback: false,
   });
   if (result.success) return { success: true };
-  if (result.error === "user_cancel" || result.error === "system_cancel" || result.error === "app_cancel") {
+  if (
+    result.error === "user_cancel" ||
+    result.error === "system_cancel" ||
+    result.error === "app_cancel"
+  ) {
     return { success: false, message: "Authentication cancelled." };
   }
   if (result.error === "lockout") {
-    return { success: false, message: "Biometrics are temporarily locked. Use your device passcode." };
+    return {
+      success: false,
+      message: "Biometrics are temporarily locked. Use your device passcode.",
+    };
   }
   return { success: false, message: "Could not verify your identity." };
 }

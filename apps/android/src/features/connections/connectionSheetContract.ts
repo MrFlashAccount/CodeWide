@@ -10,6 +10,7 @@ export type ConnectionSheetProps = {
   onSave(input: ConnectionInput): Promise<void>;
   initialCode: string | null;
 };
+/** Connection-sheet contract extended with session-owned save state. */
 export type ConnectionSheetSessionProps = ConnectionSheetProps & {
   saving: boolean;
   setSaving(value: boolean): void;

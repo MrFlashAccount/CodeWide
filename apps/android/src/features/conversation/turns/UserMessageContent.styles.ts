@@ -2,9 +2,18 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  userBubbleText: { color: colors.text, ...typeScale.body },
-  userMessageContent: { minWidth: 0, gap: spacing.compact },
-  userMessageMediaContent: { width: 320, maxWidth: "100%" },
+  userBubbleText: {
+    color: colors.text,
+    ...typeScale.body,
+  },
+  userMessageContent: {
+    minWidth: 0,
+    gap: spacing.compact,
+  },
+  userMessageMediaContent: {
+    width: 320,
+    maxWidth: "100%",
+  },
   userMessageTextBlock: { minWidth: 0 },
   pendingUserMessageShimmer: { alignSelf: "stretch" },
   userMessageExpandButton: {
@@ -28,8 +37,15 @@ export const styles = StyleSheet.create({
     overflow: "hidden",
     borderRadius: radii.medium,
   },
-  userImageGalleryHero: { width: "100%", aspectRatio: 16 / 9 },
-  userImageGalleryTile: { width: "49%", flexGrow: 1, aspectRatio: 1 },
+  userImageGalleryHero: {
+    width: "100%",
+    aspectRatio: 16 / 9,
+  },
+  userImageGalleryTile: {
+    width: "49%",
+    flexGrow: 1,
+    aspectRatio: 1,
+  },
   userImage: {
     width: 220,
     maxWidth: "100%",
@@ -52,6 +68,14 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  attachmentText: { flex: 1, color: colors.textMuted, ...typeScale.label },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
+  attachmentText: {
+    flex: 1,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
 });

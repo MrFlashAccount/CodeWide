@@ -14,6 +14,7 @@ export function useThreadUiState(
   connectionId: string,
   threadId: string,
 ): ThreadUiStateRow {
-  const initial = database.get(connectionId, threadId) ?? use(database.read(connectionId, threadId));
+  const initial =
+    database.get(connectionId, threadId) ?? use(database.read(connectionId, threadId));
   return useSelector(() => database.row$(connectionId, threadId).get()) ?? initial;
 }

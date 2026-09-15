@@ -19,17 +19,20 @@ export function useThreadSummaryView(
   const selectedThreadId = request?.selectedThreadId ?? null;
   const subagentConnectionId = request?.subagentConnectionId ?? null;
   const subagentLimit = request?.subagentLimit ?? 0;
-  const resource = database === null || !enabled ? null : database.viewResource({
-    ...(viewId === undefined ? {} : { viewId }),
-    connectionId,
-    ...(projectCwd === undefined ? {} : { projectCwd }),
-    recentLimit,
-    archivedLimit,
-    selectedConnectionId,
-    selectedThreadId,
-    subagentConnectionId,
-    subagentLimit,
-  });
+  const resource =
+    database === null || !enabled
+      ? null
+      : database.viewResource({
+          ...(viewId === undefined ? {} : { viewId }),
+          connectionId,
+          ...(projectCwd === undefined ? {} : { projectCwd }),
+          recentLimit,
+          archivedLimit,
+          selectedConnectionId,
+          selectedThreadId,
+          subagentConnectionId,
+          subagentLimit,
+        });
   useEffect(() => {
     if (database === null || !enabled) return;
     return database.model.retainView({
@@ -38,9 +41,12 @@ export function useThreadSummaryView(
     });
   }, [connectionId, database, enabled, viewId]);
 
-  return useSelector(() => {
-    if (resource === null) return null;
-    resource.ready$.get();
-    return resource.view$.get();
-  }, { suspense: suspendUntilReady });
+  return useSelector(
+    () => {
+      if (resource === null) return null;
+      resource.ready$.get();
+      return resource.view$.get();
+    },
+    { suspense: suspendUntilReady },
+  );
 }

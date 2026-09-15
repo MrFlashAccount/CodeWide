@@ -6,8 +6,14 @@ import { listRowStyles as styles } from "./AppListRow.styles";
 import { listRowHeight, type AppListRowProps } from "./AppListRow.types";
 
 const contentStyles = StyleSheet.create({
-  actions: { flexDirection: "row", alignItems: "center" },
-  primary: { flex: 1, minWidth: 0 },
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  primary: {
+    flex: 1,
+    minWidth: 0,
+  },
   secondary: { paddingRight: spacing.md },
 });
 

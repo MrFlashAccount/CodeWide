@@ -20,6 +20,7 @@ import {
   playTargetHaptic,
   resistedSwipe,
 } from "./queueMotionPolicy";
+
 export function useQueueBubbleMotion(props: AnimatedQueueBubbleProps) {
   const {
     deleteEnabled,

@@ -13,10 +13,22 @@ export const styles = StyleSheet.create({
     gap: spacing.compact,
     paddingHorizontal: spacing.xxs,
   },
-  turnFooterEnd: { alignSelf: "flex-end", justifyContent: "flex-end", maxWidth: "86%" },
-  turnStatusDot: { width: 7, height: 7, borderRadius: radii.pill },
+  turnFooterEnd: {
+    alignSelf: "flex-end",
+    justifyContent: "flex-end",
+    maxWidth: "86%",
+  },
+  turnStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: radii.pill,
+  },
   turnStatusFailed: { backgroundColor: colors.red },
-  userTurnCluster: { width: "100%", alignItems: "stretch", gap: spacing.optical },
+  userTurnCluster: {
+    width: "100%",
+    alignItems: "stretch",
+    gap: spacing.optical,
+  },
   userMessageRow: {
     width: "100%",
     minWidth: 0,
@@ -46,7 +58,14 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     borderRadius: radii.medium,
   },
-  retryMessageText: { color: colors.accent, ...typeScale.label, fontWeight: typeWeight.semibold },
-  turnMetaText: { color: colors.textMuted, ...typeScale.caption },
+  retryMessageText: {
+    color: colors.accent,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  turnMetaText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
   disabled: { opacity: 0.42 },
 });

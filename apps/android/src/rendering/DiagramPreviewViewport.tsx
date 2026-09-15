@@ -38,7 +38,9 @@ export function useDiagramPreviewViewportController(): DiagramPreviewViewportCon
   const register = useEvent((observer: VisibilityObserver) => {
     observersRef.current.add(observer);
     schedule();
-    return () => { observersRef.current.delete(observer); };
+    return () => {
+      observersRef.current.delete(observer);
+    };
   });
   useEffect(() => {
     viewportHeightRef.current = viewportHeight;
@@ -81,16 +83,20 @@ export function DiagramPreviewVisibility({
     const preloadMargin = viewportHeight;
     ref.current?.measureInWindow((_x, y, _width, height) => {
       const near = y + height >= -preloadMargin && y <= viewportHeight + preloadMargin;
-      setVisibleState((current) => current.near === near && (current.activated || !near)
-        ? current
-        : { near, activated: current.activated || near });
+      setVisibleState((current) =>
+        current.near === near && (current.activated || !near)
+          ? current
+          : { near, activated: current.activated || near },
+      );
     });
   });
   useEffect(() => {
     if (controller === null) return;
     return controller.register(checkVisibility);
   }, [checkVisibility, controller]);
-  const onLayout = useEvent((_event: LayoutChangeEvent) => { controller?.schedule(); });
+  const onLayout = useEvent((_event: LayoutChangeEvent) => {
+    controller?.schedule();
+  });
   return (
     <View ref={ref} collapsable={false} onLayout={onLayout} style={styles.measurementRoot}>
       {children({

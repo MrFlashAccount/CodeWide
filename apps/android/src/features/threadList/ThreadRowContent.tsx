@@ -8,6 +8,7 @@ import { AppText as Text } from "../../ui/Typography";
 import { serverGlyph } from "../connections/connectionPresentation";
 import { styles } from "./ThreadRow.styles";
 import type { ThreadRowProps } from "./threadRowContract";
+
 export function ThreadRowContent({
   thread,
   server,

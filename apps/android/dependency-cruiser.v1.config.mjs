@@ -1,6 +1,6 @@
 import v2 from "./dependency-cruiser.v2.config.mjs";
 
-const legacySource = "^src/(?!(?:v2|boot|presentation)/)";
+const legacySource = "^(?:app/legacy[.]tsx$|src/(?!(?:v2|boot|presentation)/))";
 
 // Exact public modules of completed feature units; private views, styles and session helpers stay local.
 const featurePublicModules = {

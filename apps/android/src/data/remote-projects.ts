@@ -62,23 +62,27 @@ export function parseProjectHome(value: unknown): string {
 export function directoryCrumbs(path: string, home: string | null): PathCrumb[] {
   const crumbs = pathCrumbs(path);
   const homeIndex = home === null ? -1 : crumbs.findIndex((crumb) => crumb.path === home);
-  return homeIndex < 0 ? crumbs : [{ label: "Home", path: home ?? "" }, ...crumbs.slice(homeIndex + 1)];
+  return homeIndex < 0
+    ? crumbs
+    : [{ label: "Home", path: home ?? "" }, ...crumbs.slice(homeIndex + 1)];
 }
 
 export function parseRemoteDirectory(value: unknown): RemoteDirectoryEntry[] {
   const source = record(value);
-  if (!Array.isArray(source?.entries)) throw new Error("Companion returned an invalid directory listing");
+  if (!Array.isArray(source?.entries))
+    throw new Error("Companion returned an invalid directory listing");
   return source.entries.flatMap((item) => {
     const entry = record(item);
     if (
-      entry === null
-      || typeof entry.fileName !== "string"
-      || typeof entry.isDirectory !== "boolean"
-      || typeof entry.isFile !== "boolean"
-      || entry.fileName === "."
-      || entry.fileName === ".."
-      || /[\\/]/u.test(entry.fileName)
-    ) return [];
+      entry === null ||
+      typeof entry.fileName !== "string" ||
+      typeof entry.isDirectory !== "boolean" ||
+      typeof entry.isFile !== "boolean" ||
+      entry.fileName === "." ||
+      entry.fileName === ".." ||
+      /[\\/]/u.test(entry.fileName)
+    )
+      return [];
     return [{ fileName: entry.fileName, isDirectory: entry.isDirectory, isFile: entry.isFile }];
   });
 }
@@ -110,7 +114,7 @@ export function pathCrumbs(path: string): PathCrumb[] {
 
 export function parentDirectoryPath(path: string): string | null {
   const crumbs = pathCrumbs(path);
-  return crumbs.length < 2 ? null : crumbs.at(-2)?.path ?? null;
+  return crumbs.length < 2 ? null : (crumbs.at(-2)?.path ?? null);
 }
 
 export function joinDirectoryPath(parent: string, child: string): string {
@@ -126,20 +130,29 @@ export function normalizeDirectoryPath(path: string): string {
     const slashes = trimmed.replaceAll("/", "\\").replace(/\\{2,}/gu, "\\");
     return /^[A-Za-z]:\\$/u.test(slashes) ? slashes : slashes.replace(/\\+$/gu, "");
   }
-  const root = trimmed.startsWith("//") && !trimmed.startsWith("///") ? "//" : trimmed.startsWith("/") ? "/" : "";
-  const body = trimmed.slice(root.length).replace(/\/{2,}/gu, "/").replace(/\/+$/gu, "");
+  const root =
+    trimmed.startsWith("//") && !trimmed.startsWith("///")
+      ? "//"
+      : trimmed.startsWith("/")
+        ? "/"
+        : "";
+  const body = trimmed
+    .slice(root.length)
+    .replace(/\/{2,}/gu, "/")
+    .replace(/\/+$/gu, "");
   return root + body;
 }
 
 function parseRemoteProject(value: unknown): RemoteProject {
   const project = record(value);
   if (
-    project === null
-    || typeof project.path !== "string"
-    || typeof project.name !== "string"
-    || typeof project.addedAt !== "number"
-    || typeof project.lastUsedAt !== "number"
-  ) throw new Error("Companion returned an invalid project");
+    project === null ||
+    typeof project.path !== "string" ||
+    typeof project.name !== "string" ||
+    typeof project.addedAt !== "number" ||
+    typeof project.lastUsedAt !== "number"
+  )
+    throw new Error("Companion returned an invalid project");
   return {
     path: normalizeDirectoryPath(project.path),
     name: project.name,
@@ -151,6 +164,6 @@ function parseRemoteProject(value: unknown): RemoteProject {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }

@@ -5,6 +5,7 @@ import { styles } from "./ComposerEditor.styles";
 import type { ComposerFeatureProps } from "./ComposerFeatureContract";
 import { ComposerMarkdownInput } from "./input/ComposerMarkdownInput";
 import { VoiceCaptureStatus } from "./voice/VoiceCaptureStatus";
+
 type Props = Pick<
   ComposerFeatureProps,
   | "voicePhase"

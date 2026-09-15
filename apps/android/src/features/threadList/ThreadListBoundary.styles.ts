@@ -9,5 +9,8 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl + spacing.md,
   },
-  threadListEmptyText: { color: colors.textMuted, ...typeScale.body },
+  threadListEmptyText: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
 });

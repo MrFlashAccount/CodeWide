@@ -18,8 +18,14 @@ export type ProjectedThreadChatTimelineEntry =
   | { kind: "turn"; turn: Thread["turns"][number] }
   | { kind: "delivery"; delivery: ProjectedThreadChatDelivery };
 
-const turnTimelineEntryCache = new WeakMap<Thread["turns"][number], Extract<ProjectedThreadChatTimelineEntry, { kind: "turn" }>>();
-const deliveryTimelineEntryCache = new WeakMap<ProjectedThreadChatDelivery, Extract<ProjectedThreadChatTimelineEntry, { kind: "delivery" }>>();
+const turnTimelineEntryCache = new WeakMap<
+  Thread["turns"][number],
+  Extract<ProjectedThreadChatTimelineEntry, { kind: "turn" }>
+>();
+const deliveryTimelineEntryCache = new WeakMap<
+  ProjectedThreadChatDelivery,
+  Extract<ProjectedThreadChatTimelineEntry, { kind: "delivery" }>
+>();
 
 function hasPresentableTurnItem(item: Thread["turns"][number]["items"][number]): boolean {
   switch (item.type) {
@@ -27,7 +33,10 @@ function hasPresentableTurnItem(item: Thread["turns"][number]["items"][number]):
     case "plan":
       return item.text.trim() !== "";
     case "reasoning":
-      return item.summary.some((text) => text.trim() !== "") || item.content.some((text) => text.trim() !== "");
+      return (
+        item.summary.some((text) => text.trim() !== "") ||
+        item.content.some((text) => text.trim() !== "")
+      );
     case "hookPrompt":
       return item.fragments.length > 0;
     default:
@@ -41,7 +50,9 @@ function hasPresentableTurnContent(turn: Thread["turns"][number]): boolean {
   return (metadata?.activity?.count ?? 0) > 0 || compactTurnArtifactReferences(turn).length > 0;
 }
 
-function turnTimelineEntry(turn: Thread["turns"][number]): Extract<ProjectedThreadChatTimelineEntry, { kind: "turn" }> {
+function turnTimelineEntry(
+  turn: Thread["turns"][number],
+): Extract<ProjectedThreadChatTimelineEntry, { kind: "turn" }> {
   const cached = turnTimelineEntryCache.get(turn);
   if (cached !== undefined) return cached;
   const entry = { kind: "turn" as const, turn };
@@ -49,7 +60,9 @@ function turnTimelineEntry(turn: Thread["turns"][number]): Extract<ProjectedThre
   return entry;
 }
 
-function deliveryTimelineEntry(delivery: ProjectedThreadChatDelivery): Extract<ProjectedThreadChatTimelineEntry, { kind: "delivery" }> {
+function deliveryTimelineEntry(
+  delivery: ProjectedThreadChatDelivery,
+): Extract<ProjectedThreadChatTimelineEntry, { kind: "delivery" }> {
   const cached = deliveryTimelineEntryCache.get(delivery);
   if (cached !== undefined) return cached;
   const entry = { kind: "delivery" as const, delivery };
@@ -78,21 +91,33 @@ export function projectResidentThreadTimeline(
   const authoritativeClientIds = new Set<string>();
   for (const turn of turns) {
     for (const item of projectCodexVisibleTurn(turn).items) {
-      if (item.type === "userMessage" && typeof item.clientId === "string" && item.clientId.length > 0) {
+      if (
+        item.type === "userMessage" &&
+        typeof item.clientId === "string" &&
+        item.clientId.length > 0
+      ) {
         authoritativeClientIds.add(item.clientId);
       }
     }
   }
-  const pendingStart = deliveries.some((delivery) => delivery.method === "turn/start"
-    && delivery.state !== "failed" && !authoritativeClientIds.has(delivery.commandId));
+  const pendingStart = deliveries.some(
+    (delivery) =>
+      delivery.method === "turn/start" &&
+      delivery.state !== "failed" &&
+      !authoritativeClientIds.has(delivery.commandId),
+  );
   const visibleTurns = turns.flatMap((turn) => {
     const projected = projectCodexVisibleTurn(turn);
     // turn/started, metadata-only recovery and empty reasoning/agent items can
     // precede userMessage. They are lifecycle evidence, not an answer above a
     // still-sending prompt. Preserve unloaded history when no local start owns
     // that waiting state, and never suppress actual server content or tools.
-    if (projected.status === "inProgress" && !hasPresentableTurnContent(projected)
-      && (projected.itemsView !== "notLoaded" || pendingStart)) return [];
+    if (
+      projected.status === "inProgress" &&
+      !hasPresentableTurnContent(projected) &&
+      (projected.itemsView !== "notLoaded" || pendingStart)
+    )
+      return [];
     return projected !== turn && projected.items.length === 0 && turn.status !== "inProgress"
       ? []
       : [projected];
@@ -110,8 +135,10 @@ export function projectResidentThreadTimeline(
     // feedback. Keep it until canonical client-id handoff or terminal failure.
     if (delivery.state !== "failed") return true;
     if (oldestTurnAt === null || newestTurnAt === null) return range.includesLatest;
-    return (range.includesEarliest || delivery.createdAt >= oldestTurnAt)
-      && (range.includesLatest || delivery.createdAt <= newestTurnAt);
+    return (
+      (range.includesEarliest || delivery.createdAt >= oldestTurnAt) &&
+      (range.includesLatest || delivery.createdAt <= newestTurnAt)
+    );
   });
   const ordered = [
     ...visibleTurns.map((turn, index) => ({
@@ -128,7 +155,11 @@ export function projectResidentThreadTimeline(
     })),
   ];
   ordered.sort((left, right) => {
-    if (left.timestampMs !== null && right.timestampMs !== null && left.timestampMs !== right.timestampMs) {
+    if (
+      left.timestampMs !== null &&
+      right.timestampMs !== null &&
+      left.timestampMs !== right.timestampMs
+    ) {
       return left.timestampMs - right.timestampMs;
     }
     if (left.timestampMs === null && right.timestampMs !== null) return -1;

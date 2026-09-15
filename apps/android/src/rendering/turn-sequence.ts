@@ -53,8 +53,9 @@ export function activeTurnSequence(
 ): ActiveTurnSequencePart[] {
   const parts: ActiveTurnSequencePart[] = [];
   const liveByIndex = new Map(liveEntries.map((entry) => [entry.index, entry.block]));
-  const orderedIndexes = [...collapsedIndexes, ...liveEntries.map((entry) => entry.index)]
-    .sort((left, right) => left - right);
+  const orderedIndexes = [...collapsedIndexes, ...liveEntries.map((entry) => entry.index)].sort(
+    (left, right) => left - right,
+  );
   let liveBlocks: RenderBlock[] = [];
   let collapsed: number[] = [];
 
@@ -98,7 +99,7 @@ export function completedTurnContent(blocks: RenderBlock[]): CompletedTurnConten
     }
     if (finalIndex === -1) finalIndex = index;
   }
-  const finalAnswer = finalIndex === -1 ? null : content[finalIndex] ?? null;
+  const finalAnswer = finalIndex === -1 ? null : (content[finalIndex] ?? null);
   return {
     finalAnswer,
     history: content.filter((_block, index) => index !== finalIndex),

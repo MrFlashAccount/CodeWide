@@ -1,7 +1,12 @@
 import type { AccountRateLimitsDatabase } from "./account-rate-limits-database-contract";
+
 export type { AccountRateLimitsDatabase } from "./account-rate-limits-database-contract";
 
-import { mergeAccountPoolRateLimits, mergeAccountRateLimits, type AccountRateLimitsRow } from "./account-rate-limits";
+import {
+  mergeAccountPoolRateLimits,
+  mergeAccountRateLimits,
+  type AccountRateLimitsRow,
+} from "./account-rate-limits";
 
 import { cloneProtocolValue } from "./clone-protocol-value";
 import { createPersistentCollectionModel } from "./persistent-collection.native";
@@ -21,7 +26,9 @@ export function createAccountRateLimitsDatabase(): AccountRateLimitsDatabase {
       { property: "updatedAt", column: "updated_at", type: "REAL" },
     ],
     legacyCollectionId: "account-rate-limits-v1",
-    onResidentRows: (rows) => { source = new Map(rows.map((row) => [row.id, row])); },
+    onResidentRows: (rows) => {
+      source = new Map(rows.map((row) => [row.id, row]));
+    },
   });
   const { collection, storage } = model;
 
@@ -31,7 +38,9 @@ export function createAccountRateLimitsDatabase(): AccountRateLimitsDatabase {
     source.set(row.id, row);
     storage.begin();
     storage.write({ type: previous === undefined ? "insert" : "update", value: row });
-    void storage.commit().catch((cause: unknown) => console.warn("Could not persist account limits", cause));
+    void storage
+      .commit()
+      .catch((cause: unknown) => console.warn("Could not persist account limits", cause));
   };
   const get = (connectionId: string): AccountRateLimitsRow | null => {
     return source.get(connectionId) ?? null;
@@ -42,28 +51,57 @@ export function createAccountRateLimitsDatabase(): AccountRateLimitsDatabase {
     get,
     markLoading(connectionId) {
       const previous = get(connectionId);
-      publish({ id: connectionId, connectionId, status: "loading", snapshot: previous?.snapshot ?? null, accountPool: previous?.accountPool ?? null, error: null, updatedAt: previous?.updatedAt ?? 0 });
-    },
-    putSnapshot(connectionId, snapshot) {
-      const previous = get(connectionId);
-      publish({ id: connectionId, connectionId, status: "ready", snapshot: cloneProtocolValue(snapshot), accountPool: previous?.accountPool ?? null, error: null, updatedAt: Date.now() });
-    },
-    putAccountPool(connectionId, accountPool) {
-      const previous = get(connectionId);
-      const active = accountPool.profiles.find((profile) => profile.id === accountPool.activeProfileId) ?? null;
-      const activeRefresh = active !== null && active.rateLimits !== null && active.rateLimitsUpdatedAt !== null && active.rateLimitsError === null
-        ? { snapshot: active.rateLimits, updatedAt: active.rateLimitsUpdatedAt }
-        : null;
       publish({
         id: connectionId,
         connectionId,
-        status: active?.rateLimitsError !== null && active?.rateLimitsError !== undefined
-          ? "error"
-          : activeRefresh !== null ? "ready" : previous?.status ?? "ready",
-        snapshot: activeRefresh !== null ? cloneProtocolValue(activeRefresh.snapshot) : previous?.snapshot ?? null,
+        status: "loading",
+        snapshot: previous?.snapshot ?? null,
+        accountPool: previous?.accountPool ?? null,
+        error: null,
+        updatedAt: previous?.updatedAt ?? 0,
+      });
+    },
+    putSnapshot(connectionId, snapshot) {
+      const previous = get(connectionId);
+      publish({
+        id: connectionId,
+        connectionId,
+        status: "ready",
+        snapshot: cloneProtocolValue(snapshot),
+        accountPool: previous?.accountPool ?? null,
+        error: null,
+        updatedAt: Date.now(),
+      });
+    },
+    putAccountPool(connectionId, accountPool) {
+      const previous = get(connectionId);
+      const active =
+        accountPool.profiles.find((profile) => profile.id === accountPool.activeProfileId) ?? null;
+      const activeRefresh =
+        active !== null &&
+        active.rateLimits !== null &&
+        active.rateLimitsUpdatedAt !== null &&
+        active.rateLimitsError === null
+          ? { snapshot: active.rateLimits, updatedAt: active.rateLimitsUpdatedAt }
+          : null;
+      publish({
+        id: connectionId,
+        connectionId,
+        status:
+          active?.rateLimitsError !== null && active?.rateLimitsError !== undefined
+            ? "error"
+            : activeRefresh !== null
+              ? "ready"
+              : (previous?.status ?? "ready"),
+        snapshot:
+          activeRefresh !== null
+            ? cloneProtocolValue(activeRefresh.snapshot)
+            : (previous?.snapshot ?? null),
         accountPool: cloneProtocolValue(accountPool),
-        error: active?.rateLimitsError ?? (activeRefresh !== null ? null : previous?.error ?? null),
-        updatedAt: activeRefresh !== null ? activeRefresh.updatedAt * 1_000 : previous?.updatedAt ?? 0,
+        error:
+          active?.rateLimitsError ?? (activeRefresh !== null ? null : (previous?.error ?? null)),
+        updatedAt:
+          activeRefresh !== null ? activeRefresh.updatedAt * 1_000 : (previous?.updatedAt ?? 0),
       });
     },
     mergeUpdate(connectionId, update) {
@@ -74,21 +112,35 @@ export function createAccountRateLimitsDatabase(): AccountRateLimitsDatabase {
         connectionId,
         status: "ready",
         snapshot: mergeAccountRateLimits(previous?.snapshot ?? null, update),
-        accountPool: mergeAccountPoolRateLimits(previous?.accountPool, update, Math.floor(updatedAt / 1_000)),
+        accountPool: mergeAccountPoolRateLimits(
+          previous?.accountPool,
+          update,
+          Math.floor(updatedAt / 1_000),
+        ),
         error: null,
         updatedAt,
       });
     },
     markError(connectionId, error) {
       const previous = get(connectionId);
-      publish({ id: connectionId, connectionId, status: "error", snapshot: previous?.snapshot ?? null, accountPool: previous?.accountPool ?? null, error: error.slice(0, 1_000), updatedAt: previous?.updatedAt ?? 0 });
+      publish({
+        id: connectionId,
+        connectionId,
+        status: "error",
+        snapshot: previous?.snapshot ?? null,
+        accountPool: previous?.accountPool ?? null,
+        error: error.slice(0, 1_000),
+        updatedAt: previous?.updatedAt ?? 0,
+      });
     },
     remove(connectionId) {
       if (disposed) return;
       if (!source.delete(connectionId)) return;
       storage.begin();
       storage.write({ type: "delete", key: connectionId });
-      void storage.commit().catch((cause: unknown) => console.warn("Could not delete account limits", cause));
+      void storage
+        .commit()
+        .catch((cause: unknown) => console.warn("Could not delete account limits", cause));
     },
     close() {
       disposed = true;

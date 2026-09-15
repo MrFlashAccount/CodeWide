@@ -7,9 +7,10 @@ import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
  */
 export function turnProjectionTopologyRevision(turn: Pick<Turn, "items" | "status">): string {
   const tail = turn.items.at(-1);
-  const tailRevision = tail?.type === "agentMessage"
-    ? `${tail.id}\u0000${tail.type}\u0000${tail.phase ?? ""}\u0000${textEdgeRevision(tail.text)}`
-    : `${tail?.id ?? ""}\u0000${tail?.type ?? ""}`;
+  const tailRevision =
+    tail?.type === "agentMessage"
+      ? `${tail.id}\u0000${tail.type}\u0000${tail.phase ?? ""}\u0000${textEdgeRevision(tail.text)}`
+      : `${tail?.id ?? ""}\u0000${tail?.type ?? ""}`;
   return `${turn.status}\u0000${turn.items.length}\u0000${tailRevision}`;
 }
 

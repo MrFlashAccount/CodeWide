@@ -46,7 +46,17 @@ export function CopyErrorButton({ report }: { report: string }) {
 }
 
 const styles = StyleSheet.create({
-  button: { minHeight: controlSize.touch, justifyContent: "center", paddingHorizontal: spacing.xs },
-  label: { color: colors.primary, ...typeScale.body },
-  hint: { color: colors.textMuted, ...typeScale.label },
+  button: {
+    minHeight: controlSize.touch,
+    justifyContent: "center",
+    paddingHorizontal: spacing.xs,
+  },
+  label: {
+    color: colors.primary,
+    ...typeScale.body,
+  },
+  hint: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
 });

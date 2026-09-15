@@ -2,13 +2,21 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, spacing, typeScale, typeTracking, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  outputFootprintMetric: { flexShrink: 0, justifyContent: "center" },
+  outputFootprintMetric: {
+    flexShrink: 0,
+    justifyContent: "center",
+  },
   outputFootprintMetricText: {
     color: colors.textDim,
     ...typeScale.caption,
     fontVariant: ["tabular-nums"],
   },
-  commandActivitySection: { width: "100%", minWidth: 0, maxWidth: "100%", gap: spacing.xxs },
+  commandActivitySection: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    gap: spacing.xxs,
+  },
   commandActivitySectionHeader: {
     minHeight: controlSize.compact,
     flexDirection: "row",
@@ -23,7 +31,17 @@ export const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: typeTracking.caps,
   },
-  turnMetaText: { color: colors.textMuted, ...typeScale.caption },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
-  errorText: { color: colors.red, ...typeScale.body },
+  turnMetaText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

@@ -23,7 +23,6 @@ export function formatNumber(value: number, format?: Intl.NumberFormatOptions): 
 
 /** V1 number-format owner, extracted without changing interaction or resource lifetime. */
 
-
 export function compactNumber(value: number): string {
   if (Math.abs(value) < 1_000) return value.toLocaleString();
   if (Math.abs(value) < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;

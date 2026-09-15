@@ -38,39 +38,6 @@ export const darkScheme = {
   scrim: "rgba(0, 0, 0, 0.72)",
 } as const;
 
-export const lightScheme = {
-  background: "#F6F6F6",
-  onBackground: "#151515",
-  surface: "#FFFFFF",
-  onSurface: "#151515",
-  surfaceContainerLowest: "#FFFFFF",
-  surfaceContainerLow: "#F2F2F2",
-  surfaceContainer: "#EAEAEA",
-  surfaceContainerHigh: "#E3E3E3",
-  surfaceContainerHighest: "#DADADA",
-  onSurfaceVariant: "#5E5E5E",
-  outline: "#D0D0D0",
-  outlineVariant: "#D0D0D0",
-  primary: "#202020",
-  primaryPressed: "#3A3A3A",
-  onPrimary: "#FFFFFF",
-  primaryContainer: "#E4E4E4",
-  onPrimaryContainer: "#181818",
-  secondaryContainer: "#E4E4E4",
-  onSecondaryContainer: "#181818",
-  tertiaryContainer: "#EAEAEA",
-  onTertiaryContainer: "#151515",
-  error: "#BA1A1A",
-  errorContainer: "#FFDAD6",
-  onErrorContainer: "#410002",
-  success: "#187A47",
-  successContainer: "#B8F3CC",
-  warning: "#A9520E",
-  warningContainer: "#FFE08A",
-  code: "#F0F4F8",
-  scrim: "rgba(0, 0, 0, 0.42)",
-} as const;
-
 // V1 remains dark-first. Components consume semantic aliases below; the
 // native dynamic-color/light-theme switch can swap this source atomically.
 const scheme = darkScheme;

@@ -10,9 +10,15 @@ import {
 } from "../../theme";
 import { conversationChromeEdgeInset } from "../../ui/conversation-chrome-layout";
 import { COMPOSER_CHIP_BOTTOM_INSET, COMPOSER_MIN_HEIGHT } from "./composerLayout";
+
 export const styles = StyleSheet.create({
   pressed: { opacity: 0.68 },
-  composerDock: { paddingTop: 0, flexShrink: 0, minWidth: 0, alignSelf: "stretch" },
+  composerDock: {
+    paddingTop: 0,
+    flexShrink: 0,
+    minWidth: 0,
+    alignSelf: "stretch",
+  },
 
   queuedComposerEditBar: {
     minHeight: controlSize.regular,
@@ -67,7 +73,12 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
-  composerError: { minWidth: 0, flex: 1, color: colors.red, ...typeScale.label },
+  composerError: {
+    minWidth: 0,
+    flex: 1,
+    color: colors.red,
+    ...typeScale.label,
+  },
   composerMenu: {
     width: touchTarget,
     height: touchTarget,
@@ -78,7 +89,11 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
   },
   composerMenuActive: { backgroundColor: colors.primaryContainer },
-  composerMenuAnchor: { width: touchTarget, height: touchTarget, flexShrink: 0 },
+  composerMenuAnchor: {
+    width: touchTarget,
+    height: touchTarget,
+    flexShrink: 0,
+  },
   composerInputShell: {
     flex: 1,
     flexBasis: 0,

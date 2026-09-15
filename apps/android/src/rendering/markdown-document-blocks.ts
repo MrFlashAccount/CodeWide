@@ -25,7 +25,15 @@ export function markdownDocumentBlocks(segments: readonly string[]): MarkdownDoc
     for (let blockIndex = 0; blockIndex < parsed.root.children.length; blockIndex += 1) {
       const node = parsed.root.children[blockIndex]!;
       const path = `${node.type}-${blockIndex}`;
-      blocks.push({ key: `${reviewPathPrefix}/${path}`, node, path, reviewPathPrefix, imageOrder, segmentIndex, blockIndex });
+      blocks.push({
+        key: `${reviewPathPrefix}/${path}`,
+        node,
+        path,
+        reviewPathPrefix,
+        imageOrder,
+        segmentIndex,
+        blockIndex,
+      });
     }
   }
   return blocks;
@@ -41,6 +49,8 @@ export function markdownDocumentTargetIndex(
   const source = segments[target.segmentIndex];
   if (source === undefined) return 0;
   const blockIndex = richMarkdownBlockIndexAtLine(source, target.line);
-  const index = blocks.findIndex((block) => block.segmentIndex === target.segmentIndex && block.blockIndex === blockIndex);
+  const index = blocks.findIndex(
+    (block) => block.segmentIndex === target.segmentIndex && block.blockIndex === blockIndex,
+  );
   return Math.max(0, index);
 }

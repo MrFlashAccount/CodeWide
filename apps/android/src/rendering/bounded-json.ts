@@ -5,7 +5,9 @@ export function boundedJsonStringify(value: unknown, maxChars = 96_000): string 
   const seen = new WeakSet<object>();
   const normalized = boundedValue(value, budget, seen, 0);
   const serialized = JSON.stringify(normalized, null, 2) ?? String(normalized ?? "null");
-  return serialized.length <= maxChars ? serialized : `${serialized.slice(0, Math.max(0, maxChars - TRUNCATED.length))}${TRUNCATED}`;
+  return serialized.length <= maxChars
+    ? serialized
+    : `${serialized.slice(0, Math.max(0, maxChars - TRUNCATED.length))}${TRUNCATED}`;
 }
 
 function boundedValue(
@@ -19,7 +21,9 @@ function boundedValue(
   if (typeof value === "string") {
     const take = Math.max(0, Math.min(value.length, budget.chars));
     budget.chars -= take;
-    return take === value.length ? value : `${value.slice(0, Math.max(0, take - TRUNCATED.length))}${TRUNCATED}`;
+    return take === value.length
+      ? value
+      : `${value.slice(0, Math.max(0, take - TRUNCATED.length))}${TRUNCATED}`;
   }
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "bigint") return value.toString();

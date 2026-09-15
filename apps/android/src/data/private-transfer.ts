@@ -37,10 +37,7 @@ export async function fetchAuthenticatedTransfer(
     const request = createRequest(access);
     const response = await fetch(request.uri, {
       ...request.init,
-      headers: mergeHeaders(
-        { authorization: access.authorization },
-        request.init?.headers,
-      ),
+      headers: mergeHeaders({ authorization: access.authorization }, request.init?.headers),
     });
     if (attempt === 0 && isAuthorizationStatus(response.status)) continue;
     return response;
@@ -54,21 +51,28 @@ export async function fetchPrivateAsset(
   init: RequestInit = {},
 ): Promise<Response> {
   if (source.kind === "direct") {
-    return await cachedAttachmentFetch(source.uri, {
-      ...init,
-      headers: mergeHeaders(source.headers, init.headers),
-    }, { scope: "direct", identity: source.uri });
+    return await cachedAttachmentFetch(
+      source.uri,
+      {
+        ...init,
+        headers: mergeHeaders(source.headers, init.headers),
+      },
+      { scope: "direct", identity: source.uri },
+    );
   }
   if (getAccess === null) throw new Error("Private asset access is unavailable");
-  const resolved = source.kind === "remote"
-    ? await materializeRemoteAsset(source.url, getAccess)
-    : source;
+  const resolved =
+    source.kind === "remote" ? await materializeRemoteAsset(source.url, getAccess) : source;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const access = await getAccess(attempt > 0);
-    const response = await cachedAttachmentFetch(privateAssetUrl(resolved, access), {
-      ...init,
-      headers: mergeHeaders({ authorization: access.authorization }, init.headers),
-    }, { scope: access.cacheScope ?? access.baseUrl, identity: privateAssetCacheKey(resolved) });
+    const response = await cachedAttachmentFetch(
+      privateAssetUrl(resolved, access),
+      {
+        ...init,
+        headers: mergeHeaders({ authorization: access.authorization }, init.headers),
+      },
+      { scope: access.cacheScope ?? access.baseUrl, identity: privateAssetCacheKey(resolved) },
+    );
     if (attempt === 0 && isAuthorizationStatus(response.status)) continue;
     return response;
   }
@@ -110,7 +114,9 @@ export async function readPrivateAssetText(
   if (!response.ok) {
     const detail = (await response.text()).slice(0, 240).trim();
     if (response.status === 404 && source.kind === "path") throw new Error("File was deleted");
-    throw new Error(`Private content unavailable (${response.status})${detail === "" ? "" : `: ${detail}`}`);
+    throw new Error(
+      `Private content unavailable (${response.status})${detail === "" ? "" : `: ${detail}`}`,
+    );
   }
   const text = await response.text();
   const encodedBytes = new TextEncoder().encode(text).byteLength;
@@ -133,10 +139,14 @@ export async function resolvePrivateAssetRequest(
   source: Exclude<PrivateAssetSource, { kind: "direct" }>,
   getAccess: GetTransferAccess,
   forceRefresh = false,
-): Promise<{ uri: string; headers: Record<string, string>; cacheScope: string; cacheIdentity: string }> {
-  const resolved = source.kind === "remote"
-    ? await materializeRemoteAsset(source.url, getAccess)
-    : source;
+): Promise<{
+  uri: string;
+  headers: Record<string, string>;
+  cacheScope: string;
+  cacheIdentity: string;
+}> {
+  const resolved =
+    source.kind === "remote" ? await materializeRemoteAsset(source.url, getAccess) : source;
   const access = await getAccess(forceRefresh);
   return {
     uri: privateAssetUrl(resolved, access),
@@ -150,7 +160,8 @@ export function privateAssetCacheKey(source: PrivateAssetSource): string {
   if (source.kind === "direct") return `direct:${source.uri}`;
   if (source.kind === "path") return `path:${source.path}`;
   if (source.kind === "content") return `content:${source.id}`;
-  if (source.kind === "scoped") return `scoped:${source.rootId}:${source.path}:${source.cacheRevision ?? "0"}`;
+  if (source.kind === "scoped")
+    return `scoped:${source.rootId}:${source.path}:${source.cacheRevision ?? "0"}`;
   return `remote:${source.url}`;
 }
 
@@ -172,7 +183,8 @@ function privateAssetUrl(
   access: TransferAccess,
 ): string {
   if (source.kind === "path") {
-    if (!source.path.startsWith("/") || source.path.includes("\0")) throw new Error("Private file path must be absolute");
+    if (!source.path.startsWith("/") || source.path.includes("\0"))
+      throw new Error("Private file path must be absolute");
     const url = companionUrl(access, "/v1/files/preview");
     url.search = new URLSearchParams({ path: source.path }).toString();
     return url.toString();
@@ -186,7 +198,10 @@ function privateAssetUrl(
   return url.toString();
 }
 
-async function materializeRemoteAsset(url: string, getAccess: GetTransferAccess): Promise<{ kind: "content"; id: string }> {
+async function materializeRemoteAsset(
+  url: string,
+  getAccess: GetTransferAccess,
+): Promise<{ kind: "content"; id: string }> {
   const response = await fetchAuthenticatedTransfer(getAccess, (access) => ({
     uri: companionUrl(access, "/v1/media/materialize").toString(),
     init: {
@@ -196,8 +211,9 @@ async function materializeRemoteAsset(url: string, getAccess: GetTransferAccess)
     },
   }));
   if (!response.ok) throw new Error(`Private asset materialization failed (${response.status})`);
-  const body = await response.json() as { id?: unknown };
-  if (typeof body.id !== "string" || !/^[a-f0-9]{64}$/u.test(body.id)) throw new Error("Private asset response is invalid");
+  const body = (await response.json()) as { id?: unknown };
+  if (typeof body.id !== "string" || !/^[a-f0-9]{64}$/u.test(body.id))
+    throw new Error("Private asset response is invalid");
   return { kind: "content", id: body.id };
 }
 
@@ -226,13 +242,20 @@ function parseContentLength(value: string | null): number | null {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function parseContentRange(value: string | null): { endExclusive: number; total: number | null } | null {
+function parseContentRange(
+  value: string | null,
+): { endExclusive: number; total: number | null } | null {
   if (value === null) return null;
   const match = /^bytes (\d+)-(\d+)\/(\d+|\*)$/u.exec(value);
   if (match === null) return null;
   const end = Number(match[2]);
   const total = match[3] === "*" ? null : Number(match[3]);
-  if (!Number.isSafeInteger(end) || end < 0 || (total !== null && (!Number.isSafeInteger(total) || total < 0))) return null;
+  if (
+    !Number.isSafeInteger(end) ||
+    end < 0 ||
+    (total !== null && (!Number.isSafeInteger(total) || total < 0))
+  )
+    return null;
   return { endExclusive: end + 1, total };
 }
 
@@ -244,12 +267,23 @@ export type PrivateTransferAuthority = {
 };
 
 /** Returns qualified access without retaining credentials in the feature. */
-export function createPrivateTransferAccess({ currentConnections, nativeCompanionHttpOrigin, scopedHttpAuthorization }: PrivateTransferAuthority) {
-    const transferAccess = async (connectionId: string, forceRefresh = false): Promise<TransferAccess> => {
-      const connection = currentConnections().find((candidate) => candidate.id === connectionId);
-      if (connection === undefined) throw new Error("Connection not found");
-      const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
-      return { baseUrl: companionHttpUrl(origin, "/"), authorization: await scopedHttpAuthorization(connection, forceRefresh), cacheScope: connection.id };
+export function createPrivateTransferAccess({
+  currentConnections,
+  nativeCompanionHttpOrigin,
+  scopedHttpAuthorization,
+}: PrivateTransferAuthority) {
+  const transferAccess = async (
+    connectionId: string,
+    forceRefresh = false,
+  ): Promise<TransferAccess> => {
+    const connection = currentConnections().find((candidate) => candidate.id === connectionId);
+    if (connection === undefined) throw new Error("Connection not found");
+    const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+    return {
+      baseUrl: companionHttpUrl(origin, "/"),
+      authorization: await scopedHttpAuthorization(connection, forceRefresh),
+      cacheScope: connection.id,
     };
+  };
   return transferAccess;
 }

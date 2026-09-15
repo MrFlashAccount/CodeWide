@@ -7,9 +7,12 @@ const deviceTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 
 function deviceTimeFormatter(preferences: DeviceTimePreferences): Intl.DateTimeFormat {
   const locale = preferences.locale ?? "";
-  const hourMode = preferences.uses24HourClock === undefined
-    ? "device"
-    : preferences.uses24HourClock ? "24" : "12";
+  const hourMode =
+    preferences.uses24HourClock === undefined
+      ? "device"
+      : preferences.uses24HourClock
+        ? "24"
+        : "12";
   const key = `${locale}\u0000${hourMode}`;
   const cached = deviceTimeFormatters.get(key);
   if (cached !== undefined) return cached;
@@ -22,12 +25,18 @@ function deviceTimeFormatter(preferences: DeviceTimePreferences): Intl.DateTimeF
   return formatter;
 }
 
-export function formatTimeForDevice(timestampSeconds: number, preferences: DeviceTimePreferences): string {
+export function formatTimeForDevice(
+  timestampSeconds: number,
+  preferences: DeviceTimePreferences,
+): string {
   return deviceTimeFormatter(preferences).format(timestampSeconds * 1_000);
 }
 
 /** Calendar dates and clock mode both follow the device's explicit preferences. */
-export function formatDateTimeForDevice(timestampSeconds: number, preferences: DeviceTimePreferences): string {
+export function formatDateTimeForDevice(
+  timestampSeconds: number,
+  preferences: DeviceTimePreferences,
+): string {
   return new Intl.DateTimeFormat(preferences.locale, {
     day: "numeric",
     month: "short",

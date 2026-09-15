@@ -74,14 +74,19 @@ export type CounterMetric =
   | "voice_failures";
 
 export type OperationalMetricsSnapshot = {
-  timings: Partial<Record<TimingMetric, {
-    count: number;
-    totalCount: number;
-    totalMs: number;
-    p50Ms: number;
-    p95Ms: number;
-    maxMs: number;
-  }>>;
+  timings: Partial<
+    Record<
+      TimingMetric,
+      {
+        count: number;
+        totalCount: number;
+        totalMs: number;
+        p50Ms: number;
+        p95Ms: number;
+        maxMs: number;
+      }
+    >
+  >;
   counters: Partial<Record<CounterMetric, number>>;
   gauges: {
     livePendingStreams: number;
@@ -98,7 +103,10 @@ const timingSamples = new Map<TimingMetric, number[]>();
 const timingTotals = new Map<TimingMetric, { count: number; totalMs: number }>();
 const counters = new Map<CounterMetric, number>();
 const MAX_PENDING_LIVE_STREAMS = 256;
-const pendingLiveCommits = new Map<string, { firstAtMs: number; chars: number; projectionBatches: number }>();
+const pendingLiveCommits = new Map<
+  string,
+  { firstAtMs: number; chars: number; projectionBatches: number }
+>();
 let diagnosticsEnabled = false;
 let sqliteSubsetLastRows = 0;
 let sqliteSubsetMaxRows = 0;
@@ -108,7 +116,8 @@ export function recordTiming(name: TimingMetric, valueMs: number): void {
   if (!Number.isFinite(valueMs) || valueMs < 0) return;
   const values = timingSamples.get(name) ?? [];
   values.push(Math.min(valueMs, 60_000));
-  if (values.length > MAX_SAMPLES_PER_METRIC) values.splice(0, values.length - MAX_SAMPLES_PER_METRIC);
+  if (values.length > MAX_SAMPLES_PER_METRIC)
+    values.splice(0, values.length - MAX_SAMPLES_PER_METRIC);
   timingSamples.set(name, values);
   const total = timingTotals.get(name) ?? { count: 0, totalMs: 0 };
   total.count = Math.min(Number.MAX_SAFE_INTEGER, total.count + 1);
@@ -153,17 +162,36 @@ export function operationalDiagnosticsEnabled(): boolean {
   return diagnosticsEnabled;
 }
 
-export function liveStreamMetricKey(connectionId: unknown, threadId: unknown, turnId: unknown, itemId: unknown): string | null {
-  if (![connectionId, threadId, turnId, itemId].every((value) => typeof value === "string" && value !== "")) return null;
+export function liveStreamMetricKey(
+  connectionId: unknown,
+  threadId: unknown,
+  turnId: unknown,
+  itemId: unknown,
+): string | null {
+  if (
+    ![connectionId, threadId, turnId, itemId].every(
+      (value) => typeof value === "string" && value !== "",
+    )
+  )
+    return null;
   return `${connectionId as string}\u0000${threadId as string}\u0000${turnId as string}\u0000${itemId as string}`;
 }
 
-export function markLiveBatchDelivered(streamKey: string, deltaChars: number, values: Record<string, number> = {}): void {
+export function markLiveBatchDelivered(
+  streamKey: string,
+  deltaChars: number,
+  values: Record<string, number> = {},
+): void {
   if (!Number.isSafeInteger(deltaChars) || deltaChars < 1) return;
   const previous = pendingLiveCommits.get(streamKey);
   if (previous === undefined) {
-    if (pendingLiveCommits.size >= MAX_PENDING_LIVE_STREAMS) pendingLiveCommits.delete(pendingLiveCommits.keys().next().value as string);
-    pendingLiveCommits.set(streamKey, { firstAtMs: performance.now(), chars: deltaChars, projectionBatches: 1 });
+    if (pendingLiveCommits.size >= MAX_PENDING_LIVE_STREAMS)
+      pendingLiveCommits.delete(pendingLiveCommits.keys().next().value as string);
+    pendingLiveCommits.set(streamKey, {
+      firstAtMs: performance.now(),
+      chars: deltaChars,
+      projectionBatches: 1,
+    });
   } else {
     previous.chars = Math.min(Number.MAX_SAFE_INTEGER, previous.chars + deltaChars);
     previous.projectionBatches = Math.min(Number.MAX_SAFE_INTEGER, previous.projectionBatches + 1);
@@ -214,7 +242,10 @@ export function operationalMetricsSnapshot(): OperationalMetricsSnapshot {
   const timings: OperationalMetricsSnapshot["timings"] = {};
   for (const [name, rawValues] of timingSamples) {
     const values = [...rawValues].sort((left, right) => left - right);
-    const total = timingTotals.get(name) ?? { count: values.length, totalMs: values.reduce((sum, value) => sum + value, 0) };
+    const total = timingTotals.get(name) ?? {
+      count: values.length,
+      totalMs: values.reduce((sum, value) => sum + value, 0),
+    };
     timings[name] = {
       count: values.length,
       totalCount: total.count,
@@ -264,8 +295,17 @@ function rounded(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function liveStreamDimensions(streamKey: string): { connectionId: string; threadId: string; turnId: string; itemId: string } | null {
+function liveStreamDimensions(
+  streamKey: string,
+): { connectionId: string; threadId: string; turnId: string; itemId: string } | null {
   const [connectionId, threadId, turnId, itemId, extra] = streamKey.split("\u0000");
-  if (extra !== undefined || connectionId === undefined || threadId === undefined || turnId === undefined || itemId === undefined) return null;
+  if (
+    extra !== undefined ||
+    connectionId === undefined ||
+    threadId === undefined ||
+    turnId === undefined ||
+    itemId === undefined
+  )
+    return null;
   return { connectionId, threadId, turnId, itemId };
 }

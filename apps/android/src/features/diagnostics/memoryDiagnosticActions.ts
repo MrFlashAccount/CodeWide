@@ -23,6 +23,7 @@ import {
   memoryStageDeltas,
 } from "./memoryReclamation";
 import { delay } from "./performanceDelay";
+
 export function useMemoryDiagnosticActions(setError: (error: string | null) => void) {
   const [memoryReportCopyState, setMemoryReportCopyState] = useState<
     "idle" | "collecting" | "copied"

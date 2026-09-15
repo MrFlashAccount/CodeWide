@@ -1,5 +1,9 @@
 import { open } from "@op-engineering/op-sqlite";
-import { wrapSqliteDatabase, type SqliteDatabase, type SqliteDatabaseLike } from "@codewide/tanstack-db-sqlite";
+import {
+  wrapSqliteDatabase,
+  type SqliteDatabase,
+  type SqliteDatabaseLike,
+} from "@codewide/tanstack-db-sqlite";
 
 let settingsDatabase: SqliteDatabase | null = null;
 

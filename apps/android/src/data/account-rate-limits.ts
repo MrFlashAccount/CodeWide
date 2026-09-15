@@ -66,7 +66,8 @@ export function mergeAccountPoolRateLimits(
   update: AccountRateLimitsUpdatedNotification,
   updatedAtSeconds = Math.floor(Date.now() / 1_000),
 ): AccountPoolSnapshot | null {
-  if (previous === null || previous === undefined || previous.activeProfileId === null) return previous ?? null;
+  if (previous === null || previous === undefined || previous.activeProfileId === null)
+    return previous ?? null;
   let changed = false;
   const profiles = previous.profiles.map((profile) => {
     if (profile.id !== previous.activeProfileId) return profile;
@@ -81,7 +82,9 @@ export function mergeAccountPoolRateLimits(
   return changed ? { ...previous, profiles } : previous;
 }
 
-export function selectWeeklyRateLimit(response: GetAccountRateLimitsResponse | null): WeeklyRateLimit | null {
+export function selectWeeklyRateLimit(
+  response: GetAccountRateLimitsResponse | null,
+): WeeklyRateLimit | null {
   if (response === null) return null;
   const canonical = weeklyRateLimit(response.rateLimits);
   if (canonical !== null) return canonical;
@@ -124,11 +127,13 @@ export function contextUsageFromProjection(usage: TurnUsageProjection | null): C
     usedTokens,
     totalTokens,
     remainingTokens: Math.max(0, totalTokens - usedTokens),
-    usedPercent: Math.max(0, Math.min(100, usedTokens / totalTokens * 100)),
+    usedPercent: Math.max(0, Math.min(100, (usedTokens / totalTokens) * 100)),
   };
 }
 
-export function currentThreadUsageProjection(thread: Thread | null | undefined): TurnUsageProjection | null {
+export function currentThreadUsageProjection(
+  thread: Thread | null | undefined,
+): TurnUsageProjection | null {
   if (thread === null || thread === undefined) return null;
   for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
     const usage = projectedTurnMetadata(thread.turns[index]!)?.usage ?? null;
@@ -137,11 +142,24 @@ export function currentThreadUsageProjection(thread: Thread | null | undefined):
   return null;
 }
 
-export function accountRateLimitsStale(row: AccountRateLimitsRow | null | undefined, now = Date.now()): boolean {
+export function accountRateLimitsStale(
+  row: AccountRateLimitsRow | null | undefined,
+  now = Date.now(),
+): boolean {
   if (row === null || row === undefined || row.snapshot === null) return true;
   if (row.status === "error") return true;
-  if (row.accountPool === null || row.accountPool === undefined || row.accountPool.profiles.length === 0) return true;
-  if (row.accountPool.profiles.some((profile) => profile.enabled && accountProfileRateLimitsStale(profile, now))) return true;
+  if (
+    row.accountPool === null ||
+    row.accountPool === undefined ||
+    row.accountPool.profiles.length === 0
+  )
+    return true;
+  if (
+    row.accountPool.profiles.some(
+      (profile) => profile.enabled && accountProfileRateLimitsStale(profile, now),
+    )
+  )
+    return true;
   if (now - row.updatedAt >= ACCOUNT_RATE_LIMITS_REFRESH_MS) return true;
   const weekly = selectWeeklyRateLimit(row.snapshot);
   return weekly?.window.resetsAt !== null && weekly?.window.resetsAt !== undefined
@@ -149,8 +167,16 @@ export function accountRateLimitsStale(row: AccountRateLimitsRow | null | undefi
     : false;
 }
 
-export function accountProfileRateLimitsStale(profile: AccountPoolProfile, now = Date.now()): boolean {
-  if (profile.rateLimits === null || profile.rateLimitsUpdatedAt === null || profile.rateLimitsError !== null) return true;
+export function accountProfileRateLimitsStale(
+  profile: AccountPoolProfile,
+  now = Date.now(),
+): boolean {
+  if (
+    profile.rateLimits === null ||
+    profile.rateLimitsUpdatedAt === null ||
+    profile.rateLimitsError !== null
+  )
+    return true;
   if (now - profile.rateLimitsUpdatedAt * 1_000 >= ACCOUNT_RATE_LIMITS_REFRESH_MS) return true;
   const weekly = selectWeeklyRateLimit(profile.rateLimits);
   return weekly?.window.resetsAt !== null && weekly?.window.resetsAt !== undefined
@@ -164,14 +190,17 @@ export function relativeResetTime(resetsAt: number | null, now = Date.now()): st
   if (remainingMs <= 0) return "reset due";
   const totalMinutes = Math.max(1, Math.ceil(remainingMs / 60_000));
   const days = Math.floor(totalMinutes / (24 * 60));
-  const hours = Math.floor(totalMinutes % (24 * 60) / 60);
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
   const minutes = totalMinutes % 60;
   if (days > 0) return `in ${days}d${hours > 0 ? ` ${hours}h` : ""}`;
   if (hours > 0) return `in ${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
   return `in ${minutes}m`;
 }
 
-function mergeRateLimitSnapshot(previous: RateLimitSnapshot | null, update: RateLimitSnapshot): RateLimitSnapshot {
+function mergeRateLimitSnapshot(
+  previous: RateLimitSnapshot | null,
+  update: RateLimitSnapshot,
+): RateLimitSnapshot {
   if (previous === null) return cloneProtocolValue(update);
   return {
     limitId: update.limitId ?? previous.limitId,
@@ -186,7 +215,10 @@ function mergeRateLimitSnapshot(previous: RateLimitSnapshot | null, update: Rate
   };
 }
 
-function mergeRateLimitWindow(previous: RateLimitWindow | null, update: RateLimitWindow | null): RateLimitWindow | null {
+function mergeRateLimitWindow(
+  previous: RateLimitWindow | null,
+  update: RateLimitWindow | null,
+): RateLimitWindow | null {
   if (update === null) return previous;
   if (previous === null) return cloneProtocolValue(update);
   return {

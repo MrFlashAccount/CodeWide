@@ -23,4 +23,9 @@ export function InternalBrowser({
   return <View accessibilityLabel={`Internal browser: ${url}`} style={styles.root} />;
 }
 
-const styles = StyleSheet.create({ root: { flex: 1, backgroundColor: colors.background } });
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+});

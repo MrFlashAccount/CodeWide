@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Pressable } from "react-native";
 import { colors, iconSize } from "../../../theme";
 import { styles } from "./InternalBrowser.styles";
+
 export function BrowserButton({
   label,
   icon,

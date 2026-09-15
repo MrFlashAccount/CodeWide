@@ -31,9 +31,16 @@ export function StreamingRevealSurface({
   return (
     <StreamingRevealContext.Provider value={streamKey}>
       {!shouldAnimate ? (
-        <View testID="streaming-reveal-fallback" pointerEvents="box-none">{children}</View>
+        <View testID="streaming-reveal-fallback" pointerEvents="box-none">
+          {children}
+        </View>
       ) : (
-        <NativeSurface streamKey={streamKey} reduceMotion={false} animateNew pointerEvents="box-none">
+        <NativeSurface
+          streamKey={streamKey}
+          reduceMotion={false}
+          animateNew
+          pointerEvents="box-none"
+        >
           {children}
         </NativeSurface>
       )}

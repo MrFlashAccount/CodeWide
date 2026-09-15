@@ -102,7 +102,10 @@ export function BrowserAddressBar(props: BrowserAddressBarProps) {
 const addressLayoutTransition = LinearTransition.duration(240).easing(Easing.inOut(Easing.cubic));
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minWidth: 0 },
+  root: {
+    flex: 1,
+    minWidth: 0,
+  },
   rootEditing: { zIndex: 2 },
   row: {
     height: controlSize.regular,
@@ -113,7 +116,10 @@ const styles = StyleSheet.create({
     borderColor: "transparent",
     backgroundColor: colors.background,
   },
-  rowEditing: { borderColor: colors.border, backgroundColor: colors.surfaceRaised },
+  rowEditing: {
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceRaised,
+  },
   input: {
     flex: 1,
     minWidth: 0,
@@ -129,5 +135,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  error: { ...typeScale.caption, color: colors.error, padding: spacing.xs },
+  error: {
+    ...typeScale.caption,
+    color: colors.error,
+    padding: spacing.xs,
+  },
 });

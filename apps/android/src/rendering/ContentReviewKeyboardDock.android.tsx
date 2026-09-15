@@ -6,7 +6,9 @@ import { KeyboardStickyView } from "react-native-keyboard-controller";
 
 import { useOverlaySurface } from "../ui/OverlaySurfaceContext";
 
-interface DockProps { children: ReactNode }
+interface DockProps {
+  children: ReactNode;
+}
 
 const DIALOG_DOCK_MODIFIERS = [fillMaxSize(), imePadding()];
 
@@ -26,7 +28,12 @@ export function ContentReviewKeyboardDock(props: DockProps) {
   // Compose Dialog. Read IME insets in that dialog instead. Only this overlay's
   // available height changes; the reviewed image and pin coordinates stay fixed.
   return (
-    <Host colorScheme="dark" pointerEvents="box-none" ignoreSafeAreaKeyboardInsets style={styles.layer}>
+    <Host
+      colorScheme="dark"
+      pointerEvents="box-none"
+      ignoreSafeAreaKeyboardInsets
+      style={styles.layer}
+    >
       <Column modifiers={DIALOG_DOCK_MODIFIERS}>
         <RNHostView matchContents={false}>
           <View pointerEvents="box-none" style={styles.content}>
@@ -39,7 +46,22 @@ export function ContentReviewKeyboardDock(props: DockProps) {
 }
 
 const styles = StyleSheet.create({
-  layer: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 100, justifyContent: "flex-end" },
-  sticky: { width: "100%", flexShrink: 0 },
-  content: { flex: 1, minHeight: 0, justifyContent: "flex-end" },
+  layer: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 100,
+    justifyContent: "flex-end",
+  },
+  sticky: {
+    width: "100%",
+    flexShrink: 0,
+  },
+  content: {
+    flex: 1,
+    minHeight: 0,
+    justifyContent: "flex-end",
+  },
 });

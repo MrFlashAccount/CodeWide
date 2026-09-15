@@ -159,4 +159,5 @@ export function usePairingSession({
   };
 }
 
+/** State machine returned by the server-pairing session hook. */
 export type PairingSession = ReturnType<typeof usePairingSession>;

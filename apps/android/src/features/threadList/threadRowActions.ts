@@ -4,6 +4,7 @@ import { useEvent } from "../../react/useEvent";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { useAppDialog } from "../../ui/AppDialog";
 import type { ThreadRowProps } from "./threadRowContract";
+
 export function useThreadRowActions({
   thread,
   onTogglePin,
@@ -71,4 +72,5 @@ export function useThreadRowActions({
     closeSwipe,
   };
 }
+/** Explicit actions exposed by the thread-row action owner. */
 export type ThreadRowActions = ReturnType<typeof useThreadRowActions>;

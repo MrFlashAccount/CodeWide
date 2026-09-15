@@ -17,7 +17,14 @@ export function turnItemChanges(items: readonly ThreadItem[]): readonly TurnChan
     if (item.type !== "fileChange" || item.status !== "completed") continue;
     for (const change of item.changes) {
       const projection = projectFileChange(change.diff, change.kind);
-      files.push({ path: change.path, patch: projection.renderSource, kind: projection.kind, itemId: item.id, additions: projection.additions, deletions: projection.deletions });
+      files.push({
+        path: change.path,
+        patch: projection.renderSource,
+        kind: projection.kind,
+        itemId: item.id,
+        additions: projection.additions,
+        deletions: projection.deletions,
+      });
     }
   }
   return files;
@@ -34,7 +41,14 @@ export function turnChangedFiles(diff: string): readonly TurnChangedFile[] {
     const path = decodeDiffPath(rawPath ?? "Turn changes");
     const kind = deleted === "/dev/null" ? "add" : header === "/dev/null" ? "delete" : "update";
     const projection = projectFileChange(patch, kind);
-    return { path, patch, kind: projection.kind, itemId: `recorded-diff:${index}`, additions: projection.additions, deletions: projection.deletions };
+    return {
+      path,
+      patch,
+      kind: projection.kind,
+      itemId: `recorded-diff:${index}`,
+      additions: projection.additions,
+      deletions: projection.deletions,
+    };
   });
 }
 

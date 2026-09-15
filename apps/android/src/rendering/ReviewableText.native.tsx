@@ -1,10 +1,4 @@
-import {
-  useId,
-  useLayoutEffect,
-  useRef,
-  type ComponentProps,
-  type ComponentRef,
-} from "react";
+import { useId, useLayoutEffect, useRef, type ComponentProps, type ComponentRef } from "react";
 import {
   DeviceEventEmitter,
   findNodeHandle,
@@ -60,9 +54,11 @@ export function ReviewableText({
   const token = `review-text-${generatedId}`;
   const handleReviewSelection = useEvent(onReviewSelection);
   const highlightKey = reviewHighlights.map(({ start, end }) => `${start}:${end}`).join(",");
-  const applyReviewHighlights = useEvent((nativeModule: ReturnType<typeof contentReviewNativeModule>, reactTag: number) => {
-    nativeModule?.setHighlights?.(reactTag, token, reviewHighlights);
-  });
+  const applyReviewHighlights = useEvent(
+    (nativeModule: ReturnType<typeof contentReviewNativeModule>, reactTag: number) => {
+      nativeModule?.setHighlights?.(reactTag, token, reviewHighlights);
+    },
+  );
 
   useLayoutEffect(() => {
     const nativeModule = contentReviewNativeModule(NativeModules.CodeWideContentReview);

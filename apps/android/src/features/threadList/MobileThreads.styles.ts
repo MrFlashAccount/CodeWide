@@ -4,8 +4,14 @@ import { colors, controlSize, radii, spacing, touchTarget, typeScale } from "../
 import { threadListLayout } from "../../ui/thread-list-layout";
 
 export const styles = StyleSheet.create({
-  threadListHeaderChrome: { flexShrink: 0, backgroundColor: colors.threadListSurface },
-  threadListContentSurface: { flex: 1, minHeight: 0 },
+  threadListHeaderChrome: {
+    flexShrink: 0,
+    backgroundColor: colors.threadListSurface,
+  },
+  threadListContentSurface: {
+    flex: 1,
+    minHeight: 0,
+  },
   threadListSuspended: { flex: 1 },
   headerIcon: {
     width: touchTarget,
@@ -21,7 +27,12 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.optical,
   },
-  threadSearchBox: { ...searchFieldLayout, height: controlSize.regular, flex: 1, minWidth: 0 },
+  threadSearchBox: {
+    ...searchFieldLayout,
+    height: controlSize.regular,
+    flex: 1,
+    minWidth: 0,
+  },
   searchBox: {
     height: controlSize.touch,
     borderRadius: radii.large,
@@ -31,8 +42,18 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     gap: spacing.xs,
   },
-  searchInput: { flex: 1, minWidth: 0, color: colors.text, ...typeScale.body, paddingVertical: 0 },
-  mobileList: { flex: 1, backgroundColor: colors.threadListSurface, overflow: "hidden" },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    ...typeScale.body,
+    paddingVertical: 0,
+  },
+  mobileList: {
+    flex: 1,
+    backgroundColor: colors.threadListSurface,
+    overflow: "hidden",
+  },
   mobileTitleRow: {
     minHeight: touchTarget,
     paddingLeft: spacing.sm,
@@ -51,10 +72,23 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
     borderRadius: radii.medium,
   },
-  mobileIdentity: { flex: 1, minWidth: 0 },
-  mobileTitle: { flexShrink: 1, color: colors.text, ...typeScale.title },
-  mobileTitleGrow: { flex: 1, minWidth: 0 },
-  mobileSubtitle: { color: colors.textMuted, ...typeScale.label },
+  mobileIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mobileTitle: {
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.title,
+  },
+  mobileTitleGrow: {
+    flex: 1,
+    minWidth: 0,
+  },
+  mobileSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   mobileSearchWrap: {
     paddingLeft: spacing.md,
     paddingRight: threadListLayout.edgeInset,

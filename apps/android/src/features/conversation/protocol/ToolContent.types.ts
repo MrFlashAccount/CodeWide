@@ -1,4 +1,5 @@
 import type { RenderBlock } from "@codewide/renderers";
+
 export interface ToolContentProps {
   block: RenderBlock;
   getTransferAccess?(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;

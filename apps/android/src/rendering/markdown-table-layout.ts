@@ -1,6 +1,9 @@
-export const MIN_TABLE_COLUMN_WIDTH = 144;
+const MIN_TABLE_COLUMN_WIDTH = 144;
 
-export function markdownTableLayout(viewportWidth: number, columnCount: number): {
+export function markdownTableLayout(
+  viewportWidth: number,
+  columnCount: number,
+): {
   tableWidth: number;
   cellWidth: number;
 } {

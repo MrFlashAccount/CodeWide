@@ -6,6 +6,7 @@ import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
 import { type PortForwardingCandidate } from "./portForwardingContract";
 import { styles } from "./PortForwardingManager.styles";
 import { ServiceIcon, candidateIcon, shortCwd } from "./PortPresentation";
+
 export function CandidateRow({
   candidate,
   position,

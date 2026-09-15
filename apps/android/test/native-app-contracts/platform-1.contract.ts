@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { sourceObjectDeclaration } from "../source-contract";
 import {
   screen,
   timelineList,
@@ -70,9 +71,16 @@ it("preserves platform integration contracts — 2", () => {
   expect(screen).not.toContain("activeThreadResourcesTaskKey");
   expect(screen).not.toContain("styles.agentReplyMeta");
   expect(screen).not.toContain("autoExpandWhileRunning");
-  expect(richMarkdown).toContain('list: { minWidth: 0, alignSelf: "flex-start"');
-  expect(richMarkdown).toContain('listRow: { minWidth: 0, alignSelf: "flex-start"');
-  expect(richMarkdown).toContain("listBody: { minWidth: 0, flexShrink: 1, gap: spacing.optical }");
+  const listStyle = sourceObjectDeclaration(richMarkdown, "list");
+  expect(listStyle).toContain("minWidth: 0");
+  expect(listStyle).toContain('alignSelf: "flex-start"');
+  const listRowStyle = sourceObjectDeclaration(richMarkdown, "listRow");
+  expect(listRowStyle).toContain("minWidth: 0");
+  expect(listRowStyle).toContain('alignSelf: "flex-start"');
+  const listBodyStyle = sourceObjectDeclaration(richMarkdown, "listBody");
+  expect(listBodyStyle).toContain("minWidth: 0");
+  expect(listBodyStyle).toContain("flexShrink: 1");
+  expect(listBodyStyle).toContain("gap: spacing.optical");
   expect(richMarkdown).not.toContain(
     "listBody: { minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: 0",
   );

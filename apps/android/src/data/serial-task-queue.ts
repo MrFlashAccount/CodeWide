@@ -6,7 +6,10 @@ export class SerialTaskQueue {
   run<T>(task: () => Promise<T>): Promise<T> {
     if (this.#closed) return Promise.reject(new Error("Serial task queue is closed"));
     const result = this.#tail.then(task);
-    this.#tail = result.then(() => undefined, () => undefined);
+    this.#tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
   }
 

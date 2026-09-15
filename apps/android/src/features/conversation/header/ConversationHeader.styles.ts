@@ -1,6 +1,7 @@
 import { StyleSheet } from "react-native";
 import { colors, layoutSize, radii, spacing, touchTarget, typeScale } from "../../../theme";
 import { conversationChromeEdgeInset } from "../../../ui/conversation-chrome-layout";
+
 export const styles = StyleSheet.create({
   headerIcon: {
     width: touchTarget,
@@ -16,7 +17,10 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: 0,
   },
-  conversationIdentity: { flex: 1, minWidth: 0 },
+  conversationIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
   conversationIdentityRaised: {
     marginLeft: spacing.xs,
     transform: [{ translateY: spacing.optical }],
@@ -28,6 +32,12 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.xs,
   },
-  conversationTitle: { color: colors.text, ...typeScale.title },
-  conversationHeaderTitle: { minWidth: 0, flexShrink: 1 },
+  conversationTitle: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  conversationHeaderTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+  },
 });

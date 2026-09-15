@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { compactSource } from "../source-contract";
 import {
   manifest,
   connectionService,
@@ -121,7 +122,7 @@ it("preserves native integration contracts — 1", () => {
     "fun readCommittedFrames(connectionId: String, afterCursor: Double?, promise: Promise)",
   );
   expect(nativeModule).toContain("NATIVE_BRIDGE_CONTRACT_VERSION = 2");
-  expect(nativeEngine).toContain("bridge.readCommittedFrames(this.connectionId");
+  expect(compactSource(nativeEngine)).toContain("bridge.readCommittedFrames( this.connectionId");
   expect(nativeEngine).toContain('event.type === "journalAdvanced"');
   expect(nativeFrameStore).toContain(
     "fun acknowledgeThrough(connectionId: String, projectionCursor: Long)",
@@ -186,8 +187,8 @@ it("preserves native integration contracts — 1", () => {
   );
   expect(connectionService).toContain("if (error is SessionAuthorizationException)");
   expect(connectionService).toContain('emitTransportStatus("authRequired")');
-  expect(nativeEngine).toContain('addListener("CodeWideEngineEvent"');
-  expect(nativeEngine).toContain("bridge.engineRpc(this.connectionId");
+  expect(nativeEngine).toMatch(/addListener\(\s*"CodeWideEngineEvent"/u);
+  expect(nativeEngine).toMatch(/bridge\.engineRpc\(\s*this\.connectionId/u);
   expect(nativeProtocolEngine).toContain(
     "private val deferredRpcs = linkedMapOf<String, DeferredRpc>()",
   );

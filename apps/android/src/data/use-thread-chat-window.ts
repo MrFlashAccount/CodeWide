@@ -29,13 +29,18 @@ function useThreadChatWindowResource(
     if (database === null || !enabled) return;
     database.adoptPreloadedWindow(connectionId, threadId);
   }, [anchorTurnId, connectionId, database, enabled, threadId]);
-  const resource = database === null || !enabled ? null : database.windowResource({
-      connectionId,
-      threadId,
-      anchorTurnId,
-      openGeneration,
-    });
-  useSelector(() => resource === null ? true : resource.ready$.get(), { suspense: suspendUntilReady });
+  const resource =
+    database === null || !enabled
+      ? null
+      : database.windowResource({
+          connectionId,
+          threadId,
+          anchorTurnId,
+          openGeneration,
+        });
+  useSelector(() => (resource === null ? true : resource.ready$.get()), {
+    suspense: suspendUntilReady,
+  });
   return resource;
 }
 

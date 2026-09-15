@@ -10,7 +10,13 @@ import {
 import type { WorkspaceResourceDatabase } from "./workspace-resource-database";
 import type { GetTransferAccess } from "./private-transfer";
 
-type UploadedAttachment = { id: string; rootId: string; path: string; name: string; kind: "image" | "audio" | "file" };
+type UploadedAttachment = {
+  id: string;
+  rootId: string;
+  path: string;
+  name: string;
+  kind: "image" | "audio" | "file";
+};
 
 export class FileTransferController {
   private readonly running = new Map<string, RunningTransfer>();
@@ -37,14 +43,37 @@ export class FileTransferController {
     this.generations.set(options.scope, generation);
     this.put(options.scope, "authorizing", null, null, null);
     try {
-      const task = options.mode === "upload"
-        ? options.upload === null ? null : startUpload(options.getAccess, options.upload, options.rootId, options.remotePath, options.overwrite, (progress) => {
-            if (this.isCurrent(options.scope, generation)) this.put(options.scope, "running", progress, null, null);
-          })
-        : options.directory === null ? null : startDownload(options.getAccess, options.directory, options.rootId, options.remotePath, (progress) => {
-            if (this.isCurrent(options.scope, generation)) this.put(options.scope, "running", progress, null, null);
-          });
-      if (task === null) throw new Error(options.mode === "upload" ? "Choose a file first" : "Choose a destination folder first");
+      const task =
+        options.mode === "upload"
+          ? options.upload === null
+            ? null
+            : startUpload(
+                options.getAccess,
+                options.upload,
+                options.rootId,
+                options.remotePath,
+                options.overwrite,
+                (progress) => {
+                  if (this.isCurrent(options.scope, generation))
+                    this.put(options.scope, "running", progress, null, null);
+                },
+              )
+          : options.directory === null
+            ? null
+            : startDownload(
+                options.getAccess,
+                options.directory,
+                options.rootId,
+                options.remotePath,
+                (progress) => {
+                  if (this.isCurrent(options.scope, generation))
+                    this.put(options.scope, "running", progress, null, null);
+                },
+              );
+      if (task === null)
+        throw new Error(
+          options.mode === "upload" ? "Choose a file first" : "Choose a destination folder first",
+        );
       if (!this.isCurrent(options.scope, generation)) {
         task.cancel();
         return;
@@ -55,16 +84,23 @@ export class FileTransferController {
       if (!this.isCurrent(options.scope, generation)) return;
       const result = `${value.bytes.toLocaleString()} bytes · SHA-256 ${value.sha256.slice(0, 12)}…${value.uri === undefined ? "" : ` · ${value.uri}`}`;
       this.put(options.scope, "complete", null, result, null);
-      if (options.mode === "upload" && options.upload !== null) options.onUploaded?.({
-        id: `${value.sha256.slice(0, 32)}-${Date.now().toString(36)}`,
-        rootId: options.rootId,
-        path: options.remotePath,
-        name: options.upload.name,
-        kind: attachmentKind(options.upload.mimeType, options.upload.name),
-      });
+      if (options.mode === "upload" && options.upload !== null)
+        options.onUploaded?.({
+          id: `${value.sha256.slice(0, 32)}-${Date.now().toString(36)}`,
+          rootId: options.rootId,
+          path: options.remotePath,
+          name: options.upload.name,
+          kind: attachmentKind(options.upload.mimeType, options.upload.name),
+        });
     } catch (cause) {
       if (this.isCurrent(options.scope, generation)) {
-        this.put(options.scope, "error", null, null, cause instanceof Error ? cause.message : "Transfer failed");
+        this.put(
+          options.scope,
+          "error",
+          null,
+          null,
+          cause instanceof Error ? cause.message : "Transfer failed",
+        );
       }
       throw cause;
     } finally {
@@ -86,7 +122,11 @@ export class FileTransferController {
   private put(
     scope: string,
     status: "idle" | "authorizing" | "running" | "complete" | "error",
-    progress: { transferred: number; total: number; phase: "hashing" | "transferring" | "verifying" } | null,
+    progress: {
+      transferred: number;
+      total: number;
+      phase: "hashing" | "transferring" | "verifying";
+    } | null,
     result: string | null,
     error: string | null,
   ): void {

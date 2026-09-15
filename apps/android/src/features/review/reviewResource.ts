@@ -7,6 +7,7 @@ import {
 } from "../../rendering/code-review-bridge";
 import { loadDocumentPreview } from "../../rendering/DocumentPreviewHost";
 import type { CodeReviewFileResource } from "./code-review-files";
+
 export type CodeReviewResourceValue = {
   document: CodeReviewDocument;
   diffTruncated: boolean;

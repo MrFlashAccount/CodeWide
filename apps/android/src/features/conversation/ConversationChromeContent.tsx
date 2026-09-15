@@ -13,6 +13,7 @@ import { useConversationTimelineState } from "./timeline/conversationTimelineSta
 import { JumpToLatest } from "./timeline/JumpToLatest";
 import { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
 import { TimelineSearchBar } from "./timeline/TimelineSearchBar";
+
 export function createConversationChromeContent({
   thread,
   compact,

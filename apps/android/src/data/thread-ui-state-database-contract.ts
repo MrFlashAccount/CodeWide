@@ -1,7 +1,12 @@
 import type { Observable } from "@legendapp/state";
 import type { Collection } from "@tanstack/react-db";
-import type { StoredComposerPreferences, StoredDraftAttachment, ThreadUiStateRow } from "./thread-ui-state-types";
+import type {
+  StoredComposerPreferences,
+  StoredDraftAttachment,
+  ThreadUiStateRow,
+} from "./thread-ui-state-types";
 
+/** Persists per-thread UI state independently from authoritative thread data. */
 export type ThreadUiStateDatabase = {
   collection: Collection<ThreadUiStateRow, string>;
   get(connectionId: string, threadId: string): ThreadUiStateRow | null;
@@ -11,11 +16,30 @@ export type ThreadUiStateDatabase = {
   read(connectionId: string, threadId: string): Promise<ThreadUiStateRow>;
   getOrCreate(connectionId: string, threadId: string): Promise<ThreadUiStateRow>;
   saveDraft(connectionId: string, threadId: string, text: string): Promise<void>;
-  saveAttachments(connectionId: string, threadId: string, attachments: StoredDraftAttachment[]): Promise<void>;
-  upsertAttachment(connectionId: string, threadId: string, attachment: StoredDraftAttachment, isCurrent: () => boolean): Promise<void>;
+  saveAttachments(
+    connectionId: string,
+    threadId: string,
+    attachments: StoredDraftAttachment[],
+  ): Promise<void>;
+  upsertAttachment(
+    connectionId: string,
+    threadId: string,
+    attachment: StoredDraftAttachment,
+    isCurrent: () => boolean,
+  ): Promise<void>;
   removeAttachment(connectionId: string, threadId: string, attachmentId: string): Promise<void>;
-  saveScrollOffset(connectionId: string, threadId: string, offset: number, historyAnchorTurnId: string | null, historyAnchorOffsetPx: number | null): Promise<void>;
-  savePreferences(connectionId: string, threadId: string, preferences: StoredComposerPreferences): Promise<void>;
+  saveScrollOffset(
+    connectionId: string,
+    threadId: string,
+    offset: number,
+    historyAnchorTurnId: string | null,
+    historyAnchorOffsetPx: number | null,
+  ): Promise<void>;
+  savePreferences(
+    connectionId: string,
+    threadId: string,
+    preferences: StoredComposerPreferences,
+  ): Promise<void>;
   deleteConnection(connectionId: string): Promise<void>;
   close(): void;
 };

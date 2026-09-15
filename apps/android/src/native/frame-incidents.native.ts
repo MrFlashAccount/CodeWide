@@ -1,6 +1,10 @@
 import { AppState } from "react-native";
 
-import { hasFrameContext, publishFrameIncidents, recordJsSchedulingDelay } from "../data/ui-frame-telemetry";
+import {
+  hasFrameContext,
+  publishFrameIncidents,
+  recordJsSchedulingDelay,
+} from "../data/ui-frame-telemetry";
 
 interface FrameIncidentReader {
   drainFrameIncidents(): Promise<unknown>;

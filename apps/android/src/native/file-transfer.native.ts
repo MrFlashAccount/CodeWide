@@ -490,7 +490,8 @@ async function copyFileContents(
       output.writeBytes(chunk);
       copied += chunk.length;
       progress(copied);
-      if (copied % (8 * 1024 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (copied % (8 * 1024 * 1024) === 0)
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   } finally {
     input.close();
@@ -536,7 +537,8 @@ async function hashFile(
       hash.update(chunk);
       read += chunk.length;
       progress(read);
-      if (read % (8 * 1024 * 1024) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (read % (8 * 1024 * 1024) === 0)
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   } finally {
     handle.close();

@@ -12,18 +12,28 @@ export function diagramPreviewKey(source: string): string {
   return `diagram-svg:${bytesToHex(sha256(utf8ToBytes(source)))}`;
 }
 
-export async function renderDiagramPreview(source: string, signal: AbortSignal): Promise<DiagramPreviewResult> {
+export async function renderDiagramPreview(
+  source: string,
+  signal: AbortSignal,
+): Promise<DiagramPreviewResult> {
   const bridge: unknown = NativeModules.CodeWideDiagramPreview;
-  if (typeof bridge !== "object" || bridge === null
-    || !("render" in bridge) || typeof bridge.render !== "function"
-    || !("cancel" in bridge) || typeof bridge.cancel !== "function") {
+  if (
+    typeof bridge !== "object" ||
+    bridge === null ||
+    !("render" in bridge) ||
+    typeof bridge.render !== "function" ||
+    !("cancel" in bridge) ||
+    typeof bridge.cancel !== "function"
+  ) {
     throw new Error("Diagram previews require an updated Android app");
   }
   checkAborted(signal);
   for (let attempt = 1; attempt <= MAX_RENDER_ATTEMPTS; attempt += 1) {
     const id = String(++sequence);
     const cancelRequest = bridge.cancel;
-    const cancel = (): void => { cancelRequest.call(bridge, id); };
+    const cancel = (): void => {
+      cancelRequest.call(bridge, id);
+    };
     signal.addEventListener("abort", cancel, { once: true });
     try {
       const result: unknown = await bridge.render(id, source);

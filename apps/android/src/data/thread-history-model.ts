@@ -16,9 +16,10 @@ export type ThreadHistoryActivity = {
   error: string | null;
 };
 
-export type ThreadHistoryRow = ThreadHistoryCursor & ThreadHistoryActivity & {
-  updatedAt: number;
-};
+export type ThreadHistoryRow = ThreadHistoryCursor &
+  ThreadHistoryActivity & {
+    updatedAt: number;
+  };
 
 export type ThreadHistoryModel = {
   cursor$(id: string): Observable<ThreadHistoryCursor | null>;
@@ -85,14 +86,11 @@ export function createThreadHistoryModel(maxResidentRows = 72): ThreadHistoryMod
     },
     put(row) {
       if (closed) return;
-      const {
-        status,
-        error,
-        ...cursor
-      } = row;
+      const { status, error, ...cursor } = row;
       const cursorNode = cursor$(row.id);
       const previousCursor = cursorNode.peek();
-      const nextCursor = previousCursor === null ? cursor : replaceEqualDeep(previousCursor, cursor);
+      const nextCursor =
+        previousCursor === null ? cursor : replaceEqualDeep(previousCursor, cursor);
       if (nextCursor !== previousCursor) cursorNode.set(nextCursor);
 
       const activityNode = activity$(row.id);

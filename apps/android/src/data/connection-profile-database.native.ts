@@ -1,9 +1,17 @@
 import type { ConnectionProfileDatabase } from "./connection-profile-database-contract";
-export type { ConnectionProfileDatabase, RuntimeConnectionConfig } from "./connection-profile-database-contract";
+
+export type {
+  ConnectionProfileDatabase,
+  RuntimeConnectionConfig,
+} from "./connection-profile-database-contract";
 import { randomUUID } from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 
-import { validateConnectionInput, validateConnectionProfile, validateConnectionRuntimeUpdate } from "./connection-validation";
+import {
+  validateConnectionInput,
+  validateConnectionProfile,
+  validateConnectionRuntimeUpdate,
+} from "./connection-validation";
 import type { ConnectionProfileRow, StoredConnection } from "./connection-profile-types";
 import { readLegacyPersistedRows } from "./legacy-persistence-migration.native";
 import { createPersistentCollectionModel } from "./persistent-collection.native";
@@ -20,14 +28,21 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
     columns: [
       { property: "sortOrder", column: "sort_order", type: "INTEGER" },
       { property: "updatedAt", column: "updated_at", type: "REAL" },
-      { property: "enabled", column: "enabled", type: "INTEGER", encode: (value) => value ? 1 : 0 },
+      {
+        property: "enabled",
+        column: "enabled",
+        type: "INTEGER",
+        encode: (value) => (value ? 1 : 0),
+      },
     ],
     indexes: [["sortOrder"]],
     legacyCollectionId: "connection-profiles-v1",
   });
   const { collection } = model;
 
-  const project = (rows: readonly ConnectionProfileRow[] = collection.toArray): StoredConnection[] => {
+  const project = (
+    rows: readonly ConnectionProfileRow[] = collection.toArray,
+  ): StoredConnection[] => {
     return [...rows]
       .sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id))
       .map((row) => toStoredConnection(row, ""));
@@ -45,7 +60,10 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       if (collection.toArray.length > 0) return;
       const legacy = openLegacyUiCacheSqliteDatabase();
       try {
-        const rows = await readLegacyPersistedRows<ConnectionProfileRow>(legacy.database, "connection-profiles-v1");
+        const rows = await readLegacyPersistedRows<ConnectionProfileRow>(
+          legacy.database,
+          "connection-profiles-v1",
+        );
         if (rows.length === 0) return;
         const transaction = collection.insert(rows.map((row) => ({ ...row })) as never);
         await transaction.isPersisted.promise;
@@ -71,9 +89,11 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       }
     },
     async purgeLegacyCredentials(connectionIds) {
-      await Promise.all(connectionIds.map(async (connectionId) => {
-        await SecureStore.deleteItemAsync(tokenKey(connectionId));
-      }));
+      await Promise.all(
+        connectionIds.map(async (connectionId) => {
+          await SecureStore.deleteItemAsync(tokenKey(connectionId));
+        }),
+      );
     },
     async reconcileRuntimeConfigs(configs) {
       const missing = configs.filter((config) => !collection.has(config.connectionId));
@@ -82,25 +102,29 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       // is never used as transport configuration.
       if (missing.length > 0) {
         let sortOrder = Math.max(-1, ...collection.toArray.map((row) => row.sortOrder)) + 1;
-        const transaction = collection.insert(missing.map((config) => ({
-          id: config.connectionId,
-          displayName: new URL(config.endpoint).hostname || "Remote Codex",
-          emoji: "🖥️",
-          endpoint: config.endpoint,
-          tlsPinSha256: config.tlsPinSha256,
-          enabled: config.enabled,
-          sortOrder: sortOrder++,
-          updatedAt: Date.now(),
-        })));
+        const transaction = collection.insert(
+          missing.map((config) => ({
+            id: config.connectionId,
+            displayName: new URL(config.endpoint).hostname || "Remote Codex",
+            emoji: "🖥️",
+            endpoint: config.endpoint,
+            tlsPinSha256: config.tlsPinSha256,
+            enabled: config.enabled,
+            sortOrder: sortOrder++,
+            updatedAt: Date.now(),
+          })),
+        );
         await transaction.isPersisted.promise;
       }
       for (const config of configs) {
         const row = collection.get(config.connectionId);
-        if (row === undefined || (
-          row.endpoint === config.endpoint
-          && row.tlsPinSha256 === config.tlsPinSha256
-          && row.enabled === config.enabled
-        )) continue;
+        if (
+          row === undefined ||
+          (row.endpoint === config.endpoint &&
+            row.tlsPinSha256 === config.tlsPinSha256 &&
+            row.enabled === config.enabled)
+        )
+          continue;
         const transaction = collection.update(config.connectionId, (draft) => {
           draft.endpoint = config.endpoint;
           draft.tlsPinSha256 = config.tlsPinSha256;
@@ -174,7 +198,9 @@ export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
       return input;
     },
     async move(connectionId, direction) {
-      const rows = [...collection.toArray].sort((left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id));
+      const rows = [...collection.toArray].sort(
+        (left, right) => left.sortOrder - right.sortOrder || left.id.localeCompare(right.id),
+      );
       const index = rows.findIndex((row) => row.id === connectionId);
       const current = rows[index];
       const neighbor = rows[index + direction];

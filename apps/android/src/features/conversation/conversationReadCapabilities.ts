@@ -13,6 +13,8 @@ import type {
   useOverlayScrollState,
 } from "./timeline/overlayScrollOwnership";
 import type { usePaginationTrim, useTimelineViewportState } from "./timeline/timelineViewport";
+
+/** Authoritative data and navigation capabilities required by the read surface. */
 export type ConversationReadSurfaceProps = {
   thread: ThreadListItem;
   server: ThreadListServer | undefined;

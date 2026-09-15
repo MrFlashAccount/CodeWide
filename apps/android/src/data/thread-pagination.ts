@@ -14,7 +14,10 @@ export type ThreadHistoryState = {
 };
 
 /** Cached exhaustion alone cannot label a trimmed resident window as the beginning. */
-export function threadHistoryContainsBeginning(atEarliestKnownTurn: boolean, olderCursor: string | null | undefined): boolean {
+export function threadHistoryContainsBeginning(
+  atEarliestKnownTurn: boolean,
+  olderCursor: string | null | undefined,
+): boolean {
   return atEarliestKnownTurn && olderCursor === null;
 }
 

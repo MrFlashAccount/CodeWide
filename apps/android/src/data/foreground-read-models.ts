@@ -5,7 +5,10 @@ export interface ForegroundReadModels {
 }
 
 /** Foreground freshness is independent of whether the transport changed state. */
-export async function refreshForegroundReadModels(connectionId: string, models: ForegroundReadModels): Promise<void> {
+export async function refreshForegroundReadModels(
+  connectionId: string,
+  models: ForegroundReadModels,
+): Promise<void> {
   const threadId = models.desiredThreadId(connectionId);
   const repairs = [models.refreshCatalog(connectionId)];
   if (threadId !== undefined) repairs.push(models.refreshThread(connectionId, threadId));

@@ -10,7 +10,12 @@ import {
 } from "../../theme";
 
 export const styles = StyleSheet.create({
-  root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
   header: {
     minHeight: layoutSize.header,
     flexDirection: "row",
@@ -28,7 +33,10 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.pill,
   },
-  tabScroll: { flex: 1, minWidth: 0 },
+  tabScroll: {
+    flex: 1,
+    minWidth: 0,
+  },
   tabList: {
     alignItems: "center",
     gap: spacing.xs,
@@ -53,7 +61,11 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingLeft: spacing.sm,
   },
-  tabText: { flexShrink: 1, color: colors.textMuted, ...typeScale.label },
+  tabText: {
+    flexShrink: 1,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   activeTabText: { color: colors.text },
   tabClose: {
     width: controlSize.compact,
@@ -70,13 +82,30 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.small,
   },
-  statusDot: { width: 7, height: 7, borderRadius: radii.pill },
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: radii.pill,
+  },
   statusLive: { backgroundColor: colors.green },
   statusError: { backgroundColor: colors.red },
   statusIdle: { backgroundColor: colors.textDim },
-  terminalPane: { flex: 1, minWidth: 0, minHeight: 0 },
-  terminal: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
-  connecting: { position: "absolute", top: spacing.md, right: spacing.md },
+  terminalPane: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+  },
+  terminal: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
+  connecting: {
+    position: "absolute",
+    top: spacing.md,
+    right: spacing.md,
+  },
   errorBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -85,7 +114,11 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     backgroundColor: colors.errorContainer,
   },
-  errorText: { flex: 1, color: colors.red, ...typeScale.label },
+  errorText: {
+    flex: 1,
+    color: colors.red,
+    ...typeScale.label,
+  },
   empty: {
     flex: 1,
     alignItems: "center",
@@ -93,7 +126,10 @@ export const styles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.lg,
   },
-  emptyTitle: { color: colors.textMuted, ...typeScale.body },
+  emptyTitle: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
   createButton: {
     minHeight: touchTarget,
     flexDirection: "row",
@@ -103,7 +139,10 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.accent,
   },
-  createButtonText: { color: colors.onPrimary, ...typeScale.body },
+  createButtonText: {
+    color: colors.onPrimary,
+    ...typeScale.body,
+  },
   pressed: { opacity: 0.72 },
   disabled: { opacity: 0.4 },
 });

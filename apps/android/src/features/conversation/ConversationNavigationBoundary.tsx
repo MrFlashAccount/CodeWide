@@ -10,6 +10,7 @@ import { emojiSafeTitle } from "../../ui/ThreadTitle";
 import { AppText as Text } from "../../ui/Typography";
 import { type ThreadListServer } from "../connections/connectionPresentation";
 import { type ThreadListItem } from "../threadList/threadListTypes";
+
 export function ConversationNavigationLoader({
   thread,
   server,
@@ -97,7 +98,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.large,
   },
-  conversation: { flex: 1, minWidth: 0, backgroundColor: colors.conversationSurface },
+  conversation: {
+    flex: 1,
+    minWidth: 0,
+    backgroundColor: colors.conversationSurface,
+  },
   conversationKeyboard: {
     flex: 1,
     minWidth: 0,
@@ -111,7 +116,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 0,
   },
-  conversationIdentity: { flex: 1, minWidth: 0 },
-  conversationTitle: { color: colors.text, ...typeScale.title },
-  conversationSubtitle: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.optical },
+  conversationIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  conversationTitle: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  conversationSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.optical,
+  },
 });

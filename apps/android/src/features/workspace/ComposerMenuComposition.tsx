@@ -14,6 +14,8 @@ import { ReviewSheet } from "../review/ReviewTargetSheet";
 import { BackgroundTerminalsSheet } from "../terminal/backgroundTerminals";
 import { styles } from "./ComposerMenuComposition.styles";
 import type { ComposerToolCapabilities } from "./composerToolCapabilities";
+
+/** Binds workspace-owned actions and resources to the composer menu. */
 export function ComposerMenuComposition({
   queuedPrompts,
   activeTurnId,

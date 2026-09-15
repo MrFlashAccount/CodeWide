@@ -1,6 +1,6 @@
 import type { ThreadGoalStatus } from "@codewide/codex-protocol/v0.147.0/v2";
 
-export type GoalEditorValue = {
+type GoalEditorValue = {
   objective: string;
   status: ThreadGoalStatus;
   tokenBudget: number | null;

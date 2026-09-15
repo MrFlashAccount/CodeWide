@@ -1,7 +1,12 @@
 import type { RemoteFileAttachment } from "@codewide/sync-client";
 import { fileMediaKind } from "@codewide/file-types";
 
-import { privateImageAssetProjection, safeImageUri, userImageSourceProjection, type PrivateImageAssetProjection } from "./image-source";
+import {
+  privateImageAssetProjection,
+  safeImageUri,
+  userImageSourceProjection,
+  type PrivateImageAssetProjection,
+} from "./image-source";
 import { normalizeUserMessage } from "./user-message-normalizer";
 
 export type UserMessageAttachmentSource =
@@ -44,12 +49,17 @@ export function projectUserMessageAttachments(
     const part = raw as Record<string, unknown>;
     const image = userImageSourceProjection(part);
     if (image !== null) {
-      const source: UserMessageAttachmentSource = image.kind === "content"
-        ? { type: "content", asset: image.asset }
-        : image.kind === "path"
-          ? { type: "path", path: image.path }
-          : { type: "url", url: image.uri };
-      push({ kind: "image", name: image.kind === "path" ? basename(image.path) : `Image ${result.length + 1}`, source });
+      const source: UserMessageAttachmentSource =
+        image.kind === "content"
+          ? { type: "content", asset: image.asset }
+          : image.kind === "path"
+            ? { type: "path", path: image.path }
+            : { type: "url", url: image.uri };
+      push({
+        kind: "image",
+        name: image.kind === "path" ? basename(image.path) : `Image ${result.length + 1}`,
+        source,
+      });
       continue;
     }
     if (part.type === "localAudio" && typeof part.path === "string" && part.path.length > 0) {
@@ -59,14 +69,19 @@ export function projectUserMessageAttachments(
     if (part.type === "mention" && typeof part.path === "string" && part.path.length > 0) {
       push({
         kind: fileMediaKind(part.path) ?? "file",
-        name: typeof part.name === "string" && part.name.length > 0 ? part.name : basename(part.path),
+        name:
+          typeof part.name === "string" && part.name.length > 0 ? part.name : basename(part.path),
         source: { type: "path", path: part.path },
       });
       continue;
     }
     if (part.type === "text" && typeof part.text === "string") {
       for (const file of normalizeUserMessage(part.text).files) {
-        push({ kind: fileMediaKind(file.name) ?? "file", name: file.name, source: { type: "path", path: file.path } });
+        push({
+          kind: fileMediaKind(file.name) ?? "file",
+          name: file.name,
+          source: { type: "path", path: file.path },
+        });
       }
     }
   }
@@ -97,7 +112,12 @@ function parseProjectedAttachments(value: unknown): UserMessageAttachment[] {
 function parseProjectedSource(value: unknown): UserMessageAttachmentSource | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as Record<string, unknown>;
-  if (source.type === "path" && typeof source.path === "string" && source.path.startsWith("/") && !source.path.includes("\0")) {
+  if (
+    source.type === "path" &&
+    typeof source.path === "string" &&
+    source.path.startsWith("/") &&
+    !source.path.includes("\0")
+  ) {
     return { type: "path", path: source.path };
   }
   if (source.type === "content") {

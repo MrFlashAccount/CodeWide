@@ -1,6 +1,8 @@
 import type { RemoteFileAttachment } from "@codewide/sync-client";
 import type { QueuedPrompt } from "../../data/thread-delivery-state";
 import { useEvent } from "../../react/useEvent";
+
+/** Remote commands available to the queued-prompt feature. */
 export type QueueCommands = {
   listQueuedPrompts(connectionId: string, threadId: string): Promise<QueuedPrompt[]>;
   editQueuedPrompt(

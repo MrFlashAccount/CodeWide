@@ -17,6 +17,8 @@ import type { VoiceInputController } from "../../data/voice-input-controller";
 import type { WorkspaceResourceDatabase } from "../../data/workspace-resource-database";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import type { ComposerAccessoryAction, ComposerMenuPage } from "./composerTypes";
+
+/** Capabilities and state required by the complete V1 composer surface. */
 export type ComposerFeatureProps = {
   newChat: boolean;
   workspaceResources: WorkspaceResourceDatabase | null;

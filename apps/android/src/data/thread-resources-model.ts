@@ -16,7 +16,10 @@ export type ThreadResourcesModel = {
 export function createThreadResourcesModel(maxResidentRows = 48): ThreadResourcesModel {
   const rows = new Map<string, Observable<ThreadResourcesRow | null>>();
   const retainCounts = new Map<string, number>();
-  const resources = new Map<string, { ready$: Observable<boolean>; revision: string; loadingRevision: string | null; token: number }>();
+  const resources = new Map<
+    string,
+    { ready$: Observable<boolean>; revision: string; loadingRevision: string | null; token: number }
+  >();
   let closed = false;
 
   const row$ = (id: string): Observable<ThreadResourcesRow | null> => {
@@ -32,7 +35,9 @@ export function createThreadResourcesModel(maxResidentRows = 48): ThreadResource
     const resident = [...rows]
       .flatMap(([id, node]) => {
         const row = node.peek();
-        return row === null || (retainCounts.get(id) ?? 0) > 0 ? [] : [{ id, updatedAt: row.updatedAt }];
+        return row === null || (retainCounts.get(id) ?? 0) > 0
+          ? []
+          : [{ id, updatedAt: row.updatedAt }];
       })
       .sort((left, right) => left.updatedAt - right.updatedAt);
     const residentCount = [...rows.values()].filter((node) => node.peek() !== null).length;
@@ -44,7 +49,17 @@ export function createThreadResourcesModel(maxResidentRows = 48): ThreadResource
     }
   };
 
-  const beginLoad = (id: string, revision: string, loader: () => Promise<unknown>, record: { ready$: Observable<boolean>; revision: string; loadingRevision: string | null; token: number }): Promise<boolean> => {
+  const beginLoad = (
+    id: string,
+    revision: string,
+    loader: () => Promise<unknown>,
+    record: {
+      ready$: Observable<boolean>;
+      revision: string;
+      loadingRevision: string | null;
+      token: number;
+    },
+  ): Promise<boolean> => {
     const token = record.token + 1;
     record.token = token;
     record.revision = revision;
@@ -53,16 +68,30 @@ export function createThreadResourcesModel(maxResidentRows = 48): ThreadResource
     // current stack so a loader that publishes a loading row cannot mutate an
     // external store in the middle of React rendering.
     const operation = Promise.resolve().then(loader);
-    return operation.then(() => {
-      const current = resources.get(id);
-      if (closed || current === undefined || current.token !== token || current.revision !== revision) return false;
-      current.loadingRevision = null;
-      return true;
-    }).catch((cause: unknown) => {
-      const current = resources.get(id);
-      if (!closed && current !== undefined && current.token === token && current.revision === revision) current.loadingRevision = null;
-      throw cause;
-    });
+    return operation
+      .then(() => {
+        const current = resources.get(id);
+        if (
+          closed ||
+          current === undefined ||
+          current.token !== token ||
+          current.revision !== revision
+        )
+          return false;
+        current.loadingRevision = null;
+        return true;
+      })
+      .catch((cause: unknown) => {
+        const current = resources.get(id);
+        if (
+          !closed &&
+          current !== undefined &&
+          current.token === token &&
+          current.revision === revision
+        )
+          current.loadingRevision = null;
+        throw cause;
+      });
   };
 
   return {
@@ -71,9 +100,16 @@ export function createThreadResourcesModel(maxResidentRows = 48): ThreadResource
       if (closed) throw new Error("Thread resources model is closed");
       let record = resources.get(id);
       if (record === undefined) {
-        record = { ready$: null as unknown as Observable<boolean>, revision, loadingRevision: revision, token: 0 };
+        record = {
+          ready$: null as unknown as Observable<boolean>,
+          revision,
+          loadingRevision: revision,
+          token: 0,
+        };
         resources.set(id, record);
-        record.ready$ = observable(beginLoad(id, revision, loader, record)) as unknown as Observable<boolean>;
+        record.ready$ = observable(
+          beginLoad(id, revision, loader, record),
+        ) as unknown as Observable<boolean>;
       } else if (record.revision !== revision && record.loadingRevision !== revision) {
         void beginLoad(id, revision, loader, record).catch(() => {
           // The loader publishes its scoped error row. Keep the stale value;

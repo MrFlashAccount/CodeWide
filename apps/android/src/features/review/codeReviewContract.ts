@@ -9,6 +9,8 @@ import type { CodeReviewComment } from "../../rendering/code-review";
 import type { CodeReviewViewMode } from "../../rendering/code-review-bridge";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 import type { CodeReviewFileResource } from "./code-review-files";
+
+/** Review resources, selection state, and commands required by the review workspace. */
 export type CodeReviewWorkspaceProps = {
   changes: readonly CodeReviewFileResource[];
   changeScope?: ThreadChangeScope;

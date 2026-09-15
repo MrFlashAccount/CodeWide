@@ -19,20 +19,23 @@ let nativeSubscription: { remove(): void } | null = null;
 function bridge(): NativeLargePasteModule | null {
   const candidate = NativeModules.CodeWideLargePaste as Partial<NativeLargePasteModule> | undefined;
   return typeof candidate?.install === "function" && typeof candidate.uninstall === "function"
-    ? candidate as NativeLargePasteModule
+    ? (candidate as NativeLargePasteModule)
     : null;
 }
 
 function ensureNativeSubscription(): void {
   if (nativeSubscription !== null) return;
-  nativeSubscription = DeviceEventEmitter.addListener("codewideLargePaste", (event: NativeLargePasteEvent) => {
-    if (typeof event.token !== "string" || typeof event.text !== "string") return;
-    callbacks.get(event.token)?.({
-      text: event.text,
-      start: Number.isFinite(event.start) ? event.start : 0,
-      end: Number.isFinite(event.end) ? event.end : 0,
-    });
-  });
+  nativeSubscription = DeviceEventEmitter.addListener(
+    "codewideLargePaste",
+    (event: NativeLargePasteEvent) => {
+      if (typeof event.token !== "string" || typeof event.text !== "string") return;
+      callbacks.get(event.token)?.({
+        text: event.text,
+        start: Number.isFinite(event.start) ? event.start : 0,
+        end: Number.isFinite(event.end) ? event.end : 0,
+      });
+    },
+  );
 }
 
 export function installLargePasteInterceptor(

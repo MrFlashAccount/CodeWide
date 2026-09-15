@@ -1,3 +1,4 @@
+/** Authenticated bidirectional channel leased from the native transport. */
 export type AuthenticatedDuplexChannel = {
   readonly readyState: number;
   send(data: string): void;
@@ -8,6 +9,7 @@ export type AuthenticatedDuplexChannel = {
   addEventListener(type: "error", listener: () => void): void;
 };
 
+/** Closed request set accepted by the authenticated native transport. */
 export type AuthenticatedRequest =
   | { operation: "file.download"; rootId: string; path: string; head: boolean }
   | { operation: "file.preview"; path: string; head: boolean }
@@ -35,12 +37,14 @@ export type AuthenticatedRequest =
   | { operation: "tunnel.create"; port: number; ttlSeconds: number | null }
   | { operation: "tunnel.delete"; tunnelId: string };
 
+/** Content response returned by an authenticated native request. */
 export type AuthenticatedResponse = {
   status: number;
   contentType: string;
   bodyBase64: string;
 };
 
+/** Shared authenticated transport authority for one saved server. */
 export type AuthenticatedTransportLease = {
   readonly savedServerId: string;
   openDuplex(purpose: "sync-v2" | "terminal-v2" | "voice-v2"): AuthenticatedDuplexChannel;

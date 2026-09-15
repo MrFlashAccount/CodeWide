@@ -16,12 +16,13 @@ export function parseQueuedInput(params: Record<string, unknown>): QueuedInput {
       continue;
     }
     if (
-      item?.type !== "remoteFile"
-      || typeof item.rootId !== "string"
-      || typeof item.path !== "string"
-      || typeof item.name !== "string"
-      || (item.kind !== "image" && item.kind !== "audio" && item.kind !== "file")
-    ) continue;
+      item?.type !== "remoteFile" ||
+      typeof item.rootId !== "string" ||
+      typeof item.path !== "string" ||
+      typeof item.name !== "string" ||
+      (item.kind !== "image" && item.kind !== "audio" && item.kind !== "file")
+    )
+      continue;
     attachments.push({
       id: `${item.rootId}\u0000${item.path}`,
       rootId: item.rootId,
@@ -33,7 +34,10 @@ export function parseQueuedInput(params: Record<string, unknown>): QueuedInput {
   return { text, attachments };
 }
 
-export function queuedInputPayload(text: string, attachments: readonly RemoteFileAttachment[]): unknown[] {
+export function queuedInputPayload(
+  text: string,
+  attachments: readonly RemoteFileAttachment[],
+): unknown[] {
   return [
     ...(text.length === 0 ? [] : [{ type: "text", text, text_elements: [] }]),
     ...attachments.map(({ rootId, path, name, kind }) => ({
@@ -48,6 +52,6 @@ export function queuedInputPayload(text: string, attachments: readonly RemoteFil
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }

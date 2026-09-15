@@ -1,5 +1,9 @@
 import { recordTiming } from "./operational-metrics";
-import type { ThreadDetailDatabase, ThreadRemoteNewerResult, ThreadRemoteOlderResult } from "./thread-detail-database";
+import type {
+  ThreadDetailDatabase,
+  ThreadRemoteNewerResult,
+  ThreadRemoteOlderResult,
+} from "./thread-detail-database";
 import { readThreadHistoryPage } from "./thread-history-page-read";
 import { parseThreadHistorySummaryPage } from "./thread-history-summary-page";
 import { THREAD_HISTORY_PAGE_SIZE, THREAD_RESIDENT_TURN_LIMIT } from "./thread-pagination";
@@ -11,6 +15,7 @@ import type {
 } from "./thread-sync-types";
 import { parseThreadTurnsAfterPage } from "./thread-turns-after-page";
 import { parseThreadTurnsListPage } from "./thread-turns-list-page";
+
 type HistoryAuthority = Pick<
   ThreadSyncAuthority,
   "getDetails" | "getSession" | "rpcAfterAttach"

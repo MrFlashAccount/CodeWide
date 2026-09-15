@@ -4,14 +4,21 @@ import { colors, controlSize, radii, spacing, typeScale } from "../../../theme";
 import { listRowHeight } from "../../../ui/AppListRow.types";
 
 export const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0 },
+  root: {
+    flex: 1,
+    minHeight: 0,
+  },
   searchRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xxs,
     paddingBottom: spacing.xs,
   },
-  search: { ...searchFieldLayout, flex: 1, minWidth: 0 },
+  search: {
+    ...searchFieldLayout,
+    flex: 1,
+    minWidth: 0,
+  },
   input: {
     ...typeScale.body,
     color: colors.text,
@@ -47,11 +54,25 @@ export const styles = StyleSheet.create({
     alignSelf: "flex-start",
     paddingVertical: spacing.xs,
   },
-  filterLabel: { ...typeScale.label, color: colors.textMuted },
-  list: { flex: 1, minHeight: 0 },
+  filterLabel: {
+    ...typeScale.label,
+    color: colors.textMuted,
+  },
+  list: {
+    flex: 1,
+    minHeight: 0,
+  },
   content: { paddingBottom: spacing.md },
-  notice: { ...typeScale.label, color: colors.textMuted, paddingVertical: spacing.sm },
-  error: { ...typeScale.label, color: colors.red, paddingVertical: spacing.sm },
+  notice: {
+    ...typeScale.label,
+    color: colors.textMuted,
+    paddingVertical: spacing.sm,
+  },
+  error: {
+    ...typeScale.label,
+    color: colors.red,
+    paddingVertical: spacing.sm,
+  },
   groupHeader: {
     height: listRowHeight.single,
     flexDirection: "row",
@@ -60,15 +81,29 @@ export const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.xs,
   },
-  groupTitle: { ...typeScale.label, color: colors.text, flex: 1, minWidth: 0 },
-  count: { ...typeScale.label, color: colors.textDim },
+  groupTitle: {
+    ...typeScale.label,
+    color: colors.text,
+    flex: 1,
+    minWidth: 0,
+  },
+  count: {
+    ...typeScale.label,
+    color: colors.textDim,
+  },
   row: {
     height: listRowHeight.double,
     overflow: "hidden",
     backgroundColor: colors.surfaceContainer,
   },
-  firstRow: { borderTopLeftRadius: radii.medium, borderTopRightRadius: radii.medium },
-  lastRow: { borderBottomLeftRadius: radii.medium, borderBottomRightRadius: radii.medium },
+  firstRow: {
+    borderTopLeftRadius: radii.medium,
+    borderTopRightRadius: radii.medium,
+  },
+  lastRow: {
+    borderBottomLeftRadius: radii.medium,
+    borderBottomRightRadius: radii.medium,
+  },
   separator: {
     position: "absolute",
     bottom: 0,

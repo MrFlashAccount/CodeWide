@@ -20,6 +20,8 @@ import { useWorkspaceListBindings } from "./workspaceListBindings";
 import { useWorkspaceProjectBindings } from "./workspaceProjectBindings";
 import type { WorkspaceContentProps } from "./WorkspaceScreen.types";
 import { renderWorkspaceScreenContent } from "./WorkspaceScreenContent";
+
+/** Mounts the complete V1 workspace composition. */
 export function WorkspaceScreen() {
   return <CodeWideWorkspaceScreen />;
 }

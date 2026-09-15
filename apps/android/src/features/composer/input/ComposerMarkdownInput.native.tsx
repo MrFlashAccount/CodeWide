@@ -18,6 +18,7 @@ import type {
 import { ComposerSuggestionsPopup } from "./ComposerSuggestionsPopup";
 import { insertedText } from "./insertedText";
 import { markdownStyle, styles } from "./nativeEditorStyles";
+
 export type MentionEvent = { readonly indicator: string; readonly text?: string };
 
 export function ComposerMarkdownInput({

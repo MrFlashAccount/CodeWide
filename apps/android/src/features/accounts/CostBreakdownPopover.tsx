@@ -176,10 +176,20 @@ function TokenCostRow({
 }
 
 const styles = StyleSheet.create({
-  content: { gap: spacing.xs, padding: spacing.sm },
+  content: {
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
   heading: { gap: spacing.optical },
-  title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
-  model: { color: colors.textDim, ...typeScale.label },
+  title: {
+    color: colors.text,
+    ...typeScale.title,
+    fontWeight: typeWeight.semibold,
+  },
+  model: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
   rows: { gap: spacing.optical },
   row: {
     minHeight: controlSize.compact,
@@ -188,14 +198,23 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.sm,
   },
-  rowLabel: { flexShrink: 1, color: colors.textMuted, ...typeScale.body },
+  rowLabel: {
+    flexShrink: 1,
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
   rowValue: {
     flexShrink: 0,
     color: colors.text,
     ...typeScale.label,
     fontVariant: ["tabular-nums"],
   },
-  tokenCostValue: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  tokenCostValue: {
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+  },
   totalRow: {
     minHeight: controlSize.compact,
     marginTop: spacing.xxs,
@@ -207,14 +226,23 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
-  totalLabel: { color: colors.text, ...typeScale.label },
+  totalLabel: {
+    color: colors.text,
+    ...typeScale.label,
+  },
   totalValue: {
     color: colors.text,
     ...typeScale.title,
     fontWeight: typeWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
-  note: { color: colors.textDim, ...typeScale.caption },
-  trigger: { color: colors.textMuted, ...typeScale.caption },
+  note: {
+    color: colors.textDim,
+    ...typeScale.caption,
+  },
+  trigger: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
   pressed: { opacity: 0.68 },
 });

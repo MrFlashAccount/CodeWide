@@ -1,5 +1,9 @@
 import { open } from "@op-engineering/op-sqlite";
-import { wrapSqliteDatabase, type SqliteDatabase, type SqliteDatabaseLike } from "@codewide/tanstack-db-sqlite";
+import {
+  wrapSqliteDatabase,
+  type SqliteDatabase,
+  type SqliteDatabaseLike,
+} from "@codewide/tanstack-db-sqlite";
 import { cacheDirectory, getInfoAsync } from "expo-file-system/legacy";
 import { AppState } from "react-native";
 
@@ -57,7 +61,9 @@ async function fileSize(path: string): Promise<number> {
 }
 
 export function getUiCacheSqliteDatabase(): SqliteDatabase {
-  sharedSqliteDatabase ??= wrapSqliteDatabase(getUiCacheNativeDatabase() as unknown as SqliteDatabaseLike);
+  sharedSqliteDatabase ??= wrapSqliteDatabase(
+    getUiCacheNativeDatabase() as unknown as SqliteDatabaseLike,
+  );
   installLifecycleFlush();
   return sharedSqliteDatabase;
 }
@@ -70,7 +76,10 @@ export function openLegacyUiCacheSqliteDatabase(): { database: SqliteDatabase; c
   };
 }
 
-export function registerUiCacheCollectionFlusher(collectionId: string, flush: () => Promise<void>): () => void {
+export function registerUiCacheCollectionFlusher(
+  collectionId: string,
+  flush: () => Promise<void>,
+): () => void {
   const flushers = flushersByCollection.get(collectionId) ?? new Set<() => Promise<void>>();
   flushers.add(flush);
   flushersByCollection.set(collectionId, flushers);
@@ -81,7 +90,9 @@ export function registerUiCacheCollectionFlusher(collectionId: string, flush: ()
 }
 
 export async function flushUiCacheCollection(collectionId: string): Promise<void> {
-  await Promise.all([...flushersByCollection.get(collectionId) ?? []].map(async (flush) => await flush()));
+  await Promise.all(
+    [...(flushersByCollection.get(collectionId) ?? [])].map(async (flush) => await flush()),
+  );
 }
 
 export async function flushLiveUiCacheCheckpoints(): Promise<void> {

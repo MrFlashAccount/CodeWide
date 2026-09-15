@@ -17,6 +17,7 @@ import { colors, iconSize } from "../../theme";
 import { useFullscreenWindowReady } from "../../ui/FullscreenWindowReady";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./TerminalWorkspace.styles";
+
 export function TerminalTab({ tab }: { tab: InteractiveTerminalTab }) {
   const terminalRef = useRef<TerminalViewRef>(null);
   const fullscreenWindowReady = useFullscreenWindowReady();

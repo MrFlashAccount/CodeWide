@@ -31,18 +31,38 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.surfaceRaised,
   },
-  toggleCopy: { flex: 1, minWidth: 0 },
-  title: { color: colors.text, ...typeScale.title },
-  subtitle: { marginTop: spacing.optical, color: colors.textMuted, ...typeScale.label },
-  notice: { color: colors.textMuted, ...typeScale.body },
-  error: { color: colors.red, ...typeScale.body },
+  toggleCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  subtitle: {
+    marginTop: spacing.optical,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  notice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  error: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   collecting: {
     minHeight: controlSize.touch,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
   },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
   metricTile: {
     width: "48%",
     flexGrow: 1,
@@ -52,14 +72,21 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.surfaceContainerLow,
   },
-  metricLabel: { color: colors.textMuted, ...typeScale.label },
+  metricLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   metricValue: {
     color: colors.text,
     ...typeScale.heading,
     fontWeight: typeWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
-  metricDetail: { color: colors.textDim, ...typeScale.label, fontVariant: ["tabular-nums"] },
+  metricDetail: {
+    color: colors.textDim,
+    ...typeScale.label,
+    fontVariant: ["tabular-nums"],
+  },
   chartCard: {
     padding: spacing.sm,
     gap: spacing.sm,
@@ -72,32 +99,79 @@ export const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.sm,
   },
-  chartTitle: { color: colors.text, ...typeScale.title },
-  chartSubtitle: { marginTop: spacing.optical, color: colors.textDim, ...typeScale.caption },
-  legend: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: spacing.xs },
-  legendItem: { flexDirection: "row", alignItems: "center", gap: spacing.xxs },
-  legendDot: { width: 7, height: 7, borderRadius: radii.pill },
-  legendLabel: { color: colors.textMuted, ...typeScale.caption },
-  sparkline: { height: layoutSize.row, overflow: "hidden" },
-  chartEmpty: { color: colors.textDim, ...typeScale.label },
-  memoryRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  chartTitle: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  chartSubtitle: {
+    marginTop: spacing.optical,
+    color: colors.textDim,
+    ...typeScale.caption,
+  },
+  legend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: spacing.xs,
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+  },
+  legendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: radii.pill,
+  },
+  legendLabel: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  sparkline: {
+    height: layoutSize.row,
+    overflow: "hidden",
+  },
+  chartEmpty: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
+  memoryRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
   memoryBreakdown: { gap: spacing.xs },
-  memoryLabel: { color: colors.textMuted, ...typeScale.label, fontVariant: ["tabular-nums"] },
+  memoryLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    fontVariant: ["tabular-nums"],
+  },
   experimentCard: {
     padding: spacing.sm,
     gap: spacing.sm,
     borderRadius: radii.medium,
     backgroundColor: colors.surfaceContainerLow,
   },
-  experimentHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
-  experimentHeaderCopy: { flex: 1, minWidth: 0 },
+  experimentHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+  },
+  experimentHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
   diagnosticsButtonRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "flex-end",
     gap: spacing.xs,
   },
-  diagnosticActionRow: { alignItems: "flex-end", gap: spacing.xs },
+  diagnosticActionRow: {
+    alignItems: "flex-end",
+    gap: spacing.xs,
+  },
   experimentRow: {
     minHeight: layoutSize.row,
     flexDirection: "row",
@@ -107,9 +181,19 @@ export const styles = StyleSheet.create({
     borderTopColor: colors.borderSoft,
     paddingTop: spacing.xs,
   },
-  experimentCopy: { flex: 1, minWidth: 0 },
-  experimentTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
-  experimentDescription: { color: colors.textMuted, ...typeScale.label },
+  experimentCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  experimentTitle: {
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  experimentDescription: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   smallButton: {
     minHeight: controlSize.compact,
     justifyContent: "center",
@@ -119,7 +203,10 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
   },
   smallButtonPressed: { opacity: 0.72 },
-  smallButtonText: { color: colors.text, ...typeScale.label },
+  smallButtonText: {
+    color: colors.text,
+    ...typeScale.label,
+  },
   abButton: {
     minWidth: controlSize.compact,
     minHeight: controlSize.compact,
@@ -129,7 +216,11 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.surfaceContainerHigh,
   },
-  abButtonText: { color: colors.text, ...typeScale.label, fontWeight: typeWeight.semibold },
+  abButtonText: {
+    color: colors.text,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
   buttonDisabled: { opacity: 0.5 },
   stageRow: {
     flexDirection: "row",
@@ -137,10 +228,26 @@ export const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.sm,
   },
-  stageLabel: { flex: 1, color: colors.textMuted, ...typeScale.label },
-  stageValue: { color: colors.text, ...typeScale.label, fontVariant: ["tabular-nums"] },
-  counterWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  counterText: { color: colors.textDim, ...typeScale.caption, fontVariant: ["tabular-nums"] },
+  stageLabel: {
+    flex: 1,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  stageValue: {
+    color: colors.text,
+    ...typeScale.label,
+    fontVariant: ["tabular-nums"],
+  },
+  counterWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  counterText: {
+    color: colors.textDim,
+    ...typeScale.caption,
+    fontVariant: ["tabular-nums"],
+  },
   resultCard: {
     padding: spacing.sm,
     gap: spacing.xs,
@@ -155,5 +262,8 @@ export const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
-  footnote: { color: colors.textDim, ...typeScale.caption },
+  footnote: {
+    color: colors.textDim,
+    ...typeScale.caption,
+  },
 });

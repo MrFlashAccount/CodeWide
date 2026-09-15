@@ -8,8 +8,12 @@ export function normalizeProjectCwd(value: string): string {
     const normalized = prefix + slashes.slice(prefix.length).replace(/\\{2,}/gu, "\\");
     return /^[A-Za-z]:\\$/u.test(normalized) ? normalized : normalized.replace(/\\+$/gu, "");
   }
-  const leading = cwd.startsWith("//") && !cwd.startsWith("///") ? "//" : cwd.startsWith("/") ? "/" : "";
-  const body = cwd.slice(leading.length).replace(/\/{2,}/gu, "/").replace(/\/+$/gu, "");
+  const leading =
+    cwd.startsWith("//") && !cwd.startsWith("///") ? "//" : cwd.startsWith("/") ? "/" : "";
+  const body = cwd
+    .slice(leading.length)
+    .replace(/\/{2,}/gu, "/")
+    .replace(/\/+$/gu, "");
   return leading + body;
 }
 

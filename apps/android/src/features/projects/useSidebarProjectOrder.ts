@@ -9,6 +9,7 @@ import {
 
 const database = getUserPreferencesDatabase();
 
+/** Returns persisted sidebar project order with mutation and reset actions. */
 export function useSidebarProjectOrder() {
   const query = useLiveQuery(() => database.collection);
   const order = decodeProjectOrder(

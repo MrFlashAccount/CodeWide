@@ -21,7 +21,7 @@ export type ConversationDestination =
     }
   | { kind: "draft"; generation: number; draft: NewChatDraft };
 
-export type ThreadNavigationSelection = {
+type ThreadNavigationSelection = {
   id: string | null;
   generation: number;
 };

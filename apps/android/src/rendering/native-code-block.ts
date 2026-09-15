@@ -6,10 +6,10 @@ export type NativeCodeVariant = "code" | "diff" | "terminal";
 // This is not the app's scalable prose/inline-code typography.
 export const NATIVE_CODE_FONT_SIZE = 11;
 export const NATIVE_CODE_LINE_HEIGHT = 16;
-export const NATIVE_CODE_VERTICAL_PADDING = 4;
+const NATIVE_CODE_VERTICAL_PADDING = 4;
 export const NATIVE_CODE_DEFAULT_MAX_HEIGHT = 400;
 export const NATIVE_CODE_MAX_PREVIEW_LINES = 2_000;
-export const NATIVE_CODE_MAX_PREVIEW_CHARS = 200_000;
+const NATIVE_CODE_MAX_PREVIEW_CHARS = 200_000;
 
 type NativeCodeLanguageDefinition = {
   id: string;
@@ -26,8 +26,14 @@ for (const language of nativeCodeLanguages) {
   for (const extension of language.extensions) EXTENSION_LANGUAGES.set(extension, language.id);
 }
 
-export function normalizeNativeCodeLanguage(language: string, variant: NativeCodeVariant = "code"): string {
-  const normalized = language.trim().toLocaleLowerCase().replace(/^language-/, "");
+export function normalizeNativeCodeLanguage(
+  language: string,
+  variant: NativeCodeVariant = "code",
+): string {
+  const normalized = language
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/^language-/, "");
   const resolved = LANGUAGE_ALIASES.get(normalized) ?? (normalized || "text");
   if (variant === "diff" && (resolved === "text" || resolved === "diff")) return "diff";
   return resolved;
@@ -51,19 +57,37 @@ export function nativeCodeLanguageForPath(path: string): string {
   return EXTENSION_LANGUAGES.get(extension) ?? "text";
 }
 
-export function nativeCodePreview(value: string): { value: string; truncated: boolean; originalLines: number } {
+export function nativeCodePreview(value: string): {
+  value: string;
+  truncated: boolean;
+  originalLines: number;
+} {
   const originalLines = value === "" ? 1 : value.split("\n").length;
-  if (value.length <= NATIVE_CODE_MAX_PREVIEW_CHARS && originalLines <= NATIVE_CODE_MAX_PREVIEW_LINES) {
+  if (
+    value.length <= NATIVE_CODE_MAX_PREVIEW_CHARS &&
+    originalLines <= NATIVE_CODE_MAX_PREVIEW_LINES
+  ) {
     return { value, truncated: false, originalLines };
   }
-  const lines = value.slice(0, NATIVE_CODE_MAX_PREVIEW_CHARS).split("\n").slice(0, NATIVE_CODE_MAX_PREVIEW_LINES);
+  const lines = value
+    .slice(0, NATIVE_CODE_MAX_PREVIEW_CHARS)
+    .split("\n")
+    .slice(0, NATIVE_CODE_MAX_PREVIEW_LINES);
   return { value: lines.join("\n"), truncated: true, originalLines };
 }
 
-export function nativeCodeHeight(value: string, maxHeight = NATIVE_CODE_DEFAULT_MAX_HEIGHT, maxVisibleLines?: number): number {
+export function nativeCodeHeight(
+  value: string,
+  maxHeight = NATIVE_CODE_DEFAULT_MAX_HEIGHT,
+  maxVisibleLines?: number,
+): number {
   const lineCount = value === "" ? 1 : value.split("\n").length;
-  const visibleLines = maxVisibleLines === undefined ? lineCount : Math.min(lineCount, Math.max(1, maxVisibleLines));
-  return Math.min(maxHeight, visibleLines * NATIVE_CODE_LINE_HEIGHT + NATIVE_CODE_VERTICAL_PADDING * 2);
+  const visibleLines =
+    maxVisibleLines === undefined ? lineCount : Math.min(lineCount, Math.max(1, maxVisibleLines));
+  return Math.min(
+    maxHeight,
+    visibleLines * NATIVE_CODE_LINE_HEIGHT + NATIVE_CODE_VERTICAL_PADDING * 2,
+  );
 }
 
 export function collapsedCodePreview(value: string, lines: number, fromEnd: boolean): string {

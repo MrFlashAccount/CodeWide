@@ -3,6 +3,7 @@ import { ConversationQueueFooter } from "./ConversationQueueFooter";
 import type { CreateConversationTimelineContentProps } from "./ConversationTimelineContent.types";
 import { ConversationTimelineSurface } from "./timeline/ConversationTimelineSurface";
 import { TimelineViewport } from "./timeline/TimelineViewport";
+
 export function createConversationTimelineContent(props: CreateConversationTimelineContentProps) {
   const timelineContent = (
     <TimelineViewport

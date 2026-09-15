@@ -56,8 +56,17 @@ export default function ComposerEditorTrial(props: TrialProps) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0, backgroundColor: colors.background },
-  header: { flexDirection: "row", alignItems: "center", gap: spacing.xs, padding: spacing.md },
+  root: {
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    padding: spacing.md,
+  },
   body: { flex: 1 },
   bodyContent: {
     paddingHorizontal: spacing.md,
@@ -71,14 +80,24 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xxs,
     backgroundColor: colors.surface,
   },
-  title: { ...typeScale.title, flex: 1, color: colors.text },
+  title: {
+    ...typeScale.title,
+    flex: 1,
+    color: colors.text,
+  },
   close: {
     minHeight: controlSize.regular,
     justifyContent: "center",
     paddingHorizontal: spacing.sm,
   },
-  text: { ...typeScale.body, color: colors.text },
-  hint: { ...typeScale.caption, color: colors.textMuted },
+  text: {
+    ...typeScale.body,
+    color: colors.text,
+  },
+  hint: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+  },
   preview: {
     gap: spacing.xxs,
     padding: spacing.sm,

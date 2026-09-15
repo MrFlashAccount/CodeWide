@@ -1,4 +1,9 @@
-import { assignSkillPlugins, parseCatalogSkills, parseInstalledSkillPlugins, parsePluginSkillPaths } from "./skill-catalog-adapter";
+import {
+  assignSkillPlugins,
+  parseCatalogSkills,
+  parseInstalledSkillPlugins,
+  parsePluginSkillPaths,
+} from "./skill-catalog-adapter";
 import type { CatalogSkill, InstalledSkillPlugin, SkillPlugin } from "./skill-catalog-types";
 
 type SkillCatalogReader = {
@@ -7,7 +12,10 @@ type SkillCatalogReader = {
   plugin(input: InstalledSkillPlugin): Promise<unknown>;
 };
 
-async function readPluginMembership(reader: SkillCatalogReader, signal: AbortSignal): Promise<{ paths: Map<string, SkillPlugin>; complete: boolean }> {
+async function readPluginMembership(
+  reader: SkillCatalogReader,
+  signal: AbortSignal,
+): Promise<{ paths: Map<string, SkillPlugin>; complete: boolean }> {
   const paths = new Map<string, SkillPlugin>();
   const ambiguous = new Set<string>();
   const plugins = parseInstalledSkillPlugins(await reader.installedPlugins());
@@ -39,17 +47,27 @@ async function readPluginMembership(reader: SkillCatalogReader, signal: AbortSig
 }
 
 /** Decoration has its own budget so it cannot consume the controls loader's 12s deadline. */
-export async function loadSkillCatalog(reader: SkillCatalogReader, metadataBudgetMs = 3_000): Promise<CatalogSkill[]> {
+export async function loadSkillCatalog(
+  reader: SkillCatalogReader,
+  metadataBudgetMs = 3_000,
+): Promise<CatalogSkill[]> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const metadata = Promise.race([
     readPluginMembership(reader, controller.signal).catch(() => null),
-    new Promise<null>((resolve) => { timer = setTimeout(() => { controller.abort(); resolve(null); }, metadataBudgetMs); }),
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve(null);
+      }, metadataBudgetMs);
+    }),
   ]);
   try {
     const skills = parseCatalogSkills(await reader.skills());
     const membership = await metadata;
-    return membership === null ? skills : assignSkillPlugins(skills, membership.paths, membership.complete);
+    return membership === null
+      ? skills
+      : assignSkillPlugins(skills, membership.paths, membership.complete);
   } finally {
     controller.abort();
     clearTimeout(timer);

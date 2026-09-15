@@ -6,6 +6,7 @@ import {
   STACK_VIEWPORT_HEIGHT,
   SWIPE_REVEAL,
 } from "./inlineQueueLayout";
+
 export const styles = StyleSheet.create({
   actionButton: {
     alignItems: "center",
@@ -25,15 +26,30 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xxs,
     ...typeScale.caption,
   },
-  actionText: { color: colors.textMuted, ...typeScale.caption, fontWeight: typeWeight.semibold },
+  actionText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    fontWeight: typeWeight.semibold,
+  },
   actions: {
     alignItems: "center",
     flexDirection: "row",
     flexShrink: 0,
     justifyContent: "flex-end",
   },
-  backdrop: { bottom: 0, left: 0, position: "absolute", right: 0, top: 0, zIndex: 1 },
-  body: { flex: 1, gap: spacing.optical, minWidth: 0 },
+  backdrop: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+    zIndex: 1,
+  },
+  body: {
+    flex: 1,
+    gap: spacing.optical,
+    minWidth: 0,
+  },
   bubble: {
     backgroundColor: colors.surfaceContainerHigh,
     borderColor: colors.border,
@@ -42,30 +58,70 @@ export const styles = StyleSheet.create({
     height: "100%",
     overflow: "hidden",
   },
-  cardSlot: { bottom: 0, left: 0, position: "absolute", right: 0 },
+  cardSlot: {
+    bottom: 0,
+    left: 0,
+    position: "absolute",
+    right: 0,
+  },
   collapsedBubbleContent: {
     height: STACK_HEIGHT - CARD_BORDER_WIDTH * 2,
     justifyContent: "center",
     paddingHorizontal: spacing.sm,
   },
-  collapsedList: { height: STACK_VIEWPORT_HEIGHT, marginTop: 0, overflow: "visible" },
-  contentRow: { alignItems: "center", flexDirection: "row", gap: spacing.xxs, minHeight: 0 },
+  collapsedList: {
+    height: STACK_VIEWPORT_HEIGHT,
+    marginTop: 0,
+    overflow: "visible",
+  },
+  contentRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xxs,
+    minHeight: 0,
+  },
   deleteSwipeAction: { backgroundColor: colors.red },
   deleteSwipeActionContent: { alignSelf: "flex-end" },
-  errorText: { color: colors.error, ...typeScale.caption },
+  errorText: {
+    color: colors.error,
+    ...typeScale.caption,
+  },
   expandedBubbleContent: {
     gap: spacing.xxs,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
   expandedTail: { zIndex: 60 },
-  failedBubble: { backgroundColor: colors.errorContainer, borderColor: colors.error },
-  list: { flexGrow: 0, flexShrink: 1, minHeight: 0, overflow: "visible" },
+  failedBubble: {
+    backgroundColor: colors.errorContainer,
+    borderColor: colors.error,
+  },
+  list: {
+    flexGrow: 0,
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: "visible",
+  },
   listContent: { position: "relative" },
-  message: { color: colors.text, ...typeScale.body },
-  meta: { color: colors.textMuted, ...typeScale.caption, fontVariant: ["tabular-nums"] },
-  footerRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs, minWidth: 0 },
-  metaRow: { flex: 1, minWidth: 0 },
+  message: {
+    color: colors.text,
+    ...typeScale.body,
+  },
+  meta: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    fontVariant: ["tabular-nums"],
+  },
+  footerRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: spacing.xs,
+    minWidth: 0,
+  },
+  metaRow: {
+    flex: 1,
+    minWidth: 0,
+  },
   moreButton: {
     alignItems: "center",
     height: controlSize.compact,
@@ -73,7 +129,13 @@ export const styles = StyleSheet.create({
     marginRight: -spacing.xxs,
     width: controlSize.compact,
   },
-  overlay: { bottom: 0, position: "absolute", right: 0, width: "82%", zIndex: 2 },
+  overlay: {
+    bottom: 0,
+    position: "absolute",
+    right: 0,
+    width: "82%",
+    zIndex: 2,
+  },
   pressed: { opacity: 0.72 },
   raisedCardSlot: { zIndex: 100 },
   retryButton: {
@@ -84,9 +146,19 @@ export const styles = StyleSheet.create({
     minHeight: controlSize.compact,
     paddingHorizontal: spacing.xxs,
   },
-  retryText: { color: colors.textMuted, ...typeScale.caption, fontWeight: typeWeight.semibold },
-  stackPreview: { color: colors.textMuted, ...typeScale.caption },
-  stackLine: { flex: 1, minWidth: 0 },
+  retryText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    fontWeight: typeWeight.semibold,
+  },
+  stackPreview: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  stackLine: {
+    flex: 1,
+    minWidth: 0,
+  },
   stackTitle: {
     color: colors.text,
     flexShrink: 0,
@@ -112,7 +184,11 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     width: SWIPE_REVEAL,
   },
-  swipeActionText: { color: colors.text, ...typeScale.caption, fontWeight: typeWeight.semibold },
+  swipeActionText: {
+    color: colors.text,
+    ...typeScale.caption,
+    fontWeight: typeWeight.semibold,
+  },
   tail: {
     minHeight: STACK_VIEWPORT_HEIGHT,
     overflow: "visible",

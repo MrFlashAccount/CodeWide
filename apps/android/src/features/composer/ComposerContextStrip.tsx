@@ -2,6 +2,7 @@ import { ScrollView } from "react-native";
 import { styles } from "./ComposerContextStrip.styles";
 import type { ComposerFeatureProps } from "./ComposerFeatureContract";
 import { ComposerControlChips } from "./settings/ComposerControlChips";
+
 type Props = Pick<
   ComposerFeatureProps,
   | "newChat"

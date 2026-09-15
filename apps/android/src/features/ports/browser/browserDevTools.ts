@@ -22,6 +22,7 @@ import {
   proxiedWebSocketUrl,
   type DevToolsTarget,
 } from "./devToolsTarget";
+
 export function useBrowserDevTools(
   webView: RefObject<WebView | null>,
   navigation: Pick<WebViewNavigation, "url">,

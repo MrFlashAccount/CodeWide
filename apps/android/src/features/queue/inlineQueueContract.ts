@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+
+/** Stable display projection of one queued prompt. */
 export interface InlineQueueOverlayItem {
   readonly id: string;
   readonly text: string;
@@ -8,6 +10,7 @@ export interface InlineQueueOverlayItem {
   readonly lastError: string | null;
 }
 
+/** Queue data, layout limits, and explicit item actions accepted by the overlay. */
 export interface InlineQueueOverlayProps {
   readonly maxHeight: number;
   readonly expanded: boolean;
@@ -23,6 +26,7 @@ export interface InlineQueueOverlayProps {
   onRefresh?(): Promise<unknown>;
 }
 
+/** Measured position and animation targets for one queue item. */
 export interface QueueLayout {
   readonly height: number;
   readonly item: InlineQueueOverlayItem;
@@ -31,6 +35,7 @@ export interface QueueLayout {
   readonly targetY: number;
 }
 
+/** Visual state and actions accepted by an animated queue bubble. */
 export interface AnimatedQueueBubbleProps {
   readonly children: ReactNode;
   readonly deleteEnabled: boolean;

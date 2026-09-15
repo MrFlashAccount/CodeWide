@@ -1,4 +1,9 @@
-import { fileMediaKind, isHtmlFile, isKnownCodeOrTextFile, isMarkdownFile } from "@codewide/file-types";
+import {
+  fileMediaKind,
+  isHtmlFile,
+  isKnownCodeOrTextFile,
+  isMarkdownFile,
+} from "@codewide/file-types";
 
 export type DocumentPreviewKind = "markdown" | "text" | "html" | "image" | "download";
 
@@ -53,12 +58,16 @@ export function markdownLineTarget(
     const contributionEnd = sourceOffset + contribution.length;
     const isLast = segmentIndex === segments.length - 1;
     if (targetOffset < contributionEnd || isLast) {
-      const sourcePrefixLength = Math.max(0, Math.min(contribution.length, targetOffset - sourceOffset));
+      const sourcePrefixLength = Math.max(
+        0,
+        Math.min(contribution.length, targetOffset - sourceOffset),
+      );
       return {
         segmentIndex,
-        line: 1
-          + countNewlines(segment.slice(0, contribution.renderedStart))
-          + countNewlines(source.slice(sourceOffset, sourceOffset + sourcePrefixLength)),
+        line:
+          1 +
+          countNewlines(segment.slice(0, contribution.renderedStart)) +
+          countNewlines(source.slice(sourceOffset, sourceOffset + sourcePrefixLength)),
       };
     }
     sourceOffset = contributionEnd;
@@ -85,11 +94,13 @@ export function remoteFileKind(name: string, path: string): DocumentPreviewKind 
 export function isRemoteFileHref(value: string): boolean {
   const raw = value.trim();
   const sourceReference = parseTextDocumentLocation(raw).path !== raw;
-  return raw !== ""
-    && !raw.startsWith("#")
-    && !raw.startsWith("//")
-    && !raw.includes("\0")
-    && (sourceReference || !/^[a-z][a-z\d+.-]*:/iu.test(raw));
+  return (
+    raw !== "" &&
+    !raw.startsWith("#") &&
+    !raw.startsWith("//") &&
+    !raw.includes("\0") &&
+    (sourceReference || !/^[a-z][a-z\d+.-]*:/iu.test(raw))
+  );
 }
 
 /** Resolve a path emitted by Codex against the remote thread cwd. The
@@ -100,7 +111,10 @@ export function resolveRemoteDocumentPath(value: string, cwd: string): string | 
   return resolveRemoteDocumentLocation(value, cwd)?.path ?? null;
 }
 
-export function resolveRemoteDocumentLocation(value: string, cwd: string): RemoteDocumentLocation | null {
+export function resolveRemoteDocumentLocation(
+  value: string,
+  cwd: string,
+): RemoteDocumentLocation | null {
   const raw = value.trim();
   if (!isRemoteFileHref(raw)) return null;
   const withoutFragment = raw.split("#", 1)[0] ?? "";
@@ -114,11 +128,16 @@ export function resolveRemoteDocumentLocation(value: string, cwd: string): Remot
   }
   if (decoded.includes("\0")) return null;
   const base = cwd.startsWith("/") ? cwd : "/workspace";
-  const normalized = normalizeAbsoluteRemotePath(decoded.startsWith("/") ? decoded : `${base}/${decoded}`);
+  const normalized = normalizeAbsoluteRemotePath(
+    decoded.startsWith("/") ? decoded : `${base}/${decoded}`,
+  );
   return parseTextDocumentLocation(normalized);
 }
 
-export function resolvePreviewableDocumentLink(href: string, cwd: string): PreviewableDocumentTarget | null {
+export function resolvePreviewableDocumentLink(
+  href: string,
+  cwd: string,
+): PreviewableDocumentTarget | null {
   const location = resolveRemoteDocumentLocation(href, cwd);
   if (location === null) return null;
   const name = remoteDocumentBasename(location.path);
@@ -152,7 +171,11 @@ function sourceLineStartOffset(source: string, line: number): number {
   return offset;
 }
 
-function segmentSourceContribution(segment: string, source: string, sourceOffset: number): { renderedStart: number; length: number } {
+function segmentSourceContribution(
+  segment: string,
+  source: string,
+  sourceOffset: number,
+): { renderedStart: number; length: number } {
   const remaining = source.slice(sourceOffset);
   const candidateStarts = [0];
   let newline = segment.indexOf("\n");
@@ -171,7 +194,8 @@ function segmentSourceContribution(segment: string, source: string, sourceOffset
 function commonPrefixLength(segment: string, segmentStart: number, source: string): number {
   const limit = Math.min(segment.length - segmentStart, source.length);
   let length = 0;
-  while (length < limit && segment.charCodeAt(segmentStart + length) === source.charCodeAt(length)) length += 1;
+  while (length < limit && segment.charCodeAt(segmentStart + length) === source.charCodeAt(length))
+    length += 1;
   return length;
 }
 
@@ -220,6 +244,7 @@ export function interactiveHtmlDocument(source: string): string {
   const headTag = /<head(?:\s[^>]*)?>/iu;
   if (headTag.test(source)) return source.replace(headTag, (match) => `${match}${head}`);
   const htmlTag = /<html(?:\s[^>]*)?>/iu;
-  if (htmlTag.test(source)) return source.replace(htmlTag, (match) => `${match}<head>${head}</head>`);
+  if (htmlTag.test(source))
+    return source.replace(htmlTag, (match) => `${match}<head>${head}</head>`);
   return `<!doctype html><html><head>${head}</head><body>${source}</body></html>`;
 }

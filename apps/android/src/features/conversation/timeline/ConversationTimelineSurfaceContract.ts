@@ -7,6 +7,8 @@ import { View } from "react-native";
 import type { ThreadHistoryModel } from "../../../data/thread-history-model";
 import type { ThreadHistoryViewport } from "../../../data/use-thread-history-controller";
 import type { MessageListState } from "../../../ui/MessageListBoundary";
+
+/** State and actions required by the complete conversation timeline surface. */
 export type ConversationTimelineSurfaceProps = {
   timelineViewportRef: RefObject<View | null>;
   draftConnectionId: string | null;

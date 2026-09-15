@@ -25,7 +25,11 @@ export const styles = StyleSheet.create({
     gap: spacing.compact,
     paddingTop: spacing.xxs,
   },
-  largeContentActions: { width: "100%", minWidth: 0, gap: spacing.xxs },
+  largeContentActions: {
+    width: "100%",
+    minWidth: 0,
+    gap: spacing.xxs,
+  },
   largeContentButton: {
     minHeight: controlSize.compact,
     minWidth: 0,
@@ -43,7 +47,11 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  largeContentPager: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.xxs },
+  largeContentPager: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: spacing.xxs,
+  },
   largeContentPageButton: {
     width: controlSize.compact,
     height: controlSize.compact,
@@ -52,7 +60,12 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.surfaceRaised,
   },
-  fullContentViewer: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  fullContentViewer: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
   fullContentHeader: {
     minHeight: layoutSize.header,
     flexDirection: "row",
@@ -70,9 +83,20 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  fullContentHeaderText: { flex: 1, minWidth: 0 },
-  fullContentTitle: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
-  fullContentMeta: { color: colors.textMuted, ...typeScale.caption, fontVariant: ["tabular-nums"] },
+  fullContentHeaderText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  fullContentTitle: {
+    color: colors.text,
+    ...typeScale.title,
+    fontWeight: typeWeight.semibold,
+  },
+  fullContentMeta: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    fontVariant: ["tabular-nums"],
+  },
   fullContentViewport: {
     flex: 1,
     minWidth: 0,
@@ -88,12 +112,21 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
     padding: spacing.md,
   },
-  fullContentMarkdown: { padding: spacing.md, paddingBottom: spacing.xl },
-  fullContentRawHorizontal: { flexGrow: 0, padding: spacing.sm },
+  fullContentMarkdown: {
+    padding: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  fullContentRawHorizontal: {
+    flexGrow: 0,
+    padding: spacing.sm,
+  },
   fullContentRawText: {
     color: "#D3D7DE",
     ...typeScale.code,
-    fontFamily: Platform.select({ android: "monospace", default: "Courier" }),
+    fontFamily: Platform.select({
+      android: "monospace",
+      default: "Courier",
+    }),
   },
   fullContentFooter: {
     minHeight: controlSize.touch,
@@ -105,9 +138,23 @@ export const styles = StyleSheet.create({
     borderTopColor: colors.borderSoft,
     backgroundColor: colors.surface,
   },
-  fullContentFooterText: { flex: 1, color: colors.textMuted, ...typeScale.caption },
-  turnMetaText: { color: colors.textMuted, ...typeScale.caption },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
+  fullContentFooterText: {
+    flex: 1,
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  turnMetaText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
   disabled: { opacity: 0.42 },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

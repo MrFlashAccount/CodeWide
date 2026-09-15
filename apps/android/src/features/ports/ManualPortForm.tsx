@@ -5,6 +5,7 @@ import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography"
 import { type FormState } from "./portForwardingForm";
 import { styles } from "./PortForwardingManager.styles";
 import { InlineError } from "./PortPresentation";
+
 export function ManualPortForm(props: {
   serverName: string;
   form: FormState;
@@ -105,7 +106,7 @@ export function ManualPortForm(props: {
   );
 }
 
-export function PortField(props: {
+function PortField(props: {
   label: string;
   hint: string;
   accessibilityLabel: string;

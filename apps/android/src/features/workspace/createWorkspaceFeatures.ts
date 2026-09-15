@@ -28,7 +28,7 @@ import { createTerminalWorkspaceAdapter } from "../terminal/workspaceAdapter";
 import { createTurnActionsWorkspaceAdapter } from "../turnActions/workspaceAdapter";
 
 /** Constructs stable feature capabilities over the existing module-lifetime runtime. */
-export function createWorkspaceFeatures() {
+function createWorkspaceFeatures() {
   const connections = createConnectionsWorkspaceAdapter({
     getProfiles: () => workspaceRuntime.snapshot.connectionProfiles,
     getConnectionState: () => workspaceRuntime.snapshot.connectionState,

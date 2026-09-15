@@ -27,7 +27,10 @@ export const styles = StyleSheet.create({
     flexShrink: 1,
     color: colors.text,
     ...typeScale.code,
-    fontFamily: Platform.select({ android: "monospace", default: "Courier" }),
+    fontFamily: Platform.select({
+      android: "monospace",
+      default: "Courier",
+    }),
   },
   diffKind: {
     flexShrink: 0,
@@ -39,12 +42,23 @@ export const styles = StyleSheet.create({
     minWidth: 18,
     flexShrink: 0,
     ...typeScale.code,
-    fontFamily: Platform.select({ android: "monospace", default: "Courier" }),
+    fontFamily: Platform.select({
+      android: "monospace",
+      default: "Courier",
+    }),
     fontVariant: ["tabular-nums"],
     textAlign: "right",
   },
   diffStatAdd: { color: colors.green },
   diffStatDelete: { color: colors.red },
-  diffLines: { width: "100%", minWidth: 0, paddingVertical: spacing.xxs },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
+  diffLines: {
+    width: "100%",
+    minWidth: 0,
+    paddingVertical: spacing.xxs,
+  },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
 });

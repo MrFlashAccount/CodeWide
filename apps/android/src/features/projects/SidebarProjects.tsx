@@ -10,6 +10,7 @@ import type { ProjectManagementProps } from "./projectManagementContract";
 import { ProjectManagementRow, projectManagerItemHeight } from "./ProjectManagementRow";
 import type { SidebarProject } from "./sidebarProjects";
 import { styles } from "./SidebarProjects.styles";
+
 export function SidebarProjectRow({
   project,
   onPress,

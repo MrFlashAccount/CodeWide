@@ -7,7 +7,7 @@ import { listRowPosition } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./SearchFilters.styles";
 
-export interface FilterOption {
+interface FilterOption {
   readonly id: string;
   readonly label: string;
   readonly subtitle?: string;

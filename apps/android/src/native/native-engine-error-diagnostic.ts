@@ -8,12 +8,18 @@ export function nativeEngineErrorDiagnostic(cause: unknown, fallback: string): s
   const message = readableStringProperty(cause, "message");
   const name = readableStringProperty(cause, "name");
   const stack = readableStringProperty(cause, "stack");
-  const summary = message === ""
-    ? name === "" || name === "Error" ? fallback : name
-    : name === "" || name === "Error" ? message : `${name}: ${message}`;
-  const diagnostic = stack === "" || stack === message || stack === summary
-    ? summary
-    : `${summary}\n\nJavaScript stack:\n${stack}`;
+  const summary =
+    message === ""
+      ? name === "" || name === "Error"
+        ? fallback
+        : name
+      : name === "" || name === "Error"
+        ? message
+        : `${name}: ${message}`;
+  const diagnostic =
+    stack === "" || stack === message || stack === summary
+      ? summary
+      : `${summary}\n\nJavaScript stack:\n${stack}`;
   return diagnostic.slice(0, MAX_NATIVE_ERROR_DIAGNOSTIC_CHARS);
 }
 

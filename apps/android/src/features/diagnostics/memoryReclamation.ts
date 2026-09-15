@@ -71,6 +71,6 @@ export function memoryCheckpointDelta(
   };
 }
 
-export function nullableDelta(current: number | null, previous: number | null): number | null {
+function nullableDelta(current: number | null, previous: number | null): number | null {
   return current === null || previous === null ? null : current - previous;
 }

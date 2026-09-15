@@ -14,16 +14,36 @@ import {
   resolveRemoteDocumentPath,
 } from "../src/rendering/document-preview";
 
-const changes = readFileSync(new URL("../src/features/changes/ChangesFeature.tsx", import.meta.url), "utf8");
+const changes = readFileSync(
+  new URL("../src/features/changes/ChangesFeature.tsx", import.meta.url),
+  "utf8",
+);
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
-const workspace = readFileSync(new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
-const nativeEditor = readFileSync(new URL("../src/rendering/CodeReviewEditor.native.tsx", import.meta.url), "utf8");
-const editorRuntime = readFileSync(new URL("../code-review-editor/entry.ts", import.meta.url), "utf8");
-const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
+const workspace = readFileSync(
+  new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url),
+  "utf8",
+);
+const nativeEditor = readFileSync(
+  new URL("../src/rendering/CodeReviewEditor.native.tsx", import.meta.url),
+  "utf8",
+);
+const editorRuntime = readFileSync(
+  new URL("../code-review-editor/entry.ts", import.meta.url),
+  "utf8",
+);
+const documentPreview = readFileSync(
+  new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
+  "utf8",
+);
 
-const migratedDocumentNavigation = readFileSync(new URL("../src/features/attachments/documentNavigation.ts", import.meta.url), "utf8");
-const migratedAttachmentPreview = readFileSync(new URL("../src/features/attachments/attachmentPreview.tsx", import.meta.url), "utf8");
-
+const migratedDocumentNavigation = readFileSync(
+  new URL("../src/features/attachments/documentNavigation.ts", import.meta.url),
+  "utf8",
+);
+const migratedAttachmentPreview = readFileSync(
+  new URL("../src/features/attachments/attachmentPreview.tsx", import.meta.url),
+  "utf8",
+);
 
 describe("document preview", () => {
   it("routes previewable documents, images and downloads by file type", () => {
@@ -53,12 +73,24 @@ describe("document preview", () => {
   });
 
   it("resolves attached relative document links against the remote thread cwd", () => {
-    expect(resolveRemoteDocumentPath("docs/../README.md", "/srv/project/apps/mobile")).toBe("/srv/project/apps/mobile/README.md");
-    expect(resolveRemoteDocumentPath("../docs/My%20Guide.md#intro", "/srv/project/apps/mobile")).toBe("/srv/project/apps/docs/My Guide.md");
-    expect(resolveRemoteDocumentPath("/srv/project/README.md", "/ignored")).toBe("/srv/project/README.md");
-    expect(resolveRemoteDocumentPath("/srv/project/src/Screen.tsx:2080", "/ignored")).toBe("/srv/project/src/Screen.tsx");
-    expect(resolveRemoteDocumentPath("src/Screen.tsx:2080:14", "/srv/project")).toBe("/srv/project/src/Screen.tsx");
-    expect(resolveRemoteDocumentPath("artifacts/build.zip:2080", "/srv/project")).toBe("/srv/project/artifacts/build.zip:2080");
+    expect(resolveRemoteDocumentPath("docs/../README.md", "/srv/project/apps/mobile")).toBe(
+      "/srv/project/apps/mobile/README.md",
+    );
+    expect(
+      resolveRemoteDocumentPath("../docs/My%20Guide.md#intro", "/srv/project/apps/mobile"),
+    ).toBe("/srv/project/apps/docs/My Guide.md");
+    expect(resolveRemoteDocumentPath("/srv/project/README.md", "/ignored")).toBe(
+      "/srv/project/README.md",
+    );
+    expect(resolveRemoteDocumentPath("/srv/project/src/Screen.tsx:2080", "/ignored")).toBe(
+      "/srv/project/src/Screen.tsx",
+    );
+    expect(resolveRemoteDocumentPath("src/Screen.tsx:2080:14", "/srv/project")).toBe(
+      "/srv/project/src/Screen.tsx",
+    );
+    expect(resolveRemoteDocumentPath("artifacts/build.zip:2080", "/srv/project")).toBe(
+      "/srv/project/artifacts/build.zip:2080",
+    );
     expect(resolveRemoteDocumentPath("https://example.test/README.md", "/srv/project")).toBeNull();
     expect(resolveRemoteDocumentPath("#section", "/srv/project")).toBeNull();
   });
@@ -69,7 +101,9 @@ describe("document preview", () => {
       name: "README.md",
       path: "/srv/project/docs/README.md",
     });
-    expect(resolvePreviewableDocumentLink("preview/index.HTML?mode=compact", "/srv/project")).toEqual({
+    expect(
+      resolvePreviewableDocumentLink("preview/index.HTML?mode=compact", "/srv/project"),
+    ).toEqual({
       kind: "html",
       name: "index.HTML",
       path: "/srv/project/preview/index.HTML",
@@ -107,15 +141,19 @@ describe("document preview", () => {
   });
 
   it("opens source references at a one-shot highlighted line without opening a comment", () => {
-    expect(changes).toContain('initialLine: request.line');
-    expect(changes).toContain('initialColumn: request.column');
+    expect(changes).toContain("initialLine: request.line");
+    expect(changes).toContain("initialColumn: request.column");
     expect(screen).not.toContain('target.kind === "text" || target.line !== undefined');
-    expect(migratedDocumentNavigation).toContain('if (target.kind === "text") openCodeDocument(request);');
+    expect(migratedDocumentNavigation).toContain(
+      'if (target.kind === "text") openCodeDocument(request);',
+    );
     expect(migratedAttachmentPreview).toContain('if (request.kind === "text") {');
     expect(changes).toContain("fullscreenOverlay.present(({ close }) => (");
-    expect(workspace).toContain('revealReference={selectedReference === null ? revealReference : null}');
+    expect(workspace).toContain(
+      "revealReference={selectedReference === null ? revealReference : null}",
+    );
     expect(nativeEditor).toContain('send({ command: "reveal", payload: revealReference })');
-    expect(editorRuntime).toContain('revealedReference = parsed.payload');
+    expect(editorRuntime).toContain("revealedReference = parsed.payload");
     expect(editorRuntime).toContain('scrollIntoView({ block: "center", inline: "nearest" })');
   });
 
@@ -141,16 +179,22 @@ describe("document preview", () => {
     expect(documentPreview).toContain('id === "text-smaller"');
     expect(documentPreview).toContain('id === "text-reset"');
     expect(documentPreview).toContain('id === "text-larger"');
-    expect(documentPreview).toContain('{ id: "layout-reading", label: "Reading width"');
-    expect(documentPreview).toContain('{ id: "layout-wide", label: "Full width"');
+    expect(compactSource(documentPreview)).toContain(
+      '{ id: "layout-reading", label: "Reading width"',
+    );
+    expect(compactSource(documentPreview)).toContain('{ id: "layout-wide", label: "Full width"');
     expect(documentPreview).toContain("<RichMarkdownTextScaleProvider scale={textScale}>");
-    expect(documentPreview).toContain('layoutMode === "reading" ? { maxWidth: documentReadingWidth(textScale) }');
+    expect(documentPreview).toContain(
+      'layoutMode === "reading" ? { maxWidth: documentReadingWidth(textScale) }',
+    );
     expect(documentPreview).toContain("documentReadingWidth(textScale)");
     expect(documentPreview).toContain("useDocumentViewerPreferences()");
   });
 
   it("wraps complete and fragment HTML without imposing a security policy", () => {
-    const complete = interactiveHtmlDocument("<!doctype html><html><head><title>x</title></head><body>ok</body></html>");
+    const complete = interactiveHtmlDocument(
+      "<!doctype html><html><head><title>x</title></head><body>ok</body></html>",
+    );
     expect(complete).not.toContain("Content-Security-Policy");
     expect(complete).toContain('<meta name="viewport"');
     expect(complete.indexOf('<meta name="viewport"')).toBeLessThan(complete.indexOf("<title>"));
@@ -161,7 +205,8 @@ describe("document preview", () => {
   });
 
   it("preserves scripts, frames and network APIs", () => {
-    const source = '<iframe srcdoc="<button>Nested</button>"></iframe><script src="https://unpkg.com/example.js"></script><script>fetch("https://example.com/data")</script>';
+    const source =
+      '<iframe srcdoc="<button>Nested</button>"></iframe><script src="https://unpkg.com/example.js"></script><script>fetch("https://example.com/data")</script>';
     const document = interactiveHtmlDocument(source);
     expect(document).toContain(source);
     expect(document).not.toContain("Content-Security-Policy");

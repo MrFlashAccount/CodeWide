@@ -29,9 +29,12 @@ export function VoiceAura({
     setNativeVoiceAuraState(active, 0, reducedMotion);
   }, [active, reducedMotion]);
 
-  useEffect(() => () => {
-    setNativeVoiceAuraState(false, 0, false);
-  }, []);
+  useEffect(
+    () => () => {
+      setNativeVoiceAuraState(false, 0, false);
+    },
+    [],
+  );
 
   return children;
 }

@@ -2,10 +2,7 @@ import type { Personality } from "@codewide/codex-protocol/v0.147.0";
 import { Pressable } from "react-native";
 
 import { ActionMenu, type ActionMenuItem } from "./ActionMenu";
-import type {
-  ModelThinkingMenuProps,
-  PermissionsMenuProps,
-} from "./TurnControlMenus.types";
+import type { ModelThinkingMenuProps, PermissionsMenuProps } from "./TurnControlMenus.types";
 
 const PERSONALITIES = ["friendly", "pragmatic", "none"] as const satisfies readonly Personality[];
 const SERVER_DEFAULT_PERSONALITY = "personality:server-default";
@@ -29,21 +26,32 @@ export function ModelThinkingMenu({
 }: ModelThinkingMenuProps) {
   const model = models.find((candidate) => candidate.id === selectedModel);
   const effectiveModel = selectedModel;
-  const efforts = model === undefined
-    ? []
-    : model.efforts.length > 0
-      ? model.efforts
-      : [model.defaultEffort];
+  const efforts =
+    model === undefined ? [] : model.efforts.length > 0 ? model.efforts : [model.defaultEffort];
   const effectiveEffort = selectedEffort;
   const actions: ActionMenuItem[] = [
     ...(loading && models.length === 0
-      ? [{ id: "model:loading", section: "Model", label: "Loading from remote server…", disabled: true }]
+      ? [
+          {
+            id: "model:loading",
+            section: "Model",
+            label: "Loading from remote server…",
+            disabled: true,
+          },
+        ]
       : []),
     ...(error === null
       ? []
       : [{ id: "model:error", section: "Error", label: error, disabled: true, destructive: true }]),
     ...(models.length === 0 && !loading
-      ? [{ id: "model:empty", section: "Model", label: "No models returned by the server", disabled: true }]
+      ? [
+          {
+            id: "model:empty",
+            section: "Model",
+            label: "No models returned by the server",
+            disabled: true,
+          },
+        ]
       : models.map((candidate) => ({
           id: `model:${candidate.id}`,
           section: "Model",
@@ -79,7 +87,7 @@ export function ModelThinkingMenu({
       const candidate = models.find((item) => item.id === id.slice("model:".length));
       if (candidate === undefined) return;
       const nextEffort = candidate.efforts.includes(effectiveEffort ?? "")
-        ? effectiveEffort ?? candidate.defaultEffort
+        ? (effectiveEffort ?? candidate.defaultEffort)
         : candidate.defaultEffort;
       onSelectModel(candidate.id, nextEffort);
       return;
@@ -92,7 +100,8 @@ export function ModelThinkingMenu({
       onSelectPersonality(null);
       return;
     }
-    if (id.startsWith("personality:")) onSelectPersonality(id.slice("personality:".length) as Personality);
+    if (id.startsWith("personality:"))
+      onSelectPersonality(id.slice("personality:".length) as Personality);
   };
 
   return (
@@ -102,10 +111,17 @@ export function ModelThinkingMenu({
       menuWidth={344}
       placement="top"
       align="start"
-      onOpenChange={(open) => { if (open) onOpen(); else onClose(); }}
+      onOpenChange={(open) => {
+        if (open) onOpen();
+        else onClose();
+      }}
       onSelect={select}
     >
-      <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel} style={triggerStyle}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        style={triggerStyle}
+      >
         {triggerChildren}
       </Pressable>
     </ActionMenu>
@@ -126,11 +142,26 @@ export function PermissionsMenu({
 }: PermissionsMenuProps) {
   const actions: ActionMenuItem[] = [
     ...(loading && permissions.length === 0
-      ? [{ id: "permissions:loading", section: "Security permissions", label: "Loading from remote server…", disabled: true }]
+      ? [
+          {
+            id: "permissions:loading",
+            section: "Security permissions",
+            label: "Loading from remote server…",
+            disabled: true,
+          },
+        ]
       : []),
     ...(error === null
       ? []
-      : [{ id: "permissions:error", section: "Error", label: error, disabled: true, destructive: true }]),
+      : [
+          {
+            id: "permissions:error",
+            section: "Error",
+            label: error,
+            disabled: true,
+            destructive: true,
+          },
+        ]),
     {
       id: SERVER_DEFAULT_PERMISSIONS,
       section: "Security permissions",
@@ -155,13 +186,21 @@ export function PermissionsMenu({
       menuWidth={344}
       placement="top"
       align="start"
-      onOpenChange={(open) => { if (open) onOpen(); else onClose(); }}
+      onOpenChange={(open) => {
+        if (open) onOpen();
+        else onClose();
+      }}
       onSelect={(id) => {
         if (id === SERVER_DEFAULT_PERMISSIONS) onSelectPermissions(null);
-        else if (id.startsWith("permissions:")) onSelectPermissions(id.slice("permissions:".length));
+        else if (id.startsWith("permissions:"))
+          onSelectPermissions(id.slice("permissions:".length));
       }}
     >
-      <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel} style={triggerStyle}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        style={triggerStyle}
+      >
         {triggerChildren}
       </Pressable>
     </ActionMenu>

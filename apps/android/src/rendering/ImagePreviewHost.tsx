@@ -1,20 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import {
-  createContext,
-  type ReactNode,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import {
-  ActivityIndicator,
-  Image,
-  Linking,
-  Pressable,
-  StyleSheet,
-  View,
-} from "react-native";
+import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Image, Linking, Pressable, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { retainCachedAttachment } from "../native/attachment-cache/cached-transfer";
@@ -28,12 +14,28 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { spacing, touchTarget, typeScale, typeWeight, iconSize, radii, controlSize } from "../theme";
+import {
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+  iconSize,
+  radii,
+  controlSize,
+} from "../theme";
 import { ActionMenu, type ActionMenuItem } from "../ui/ActionMenu";
 import { useAppDialog } from "../ui/AppDialog";
-import { useAppFullscreenOverlay, type AppFullscreenOverlayController } from "../ui/AppFullscreenOverlay";
+import {
+  useAppFullscreenOverlay,
+  type AppFullscreenOverlayController,
+} from "../ui/AppFullscreenOverlay";
 import { AppText as Text } from "../ui/Typography";
-import { ContentReviewComments, ContentReviewComposer, useContentReview, useImageReviewPoints } from "./ContentReviewHost";
+import {
+  ContentReviewComments,
+  ContentReviewComposer,
+  useContentReview,
+  useImageReviewPoints,
+} from "./ContentReviewHost";
 import { imageReviewPoint } from "./image-review-point";
 import type { ImageDraftTarget } from "../data/quickdraw-attachment";
 
@@ -72,11 +74,7 @@ const ImagePreviewGroupContext = createContext<string | null>(null);
  * Owns preview state above the virtualized timeline. A row can be recycled or
  * unmounted while the modal is open without destroying the preview.
  */
-export function ImagePreviewHost({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export function ImagePreviewHost({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, Map<string, RegisteredPreviewItem>>());
   const annotationRegistrationRef = useRef<ImageAnnotationHandler | null>(null);
   const sequenceRef = useRef(0);
@@ -97,14 +95,20 @@ export function ImagePreviewHost({
       };
     },
     open(request, fullscreen) {
-      const registered = request.groupId === null || request.groupId === undefined
-        ? []
-        : [...(registryRef.current.get(request.groupId)?.values() ?? [])];
+      const registered =
+        request.groupId === null || request.groupId === undefined
+          ? []
+          : [...(registryRef.current.get(request.groupId)?.values() ?? [])];
       const hasCurrent = registered.some((item) => item.id === request.id);
-      const items = (hasCurrent ? registered : [...registered, { ...request, sequence: sequenceRef.current }])
+      const items = (
+        hasCurrent ? registered : [...registered, { ...request, sequence: sequenceRef.current }]
+      )
         .sort((left, right) => (left.order ?? left.sequence) - (right.order ?? right.sequence))
         .map(({ sequence: _sequence, ...item }) => item);
-      const index = Math.max(0, items.findIndex((item) => item.id === request.id));
+      const index = Math.max(
+        0,
+        items.findIndex((item) => item.id === request.id),
+      );
       fullscreen.present(({ close }) => (
         <ImagePreviewSession
           initialSession={{ items, index }}
@@ -143,7 +147,9 @@ function ImagePreviewSession({
   const [session, setSession] = useState(initialSession);
   useEffect(() => {
     const releases = initialSession.items.map((item) => retainCachedAttachment(item.source.uri));
-    return () => { for (const release of releases) release(); };
+    return () => {
+      for (const release of releases) release();
+    };
   }, [initialSession]);
   const [preparingAnnotation, setPreparingAnnotation] = useState(false);
   const annotate = async () => {
@@ -152,7 +158,10 @@ function ImagePreviewSession({
     if (annotationHandler === null || item === undefined || preparingAnnotation) return;
     setPreparingAnnotation(true);
     await annotationHandler(item, onClose).catch((cause: unknown) => {
-      dialog.alert("Could not annotate image", cause instanceof Error ? cause.message : "Image could not be opened in QuickDraw");
+      dialog.alert(
+        "Could not annotate image",
+        cause instanceof Error ? cause.message : "Image could not be opened in QuickDraw",
+      );
     });
     setPreparingAnnotation(false);
   };
@@ -170,15 +179,22 @@ function ImagePreviewSession({
 }
 
 export function ImagePreviewGroup({ id, children }: { id: string; children: ReactNode }) {
-  return <ImagePreviewGroupContext.Provider value={id}>{children}</ImagePreviewGroupContext.Provider>;
+  return (
+    <ImagePreviewGroupContext.Provider value={id}>{children}</ImagePreviewGroupContext.Provider>
+  );
 }
 
-export function useImagePreview(): (request: ImagePreviewRequest, fullscreenOverride?: AppFullscreenOverlayController) => void {
+export function useImagePreview(): (
+  request: ImagePreviewRequest,
+  fullscreenOverride?: AppFullscreenOverlayController,
+) => void {
   const controller = useContext(ImagePreviewContext);
   const fullscreen = useAppFullscreenOverlay();
-  return useEvent((request: ImagePreviewRequest, fullscreenOverride?: AppFullscreenOverlayController) => {
-    controller.open(request, fullscreenOverride ?? fullscreen);
-  });
+  return useEvent(
+    (request: ImagePreviewRequest, fullscreenOverride?: AppFullscreenOverlayController) => {
+      controller.open(request, fullscreenOverride ?? fullscreen);
+    },
+  );
 }
 
 export function useImagePreviewGroup(): string | null {
@@ -203,7 +219,20 @@ export function useRegisterImagePreviewItem(groupId: string | null, item: ImageP
   });
   useEffect(() => {
     return registerCurrentItem();
-  }, [groupId, headersKey, item.id, item.label, item.link, item.order, item.reference, item.source.uri, item.draft?.scope, item.draft?.attachmentId, register, registerCurrentItem]);
+  }, [
+    groupId,
+    headersKey,
+    item.id,
+    item.label,
+    item.link,
+    item.order,
+    item.reference,
+    item.source.uri,
+    item.draft?.scope,
+    item.draft?.attachmentId,
+    register,
+    registerCurrentItem,
+  ]);
 }
 
 function ImageViewer({
@@ -224,11 +253,15 @@ function ImageViewer({
   const item = session.items[session.index];
   if (item === undefined) return null;
   const imageActions: ActionMenuItem[] = [
-    ...(item.download === null || item.download === undefined ? [] : [{ id: "download", label: "Download", icon: "download-outline" as const }]),
-    ...(item.link === null || item.link === undefined || item.link === item.source.uri ? [] : [{ id: "open", label: "Open link", icon: "open-outline" as const }]),
+    ...(item.download === null || item.download === undefined
+      ? []
+      : [{ id: "download", label: "Download", icon: "download-outline" as const }]),
+    ...(item.link === null || item.link === undefined || item.link === item.source.uri
+      ? []
+      : [{ id: "open", label: "Open link", icon: "open-outline" as const }]),
   ];
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}> 
+    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <ZoomableImage
         key={item.id}
         item={item}
@@ -239,12 +272,19 @@ function ImageViewer({
         onNext={() => onChangeIndex(session.index + 1)}
         onClose={onClose}
       />
-      <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top + spacing.xs }]}> 
-        <Pressable accessibilityRole="button" accessibilityLabel="Close image" onPress={onClose} style={styles.roundButton}>
+      <View pointerEvents="box-none" style={[styles.topBar, { top: insets.top + spacing.xs }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close image"
+          onPress={onClose}
+          style={styles.roundButton}
+        >
           <Ionicons name="close" size={iconSize.navigation} color="#ffffff" />
         </Pressable>
         <View style={styles.counterPill}>
-          <Text style={styles.counterText}>{session.index + 1} / {session.items.length}</Text>
+          <Text style={styles.counterText}>
+            {session.index + 1} / {session.items.length}
+          </Text>
         </View>
         <View style={styles.topBarActions}>
           <Pressable
@@ -254,7 +294,11 @@ function ImageViewer({
             onPress={() => setPinMode(!pinMode)}
             style={styles.roundButton}
           >
-            <Ionicons name={pinMode ? "pin" : "pin-outline"} size={iconSize.action} color={pinMode ? "#B794F6" : "#ffffff"} />
+            <Ionicons
+              name={pinMode ? "pin" : "pin-outline"}
+              size={iconSize.action}
+              color={pinMode ? "#B794F6" : "#ffffff"}
+            />
           </Pressable>
           {imageActions.length > 0 && (
             <ActionMenu
@@ -262,7 +306,8 @@ function ImageViewer({
               actions={imageActions}
               onSelect={(id) => {
                 if (id === "download") void item.download?.();
-                else if (id === "open" && item.link !== null && item.link !== undefined) void Linking.openURL(item.link);
+                else if (id === "open" && item.link !== null && item.link !== undefined)
+                  void Linking.openURL(item.link);
               }}
               style={styles.imageMenuAnchor}
             >
@@ -279,9 +324,11 @@ function ImageViewer({
               onPress={onAnnotate}
               style={[styles.roundButton, annotationPreparing && styles.disabled]}
             >
-              {annotationPreparing
-                ? <ActivityIndicator size="small" color="#ffffff" />
-                : <Ionicons name="brush-outline" size={iconSize.action} color="#ffffff" />}
+              {annotationPreparing ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Ionicons name="brush-outline" size={iconSize.action} color="#ffffff" />
+              )}
             </Pressable>
           )}
         </View>
@@ -311,7 +358,12 @@ function ZoomableImage({
   const review = useContentReview();
   const points = useImageReviewPoints(reviewTargetId);
   const placePin = useEvent((x: number, y: number) => {
-    void review({ kind: "image", target: { id: reviewTargetId, label: item.label, reference: item.reference ?? null }, x, y });
+    void review({
+      kind: "image",
+      target: { id: reviewTargetId, label: item.label, reference: item.reference ?? null },
+      x,
+      y,
+    });
   });
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
   const [intrinsic, setIntrinsic] = useState({ width: 1, height: 1 });
@@ -362,7 +414,9 @@ function ZoomableImage({
       } else if (gestureAxis.get() === 2) {
         pageOffset.set(0);
         translateY.set(event.translationY);
-        dismissOpacity.set(Math.max(0.35, 1 - Math.abs(event.translationY) / Math.max(1, viewport.height * 0.55)));
+        dismissOpacity.set(
+          Math.max(0.35, 1 - Math.abs(event.translationY) / Math.max(1, viewport.height * 0.55)),
+        );
       }
     })
     .onEnd((event) => {
@@ -373,10 +427,19 @@ function ZoomableImage({
       if (gestureAxis.get() === 1) {
         const direction = event.translationX < 0 ? 1 : -1;
         const allowed = direction > 0 ? canGoNext : canGoPrevious;
-        if (allowed && (Math.abs(event.translationX) > viewport.width * 0.16 || Math.abs(event.velocityX) > 720)) {
-          pageOffset.set(withTiming(direction > 0 ? -viewport.width : viewport.width, { duration: 120, easing: Easing.out(Easing.cubic) }, (finished) => {
-            if (finished) runOnJS(navigate)(direction);
-          }));
+        if (
+          allowed &&
+          (Math.abs(event.translationX) > viewport.width * 0.16 || Math.abs(event.velocityX) > 720)
+        ) {
+          pageOffset.set(
+            withTiming(
+              direction > 0 ? -viewport.width : viewport.width,
+              { duration: 120, easing: Easing.out(Easing.cubic) },
+              (finished) => {
+                if (finished) runOnJS(navigate)(direction);
+              },
+            ),
+          );
           gestureAxis.set(0);
           return;
         }
@@ -384,10 +447,19 @@ function ZoomableImage({
         gestureAxis.set(0);
         return;
       }
-      if (gestureAxis.get() === 2 && (Math.abs(event.translationY) > viewport.height * 0.14 || Math.abs(event.velocityY) > 820)) {
-        translateY.set(withTiming(event.translationY < 0 ? -viewport.height : viewport.height, { duration: 130, easing: Easing.out(Easing.cubic) }, (finished) => {
-          if (finished) runOnJS(onClose)();
-        }));
+      if (
+        gestureAxis.get() === 2 &&
+        (Math.abs(event.translationY) > viewport.height * 0.14 || Math.abs(event.velocityY) > 820)
+      ) {
+        translateY.set(
+          withTiming(
+            event.translationY < 0 ? -viewport.height : viewport.height,
+            { duration: 130, easing: Easing.out(Easing.cubic) },
+            (finished) => {
+              if (finished) runOnJS(onClose)();
+            },
+          ),
+        );
         dismissOpacity.set(withTiming(0, { duration: 130, easing: Easing.out(Easing.cubic) }));
       } else {
         translateY.set(withTiming(0, { duration: 110, easing: Easing.out(Easing.cubic) }));
@@ -412,37 +484,67 @@ function ZoomableImage({
       }
       const maxX = Math.max(0, (fit.width * scale.get() - viewport.width) / 2);
       const maxY = Math.max(0, (fit.height * scale.get() - viewport.height) / 2);
-      translateX.set(withTiming(Math.max(-maxX, Math.min(maxX, translateX.get())), { duration: 100, easing: Easing.out(Easing.cubic) }));
-      translateY.set(withTiming(Math.max(-maxY, Math.min(maxY, translateY.get())), { duration: 100, easing: Easing.out(Easing.cubic) }));
+      translateX.set(
+        withTiming(Math.max(-maxX, Math.min(maxX, translateX.get())), {
+          duration: 100,
+          easing: Easing.out(Easing.cubic),
+        }),
+      );
+      translateY.set(
+        withTiming(Math.max(-maxY, Math.min(maxY, translateY.get())), {
+          duration: 100,
+          easing: Easing.out(Easing.cubic),
+        }),
+      );
     });
 
-  const doubleTap = Gesture.Tap().numberOfTaps(2).maxDuration(260).onEnd((event, success) => {
-    if (!success) return;
-    const zoomed = scale.get() > 1.01;
-    const targetScale = zoomed ? 1 : 2.5;
-    scale.set(withTiming(targetScale, { duration: 150, easing: Easing.out(Easing.cubic) }));
-    if (zoomed) {
-      translateX.set(withTiming(0, { duration: 150, easing: Easing.out(Easing.cubic) }));
-      translateY.set(withTiming(0, { duration: 150, easing: Easing.out(Easing.cubic) }));
-    } else {
-      const nextX = (viewport.width / 2 - event.x) * (targetScale - 1);
-      const nextY = (viewport.height / 2 - event.y) * (targetScale - 1);
-      const maxX = Math.max(0, (fit.width * targetScale - viewport.width) / 2);
-      const maxY = Math.max(0, (fit.height * targetScale - viewport.height) / 2);
-      translateX.set(withTiming(Math.max(-maxX, Math.min(maxX, nextX)), { duration: 150, easing: Easing.out(Easing.cubic) }));
-      translateY.set(withTiming(Math.max(-maxY, Math.min(maxY, nextY)), { duration: 150, easing: Easing.out(Easing.cubic) }));
-    }
-  });
-
-  const pinTap = Gesture.Tap().withTestId("image-review-pin-tap").enabled(pinMode && decodeState === "ready").onEnd((event, success) => {
-    if (!success) return;
-    const point = imageReviewPoint(event, {
-      width: fit.width, height: fit.height,
-      viewportWidth: viewport.width, viewportHeight: viewport.height,
-      scale: scale.get(), translateX: translateX.get() + pageOffset.get(), translateY: translateY.get(),
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .maxDuration(260)
+    .onEnd((event, success) => {
+      if (!success) return;
+      const zoomed = scale.get() > 1.01;
+      const targetScale = zoomed ? 1 : 2.5;
+      scale.set(withTiming(targetScale, { duration: 150, easing: Easing.out(Easing.cubic) }));
+      if (zoomed) {
+        translateX.set(withTiming(0, { duration: 150, easing: Easing.out(Easing.cubic) }));
+        translateY.set(withTiming(0, { duration: 150, easing: Easing.out(Easing.cubic) }));
+      } else {
+        const nextX = (viewport.width / 2 - event.x) * (targetScale - 1);
+        const nextY = (viewport.height / 2 - event.y) * (targetScale - 1);
+        const maxX = Math.max(0, (fit.width * targetScale - viewport.width) / 2);
+        const maxY = Math.max(0, (fit.height * targetScale - viewport.height) / 2);
+        translateX.set(
+          withTiming(Math.max(-maxX, Math.min(maxX, nextX)), {
+            duration: 150,
+            easing: Easing.out(Easing.cubic),
+          }),
+        );
+        translateY.set(
+          withTiming(Math.max(-maxY, Math.min(maxY, nextY)), {
+            duration: 150,
+            easing: Easing.out(Easing.cubic),
+          }),
+        );
+      }
     });
-    if (point !== null) runOnJS(placePin)(point.x, point.y);
-  });
+
+  const pinTap = Gesture.Tap()
+    .withTestId("image-review-pin-tap")
+    .enabled(pinMode && decodeState === "ready")
+    .onEnd((event, success) => {
+      if (!success) return;
+      const point = imageReviewPoint(event, {
+        width: fit.width,
+        height: fit.height,
+        viewportWidth: viewport.width,
+        viewportHeight: viewport.height,
+        scale: scale.get(),
+        translateX: translateX.get() + pageOffset.get(),
+        translateY: translateY.get(),
+      });
+      if (point !== null) runOnJS(placePin)(point.x, point.y);
+    });
   const gestures = Gesture.Simultaneous(pan, pinch, Gesture.Exclusive(doubleTap, pinTap));
   const imageStyle = useAnimatedStyle(() => ({
     transform: [
@@ -457,10 +559,12 @@ function ZoomableImage({
     <Animated.View
       testID="image-preview-viewport"
       style={[styles.viewer, backdropStyle]}
-      onLayout={({ nativeEvent }) => setViewport({
-        width: Math.max(1, nativeEvent.layout.width),
-        height: Math.max(1, nativeEvent.layout.height),
-      })}
+      onLayout={({ nativeEvent }) =>
+        setViewport({
+          width: Math.max(1, nativeEvent.layout.width),
+          height: Math.max(1, nativeEvent.layout.height),
+        })
+      }
     >
       <GestureDetector gesture={gestures}>
         <View style={styles.gestureSurface}>
@@ -475,7 +579,9 @@ function ZoomableImage({
               <Text style={styles.imageError}>Image decode failed</Text>
             </View>
           )}
-          <Animated.View style={[styles.imageLayer, { width: fit.width, height: fit.height }, imageStyle]}>
+          <Animated.View
+            style={[styles.imageLayer, { width: fit.width, height: fit.height }, imageStyle]}
+          >
             <Image
               accessibilityLabel={`${item.label} full screen`}
               source={item.source}
@@ -499,7 +605,14 @@ function ZoomableImage({
               <View
                 key={point.id}
                 pointerEvents="none"
-                style={[styles.pin, { left: `${point.x * 100}%`, top: `${point.y * 100}%`, opacity: point.pending ? 0.6 : 1 }]}
+                style={[
+                  styles.pin,
+                  {
+                    left: `${point.x * 100}%`,
+                    top: `${point.y * 100}%`,
+                    opacity: point.pending ? 0.6 : 1,
+                  },
+                ]}
               >
                 <Text style={styles.pinText}>{index + 1}</Text>
               </View>
@@ -513,8 +626,16 @@ function ZoomableImage({
   );
 }
 
-function containSize(imageWidth: number, imageHeight: number, viewportWidth: number, viewportHeight: number): { width: number; height: number } {
-  const ratio = Math.min(viewportWidth / Math.max(1, imageWidth), viewportHeight / Math.max(1, imageHeight));
+function containSize(
+  imageWidth: number,
+  imageHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): { width: number; height: number } {
+  const ratio = Math.min(
+    viewportWidth / Math.max(1, imageWidth),
+    viewportHeight / Math.max(1, imageHeight),
+  );
   return {
     width: Math.max(1, imageWidth * ratio),
     height: Math.max(1, imageHeight * ratio),
@@ -523,22 +644,106 @@ function containSize(imageWidth: number, imageHeight: number, viewportWidth: num
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  host: { flex: 1, minWidth: 0, minHeight: 0, position: "relative" },
-  overlay: { flex: 1, backgroundColor: "#000000" },
-  root: { flex: 1, backgroundColor: "#000000" },
-  viewer: { position: "absolute", left: 0, top: 0, right: 0, bottom: 0, backgroundColor: "#000000" },
-  gestureSurface: { flex: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  imageStatus: { position: "absolute", alignItems: "center", justifyContent: "center", gap: spacing.sm, zIndex: 2 },
-  imageError: { color: "#ffffff", ...typeScale.body, fontWeight: typeWeight.semibold },
-  imageLayer: { alignItems: "center", justifyContent: "center" },
-  image: { width: "100%", height: "100%" },
-  pin: { position: "absolute", width: controlSize.compact, height: controlSize.compact, marginLeft: -controlSize.compact / 2, marginTop: -controlSize.compact / 2, borderRadius: radii.pill, backgroundColor: "#B794F6", alignItems: "center", justifyContent: "center" },
-  pinText: { color: "#000000", ...typeScale.label, fontWeight: typeWeight.semibold },
-  topBar: { position: "absolute", left: spacing.sm, right: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  topBarActions: { flexDirection: "row", gap: spacing.xs },
-  roundButton: { width: touchTarget, height: touchTarget, borderRadius: radii.pill, backgroundColor: "rgba(36,36,36,0.9)", alignItems: "center", justifyContent: "center" },
-  imageMenuAnchor: { width: touchTarget, height: touchTarget },
-  counterPill: { minHeight: controlSize.compact, borderRadius: radii.medium, backgroundColor: "rgba(36,36,36,0.82)", paddingHorizontal: spacing.sm, alignItems: "center", justifyContent: "center" },
-  counterText: { color: "#ffffff", ...typeScale.label, fontWeight: typeWeight.semibold },
+  host: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    position: "relative",
+  },
+  overlay: {
+    flex: 1,
+    backgroundColor: "#000000",
+  },
+  root: {
+    flex: 1,
+    backgroundColor: "#000000",
+  },
+  viewer: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "#000000",
+  },
+  gestureSurface: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  imageStatus: {
+    position: "absolute",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    zIndex: 2,
+  },
+  imageError: {
+    color: "#ffffff",
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  imageLayer: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  image: {
+    width: "100%",
+    height: "100%",
+  },
+  pin: {
+    position: "absolute",
+    width: controlSize.compact,
+    height: controlSize.compact,
+    marginLeft: -controlSize.compact / 2,
+    marginTop: -controlSize.compact / 2,
+    borderRadius: radii.pill,
+    backgroundColor: "#B794F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pinText: {
+    color: "#000000",
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  topBar: {
+    position: "absolute",
+    left: spacing.sm,
+    right: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  topBarActions: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  roundButton: {
+    width: touchTarget,
+    height: touchTarget,
+    borderRadius: radii.pill,
+    backgroundColor: "rgba(36,36,36,0.9)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imageMenuAnchor: {
+    width: touchTarget,
+    height: touchTarget,
+  },
+  counterPill: {
+    minHeight: controlSize.compact,
+    borderRadius: radii.medium,
+    backgroundColor: "rgba(36,36,36,0.82)",
+    paddingHorizontal: spacing.sm,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  counterText: {
+    color: "#ffffff",
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
   disabled: { opacity: 0.4 },
 });

@@ -1,4 +1,13 @@
-import { cacheDirectory, deleteAsync, getInfoAsync, makeDirectoryAsync, moveAsync, readAsStringAsync, readDirectoryAsync, writeAsStringAsync } from "expo-file-system/legacy";
+import {
+  cacheDirectory,
+  deleteAsync,
+  getInfoAsync,
+  makeDirectoryAsync,
+  moveAsync,
+  readAsStringAsync,
+  readDirectoryAsync,
+  writeAsStringAsync,
+} from "expo-file-system/legacy";
 import type { AttachmentStorage, CachedAttachment } from "./disk-cache";
 
 const KEY = /^[a-f0-9]{64}$/u;
@@ -27,7 +36,7 @@ export class ExpoAttachmentStorage implements AttachmentStorage {
       try {
         const value: unknown = JSON.parse(await readAsStringAsync(`${this.root()}${name}`));
         const entry = parseEntry(value, key);
-        if (entry !== null && await this.exists(key, entry.bytes)) {
+        if (entry !== null && (await this.exists(key, entry.bytes))) {
           restored.push(entry);
           valid.add(`${key}.json`);
           valid.add(`${key}.bin`);
@@ -66,7 +75,13 @@ function parseEntry(value: unknown, key: string): CachedAttachment | null {
   if (value === null || typeof value !== "object") return null;
   const bytes: unknown = Reflect.get(value, "bytes");
   const touchedAt: unknown = Reflect.get(value, "touchedAt");
-  if (typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes < 0
-    || typeof touchedAt !== "number" || !Number.isFinite(touchedAt)) return null;
+  if (
+    typeof bytes !== "number" ||
+    !Number.isSafeInteger(bytes) ||
+    bytes < 0 ||
+    typeof touchedAt !== "number" ||
+    !Number.isFinite(touchedAt)
+  )
+    return null;
   return { key, bytes, touchedAt };
 }

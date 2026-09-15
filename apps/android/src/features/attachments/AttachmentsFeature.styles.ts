@@ -19,7 +19,11 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.large,
   },
-  threadResourceRoute: { flex: 1, width: "100%", minHeight: 0 },
+  threadResourceRoute: {
+    flex: 1,
+    width: "100%",
+    minHeight: 0,
+  },
   threadResourceRouteHidden: { display: "none" },
   threadResourcesContent: { paddingBottom: spacing.md },
   threadAttachmentCell: { height: listRowHeight.double },
@@ -49,14 +53,22 @@ export const styles = StyleSheet.create({
     borderRadius: radii.large,
     backgroundColor: colors.primary,
   },
-  primaryActionText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  primaryActionText: {
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
   threadResourcesEmpty: {
     minHeight: 180,
     alignItems: "center",
     justifyContent: "center",
     gap: spacing.xxs,
   },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
   menuTitleRow: {
     minHeight: touchTarget,
     marginBottom: spacing.xs,
@@ -71,7 +83,17 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
-  menuScroll: { flex: 1, minHeight: 0 },
-  errorText: { color: colors.red, ...typeScale.body },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
+  menuScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

@@ -35,7 +35,7 @@ export async function readLegacyPersistedRows<T extends object>(
 function extractRows(result: unknown): readonly Record<string, SqliteValue>[] {
   if (typeof result !== "object" || result === null || !("rows" in result)) return [];
   const rows = (result as { rows?: unknown }).rows;
-  return Array.isArray(rows) ? rows as readonly Record<string, SqliteValue>[] : [];
+  return Array.isArray(rows) ? (rows as readonly Record<string, SqliteValue>[]) : [];
 }
 
 function decodePersistedJsonValue(value: unknown): unknown {
@@ -45,15 +45,21 @@ function decodePersistedJsonValue(value: unknown): unknown {
   const record = value as Record<string, unknown>;
   if (typeof record[TYPE_TAG] === "string" && typeof record[VALUE_TAG] === "string") {
     switch (record[TYPE_TAG]) {
-      case "bigint": return BigInt(record[VALUE_TAG]);
+      case "bigint":
+        return BigInt(record[VALUE_TAG]);
       case "date": {
         const date = new Date(record[VALUE_TAG]);
         return Number.isNaN(date.getTime()) ? null : date;
       }
-      case "nan": return Number.NaN;
-      case "infinity": return Number.POSITIVE_INFINITY;
-      case "-infinity": return Number.NEGATIVE_INFINITY;
+      case "nan":
+        return Number.NaN;
+      case "infinity":
+        return Number.POSITIVE_INFINITY;
+      case "-infinity":
+        return Number.NEGATIVE_INFINITY;
     }
   }
-  return Object.fromEntries(Object.entries(record).map(([key, entry]) => [key, decodePersistedJsonValue(entry)]));
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [key, decodePersistedJsonValue(entry)]),
+  );
 }

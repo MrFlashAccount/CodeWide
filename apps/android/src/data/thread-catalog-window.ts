@@ -3,7 +3,12 @@ import { type ThreadCatalogPage, type ThreadCatalogPageRequest } from "./thread-
 
 export interface ThreadCatalogWindowPort {
   load(request: ThreadCatalogPageRequest): Promise<ThreadCatalogPage>;
-  publish(threads: SyncSnapshotThread[], archived: boolean, prefixIds: ReadonlySet<string>, replaceHead: boolean): Promise<void>;
+  publish(
+    threads: SyncSnapshotThread[],
+    archived: boolean,
+    prefixIds: ReadonlySet<string>,
+    replaceHead: boolean,
+  ): Promise<void>;
   close(): void;
 }
 
@@ -35,7 +40,10 @@ export class ThreadCatalogWindow {
     return this.#run();
   }
 
-  close(): void { this.#closed = true; this.#port.close(); }
+  close(): void {
+    this.#closed = true;
+    this.#port.close();
+  }
 
   #run(): Promise<void> {
     if (this.#inFlight !== null) return this.#inFlight;
@@ -56,12 +64,17 @@ export class ThreadCatalogWindow {
         this.#ids = new Set();
         seenCursors.clear();
       }
-      if (this.#requested === 0 || (this.#loaded && (this.#cursor === null || this.#ids.size >= this.#requested))) return;
+      if (
+        this.#requested === 0 ||
+        (this.#loaded && (this.#cursor === null || this.#ids.size >= this.#requested))
+      )
+        return;
       const replaceHead = this.#cursor === null;
       const page = await this.#port.load({ archived: this.#archived, cursor: this.#cursor });
       if (this.#closed) return;
       if (this.#refreshRequested) continue;
-      if (page.nextCursor !== null && seenCursors.has(page.nextCursor)) throw new Error("thread/list returned a repeated catalog cursor");
+      if (page.nextCursor !== null && seenCursors.has(page.nextCursor))
+        throw new Error("thread/list returned a repeated catalog cursor");
       if (page.nextCursor !== null) seenCursors.add(page.nextCursor);
       // Publication may fail. Keep the prior committed continuation intact
       // until its newly extended prefix is durably accepted by the consumer.

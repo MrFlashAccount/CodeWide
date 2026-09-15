@@ -9,15 +9,13 @@ type Turn = Thread["turns"][number];
  */
 export function mergeThreadPartitions(sealed: readonly Turn[], live: readonly Turn[]): Turn[] {
   const liveIds = new Set(live.map(({ id }) => id));
-  const partitioned = [
-    ...sealed.filter(({ id }) => !liveIds.has(id)),
-    ...live,
-  ];
+  const partitioned = [...sealed.filter(({ id }) => !liveIds.has(id)), ...live];
   const originalIndex = new Map(partitioned.map((turn, index) => [turn, index] as const));
-  partitioned.sort((left, right) => (
-    compareProtocolTurnOrder(left, right)
-      || (originalIndex.get(left) ?? 0) - (originalIndex.get(right) ?? 0)
-  ));
+  partitioned.sort(
+    (left, right) =>
+      compareProtocolTurnOrder(left, right) ||
+      (originalIndex.get(left) ?? 0) - (originalIndex.get(right) ?? 0),
+  );
   return deduplicateThreadTurns(partitioned);
 }
 
@@ -60,12 +58,14 @@ export function deduplicateThreadTurns(turns: readonly Turn[]): Turn[] {
       continue;
     }
     const previous = result[previousIndex]!;
-    if (previous.status === "inProgress" && turn.status !== "inProgress") result[previousIndex] = turn;
+    if (previous.status === "inProgress" && turn.status !== "inProgress")
+      result[previousIndex] = turn;
   }
   return result;
 }
 
 function compareProtocolTurnOrder(left: Turn, right: Turn): number {
-  if (left.startedAt === null || right.startedAt === null || left.startedAt === right.startedAt) return 0;
+  if (left.startedAt === null || right.startedAt === null || left.startedAt === right.startedAt)
+    return 0;
   return left.startedAt - right.startedAt;
 }

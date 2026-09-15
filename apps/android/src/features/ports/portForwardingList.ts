@@ -5,6 +5,7 @@ import type {
   ServiceListRow,
   ServiceSegment,
 } from "./portForwardingContract";
+
 export const GROUP_HEIGHT = 36;
 
 export const PROFILE_ERROR_HEIGHT = 52;

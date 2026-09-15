@@ -1,6 +1,8 @@
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { ThreadGoalInput } from "../../data/workspace-resource-database";
 import { useEvent } from "../../react/useEvent";
+
+/** Remote commands available to the thread-goal feature. */
 export type GoalCommands = {
   getThreadGoal(connectionId: string, threadId: string): Promise<ThreadGoal | null>;
   setThreadGoal(

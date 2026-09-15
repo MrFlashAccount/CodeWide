@@ -6,6 +6,7 @@ import { useAppVoiceInputRuntime, useVoiceInputResource } from "../../ui/VoiceIn
 import { validateGoalEditorDraft } from "./goalEditor";
 
 import type { GoalDialogProps } from "./goalDialogContract";
+
 export function useGoalDialog({
   onClose,
   goal,

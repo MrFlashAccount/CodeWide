@@ -2,10 +2,16 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, touchTarget, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   flex: { flex: 1 },
   goalDialogContent: { gap: spacing.md },
-  goalDialogIntro: { gap: spacing.xxs, paddingRight: spacing.xl },
+  goalDialogIntro: {
+    gap: spacing.xxs,
+    paddingRight: spacing.xl,
+  },
   goalObjectiveInput: {
     minHeight: 112,
     color: colors.text,
@@ -19,7 +25,10 @@ export const styles = StyleSheet.create({
     textAlignVertical: "top",
     ...typeScale.body,
   },
-  goalClearPrompt: { color: colors.red, ...typeScale.label },
+  goalClearPrompt: {
+    color: colors.red,
+    ...typeScale.label,
+  },
   goalDialogActions: {
     minHeight: controlSize.regular,
     flexDirection: "row",

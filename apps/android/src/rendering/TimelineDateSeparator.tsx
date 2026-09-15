@@ -21,8 +21,15 @@ export function TimelineDateSeparator(props: TimelineDateSeparatorProps): React.
 }
 
 const styles = StyleSheet.create({
-  label: { ...typeScale.caption, flexShrink: 0 },
-  line: { backgroundColor: colors.borderSoft, flex: 1, height: 1 },
+  label: {
+    ...typeScale.caption,
+    flexShrink: 0,
+  },
+  line: {
+    backgroundColor: colors.borderSoft,
+    flex: 1,
+    height: 1,
+  },
   root: {
     alignItems: "center",
     flexDirection: "row",

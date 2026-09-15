@@ -3,6 +3,7 @@ import { PanResponder, type LayoutChangeEvent } from "react-native";
 import { useEvent } from "../../../react/useEvent";
 import type { DevToolsDockSide } from "./devToolsMessage";
 import { styles } from "./InternalBrowser.styles";
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }

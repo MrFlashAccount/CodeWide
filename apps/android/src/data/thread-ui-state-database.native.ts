@@ -1,4 +1,5 @@
 import type { ThreadUiStateDatabase } from "./thread-ui-state-database-contract";
+
 export type { ThreadUiStateDatabase } from "./thread-ui-state-database-contract";
 import { MAX_TURN_TEXT_CHARS } from "@codewide/sync-client";
 import { observable, type Observable } from "@legendapp/state";
@@ -50,9 +51,12 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     return created;
   };
 
-  const subscription = collection.subscribeChanges((changes) => {
-    for (const change of changes) publishRow(String(change.key));
-  }, { includeInitialState: false });
+  const subscription = collection.subscribeChanges(
+    (changes) => {
+      for (const change of changes) publishRow(String(change.key));
+    },
+    { includeInitialState: false },
+  );
 
   const patch = async (
     connectionId: string,
@@ -62,37 +66,38 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     await model.ready;
     const id = threadUiStateKey(connectionId, threadId);
     const current = collection.get(id);
-    const transaction = current === undefined
-      ? collection.insert(createDefaultRow(id, connectionId, threadId, apply))
-      : collection.update(id, (draft) => {
-          apply(draft);
-          draft.updatedAt = Date.now();
-        });
+    const transaction =
+      current === undefined
+        ? collection.insert(createDefaultRow(id, connectionId, threadId, apply))
+        : collection.update(id, (draft) => {
+            apply(draft);
+            draft.updatedAt = Date.now();
+          });
     await transaction.isPersisted.promise;
     publishRow(id);
   };
 
   const getOrCreate = async (connectionId: string, threadId: string): Promise<ThreadUiStateRow> => {
-      await model.ready;
-      const existing = get(connectionId, threadId);
-      if (existing !== null) return existing;
-      const id = threadUiStateKey(connectionId, threadId);
-      const row: ThreadUiStateRow = {
-        id,
-        connectionId,
-        threadId,
-        draftText: "",
-        attachments: [],
-        scrollOffset: null,
-        historyAnchorTurnId: null,
-        historyAnchorOffsetPx: null,
-        preferences: null,
-        updatedAt: Date.now(),
-      };
-      const transaction = collection.insert(row);
-      await transaction.isPersisted.promise;
-      publishRow(id);
-      return row;
+    await model.ready;
+    const existing = get(connectionId, threadId);
+    if (existing !== null) return existing;
+    const id = threadUiStateKey(connectionId, threadId);
+    const row: ThreadUiStateRow = {
+      id,
+      connectionId,
+      threadId,
+      draftText: "",
+      attachments: [],
+      scrollOffset: null,
+      historyAnchorTurnId: null,
+      historyAnchorOffsetPx: null,
+      preferences: null,
+      updatedAt: Date.now(),
+    };
+    const transaction = collection.insert(row);
+    await transaction.isPersisted.promise;
+    publishRow(id);
+    return row;
   };
 
   return {
@@ -119,11 +124,15 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     getOrCreate,
     async saveDraft(connectionId, threadId, text) {
       const value = boundedDraft(text);
-      await patch(connectionId, threadId, (draft) => { draft.draftText = value; });
+      await patch(connectionId, threadId, (draft) => {
+        draft.draftText = value;
+      });
     },
     async saveAttachments(connectionId, threadId, attachments) {
       const value = sanitizeDraftAttachments(attachments);
-      await patch(connectionId, threadId, (draft) => { draft.attachments = value; });
+      await patch(connectionId, threadId, (draft) => {
+        draft.attachments = value;
+      });
     },
     async upsertAttachment(connectionId, threadId, attachment, isCurrent) {
       const value = sanitizeDraftAttachments([attachment])[0];
@@ -137,10 +146,18 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     },
     async removeAttachment(connectionId, threadId, attachmentId) {
       await patch(connectionId, threadId, (draft) => {
-        draft.attachments = draft.attachments.filter((attachment) => attachment.id !== attachmentId);
+        draft.attachments = draft.attachments.filter(
+          (attachment) => attachment.id !== attachmentId,
+        );
       });
     },
-    async saveScrollOffset(connectionId, threadId, offset, historyAnchorTurnId, historyAnchorOffsetPx) {
+    async saveScrollOffset(
+      connectionId,
+      threadId,
+      offset,
+      historyAnchorTurnId,
+      historyAnchorOffsetPx,
+    ) {
       const value = boundedScrollOffset(offset) ?? 0;
       await patch(connectionId, threadId, (draft) => {
         draft.scrollOffset = value;
@@ -150,7 +167,9 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
     },
     async savePreferences(connectionId, threadId, preferences) {
       const value = clonePreferences(preferences);
-      await patch(connectionId, threadId, (draft) => { draft.preferences = value; });
+      await patch(connectionId, threadId, (draft) => {
+        draft.preferences = value;
+      });
     },
     async deleteConnection(connectionId) {
       await model.ready;
@@ -201,7 +220,8 @@ function createDefaultRow(
 }
 
 function boundedDraft(text: string): string {
-  if (text.length > MAX_TURN_TEXT_CHARS) throw new Error(`Draft exceeds ${MAX_TURN_TEXT_CHARS} characters`);
+  if (text.length > MAX_TURN_TEXT_CHARS)
+    throw new Error(`Draft exceeds ${MAX_TURN_TEXT_CHARS} characters`);
   return text;
 }
 
@@ -212,18 +232,24 @@ function boundedScrollOffset(offset: number | null): number | null {
 
 function boundedHistoryAnchor(turnId: string | null): string | null {
   if (turnId === null) return null;
-  return turnId.length > 0 && turnId.length <= 512 && !/[\u0000-\u001f\u007f]/u.test(turnId) ? turnId : null;
+  return turnId.length > 0 && turnId.length <= 512 && !/[\u0000-\u001f\u007f]/u.test(turnId)
+    ? turnId
+    : null;
 }
 
 function boundedHistoryAnchorOffset(offset: number | null): number | null {
   return sanitizeHistoryAnchorOffset(offset);
 }
 
-function clonePreferences(preferences: StoredComposerPreferences | null): StoredComposerPreferences | null {
-  return preferences === null ? null : {
-    ...preferences,
-    skillPaths: preferences.skillPaths.slice(0, 256),
-  };
+function clonePreferences(
+  preferences: StoredComposerPreferences | null,
+): StoredComposerPreferences | null {
+  return preferences === null
+    ? null
+    : {
+        ...preferences,
+        skillPaths: preferences.skillPaths.slice(0, 256),
+      };
 }
 
 function sanitizeDraftAttachments(value: unknown): StoredDraftAttachment[] {
@@ -232,24 +258,63 @@ function sanitizeDraftAttachments(value: unknown): StoredDraftAttachment[] {
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return [];
     const { id, rootId, path, name, kind, editor, preview } = raw as Record<string, unknown>;
     if (
-      typeof id !== "string" || id.length < 1 || id.length > 128 ||
-      typeof rootId !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/u.test(rootId) ||
-      typeof path !== "string" || path.length < 1 || path.length > 4_096 || /[\u0000-\u001f\u007f]/u.test(path) ||
-      typeof name !== "string" || name.length < 1 || name.length > 4_096 || /[\u0000-\u001f\u007f]/u.test(name) ||
+      typeof id !== "string" ||
+      id.length < 1 ||
+      id.length > 128 ||
+      typeof rootId !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,64}$/u.test(rootId) ||
+      typeof path !== "string" ||
+      path.length < 1 ||
+      path.length > 4_096 ||
+      /[\u0000-\u001f\u007f]/u.test(path) ||
+      typeof name !== "string" ||
+      name.length < 1 ||
+      name.length > 4_096 ||
+      /[\u0000-\u001f\u007f]/u.test(name) ||
       (kind !== "image" && kind !== "audio" && kind !== "file")
-    ) return [];
+    )
+      return [];
     const quickdrawEditor = sanitizeQuickdrawEditor(editor);
     const localPreview = sanitizeAttachmentPreview(preview);
-    return [{ id, rootId, path, name, kind, ...(quickdrawEditor === null ? {} : { editor: quickdrawEditor }), ...(localPreview === null ? {} : { preview: localPreview }) }];
+    return [
+      {
+        id,
+        rootId,
+        path,
+        name,
+        kind,
+        ...(quickdrawEditor === null ? {} : { editor: quickdrawEditor }),
+        ...(localPreview === null ? {} : { preview: localPreview }),
+      },
+    ];
   });
 }
 
 function sanitizeAttachmentPreview(value: unknown): AttachmentPreview | null {
-  if (value === null || typeof value !== "object" || !("uri" in value) || !("text" in value) || !("bytes" in value) || !("mimeType" in value)) return null;
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    !("uri" in value) ||
+    !("text" in value) ||
+    !("bytes" in value) ||
+    !("mimeType" in value)
+  )
+    return null;
   const { uri, text, bytes, mimeType } = value;
-  if (uri !== null && (typeof uri !== "string" || uri.length > 4096 || !/^(?:file|content):\/\//u.test(uri))) return null;
+  if (
+    uri !== null &&
+    (typeof uri !== "string" || uri.length > 4096 || !/^(?:file|content):\/\//u.test(uri))
+  )
+    return null;
   if (text !== null && (typeof text !== "string" || text.length > 512)) return null;
-  if (typeof bytes !== "number" || !Number.isSafeInteger(bytes) || bytes < 0 || typeof mimeType !== "string" || mimeType.length > 256) return null;
+  if (
+    typeof bytes !== "number" ||
+    !Number.isSafeInteger(bytes) ||
+    bytes < 0 ||
+    typeof mimeType !== "string" ||
+    mimeType.length > 256
+  )
+    return null;
   return { uri, text, bytes, mimeType };
 }
 
@@ -257,15 +322,16 @@ function sanitizeQuickdrawEditor(value: unknown): QuickdrawDraftState | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const { kind, mode, snapshot, revision } = value as Record<string, unknown>;
   if (
-    kind !== "quickdraw"
-    || (mode !== "drawing" && mode !== "image-annotation")
-    || snapshot === null
-    || typeof snapshot !== "object"
-    || Array.isArray(snapshot)
-    || typeof revision !== "number"
-    || !Number.isSafeInteger(revision)
-    || revision < 0
-  ) return null;
+    kind !== "quickdraw" ||
+    (mode !== "drawing" && mode !== "image-annotation") ||
+    snapshot === null ||
+    typeof snapshot !== "object" ||
+    Array.isArray(snapshot) ||
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 0
+  )
+    return null;
   return { kind, mode, snapshot: snapshot as Record<string, unknown>, revision };
 }
 

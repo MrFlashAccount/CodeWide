@@ -2,9 +2,9 @@ export function signed(value: number): string {
   return `${value > 0 ? "+" : ""}${decimal(value)}`;
 }
 
-export const decimalFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+const decimalFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 
-export const integerFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const integerFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 
 export function decimal(value: number): string {
   return decimalFormat.format(value);

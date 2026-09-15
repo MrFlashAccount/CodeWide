@@ -1,4 +1,8 @@
-import type { NativeDomainProjection, NativeConnectionStateProjection, NativeEngineSupervisorOptions } from "./native-engine-contract";
+import type {
+  NativeDomainProjection,
+  NativeConnectionStateProjection,
+  NativeEngineSupervisorOptions,
+} from "./native-engine-contract";
 import {
   RpcResponseError,
   type RemoteConnection,
@@ -10,7 +14,13 @@ import {
 } from "@codewide/sync-client";
 import { NativeEventEmitter, NativeModules } from "react-native";
 import { shouldFlushLiveEventsImmediately } from "../data/live-event-priority";
-import { incrementDiagnosticMetric, liveStreamMetricKey, markLiveBatchDelivered, operationalDiagnosticsEnabled, recordDiagnosticTiming } from "../data/operational-metrics";
+import {
+  incrementDiagnosticMetric,
+  liveStreamMetricKey,
+  markLiveBatchDelivered,
+  operationalDiagnosticsEnabled,
+  recordDiagnosticTiming,
+} from "../data/operational-metrics";
 import {
   recordOperationalTelemetryEvent,
   recordTelemetryEvent,
@@ -25,7 +35,15 @@ import { OrderedProjectionGate, type ProjectionWork } from "./ordered-projection
 type NativeEngineEvent = {
   contractVersion: 1 | 2;
   connectionId: string;
-  type: "state" | "snapshot" | "pendingRequests" | "events" | "checkpointEvents" | "journalAdvanced" | "outbox" | "telemetry";
+  type:
+    | "state"
+    | "snapshot"
+    | "pendingRequests"
+    | "events"
+    | "checkpointEvents"
+    | "journalAdvanced"
+    | "outbox"
+    | "telemetry";
   data: string;
   frameId?: number;
   projectionCursor?: number;
@@ -46,7 +64,10 @@ type NativeBridge = {
   engineRpc(connectionId: string, method: string, paramsJson: string): Promise<string>;
   wakeSocket(connectionId: string): void;
   acknowledgeProjection(connectionId: string, projectionCursor: number): void;
-  readCommittedFrames(connectionId: string, afterCursor: number | null): Promise<NativeCommittedFramePage>;
+  readCommittedFrames(
+    connectionId: string,
+    afterCursor: number | null,
+  ): Promise<NativeCommittedFramePage>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 };
@@ -73,7 +94,9 @@ export class NativeEngineSession implements RpcClient {
   readonly connectionId: string;
   readonly #connectionState: NativeConnectionStateProjection;
   readonly #projection: NativeDomainProjection;
-  readonly #onPendingRequests: ((connectionId: string, requests: SyncServerRequest[]) => void) | undefined;
+  readonly #onPendingRequests:
+    | ((connectionId: string, requests: SyncServerRequest[]) => void)
+    | undefined;
   readonly #projectionGate: OrderedProjectionGate;
   readonly #projectionAcknowledger: OrderedProjectionAcknowledger;
   #stopped = false;
@@ -100,7 +123,11 @@ export class NativeEngineSession implements RpcClient {
       this.#publishedLiveRpcAvailable = undefined;
       this.#stateGeneration += 1;
       this.#journalReadCursor = undefined;
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native projection update failed"));
+      void this.#connectionState.setConnectionState(
+        this.connectionId,
+        "degraded",
+        nativeEngineErrorDiagnostic(cause, "Native projection update failed"),
+      );
       this.#scheduleProjectionRecovery();
     };
     this.#projectionGate = new OrderedProjectionGate(projectionFailed);
@@ -110,12 +137,22 @@ export class NativeEngineSession implements RpcClient {
   start(): void {
     this.#publishedLiveRpcAvailable = undefined;
     if (bridge === undefined) {
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native remote engine is unavailable in this build", false);
+      void this.#connectionState.setConnectionState(
+        this.connectionId,
+        "degraded",
+        "Native remote engine is unavailable in this build",
+        false,
+      );
       return;
     }
     void this.#connectionState.setConnectionState(this.connectionId, "connecting", null, false);
     void bridge.attachSocket(this.connectionId).catch((cause: unknown) => {
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Could not start native remote engine"), false);
+      void this.#connectionState.setConnectionState(
+        this.connectionId,
+        "degraded",
+        nativeEngineErrorDiagnostic(cause, "Could not start native remote engine"),
+        false,
+      );
     });
   }
 
@@ -136,7 +173,12 @@ export class NativeEngineSession implements RpcClient {
     if (this.#stopped) return;
     if (event.contractVersion !== 1 && event.contractVersion !== 2) {
       this.#publishedLiveRpcAvailable = undefined;
-      void this.#connectionState.setConnectionState(this.connectionId, "degraded", "Native bridge contract version is unsupported", false);
+      void this.#connectionState.setConnectionState(
+        this.connectionId,
+        "degraded",
+        "Native bridge contract version is unsupported",
+        false,
+      );
       return;
     }
     if (event.type === "telemetry") {
@@ -147,7 +189,8 @@ export class NativeEngineSession implements RpcClient {
     if (event.type === "state") {
       try {
         const state = parseJson<NativeEngineState>(event.data, "native engine state");
-        if (typeof state.rpcAvailable !== "boolean") throw new Error("Native engine state omitted RPC availability");
+        if (typeof state.rpcAvailable !== "boolean")
+          throw new Error("Native engine state omitted RPC availability");
         const generation = ++this.#stateGeneration;
         if (state.state === "live") {
           // The transport can announce caught-up after it emitted the final
@@ -157,46 +200,74 @@ export class NativeEngineSession implements RpcClient {
           // Reattaching an existing JS runtime also emits its unchanged native
           // state. Do not fabricate a reconnect: that edge reloads the chat.
           if (this.#publishedLiveRpcAvailable !== state.rpcAvailable) {
-            void Promise.resolve(this.#connectionState.setConnectionState(this.connectionId, "syncing", undefined, state.rpcAvailable));
+            void Promise.resolve(
+              this.#connectionState.setConnectionState(
+                this.connectionId,
+                "syncing",
+                undefined,
+                state.rpcAvailable,
+              ),
+            );
           }
-          void Promise.resolve(this.#journalDrain).then(() => this.#projectionGate.settled()).then(async () => {
-            // The gate enqueues acknowledgement only after applying the batch,
-            // so observe its tail after the presentation queue has drained.
-            await this.#projectionAcknowledger.settled();
-          }).then(() => {
-            if (
-              this.#stopped
-              || generation !== this.#stateGeneration
-              || this.#projectionGate.blocked
-              || this.#projectionAcknowledger.blocked
-            ) return;
-            if (this.#publishedLiveRpcAvailable === state.rpcAvailable) return;
-            this.#publishedLiveRpcAvailable = state.rpcAvailable;
-            return this.#connectionState.setConnectionState(this.connectionId, "live", null, state.rpcAvailable);
-          });
+          void Promise.resolve(this.#journalDrain)
+            .then(() => this.#projectionGate.settled())
+            .then(async () => {
+              // The gate enqueues acknowledgement only after applying the batch,
+              // so observe its tail after the presentation queue has drained.
+              await this.#projectionAcknowledger.settled();
+            })
+            .then(() => {
+              if (
+                this.#stopped ||
+                generation !== this.#stateGeneration ||
+                this.#projectionGate.blocked ||
+                this.#projectionAcknowledger.blocked
+              )
+                return;
+              if (this.#publishedLiveRpcAvailable === state.rpcAvailable) return;
+              this.#publishedLiveRpcAvailable = state.rpcAvailable;
+              return this.#connectionState.setConnectionState(
+                this.connectionId,
+                "live",
+                null,
+                state.rpcAvailable,
+              );
+            });
         } else {
           this.#publishedLiveRpcAvailable = undefined;
-          void Promise.resolve(this.#connectionState.setConnectionState(
-            this.connectionId,
-            state.state,
-            state.error,
-            state.rpcAvailable,
-          ));
+          void Promise.resolve(
+            this.#connectionState.setConnectionState(
+              this.connectionId,
+              state.state,
+              state.error,
+              state.rpcAvailable,
+            ),
+          );
         }
       } catch (cause: unknown) {
         this.#publishedLiveRpcAvailable = undefined;
-        void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native engine state is invalid"), false);
+        void this.#connectionState.setConnectionState(
+          this.connectionId,
+          "degraded",
+          nativeEngineErrorDiagnostic(cause, "Native engine state is invalid"),
+          false,
+        );
       }
       return;
     }
     if (event.type === "pendingRequests") {
       try {
         const requests = parseJson<SyncServerRequest[]>(event.data, "pending server requests");
-        if (!Array.isArray(requests)) throw new Error("Native pending request projection is invalid");
+        if (!Array.isArray(requests))
+          throw new Error("Native pending request projection is invalid");
         this.#onPendingRequests?.(this.connectionId, requests);
       } catch (cause: unknown) {
         this.#publishedLiveRpcAvailable = undefined;
-        void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native pending request projection is invalid"));
+        void this.#connectionState.setConnectionState(
+          this.connectionId,
+          "degraded",
+          nativeEngineErrorDiagnostic(cause, "Native pending request projection is invalid"),
+        );
       }
       return;
     }
@@ -223,7 +294,8 @@ export class NativeEngineSession implements RpcClient {
           shmFileBytes?: number;
         }>(event.data, "native journal signal");
         if (operationalDiagnosticsEnabled() && signal.recovery !== true) {
-          if (typeof signal.commitMs === "number") recordDiagnosticTiming("native_journal_commit_ms", signal.commitMs);
+          if (typeof signal.commitMs === "number")
+            recordDiagnosticTiming("native_journal_commit_ms", signal.commitMs);
           incrementDiagnosticMetric("native_journal_commits");
           if (Number.isSafeInteger(signal.eventCount) && signal.eventCount! > 0) {
             incrementDiagnosticMetric("native_journal_committed_events", signal.eventCount);
@@ -236,8 +308,12 @@ export class NativeEngineSession implements RpcClient {
               commitMs: signal.commitMs,
               eventCount: Number.isSafeInteger(signal.eventCount) ? signal.eventCount! : 0,
               bytes: Number.isSafeInteger(signal.bytes) ? signal.bytes! : 0,
-              journalFrameCount: Number.isSafeInteger(signal.journalFrameCount) ? signal.journalFrameCount! : 0,
-              journalPayloadBytes: Number.isSafeInteger(signal.journalPayloadBytes) ? signal.journalPayloadBytes! : 0,
+              journalFrameCount: Number.isSafeInteger(signal.journalFrameCount)
+                ? signal.journalFrameCount!
+                : 0,
+              journalPayloadBytes: Number.isSafeInteger(signal.journalPayloadBytes)
+                ? signal.journalPayloadBytes!
+                : 0,
               mainFileBytes: Number.isSafeInteger(signal.mainFileBytes) ? signal.mainFileBytes! : 0,
               walFileBytes: Number.isSafeInteger(signal.walFileBytes) ? signal.walFileBytes! : 0,
               shmFileBytes: Number.isSafeInteger(signal.shmFileBytes) ? signal.shmFileBytes! : 0,
@@ -257,15 +333,24 @@ export class NativeEngineSession implements RpcClient {
       }
       if (event.type === "snapshot") {
         this.#publishedLiveRpcAvailable = undefined;
-        const snapshot = parseJson<{ cursor: number; threads: SyncSnapshotThread[] }>(event.data, "native snapshot");
-        if (!Number.isSafeInteger(snapshot.cursor) || !Array.isArray(snapshot.threads)) throw new Error("Native snapshot is invalid");
-        if (projectionCursor !== snapshot.cursor) throw new Error("Native snapshot projection cursor is invalid");
+        const snapshot = parseJson<{ cursor: number; threads: SyncSnapshotThread[] }>(
+          event.data,
+          "native snapshot",
+        );
+        if (!Number.isSafeInteger(snapshot.cursor) || !Array.isArray(snapshot.threads))
+          throw new Error("Native snapshot is invalid");
+        if (projectionCursor !== snapshot.cursor)
+          throw new Error("Native snapshot projection cursor is invalid");
         this.#journalReadCursor = snapshot.cursor;
         this.#projectionGate.enqueue({
           recovery: true,
           apply: async () => {
             if (this.#stopped) return;
-            await this.#projection.applySnapshot(this.connectionId, snapshot.threads, snapshot.cursor);
+            await this.#projection.applySnapshot(
+              this.connectionId,
+              snapshot.threads,
+              snapshot.cursor,
+            );
             this.#projectionRecovered();
           },
           acknowledge: () => {
@@ -273,7 +358,8 @@ export class NativeEngineSession implements RpcClient {
               recovery: true,
               checkpoint: Promise.resolve(),
               acknowledge: () => {
-                if (!this.#stopped) bridge?.acknowledgeProjection(this.connectionId, snapshot.cursor);
+                if (!this.#stopped)
+                  bridge?.acknowledgeProjection(this.connectionId, snapshot.cursor);
               },
             });
           },
@@ -282,16 +368,29 @@ export class NativeEngineSession implements RpcClient {
       }
       const measureDiagnostics = operationalDiagnosticsEnabled();
       const decodeStartedAt = measureDiagnostics ? performance.now() : 0;
-      const frames = parseJson<Array<{ frameId: number; frame: { type: string; cursor: number; payload: Record<string, unknown> } }>>(event.data, "native event batch");
-      if (measureDiagnostics) recordDiagnosticTiming("native_json_decode_ms", performance.now() - decodeStartedAt);
-      if (!Array.isArray(frames) || frames.length === 0) throw new Error("Native event projection is invalid");
+      const frames = parseJson<
+        Array<{
+          frameId: number;
+          frame: { type: string; cursor: number; payload: Record<string, unknown> };
+        }>
+      >(event.data, "native event batch");
+      if (measureDiagnostics)
+        recordDiagnosticTiming("native_json_decode_ms", performance.now() - decodeStartedAt);
+      if (!Array.isArray(frames) || frames.length === 0)
+        throw new Error("Native event projection is invalid");
       const syncEvents = frames.map(({ frame }) => {
-        if (frame.type !== "event" || !Number.isSafeInteger(frame.cursor) || frame.payload === null || typeof frame.payload !== "object") {
+        if (
+          frame.type !== "event" ||
+          !Number.isSafeInteger(frame.cursor) ||
+          frame.payload === null ||
+          typeof frame.payload !== "object"
+        ) {
           throw new Error("Native event projection is invalid");
         }
         return { cursor: frame.cursor, payload: frame.payload } satisfies SyncEvent;
       });
-      if (projectionCursor !== syncEvents.at(-1)?.cursor) throw new Error("Native event projection cursor is invalid");
+      if (projectionCursor !== syncEvents.at(-1)?.cursor)
+        throw new Error("Native event projection cursor is invalid");
       const recovery = event.type === "checkpointEvents";
       this.#enqueueSyncEvents(syncEvents, projectionCursor, recovery, event.data.length);
     } catch (cause: unknown) {
@@ -309,17 +408,19 @@ export class NativeEngineSession implements RpcClient {
     if (this.#journalDrain !== undefined || bridge === undefined) return;
     const drain = this.#drainCommittedJournal();
     this.#journalDrain = drain;
-    void drain.catch((cause: unknown) => {
-      this.#journalHeadCursor = undefined;
-      this.#journalReadCursor = undefined;
-      this.#enqueueProjectionFailure(cause, true);
-    }).finally(() => {
-      if (this.#journalDrain === drain) this.#journalDrain = undefined;
-      const head = this.#journalHeadCursor;
-      if (!this.#stopped && head !== undefined && (this.#journalReadCursor ?? -1) < head) {
-        this.#requestJournalDrain(head, this.#journalRecoveryRequested);
-      }
-    });
+    void drain
+      .catch((cause: unknown) => {
+        this.#journalHeadCursor = undefined;
+        this.#journalReadCursor = undefined;
+        this.#enqueueProjectionFailure(cause, true);
+      })
+      .finally(() => {
+        if (this.#journalDrain === drain) this.#journalDrain = undefined;
+        const head = this.#journalHeadCursor;
+        if (!this.#stopped && head !== undefined && (this.#journalReadCursor ?? -1) < head) {
+          this.#requestJournalDrain(head, this.#journalRecoveryRequested);
+        }
+      });
   }
 
   async #drainCommittedJournal(): Promise<void> {
@@ -327,7 +428,10 @@ export class NativeEngineSession implements RpcClient {
     while (!this.#stopped) {
       const requestedHead = this.#journalHeadCursor;
       if (requestedHead === undefined) return;
-      const page = await bridge.readCommittedFrames(this.connectionId, this.#journalReadCursor ?? null);
+      const page = await bridge.readCommittedFrames(
+        this.connectionId,
+        this.#journalReadCursor ?? null,
+      );
       if (!Array.isArray(page.frames)) throw new Error("Native committed frame page is invalid");
       if (page.baseCursor !== undefined && !Number.isSafeInteger(page.baseCursor)) {
         throw new Error("Native journal base cursor is invalid");
@@ -339,7 +443,10 @@ export class NativeEngineSession implements RpcClient {
         this.#journalReadCursor = page.baseCursor;
       }
       if (page.headCursor !== undefined) {
-        this.#journalHeadCursor = Math.max(this.#journalHeadCursor ?? page.headCursor, page.headCursor);
+        this.#journalHeadCursor = Math.max(
+          this.#journalHeadCursor ?? page.headCursor,
+          page.headCursor,
+        );
       }
       if (page.frames.length === 0) {
         if ((this.#journalReadCursor ?? -1) >= requestedHead) {
@@ -359,14 +466,19 @@ export class NativeEngineSession implements RpcClient {
         if (previousCursor !== undefined && stored.cursor !== previousCursor + 1) {
           throw new Error("Native committed frame cursor is not contiguous");
         }
-        const envelope = parseJson<{ type?: string; cursor?: number; payload?: Record<string, unknown> }>(stored.payload, "native committed frame");
+        const envelope = parseJson<{
+          type?: string;
+          cursor?: number;
+          payload?: Record<string, unknown>;
+        }>(stored.payload, "native committed frame");
         rawBytes += stored.payload.length;
         if (
-          envelope.type !== "event"
-          || envelope.cursor !== stored.cursor
-          || envelope.payload === null
-          || typeof envelope.payload !== "object"
-        ) throw new Error("Native committed frame envelope is invalid");
+          envelope.type !== "event" ||
+          envelope.cursor !== stored.cursor ||
+          envelope.payload === null ||
+          typeof envelope.payload !== "object"
+        )
+          throw new Error("Native committed frame envelope is invalid");
         previousCursor = stored.cursor;
         return { cursor: stored.cursor, payload: envelope.payload } satisfies SyncEvent;
       });
@@ -385,20 +497,29 @@ export class NativeEngineSession implements RpcClient {
     }
   }
 
-  #enqueueSyncEvents(events: SyncEvent[], projectionCursor: number, recovery: boolean, bridgeBytes: number): void {
+  #enqueueSyncEvents(
+    events: SyncEvent[],
+    projectionCursor: number,
+    recovery: boolean,
+    bridgeBytes: number,
+  ): void {
     const measureDiagnostics = operationalDiagnosticsEnabled();
     if (measureDiagnostics) {
       incrementDiagnosticMetric("native_event_batches");
       incrementDiagnosticMetric("native_event_bytes", bridgeBytes);
       incrementDiagnosticMetric("native_events", events.length);
-      if (!recovery && shouldFlushLiveEventsImmediately(events)) incrementDiagnosticMetric("live_immediate_flushes");
+      if (!recovery && shouldFlushLiveEventsImmediately(events))
+        incrementDiagnosticMetric("live_immediate_flushes");
     }
     const liveIngress = new Map<string, NonNullable<ReturnType<typeof agentMessageDeltaMetric>>>();
     for (const syncEvent of events) {
       const delta = agentMessageDeltaMetric(this.connectionId, syncEvent);
       if (delta === null) continue;
       const previous = liveIngress.get(delta.streamKey);
-      liveIngress.set(delta.streamKey, previous === undefined ? delta : { ...delta, chars: previous.chars + delta.chars });
+      liveIngress.set(
+        delta.streamKey,
+        previous === undefined ? delta : { ...delta, chars: previous.chars + delta.chars },
+      );
     }
     for (const delta of liveIngress.values()) {
       recordTelemetryEvent(this.connectionId, {
@@ -416,12 +537,18 @@ export class NativeEngineSession implements RpcClient {
   #enqueueProjectionFailure(cause: unknown, recovery: boolean): void {
     this.#projectionGate.enqueue({
       recovery,
-      apply: async () => { throw cause; },
+      apply: async () => {
+        throw cause;
+      },
       acknowledge: () => undefined,
     });
   }
 
-  #eventProjectionWork(events: SyncEvent[], projectionCursor: number, recovery: boolean): EventProjectionWork {
+  #eventProjectionWork(
+    events: SyncEvent[],
+    projectionCursor: number,
+    recovery: boolean,
+  ): EventProjectionWork {
     const eventProjection = {
       events: [...events],
       projectionCursor,
@@ -435,7 +562,10 @@ export class NativeEngineSession implements RpcClient {
         if (this.#stopped) return;
         const measureDiagnostics = operationalDiagnosticsEnabled();
         const startedAt = performance.now();
-        const projected = await this.#projection.applyEvents(this.connectionId, eventProjection.events);
+        const projected = await this.#projection.applyEvents(
+          this.connectionId,
+          eventProjection.events,
+        );
         const projectionMs = performance.now() - startedAt;
         if (projectionMs >= 50) {
           recordOperationalTelemetryEvent(this.connectionId, {
@@ -456,9 +586,16 @@ export class NativeEngineSession implements RpcClient {
             incrementDiagnosticMetric("live_events", liveDeltas.length);
           }
           const charsByStream = new Map<string, number>();
-          for (const delta of liveDeltas) charsByStream.set(delta.streamKey, (charsByStream.get(delta.streamKey) ?? 0) + delta.chars);
+          for (const delta of liveDeltas)
+            charsByStream.set(
+              delta.streamKey,
+              (charsByStream.get(delta.streamKey) ?? 0) + delta.chars,
+            );
           for (const [streamKey, chars] of charsByStream) {
-            markLiveBatchDelivered(streamKey, chars, { projectionMs, eventCount: eventProjection.events.length });
+            markLiveBatchDelivered(streamKey, chars, {
+              projectionMs,
+              eventCount: eventProjection.events.length,
+            });
           }
         }
         eventProjection.checkpoint = projected.checkpoint;
@@ -469,13 +606,24 @@ export class NativeEngineSession implements RpcClient {
           recovery,
           checkpoint: eventProjection.checkpoint,
           acknowledge: () => {
-            if (!this.#stopped) bridge?.acknowledgeProjection(this.connectionId, eventProjection.projectionCursor);
+            if (!this.#stopped)
+              bridge?.acknowledgeProjection(this.connectionId, eventProjection.projectionCursor);
           },
         });
       },
       mergeWith: (newer) => {
-        if (recovery || eventProjection.flushBoundary || !isEventProjectionWork(newer) || newer.recovery) return null;
-        if (eventProjection.events.length + newer.eventProjection.events.length > MAX_COALESCED_LIVE_EVENTS) return null;
+        if (
+          recovery ||
+          eventProjection.flushBoundary ||
+          !isEventProjectionWork(newer) ||
+          newer.recovery
+        )
+          return null;
+        if (
+          eventProjection.events.length + newer.eventProjection.events.length >
+          MAX_COALESCED_LIVE_EVENTS
+        )
+          return null;
         eventProjection.events.push(...newer.eventProjection.events);
         eventProjection.projectionCursor = newer.eventProjection.projectionCursor;
         eventProjection.flushBoundary = newer.eventProjection.flushBoundary;
@@ -494,18 +642,24 @@ export class NativeEngineSession implements RpcClient {
     );
     if (this.#stopped) throw new Error("Native connection session was replaced");
     if (envelope.ok) return envelope.result;
-    if (typeof envelope.code === "number") throw new RpcResponseError(envelope.code, envelope.message);
+    if (typeof envelope.code === "number")
+      throw new RpcResponseError(envelope.code, envelope.message);
     throw new Error(envelope.message);
   }
 
   #scheduleProjectionRecovery(): void {
-    if (this.#stopped || bridge === undefined || this.#projectionRecoveryTimer !== undefined) return;
+    if (this.#stopped || bridge === undefined || this.#projectionRecoveryTimer !== undefined)
+      return;
     const delay = Math.min(30_000, 500 * 2 ** Math.min(this.#projectionRecoveryAttempt++, 6));
     this.#projectionRecoveryTimer = setTimeout(() => {
       this.#projectionRecoveryTimer = undefined;
       if (this.#stopped) return;
       void bridge.attachSocket(this.connectionId).catch((cause: unknown) => {
-        void this.#connectionState.setConnectionState(this.connectionId, "degraded", nativeEngineErrorDiagnostic(cause, "Native projection recovery failed"));
+        void this.#connectionState.setConnectionState(
+          this.connectionId,
+          "degraded",
+          nativeEngineErrorDiagnostic(cause, "Native projection recovery failed"),
+        );
         this.#scheduleProjectionRecovery();
       });
     }, delay);
@@ -521,7 +675,9 @@ export class NativeEngineSession implements RpcClient {
 export class NativeEngineSupervisor {
   readonly #connectionState: NativeConnectionStateProjection;
   readonly #projection: NativeDomainProjection;
-  readonly #onPendingRequests: ((connectionId: string, requests: SyncServerRequest[]) => void) | undefined;
+  readonly #onPendingRequests:
+    | ((connectionId: string, requests: SyncServerRequest[]) => void)
+    | undefined;
   readonly #onOutboxChange: ((delivery: NativeCommandDelivery) => void) | undefined;
   readonly #sessions = new Map<string, NativeEngineSession>();
   readonly #fingerprints = new Map<string, string>();
@@ -532,21 +688,28 @@ export class NativeEngineSupervisor {
     this.#projection = options.projection;
     this.#onPendingRequests = options.onPendingRequests;
     this.#onOutboxChange = options.onOutboxChange;
-    this.#subscription = bridge === undefined
-      ? null
-      : new NativeEventEmitter(NativeModules.CodeWideNative).addListener("CodeWideEngineEvent", (event: NativeEngineEvent) => {
-        if ((event.contractVersion === 1 || event.contractVersion === 2) && event.type === "outbox") {
-          try {
-            const payload: unknown = JSON.parse(event.data);
-            recordNativeOutboxStorage(event.connectionId, payload);
-            this.#onOutboxChange?.(parseNativeCommandDelivery(payload));
-          } catch {
-            // Malformed native projections are never repaired with an
-            // unbounded cross-server rescan.
-          }
-        }
-        this.#sessions.get(event.connectionId)?.receive(event);
-      });
+    this.#subscription =
+      bridge === undefined
+        ? null
+        : new NativeEventEmitter(NativeModules.CodeWideNative).addListener(
+            "CodeWideEngineEvent",
+            (event: NativeEngineEvent) => {
+              if (
+                (event.contractVersion === 1 || event.contractVersion === 2) &&
+                event.type === "outbox"
+              ) {
+                try {
+                  const payload: unknown = JSON.parse(event.data);
+                  recordNativeOutboxStorage(event.connectionId, payload);
+                  this.#onOutboxChange?.(parseNativeCommandDelivery(payload));
+                } catch {
+                  // Malformed native projections are never repaired with an
+                  // unbounded cross-server rescan.
+                }
+              }
+              this.#sessions.get(event.connectionId)?.receive(event);
+            },
+          );
   }
 
   replaceConnections(connections: RemoteConnection[]): void {
@@ -564,7 +727,9 @@ export class NativeEngineSupervisor {
         connection,
         connectionState: this.#connectionState,
         projection: this.#projection,
-        ...(this.#onPendingRequests === undefined ? {} : { onPendingRequests: this.#onPendingRequests }),
+        ...(this.#onPendingRequests === undefined
+          ? {}
+          : { onPendingRequests: this.#onPendingRequests }),
       });
       this.#sessions.set(connection.id, session);
       this.#fingerprints.set(connection.id, fingerprint(connection));
@@ -607,7 +772,12 @@ function recordNativeOutboxStorage(connectionId: string, value: unknown): void {
     "walFileBytes",
     "shmFileBytes",
   ] as const;
-  if (!numeric.every((field) => typeof fields[field] === "number" && Number.isSafeInteger(fields[field]))) return;
+  if (
+    !numeric.every(
+      (field) => typeof fields[field] === "number" && Number.isSafeInteger(fields[field]),
+    )
+  )
+    return;
   const threadId = typeof projection.threadId === "string" ? projection.threadId : undefined;
   recordTelemetryEvent(connectionId, {
     name: "outbox.native_sqlite_storage",
@@ -675,18 +845,23 @@ function isEventProjectionWork(work: ProjectionWork): work is EventProjectionWor
   return "eventProjection" in work;
 }
 
-function agentMessageDeltaMetric(connectionId: string, event: SyncEvent): { streamKey: string; chars: number; threadId: string; turnId: string; itemId: string } | null {
+function agentMessageDeltaMetric(
+  connectionId: string,
+  event: SyncEvent,
+): { streamKey: string; chars: number; threadId: string; turnId: string; itemId: string } | null {
   if (event.payload.method !== "item/agentMessage/delta") return null;
   const params = event.payload.params;
   if (params === null || typeof params !== "object" || Array.isArray(params)) return null;
   const value = params as Record<string, unknown>;
   if (typeof value.delta !== "string") return null;
   const streamKey = liveStreamMetricKey(connectionId, value.threadId, value.turnId, value.itemId);
-  return streamKey === null ? null : {
-    streamKey,
-    chars: value.delta.length,
-    threadId: value.threadId as string,
-    turnId: value.turnId as string,
-    itemId: value.itemId as string,
-  };
+  return streamKey === null
+    ? null
+    : {
+        streamKey,
+        chars: value.delta.length,
+        threadId: value.threadId as string,
+        turnId: value.turnId as string,
+        itemId: value.itemId as string,
+      };
 }

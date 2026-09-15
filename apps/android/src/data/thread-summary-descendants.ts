@@ -1,7 +1,10 @@
 import type { StoredThreadSummary } from "./thread-summary-types";
 
 /** Traverses a server's parent index once, independent of input order or nesting depth. */
-export function threadSummaryDescendants(rows: readonly StoredThreadSummary[], rootThreadId: string): StoredThreadSummary[] {
+export function threadSummaryDescendants(
+  rows: readonly StoredThreadSummary[],
+  rootThreadId: string,
+): StoredThreadSummary[] {
   const children = new Map<string, StoredThreadSummary[]>();
   for (const row of rows) {
     const parent = row.parentThreadId;

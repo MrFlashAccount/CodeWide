@@ -15,14 +15,14 @@ export function serializeNavigationSpeedscopeProfile(profile: ThreadNavigationPr
   for (const record of profile.stages) {
     const end = finiteNonNegative(record.elapsedMs);
     const start = Math.min(end, previousStageEnd);
-    const frame = frames.push(speedscopeFrame(
-      `${readableName(record.stage)} · ${formatDuration(record.sincePreviousMs)}`,
-      formatDetails(record.values, record.tags),
-    )) - 1;
-    stageEvents.push(
-      { type: "O", at: start, frame },
-      { type: "C", at: end, frame },
-    );
+    const frame =
+      frames.push(
+        speedscopeFrame(
+          `${readableName(record.stage)} · ${formatDuration(record.sincePreviousMs)}`,
+          formatDetails(record.values, record.tags),
+        ),
+      ) - 1;
+    stageEvents.push({ type: "O", at: start, frame }, { type: "C", at: end, frame });
     previousStageEnd = Math.max(previousStageEnd, end);
   }
 
@@ -31,13 +31,20 @@ export function serializeNavigationSpeedscopeProfile(profile: ThreadNavigationPr
   for (const measure of profile.measures) {
     const duration = finiteNonNegative(measure.durationMs);
     if (duration === 0) continue;
-    const frame = frames.push(speedscopeFrame(
-      measure.name,
-      formatDetails(
-        { durationMs: duration, completedAtMs: finiteNonNegative(measure.elapsedMs), ...measure.values },
-        measure.tags,
-      ),
-    )) - 1;
+    const frame =
+      frames.push(
+        speedscopeFrame(
+          measure.name,
+          formatDetails(
+            {
+              durationMs: duration,
+              completedAtMs: finiteNonNegative(measure.elapsedMs),
+              ...measure.values,
+            },
+            measure.tags,
+          ),
+        ),
+      ) - 1;
     measureSamples.push([frame]);
     measureWeights.push(duration);
   }
@@ -51,26 +58,27 @@ export function serializeNavigationSpeedscopeProfile(profile: ThreadNavigationPr
   // Serialize them as tiny, stable, non-overlapping markers instead.
   const orderedVisualEvents = profile.visualEvents
     .map((event, index) => ({ event, index }))
-    .sort((left, right) => (
-      finiteNonNegative(left.event.elapsedMs) - finiteNonNegative(right.event.elapsedMs)
-      || left.index - right.index
-    ));
+    .sort(
+      (left, right) =>
+        finiteNonNegative(left.event.elapsedMs) - finiteNonNegative(right.event.elapsedMs) ||
+        left.index - right.index,
+    );
   for (const { event } of orderedVisualEvents) {
     const start = Math.max(previousVisualEnd, finiteNonNegative(event.elapsedMs));
     const end = start + 0.01;
-    const frame = frames.push(speedscopeFrame(
-      event.name,
-      formatDetails(event.values, event.tags),
-    )) - 1;
-    visualEvents.push(
-      { type: "O", at: start, frame },
-      { type: "C", at: end, frame },
-    );
+    const frame =
+      frames.push(speedscopeFrame(event.name, formatDetails(event.values, event.tags))) - 1;
+    visualEvents.push({ type: "O", at: start, frame }, { type: "C", at: end, frame });
     previousVisualEnd = end;
   }
 
   const lastVisualEventAt = previousVisualEnd;
-  const endValue = Math.max(1, finiteNonNegative(profile.totalMs), previousStageEnd, lastVisualEventAt);
+  const endValue = Math.max(
+    1,
+    finiteNonNegative(profile.totalMs),
+    previousStageEnd,
+    lastVisualEventAt,
+  );
   const profiles: unknown[] = [];
   if (stageEvents.length > 0) {
     profiles.push({
@@ -127,7 +135,10 @@ function formatDuration(value: number): string {
   return duration >= 100 ? `${Math.round(duration)} ms` : `${duration.toFixed(1)} ms`;
 }
 
-function formatDetails(values: Readonly<Record<string, number>>, tags: Readonly<Record<string, string>>): string | undefined {
+function formatDetails(
+  values: Readonly<Record<string, number>>,
+  tags: Readonly<Record<string, string>>,
+): string | undefined {
   const fields = [
     ...Object.entries(values).map(([key, value]) => `${key}=${finiteNumber(value)}`),
     ...Object.entries(tags).map(([key, value]) => `${key}=${value}`),

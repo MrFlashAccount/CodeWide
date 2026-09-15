@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { WebView, type WebViewNavigation } from "react-native-webview";
 import { useEvent } from "../../../react/useEvent";
+
 export function useBrowserNavigationState(url: string) {
   const webView = useRef<WebView>(null);
   const [addressSource, setAddressSource] = useState({ initialUrl: url, uri: url });

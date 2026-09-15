@@ -1,5 +1,6 @@
 import { type RenderContentReference } from "@codewide/renderers";
 import { type LargeContentViewerRequest } from "./contentViewerContext";
+
 export type FullContentViewerProps = {
   selection: {
     pointer: string;

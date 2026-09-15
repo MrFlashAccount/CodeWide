@@ -14,7 +14,9 @@ export function RichContentWidthProvider({
   width: number | null;
   children: ReactNode;
 }) {
-  return <RichContentWidthContext.Provider value={width}>{children}</RichContentWidthContext.Provider>;
+  return (
+    <RichContentWidthContext.Provider value={width}>{children}</RichContentWidthContext.Provider>
+  );
 }
 
 export function useRichContentWidth(): number | null {

@@ -52,7 +52,8 @@ export function useConversationOwner(scope: string): ConversationOwner {
   // token through useEvent would let an old request mutate a different chat.
   const [owner] = useConversationState(scope, () => ({
     isCurrent: () => tokenRef.current !== null && ownerRegistry.isCurrent(tokenRef.current),
-    hasReplacement: () => tokenRef.current !== null && ownerRegistry.hasReplacement(tokenRef.current),
+    hasReplacement: () =>
+      tokenRef.current !== null && ownerRegistry.hasReplacement(tokenRef.current),
   }));
   return owner;
 }

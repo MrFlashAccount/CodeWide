@@ -8,6 +8,12 @@ export const styles = StyleSheet.create({
     alignSelf: "flex-start",
     gap: spacing.xxs,
   },
-  agentMarkdownDocumentFill: { width: "100%", alignSelf: "stretch" },
-  errorText: { color: colors.red, ...typeScale.body },
+  agentMarkdownDocumentFill: {
+    width: "100%",
+    alignSelf: "stretch",
+  },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

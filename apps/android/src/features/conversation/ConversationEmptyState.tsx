@@ -8,6 +8,7 @@ import { ActionMenu } from "../../ui/ActionMenu";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
 import { ThreadHistoryEmptyState } from "./ConversationHistoryStatus";
+
 export function ConversationEmptyState({
   threadSearchActive,
   emptyRemoteThread,
@@ -111,7 +112,10 @@ export function ConversationSelectionPlaceholder() {
 }
 
 const styles = StyleSheet.create({
-  emptyText: { color: colors.textMuted, ...typeScale.title },
+  emptyText: {
+    color: colors.textMuted,
+    ...typeScale.title,
+  },
   pressed: { opacity: 0.68 },
   emptyConversation: {
     flex: 1,
@@ -127,7 +131,11 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingHorizontal: spacing.lg,
   },
-  newChatPrompt: { color: colors.text, ...typeScale.heading, textAlign: "center" },
+  newChatPrompt: {
+    color: colors.text,
+    ...typeScale.heading,
+    textAlign: "center",
+  },
   newChatProjectButton: {
     maxWidth: "100%",
     minHeight: controlSize.regular,
@@ -138,7 +146,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     borderRadius: radii.large,
   },
-  newChatProjectText: { minWidth: 0, flexShrink: 1, color: colors.accent, ...typeScale.title },
+  newChatProjectText: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.accent,
+    ...typeScale.title,
+  },
   newChatWorkspaceButton: {
     minHeight: controlSize.regular,
     flexDirection: "row",
@@ -148,5 +161,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     borderRadius: radii.large,
   },
-  newChatWorkspaceText: { color: colors.textMuted, ...typeScale.body },
+  newChatWorkspaceText: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
 });

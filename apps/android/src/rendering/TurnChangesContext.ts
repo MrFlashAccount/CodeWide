@@ -8,5 +8,8 @@ export interface TurnChangesTarget {
 }
 
 /** Opens the recorded patches for one exact turn in the shared Changes workspace. */
-export type PresentTurnChanges = (target: TurnChangesTarget, files: readonly TurnChangedFile[]) => void;
+export type PresentTurnChanges = (
+  target: TurnChangesTarget,
+  files: readonly TurnChangedFile[],
+) => void;
 export const TurnChangesContext = createContext<PresentTurnChanges | null>(null);

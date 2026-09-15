@@ -22,7 +22,12 @@ export const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.xxs,
   },
-  pairingHeaderTitle: { flex: 1, minWidth: 0, color: colors.text, ...typeScale.heading },
+  pairingHeaderTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    ...typeScale.heading,
+  },
   pairingBack: {
     width: controlSize.regular,
     height: controlSize.regular,
@@ -30,7 +35,10 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.pill,
   },
-  pairingBody: { gap: spacing.md, paddingBottom: spacing.optical },
+  pairingBody: {
+    gap: spacing.md,
+    paddingBottom: spacing.optical,
+  },
   pairingHeroIcon: {
     width: controlSize.touch,
     height: controlSize.touch,
@@ -54,9 +62,15 @@ export const styles = StyleSheet.create({
   },
   pairingCode: {
     color: colors.text,
-    fontFamily: Platform.select({ android: "monospace", default: "Courier" }),
+    fontFamily: Platform.select({
+      android: "monospace",
+      default: "Courier",
+    }),
   },
-  pairingActionStack: { gap: spacing.xs, marginTop: spacing.optical },
+  pairingActionStack: {
+    gap: spacing.xs,
+    marginTop: spacing.optical,
+  },
   pairingPrimaryAction: {
     minHeight: touchTarget,
     borderRadius: radii.pill,
@@ -82,7 +96,11 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingHorizontal: spacing.md,
   },
-  pairingSecondaryText: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
+  pairingSecondaryText: {
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
   pairingTextAction: {
     minHeight: controlSize.regular,
     flexDirection: "row",
@@ -102,7 +120,11 @@ export const styles = StyleSheet.create({
     gap: spacing.compact,
     paddingTop: spacing.xxs,
   },
-  pairingSafetyText: { color: colors.textDim, ...typeScale.label, flexShrink: 1 },
+  pairingSafetyText: {
+    color: colors.textDim,
+    ...typeScale.label,
+    flexShrink: 1,
+  },
   pairingError: {
     flexDirection: "row",
     alignItems: "center",
@@ -117,8 +139,16 @@ export const styles = StyleSheet.create({
     borderRadius: radii.large,
     backgroundColor: colors.surfaceContainerLow,
   },
-  pairingIdentityRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  pairingIdentityFields: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  pairingIdentityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  pairingIdentityFields: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
   pairingEmojiInput: {
     width: 52,
     minHeight: touchTarget,
@@ -144,9 +174,22 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.xs,
   },
-  pairingEndpoint: { color: colors.textMuted, ...typeScale.label, flex: 1 },
-  pairingMetaText: { flex: 1, minWidth: 0, color: colors.textMuted, ...typeScale.label },
-  pairingSuccess: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.lg },
+  pairingEndpoint: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    flex: 1,
+  },
+  pairingMetaText: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  pairingSuccess: {
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.lg,
+  },
   pairingSuccessIcon: {
     width: 60,
     height: layoutSize.row,
@@ -155,8 +198,16 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.primary,
   },
-  pairingSuccessTitle: { color: colors.text, ...typeScale.heading, textAlign: "center" },
-  fieldLabel: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.xxs },
+  pairingSuccessTitle: {
+    color: colors.text,
+    ...typeScale.heading,
+    textAlign: "center",
+  },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.xxs,
+  },
   fieldInput: {
     minHeight: touchTarget,
     color: colors.text,
@@ -167,5 +218,8 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     ...typeScale.body,
   },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

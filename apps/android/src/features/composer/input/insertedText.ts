@@ -1,3 +1,4 @@
+/** Locates the single text range inserted between two editor snapshots. */
 export function insertedText(
   previous: string,
   next: string,

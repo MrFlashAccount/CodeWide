@@ -1,6 +1,7 @@
 import { formatDeviceTime } from "../../data/device-time";
 import { controlSize, spacing } from "../../theme";
 import type { InlineQueueOverlayItem, QueueLayout } from "./inlineQueueContract";
+
 export const STACK_VISIBLE_ITEMS = 2;
 
 export const STACK_HEIGHT = controlSize.regular;

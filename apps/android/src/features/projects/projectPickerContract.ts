@@ -1,4 +1,6 @@
 import type { RemoteDirectoryEntry, RemoteProject } from "../../data/remote-projects";
+
+/** Project choices and selection actions exposed to the project picker. */
 export type ProjectPickerProps = {
   visible: boolean;
   cwd: string;

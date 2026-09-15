@@ -19,13 +19,30 @@ export function TurnChangesFooter(props: TurnChangesFooterProps) {
   const files = useMemo(() => turnChangedFiles(props.diff), [props.diff]);
   const open = useEvent(() => present?.(props.target, files));
   if (present === null || files.length === 0) return null;
-  return <Pressable accessibilityRole="button" accessibilityLabel="Changes in this turn" onPress={open} style={styles.trigger}>
-    <Ionicons name="git-compare-outline" size={iconSize.indicator} color={colors.textMuted} />
-    <Text numberOfLines={1} style={styles.caption}>Changes</Text>
-  </Pressable>;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Changes in this turn"
+      onPress={open}
+      style={styles.trigger}
+    >
+      <Ionicons name="git-compare-outline" size={iconSize.indicator} color={colors.textMuted} />
+      <Text numberOfLines={1} style={styles.caption}>
+        Changes
+      </Text>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
-  trigger: { flexDirection: "row", alignItems: "center", gap: spacing.xxs, flexShrink: 0 },
-  caption: { ...typeScale.caption, color: colors.textMuted },
+  trigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+    flexShrink: 0,
+  },
+  caption: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+  },
 });

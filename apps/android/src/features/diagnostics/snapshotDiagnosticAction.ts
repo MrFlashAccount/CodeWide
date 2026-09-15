@@ -4,6 +4,7 @@ import { operationalMetricsSnapshot } from "../../data/operational-metrics";
 import { performanceExperimentSnapshot } from "../../data/performance-experiments";
 import { getWindowFrameReport, usePerformanceMetrics } from "../../native/performance-metrics";
 import { useEvent } from "../../react/useEvent";
+
 export function useSnapshotDiagnosticAction(
   metrics: ReturnType<typeof usePerformanceMetrics>,
   setError: (error: string | null) => void,

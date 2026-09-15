@@ -6,7 +6,15 @@ import {
   type ModalBottomSheetRef,
 } from "@expo/ui/jetpack-compose";
 import { PortalHost } from "heroui-native/portal";
-import { useCallback, useEffect, useId, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ComponentPropsWithRef,
+  type ReactNode,
+} from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -51,8 +59,9 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
   const sheetRef = useRef<ModalBottomSheetRef>(null);
   const [nativeSheetReady, setNativeSheetReady] = useState(false);
   const expanded = contentProps.enableDynamicSizing === false;
-  const fitToContents = contentProps.enableDynamicSizing !== false
-    && (contentProps.snapPoints === undefined || contentProps.snapPoints.length === 0);
+  const fitToContents =
+    contentProps.enableDynamicSizing !== false &&
+    (contentProps.snapPoints === undefined || contentProps.snapPoints.length === 0);
   const hasMultipleSnapPoints = (contentProps.snapPoints?.length ?? 0) > 1;
   const maxIndex = Math.max(0, (contentProps.snapPoints?.length ?? 1) - 1);
   const initialFullyExpanded = hasMultipleSnapPoints && (contentProps.index ?? 0) === maxIndex;
@@ -66,9 +75,12 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
     if (isOpen || !nativeSheetReady) return;
 
     let cancelled = false;
-    void sheetRef.current?.hide().catch(() => undefined).then(() => {
-      if (!cancelled) setNativeSheetReady(false);
-    });
+    void sheetRef.current
+      ?.hide()
+      .catch(() => undefined)
+      .then(() => {
+        if (!cancelled) setNativeSheetReady(false);
+      });
 
     return () => {
       cancelled = true;
@@ -95,7 +107,16 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
         }}
       >
         <RNHostView matchContents={fitToContents}>
-          <View collapsable={false} testID={`performance-sheet:${contentProps.performanceSurface ?? "sheet"}`} style={[styles.content, expanded && styles.expandedContent, !fitToContents && styles.fixedHostContent, contentProps.style]}>
+          <View
+            collapsable={false}
+            testID={`performance-sheet:${contentProps.performanceSurface ?? "sheet"}`}
+            style={[
+              styles.content,
+              expanded && styles.expandedContent,
+              !fitToContents && styles.fixedHostContent,
+              contentProps.style,
+            ]}
+          >
             <OverlaySurfaceProvider surface="native-sheet" portalHostName={portalHostName}>
               <RecoverableRenderBoundary
                 scope="dialog"
@@ -119,7 +140,19 @@ export function AppSheetScrollView(props: ComponentPropsWithRef<typeof ScrollVie
 }
 
 const styles = StyleSheet.create({
-  content: { width: "100%", minWidth: 0, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
-  expandedContent: { flex: 1, minHeight: 0, paddingBottom: 0 },
-  fixedHostContent: { flexGrow: 1, height: 0 },
+  content: {
+    width: "100%",
+    minWidth: 0,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  expandedContent: {
+    flex: 1,
+    minHeight: 0,
+    paddingBottom: 0,
+  },
+  fixedHostContent: {
+    flexGrow: 1,
+    height: 0,
+  },
 });

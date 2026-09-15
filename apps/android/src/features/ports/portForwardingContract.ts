@@ -1,11 +1,15 @@
 import type { LegendListProps } from "@legendapp/list/react-native";
 
+/** Runtime lifecycle of one port-forwarding profile. */
 export type PortForwardingStatus = "stopped" | "connecting" | "live" | "unavailable" | "error";
 
+/** Lifecycle of remote port discovery for the active server. */
 export type PortForwardingDiscoveryStatus = "idle" | "loading" | "ready" | "error";
 
+/** User policy controlling whether a candidate port is forwarded. */
 export type PortForwardingPreference = "automatic" | "included" | "excluded";
 
+/** Persisted configuration and runtime state of one forwarded port. */
 export type PortForwardingProfile = {
   id: string;
   label: string;
@@ -21,6 +25,7 @@ export type PortForwardingProfile = {
   error: string | null;
 };
 
+/** Remote listening port that may be promoted into a forwarding profile. */
 export type PortForwardingCandidate = {
   port: number;
   name: string;
@@ -44,6 +49,7 @@ export type PortForwardingCandidate = {
   defaultForwardingEnabled: boolean;
 };
 
+/** Editable fields used to create or update a forwarding profile. */
 export type PortForwardingDraft = {
   label: string;
   remoteHost: "127.0.0.1";
@@ -52,6 +58,7 @@ export type PortForwardingDraft = {
   startImmediately: boolean;
 };
 
+/** Complete state and command contract for the port-forwarding manager. */
 export type PortForwardingManagerProps = {
   serverName: string;
   profiles: readonly PortForwardingProfile[];
@@ -71,8 +78,10 @@ export type PortForwardingManagerProps = {
   renderScrollComponent?: LegendListProps<ServiceListRow>["renderScrollComponent"];
 };
 
+/** Visible service-list segment selected by the user. */
 export type ServiceSegment = "active" | "available" | "excluded";
 
+/** Candidate or configured service rendered within a service segment. */
 export type ServiceEntry =
   | { type: "candidate"; group: string; candidate: PortForwardingCandidate }
   | {
@@ -82,4 +91,5 @@ export type ServiceEntry =
       kind: PortForwardingCandidate["kind"];
     };
 
+/** Renderable service row, including group separators. */
 export type ServiceListRow = ServiceEntry | { type: "group"; group: string };

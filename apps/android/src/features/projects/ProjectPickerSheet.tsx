@@ -10,6 +10,7 @@ import { styles } from "./ProjectPickerSheet.styles";
 import { ProjectPickerContent } from "./ProjectPickerContent";
 import { ProjectPickerHeader } from "./ProjectPickerHeader";
 import { useProjectPickerSession } from "./projectPickerSession";
+
 export function ProjectPickerSheet(props: ProjectPickerProps) {
   const state = useProjectPickerSession(props);
   const { visible, busy, error, onClose, browseOnly = false } = props;

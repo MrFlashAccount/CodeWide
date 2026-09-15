@@ -7,6 +7,7 @@ import { styles } from "../ComposerMenu.styles";
 import { permissionProfileLabel } from "../settings";
 
 import type { ComposerControlOptionsProps } from "./controlOptionsContract";
+
 export function ComposerControlOptions({
   page,
   controls,

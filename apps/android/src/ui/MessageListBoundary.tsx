@@ -22,7 +22,11 @@ export function MessageListBoundary(props: MessageListBoundaryProps) {
 
 export function MessageListSkeleton() {
   return (
-    <View accessibilityLabel="Loading messages" testID="message-list-skeleton" style={styles.content}>
+    <View
+      accessibilityLabel="Loading messages"
+      testID="message-list-skeleton"
+      style={styles.content}
+    >
       <View style={styles.user} />
       <View style={styles.answer}>
         <View style={styles.line} />
@@ -51,7 +55,9 @@ function MessageListError(props: MessageListErrorProps) {
   }
   return (
     <View style={styles.content}>
-      <Text accessibilityRole="alert" style={styles.error}>{retryError ?? props.state.message}</Text>
+      <Text accessibilityRole="alert" style={styles.error}>
+        {retryError ?? props.state.message}
+      </Text>
       <Pressable accessibilityRole="button" disabled={pending} onPress={retry} style={styles.retry}>
         <Text style={styles.label}>Retry loading messages</Text>
       </Pressable>
@@ -60,12 +66,47 @@ function MessageListError(props: MessageListErrorProps) {
 }
 
 const styles = StyleSheet.create({
-  content: { flex: 1, padding: spacing.lg, gap: spacing.lg, justifyContent: "flex-end" },
-  user: { alignSelf: "flex-end", width: "55%", height: touchTarget, borderRadius: radii.bubble, backgroundColor: colors.surface },
-  answer: { width: "88%", padding: spacing.md, gap: spacing.sm, borderRadius: radii.bubble, backgroundColor: colors.surface },
-  line: { height: spacing.sm, borderRadius: radii.small, backgroundColor: colors.border },
-  shortLine: { width: "60%", height: spacing.sm, borderRadius: radii.small, backgroundColor: colors.border },
-  error: { ...typeScale.body, color: colors.red },
-  label: { ...typeScale.body, color: colors.text },
-  retry: { minHeight: touchTarget, justifyContent: "center" },
+  content: {
+    flex: 1,
+    padding: spacing.lg,
+    gap: spacing.lg,
+    justifyContent: "flex-end",
+  },
+  user: {
+    alignSelf: "flex-end",
+    width: "55%",
+    height: touchTarget,
+    borderRadius: radii.bubble,
+    backgroundColor: colors.surface,
+  },
+  answer: {
+    width: "88%",
+    padding: spacing.md,
+    gap: spacing.sm,
+    borderRadius: radii.bubble,
+    backgroundColor: colors.surface,
+  },
+  line: {
+    height: spacing.sm,
+    borderRadius: radii.small,
+    backgroundColor: colors.border,
+  },
+  shortLine: {
+    width: "60%",
+    height: spacing.sm,
+    borderRadius: radii.small,
+    backgroundColor: colors.border,
+  },
+  error: {
+    ...typeScale.body,
+    color: colors.red,
+  },
+  label: {
+    ...typeScale.body,
+    color: colors.text,
+  },
+  retry: {
+    minHeight: touchTarget,
+    justifyContent: "center",
+  },
 });

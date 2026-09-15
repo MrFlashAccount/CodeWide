@@ -23,7 +23,8 @@ export function imageAnnotationAttachment(
 const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
 
 export function quickdrawPngBytes(dataUrl: string): Uint8Array {
-  if (!dataUrl.startsWith(PNG_DATA_URL_PREFIX)) throw new Error("QuickDraw did not return a PNG image");
+  if (!dataUrl.startsWith(PNG_DATA_URL_PREFIX))
+    throw new Error("QuickDraw did not return a PNG image");
   const encoded = dataUrl.slice(PNG_DATA_URL_PREFIX.length).replace(/\s/gu, "");
   if (encoded.length === 0) throw new Error("QuickDraw returned an empty PNG image");
   try {

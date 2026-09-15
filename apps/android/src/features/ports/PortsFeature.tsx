@@ -39,5 +39,9 @@ export function PortsFeature({
   );
 }
 const styles = StyleSheet.create({
-  notice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
+  notice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
 });

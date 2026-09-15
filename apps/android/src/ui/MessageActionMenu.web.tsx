@@ -47,67 +47,122 @@ export function MessageActionMenuProvider({ children }: MessageActionMenuProvide
   );
 }
 
-const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(function MessageActionMenuHost(_props, ref) {
-  const dialog = useAppDialog();
-  const [request, setRequest] = useState<MessageActionMenuRequest | null>(null);
-  const [isOpen, setIsOpen] = useState(false);
-  const open = useEvent<OpenMessageActionMenu>((nextRequest) => {
-    setRequest(nextRequest);
-    setIsOpen(true);
-  });
-
-  useImperativeHandle(ref, () => ({ open }), [open]);
-
-  const setOpen = (openState: boolean) => {
-    setIsOpen(openState);
-    if (!openState) setRequest(null);
-  };
-  const copy = () => {
-    if (request?.copyText === undefined || request.copyText === "") return;
-    setOpen(false);
-    void Clipboard.setStringAsync(request.copyText);
-  };
-  const fork = () => {
-    const onFork = request?.onFork;
-    if (onFork === undefined) return;
-    setOpen(false);
-    void onFork().catch((cause) => {
-      dialog.alert("Fork failed", cause instanceof Error ? cause.message : "Could not fork thread");
+const MessageActionMenuHost = forwardRef<MessageActionMenuHandle>(
+  function MessageActionMenuHost(_props, ref) {
+    const dialog = useAppDialog();
+    const [request, setRequest] = useState<MessageActionMenuRequest | null>(null);
+    const [isOpen, setIsOpen] = useState(false);
+    const open = useEvent<OpenMessageActionMenu>((nextRequest) => {
+      setRequest(nextRequest);
+      setIsOpen(true);
     });
-  };
-  const review = () => {
-    const onReview = request?.onReview;
-    if (onReview === undefined) return;
-    setOpen(false);
-    void Promise.resolve(onReview()).catch((cause) => {
-      dialog.alert("Review failed", cause instanceof Error ? cause.message : "Could not review response");
-    });
-  };
 
-  return (
-    <AppSheet isOpen={isOpen} onOpenChange={setOpen} contentProps={{ index: 0, enableDynamicSizing: true }}>
-      <View style={styles.content}>
-        <Pressable accessibilityRole="menuitem" disabled={request?.copyText === ""} onPress={copy} style={({ pressed }) => [styles.item, pressed && styles.pressed, request?.copyText === "" && styles.disabled]}>
-          <Ionicons name="copy-outline" size={iconSize.action} color={colors.textMuted} />
-          <Text style={styles.label}>Copy</Text>
-        </Pressable>
-        <Pressable accessibilityRole="menuitem" disabled={request?.onFork === undefined} onPress={fork} style={({ pressed }) => [styles.item, pressed && styles.pressed, request?.onFork === undefined && styles.disabled]}>
-          <Ionicons name="git-branch-outline" size={iconSize.action} color={colors.textMuted} />
-          <Text style={styles.label}>Fork</Text>
-        </Pressable>
-        <Pressable accessibilityRole="menuitem" disabled={request?.onReview === undefined} onPress={review} style={({ pressed }) => [styles.item, pressed && styles.pressed, request?.onReview === undefined && styles.disabled]}>
-          <Ionicons name="chatbubble-ellipses-outline" size={iconSize.action} color={colors.textMuted} />
-          <Text style={styles.label}>Review response</Text>
-        </Pressable>
-      </View>
-    </AppSheet>
-  );
-});
+    useImperativeHandle(ref, () => ({ open }), [open]);
+
+    const setOpen = (openState: boolean) => {
+      setIsOpen(openState);
+      if (!openState) setRequest(null);
+    };
+    const copy = () => {
+      if (request?.copyText === undefined || request.copyText === "") return;
+      setOpen(false);
+      void Clipboard.setStringAsync(request.copyText);
+    };
+    const fork = () => {
+      const onFork = request?.onFork;
+      if (onFork === undefined) return;
+      setOpen(false);
+      void onFork().catch((cause) => {
+        dialog.alert(
+          "Fork failed",
+          cause instanceof Error ? cause.message : "Could not fork thread",
+        );
+      });
+    };
+    const review = () => {
+      const onReview = request?.onReview;
+      if (onReview === undefined) return;
+      setOpen(false);
+      void Promise.resolve(onReview()).catch((cause) => {
+        dialog.alert(
+          "Review failed",
+          cause instanceof Error ? cause.message : "Could not review response",
+        );
+      });
+    };
+
+    return (
+      <AppSheet
+        isOpen={isOpen}
+        onOpenChange={setOpen}
+        contentProps={{ index: 0, enableDynamicSizing: true }}
+      >
+        <View style={styles.content}>
+          <Pressable
+            accessibilityRole="menuitem"
+            disabled={request?.copyText === ""}
+            onPress={copy}
+            style={({ pressed }) => [
+              styles.item,
+              pressed && styles.pressed,
+              request?.copyText === "" && styles.disabled,
+            ]}
+          >
+            <Ionicons name="copy-outline" size={iconSize.action} color={colors.textMuted} />
+            <Text style={styles.label}>Copy</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="menuitem"
+            disabled={request?.onFork === undefined}
+            onPress={fork}
+            style={({ pressed }) => [
+              styles.item,
+              pressed && styles.pressed,
+              request?.onFork === undefined && styles.disabled,
+            ]}
+          >
+            <Ionicons name="git-branch-outline" size={iconSize.action} color={colors.textMuted} />
+            <Text style={styles.label}>Fork</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="menuitem"
+            disabled={request?.onReview === undefined}
+            onPress={review}
+            style={({ pressed }) => [
+              styles.item,
+              pressed && styles.pressed,
+              request?.onReview === undefined && styles.disabled,
+            ]}
+          >
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={iconSize.action}
+              color={colors.textMuted}
+            />
+            <Text style={styles.label}>Review response</Text>
+          </Pressable>
+        </View>
+      </AppSheet>
+    );
+  },
+);
 
 const styles = StyleSheet.create({
   content: { gap: spacing.optical },
-  item: { minHeight: layoutSize.header, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.sm, borderRadius: radii.medium },
+  item: {
+    minHeight: layoutSize.header,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.medium,
+  },
   pressed: { backgroundColor: colors.surfaceContainerHigh },
   disabled: { opacity: 0.42 },
-  label: { flex: 1, color: colors.text, ...typeScale.body, fontFamily: "RobotoFlex-Medium" },
+  label: {
+    flex: 1,
+    color: colors.text,
+    ...typeScale.body,
+    fontFamily: "RobotoFlex-Medium",
+  },
 });

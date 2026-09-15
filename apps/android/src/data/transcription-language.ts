@@ -5,13 +5,23 @@ export function transcriptionLanguageHint(thread: Thread | null | undefined): "r
   let cyrillic = 0;
   let latin = 0;
   let userMessages = 0;
-  for (let turnIndex = thread.turns.length - 1; turnIndex >= 0 && userMessages < 6; turnIndex -= 1) {
+  for (
+    let turnIndex = thread.turns.length - 1;
+    turnIndex >= 0 && userMessages < 6;
+    turnIndex -= 1
+  ) {
     const turn = thread.turns[turnIndex];
     if (turn === undefined) continue;
-    for (let itemIndex = turn.items.length - 1; itemIndex >= 0 && userMessages < 6; itemIndex -= 1) {
+    for (
+      let itemIndex = turn.items.length - 1;
+      itemIndex >= 0 && userMessages < 6;
+      itemIndex -= 1
+    ) {
       const item = turn.items[itemIndex];
       if (item?.type !== "userMessage") continue;
-      const text = item.content.flatMap((part) => part.type === "text" ? [part.text.slice(0, 2_000)] : []).join(" ");
+      const text = item.content
+        .flatMap((part) => (part.type === "text" ? [part.text.slice(0, 2_000)] : []))
+        .join(" ");
       cyrillic += text.match(/[А-Яа-яЁё]/g)?.length ?? 0;
       latin += text.match(/[A-Za-z]/g)?.length ?? 0;
       userMessages += 1;

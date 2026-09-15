@@ -7,5 +7,7 @@ export class LegacyRemoteStore {
 
   close(): void {}
 
-  async listConnections(): Promise<StoredConnection[]> { return []; }
+  async listConnections(): Promise<StoredConnection[]> {
+    return [];
+  }
 }

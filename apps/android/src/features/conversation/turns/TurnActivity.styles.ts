@@ -3,9 +3,18 @@ import { colors, controlSize, spacing, typeScale, typeWeight } from "../../../th
 
 export const styles = StyleSheet.create({
   pressed: { opacity: 0.68 },
-  turnActivity: { maxWidth: "100%", alignSelf: "flex-start", marginTop: spacing.optical },
+  turnActivity: {
+    maxWidth: "100%",
+    alignSelf: "flex-start",
+    marginTop: spacing.optical,
+  },
   turnActivityCompact: { marginTop: 0 },
-  turnActivityExpanded: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" },
+  turnActivityExpanded: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    alignSelf: "stretch",
+  },
   turnActivityToggle: {
     minHeight: controlSize.compact,
     flexDirection: "row",
@@ -14,8 +23,16 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 0,
   },
   turnActivityToggleCompact: { minHeight: typeScale.body.lineHeight },
-  activityIconSlot: { flexShrink: 0, alignItems: "center", justifyContent: "center" },
-  activityChevronSlot: { flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  activityIconSlot: {
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  activityChevronSlot: {
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   turnActivityLabel: {
     minWidth: 0,
     flexShrink: 1,
@@ -23,7 +40,11 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  turnActivityLabelWave: { minWidth: 0, flexShrink: 1, alignSelf: "center" },
+  turnActivityLabelWave: {
+    minWidth: 0,
+    flexShrink: 1,
+    alignSelf: "center",
+  },
   turnActivityList: {
     width: "100%",
     minWidth: 0,

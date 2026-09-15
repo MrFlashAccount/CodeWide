@@ -87,8 +87,17 @@ export function NativeCodeBlock({
 }
 
 const styles = StyleSheet.create({
-  container: { width: "100%", minWidth: 0, maxWidth: "100%", gap: spacing.xxs },
-  nativeView: { width: "100%", minWidth: 0, maxWidth: "100%" },
+  container: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    gap: spacing.xxs,
+  },
+  nativeView: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+  },
   fallbackViewport: {
     width: "100%",
     minWidth: 0,
@@ -96,7 +105,18 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     backgroundColor: colors.code,
   },
-  fallbackContent: { flexGrow: 0, paddingVertical: spacing.xxs },
-  fallbackText: { color: colors.textMuted, ...typeScale.code, fontSize: NATIVE_CODE_FONT_SIZE, lineHeight: NATIVE_CODE_LINE_HEIGHT },
-  truncated: { color: colors.textDim, ...typeScale.caption, },
+  fallbackContent: {
+    flexGrow: 0,
+    paddingVertical: spacing.xxs,
+  },
+  fallbackText: {
+    color: colors.textMuted,
+    ...typeScale.code,
+    fontSize: NATIVE_CODE_FONT_SIZE,
+    lineHeight: NATIVE_CODE_LINE_HEIGHT,
+  },
+  truncated: {
+    color: colors.textDim,
+    ...typeScale.caption,
+  },
 });

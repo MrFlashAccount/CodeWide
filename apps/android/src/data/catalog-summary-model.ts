@@ -12,7 +12,9 @@ export class CatalogSummaryModel {
   readonly counts$ = observable<Record<string, number | null>>({});
   readonly #revisions = new Map<string, number>();
 
-  revision(connectionId: string): number { return this.#revisions.get(connectionId) ?? 0; }
+  revision(connectionId: string): number {
+    return this.#revisions.get(connectionId) ?? 0;
+  }
 
   invalidate(connectionId: string): void {
     this.#revisions.set(connectionId, this.revision(connectionId) + 1);

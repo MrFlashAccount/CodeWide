@@ -31,12 +31,13 @@ export function getUserPreferencesDatabase(): UserPreferencesDatabase {
         await ready;
         const current = collection.get(id);
         const value = apply(current?.value ?? null);
-        const transaction = current === undefined
-          ? collection.insert({ id, value, updatedAt: Date.now() })
-          : collection.update(id, (draft) => {
-              draft.value = value;
-              draft.updatedAt = Date.now();
-            });
+        const transaction =
+          current === undefined
+            ? collection.insert({ id, value, updatedAt: Date.now() })
+            : collection.update(id, (draft) => {
+                draft.value = value;
+                draft.updatedAt = Date.now();
+              });
         await transaction.isPersisted.promise;
       });
       writeQueue = operation.catch(() => undefined);

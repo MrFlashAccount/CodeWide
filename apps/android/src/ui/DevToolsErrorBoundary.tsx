@@ -39,6 +39,7 @@ type BoundaryProps = {
 
 type BoundaryState = { failure: DevToolsFailure | null };
 
+/** Isolates embedded DevTools failures from the surrounding conversation UI. */
 export class DevToolsErrorBoundary extends Component<BoundaryProps, BoundaryState> {
   override state: BoundaryState = { failure: null };
 
@@ -105,12 +106,19 @@ export function DevToolsFailurePanel({
   return (
     <View accessibilityRole="alert" style={styles.root} testID="chromium-devtools-error-boundary">
       <Text style={styles.title}>Chromium DevTools crashed</Text>
-      <Text selectable style={styles.message}>{failure.message}</Text>
+      <Text selectable style={styles.message}>
+        {failure.message}
+      </Text>
       <View style={styles.actions}>
         <Pressable accessibilityRole="button" onPress={onRetry} style={styles.primaryButton}>
           <Text style={styles.primaryLabel}>Retry DevTools</Text>
         </Pressable>
-        <Pressable accessibilityRole="button" disabled={copying} onPress={() => void copy()} style={styles.secondaryButton}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={copying}
+          onPress={() => void copy()}
+          style={styles.secondaryButton}
+        >
           <Text style={styles.secondaryLabel}>{copying ? "Copying…" : "Copy error"}</Text>
         </Pressable>
         <Pressable accessibilityRole="button" onPress={onClose} style={styles.secondaryButton}>
@@ -118,7 +126,9 @@ export function DevToolsFailurePanel({
         </Pressable>
       </View>
       <ScrollView style={styles.details} contentContainerStyle={styles.detailsContent}>
-        <Text selectable style={styles.detailsText}>{report}</Text>
+        <Text selectable style={styles.detailsText}>
+          {report}
+        </Text>
       </ScrollView>
     </View>
   );
@@ -131,9 +141,15 @@ function devToolsFailureReport(failure: DevToolsFailure): string {
     `Occurred at: ${new Date(failure.occurredAt).toISOString()}`,
     `Message: ${failure.message}`,
     failure.context === undefined ? null : `Context:\n${failure.context}`,
-    failure.stack === undefined ? "No JavaScript stack available" : `JavaScript stack:\n${failure.stack}`,
-    failure.componentStack === undefined ? "No React component stack available" : `React component stack:\n${failure.componentStack}`,
-  ].filter((line): line is string => line !== null).join("\n\n");
+    failure.stack === undefined
+      ? "No JavaScript stack available"
+      : `JavaScript stack:\n${failure.stack}`,
+    failure.componentStack === undefined
+      ? "No React component stack available"
+      : `React component stack:\n${failure.componentStack}`,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n\n");
 }
 
 function normalizeError(value: unknown): Error {
@@ -147,15 +163,58 @@ function normalizeError(value: unknown): Error {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0, gap: spacing.sm, padding: spacing.md, backgroundColor: "#202124" },
-  title: { color: colors.text, ...typeScale.title },
-  message: { color: colors.red, ...typeScale.body },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
-  primaryButton: { minHeight: controlSize.touch, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.large, backgroundColor: colors.primary },
-  primaryLabel: { color: colors.onPrimary, ...typeScale.label },
-  secondaryButton: { minHeight: controlSize.regular, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.large, backgroundColor: colors.surfaceRaised },
-  secondaryLabel: { color: colors.text, ...typeScale.label },
-  details: { flex: 1, minHeight: 80, borderRadius: radii.medium, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    minHeight: 0,
+    gap: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: "#202124",
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  message: {
+    color: colors.red,
+    ...typeScale.body,
+  },
+  actions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  primaryButton: {
+    minHeight: controlSize.touch,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.large,
+    backgroundColor: colors.primary,
+  },
+  primaryLabel: {
+    color: colors.onPrimary,
+    ...typeScale.label,
+  },
+  secondaryButton: {
+    minHeight: controlSize.regular,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.large,
+    backgroundColor: colors.surfaceRaised,
+  },
+  secondaryLabel: {
+    color: colors.text,
+    ...typeScale.label,
+  },
+  details: {
+    flex: 1,
+    minHeight: 80,
+    borderRadius: radii.medium,
+    backgroundColor: colors.background,
+  },
   detailsContent: { padding: spacing.sm },
-  detailsText: { color: colors.textMuted, ...typeScale.code, fontFamily: "monospace",  },
+  detailsText: {
+    color: colors.textMuted,
+    ...typeScale.code,
+    fontFamily: "monospace",
+  },
 });

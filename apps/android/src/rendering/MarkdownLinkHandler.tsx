@@ -11,7 +11,9 @@ export function MarkdownLocalLinkProvider({
   children: ReactNode;
   onOpen: MarkdownLocalLinkHandler;
 }) {
-  return <MarkdownLocalLinkContext.Provider value={onOpen}>{children}</MarkdownLocalLinkContext.Provider>;
+  return (
+    <MarkdownLocalLinkContext.Provider value={onOpen}>{children}</MarkdownLocalLinkContext.Provider>
+  );
 }
 
 export function useMarkdownLocalLinkHandler(): MarkdownLocalLinkHandler | null {

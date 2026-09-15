@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { sourceObjectDeclaration } from "../source-contract";
 import {
   heroUiRoot,
   appSheet,
@@ -31,12 +32,14 @@ it("preserves presentation integration contracts", () => {
   expect(appSheet).toContain("showDragHandle={contentProps.enablePanDownToClose ?? true}");
   expect(appSheet).toContain("<RNHostView matchContents={fitToContents}");
   expect(appSheet).toContain("!fitToContents && styles.fixedHostContent");
-  expect(appSheet).toContain("fixedHostContent: { flexGrow: 1, height: 0 }");
+  const fixedHostContent = sourceObjectDeclaration(appSheet, "fixedHostContent");
+  expect(fixedHostContent).toContain("flexGrow: 1");
+  expect(fixedHostContent).toContain("height: 0");
   expect(appSheet).toContain("useWindowDimensions");
   expect(appSheet).not.toContain("borderRadius:");
   expect(appSheet).not.toContain("backgroundColor:");
   expect(appSheet).toContain("sheetRef.current");
-  expect(appSheet).toContain("sheetRef.current?.hide()");
+  expect(appSheet).toMatch(/sheetRef\.current\s*\?\.hide\(\)/u);
   expect(appSheet).toContain("onOpenChange(false)");
   expect(appSheet).toContain("<RecoverableRenderBoundary");
   expect(appSheet).toContain('label="Bottom sheet content"');
@@ -72,7 +75,9 @@ it("preserves presentation integration contracts", () => {
   expect(messageActionMenu).toContain("hostRef.current?.open(request, event)");
   expect(turnControlMenus).toContain("id: SERVER_DEFAULT_PERMISSIONS");
   expect(turnControlMenus).toContain('description: "Use the server\'s configured access level"');
-  expect(appDialog).toContain("{state.isOpen && <AppDialogSurface isOpen request={state.request}");
+  expect(appDialog).toMatch(
+    /\{state\.isOpen\s*&&\s*\(\s*<AppDialogSurface\s+isOpen\s+request=\{state\.request\}/u,
+  );
   expect(appDialogSurface).toContain('from "heroui-native/dialog"');
   expect(appDialogSurface).toContain('<Dialog.Overlay variant="blur"');
   expect(appDialogSurface).toContain("<Dialog.Portal style={styles.portal}>");

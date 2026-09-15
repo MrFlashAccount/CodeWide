@@ -12,7 +12,7 @@ import { colors } from "../../theme";
 import { AppText as Text, AppTextInput as TextInput } from "../../ui/Typography";
 import { styles } from "./GoalFeature.styles";
 
-export function ThreadGoalDialog({
+function ThreadGoalDialog({
   visible,
   onClose,
   goal,
@@ -146,6 +146,7 @@ export function ThreadGoalDialog({
 
 import type { ThreadGoalRow } from "../../data/workspace-resource-database";
 import { AppSheet } from "../../ui/AppSheet";
+/** Composes thread-goal display, editing, and durable update actions. */
 export function GoalFeature({
   visible,
   onClose,

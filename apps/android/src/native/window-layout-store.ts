@@ -19,11 +19,12 @@ class WindowLayoutStore {
       this.subscription = Dimensions.addEventListener("change", ({ window }) => {
         const next = windowLayoutSnapshot(window);
         if (
-          next.width === this.snapshot.width
-          && next.height === this.snapshot.height
-          && next.scale === this.snapshot.scale
-          && next.fontScale === this.snapshot.fontScale
-        ) return;
+          next.width === this.snapshot.width &&
+          next.height === this.snapshot.height &&
+          next.scale === this.snapshot.scale &&
+          next.fontScale === this.snapshot.fontScale
+        )
+          return;
         this.snapshot = next;
         for (const notify of this.listeners) notify();
       });

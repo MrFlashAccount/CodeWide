@@ -2,7 +2,10 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, typeScale, typeWeight } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  agentPlaceholder: { color: colors.textDim, ...typeScale.label },
+  agentPlaceholder: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
   activityMoreButton: {
     minHeight: controlSize.regular,
     alignItems: "center",

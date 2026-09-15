@@ -22,7 +22,11 @@ export function AppFullscreenModal({
   children: ReactNode;
 }) {
   if (!isOpen) return null;
-  return <VisibleFullscreenModal onClose={onClose} {...(onShow === undefined ? {} : { onShow })}>{children}</VisibleFullscreenModal>;
+  return (
+    <VisibleFullscreenModal onClose={onClose} {...(onShow === undefined ? {} : { onShow })}>
+      {children}
+    </VisibleFullscreenModal>
+  );
 }
 
 function VisibleFullscreenModal({

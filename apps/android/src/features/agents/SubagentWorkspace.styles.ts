@@ -18,8 +18,17 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     backgroundColor: colors.threadListSurface,
   },
-  master: { minWidth: 0, minHeight: 0, backgroundColor: colors.threadListSurface },
-  detail: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.conversationSurface },
+  master: {
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.threadListSurface,
+  },
+  detail: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.conversationSurface,
+  },
   detailRaised: {
     borderTopLeftRadius: radii.composer,
     borderBottomLeftRadius: radii.composer,
@@ -40,11 +49,27 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingHorizontal: spacing.xs,
   },
-  headerIdentity: { flex: 1, minWidth: 0 },
-  headerTitle: { color: colors.text, ...typeScale.title },
-  masterTitle: { flex: 1, minWidth: 0 },
-  headerCount: { flexShrink: 0, color: colors.textMuted, ...typeScale.label },
-  headerSubtitle: { color: colors.textMuted, ...typeScale.label },
+  headerIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  headerTitle: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  masterTitle: {
+    flex: 1,
+    minWidth: 0,
+  },
+  headerCount: {
+    flexShrink: 0,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  headerSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   iconButton: {
     width: touchTarget,
     height: touchTarget,
@@ -65,7 +90,11 @@ export const styles = StyleSheet.create({
   },
   rowSelected: { backgroundColor: colors.secondaryContainer },
   pressed: { opacity: 0.68 },
-  rowText: { flex: 1, minWidth: 0, gap: spacing.optical },
+  rowText: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.optical,
+  },
   rowTitleLine: {
     width: "100%",
     minWidth: 0,
@@ -88,7 +117,12 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  rowMeta: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  rowMeta: {
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+  },
   unreadSlot: {
     width: 7,
     height: 18,
@@ -96,7 +130,12 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  unreadDot: { width: 7, height: 7, borderRadius: radii.pill, backgroundColor: colors.primary },
+  unreadDot: {
+    width: 7,
+    height: 7,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary,
+  },
   time: {
     flexShrink: 0,
     color: colors.textMuted,
@@ -111,9 +150,29 @@ export const styles = StyleSheet.create({
     color: colors.textMuted,
     ...typeScale.label,
   },
-  pendingPane: { flex: 1, minHeight: 0 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
-  empty: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: spacing.sm },
-  muted: { color: colors.textMuted, ...typeScale.body },
-  error: { color: colors.red, padding: spacing.sm, ...typeScale.body },
+  pendingPane: {
+    flex: 1,
+    minHeight: 0,
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
+  empty: {
+    minHeight: 180,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
+  muted: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  error: {
+    color: colors.red,
+    padding: spacing.sm,
+    ...typeScale.body,
+  },
 });

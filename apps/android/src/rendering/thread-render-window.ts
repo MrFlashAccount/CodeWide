@@ -13,7 +13,7 @@ export type TurnRenderWindow = {
   liveActivityIndexes: number[];
 };
 
-export function isTurnActivityItem(item: Turn["items"][number]): boolean {
+function isTurnActivityItem(item: Turn["items"][number]): boolean {
   return item.type !== "userMessage";
 }
 
@@ -25,7 +25,9 @@ export function isTurnActivityItem(item: Turn["items"][number]): boolean {
  */
 export function isAgentMessageStillStreaming(turn: Turn, itemId: string): boolean {
   if (turn.status !== "inProgress") return false;
-  const itemIndex = turn.items.findIndex((item) => item.id === itemId && item.type === "agentMessage");
+  const itemIndex = turn.items.findIndex(
+    (item) => item.id === itemId && item.type === "agentMessage",
+  );
   if (itemIndex < 0) return false;
   return !turn.items.slice(itemIndex + 1).some((item) => item.type !== "userMessage");
 }
@@ -68,12 +70,14 @@ export function selectTurnRenderWindow(
   const materializedIndexes: number[] = [];
   for (let index = 0; index < turn.items.length; index += 1) {
     const item = turn.items[index];
-    if (item === undefined || hiddenPlaceholderIndexes.has(index) || !isTurnActivityItem(item)) continue;
+    if (item === undefined || hiddenPlaceholderIndexes.has(index) || !isTurnActivityItem(item))
+      continue;
     // Thinking is ephemeral presentation state, not historical activity. Keep
     // the underlying item in storage, but only materialize it while it is the
     // newest thing in an active turn. The first tool or agent message that
     // follows it removes it from the render window without mutating history.
-    if (item.type === "reasoning" && (turn.status !== "inProgress" || index !== latestNonUserIndex)) continue;
+    if (item.type === "reasoning" && (turn.status !== "inProgress" || index !== latestNonUserIndex))
+      continue;
     materializedIndexes.push(index);
   }
 
@@ -84,13 +88,15 @@ export function selectTurnRenderWindow(
   const firstUserIndex = userItemIndexes[0] ?? Number.POSITIVE_INFINITY;
   const compactionIndexes = materializedIndexes.filter((index) => {
     const item = turn.items[index];
-    return item?.type === "contextCompaction"
-      && (index < firstUserIndex || isProjectedPreTurn(item));
+    return (
+      item?.type === "contextCompaction" && (index < firstUserIndex || isProjectedPreTurn(item))
+    );
   });
   const preTurnActivityIndexes = materializedIndexes.filter((index) => {
     const item = turn.items[index];
-    return item?.type !== "contextCompaction"
-      && (index < firstUserIndex || isProjectedPreTurn(item));
+    return (
+      item?.type !== "contextCompaction" && (index < firstUserIndex || isProjectedPreTurn(item))
+    );
   });
   const separatedIndexSet = new Set([...preTurnActivityIndexes, ...compactionIndexes]);
 
@@ -100,9 +106,9 @@ export function selectTurnRenderWindow(
       preTurnActivityIndexes,
       compactionIndexes,
       latestAgentIndex,
-      collapsedActivityIndexes: materializedIndexes.filter((index) => (
-        index !== latestAgentIndex && !separatedIndexSet.has(index)
-      )),
+      collapsedActivityIndexes: materializedIndexes.filter(
+        (index) => index !== latestAgentIndex && !separatedIndexSet.has(index),
+      ),
       liveActivityIndexes: [],
     };
   }
@@ -112,11 +118,13 @@ export function selectTurnRenderWindow(
     // App Server streams the final_answer item while the turn is still active.
     // Hiding that phase until turn/completed turns a real token stream into one
     // large visual jump at the boundary.
-    return !separatedIndexSet.has(index) && item?.type === "agentMessage" && item.text.trim() !== "";
+    return (
+      !separatedIndexSet.has(index) && item?.type === "agentMessage" && item.text.trim() !== ""
+    );
   });
-  const activityIndexes = materializedIndexes.filter((index) => (
-    turn.items[index]?.type !== "agentMessage" && !separatedIndexSet.has(index)
-  ));
+  const activityIndexes = materializedIndexes.filter(
+    (index) => turn.items[index]?.type !== "agentMessage" && !separatedIndexSet.has(index),
+  );
   const liveCount = Math.max(0, Math.min(liveActivityLimit, activityIndexes.length));
   const liveActivityIndexes = [
     ...agentIndexes,
@@ -141,19 +149,20 @@ function isProjectedPreTurn(item: Turn["items"][number] | undefined): boolean {
 function matchingAgentPlaceholderIndexes(turn: Turn): Set<number> {
   const hidden = new Set<number>();
   const placeholderId = `${turn.id}:agent`;
-  const placeholderIndex = turn.items.findIndex((item) => (
-    item.type === "agentMessage" && item.id === placeholderId
-  ));
+  const placeholderIndex = turn.items.findIndex(
+    (item) => item.type === "agentMessage" && item.id === placeholderId,
+  );
   if (placeholderIndex === -1) return hidden;
   const placeholder = turn.items[placeholderIndex];
   if (placeholder?.type !== "agentMessage") return hidden;
-  const hasCanonicalMatch = turn.items.some((item, index) => (
-    index !== placeholderIndex
-    && item.type === "agentMessage"
-    && item.id !== placeholderId
-    && (item.text === placeholder.text
-      || (item.phase === "final_answer" && placeholder.phase === "final_answer"))
-  ));
+  const hasCanonicalMatch = turn.items.some(
+    (item, index) =>
+      index !== placeholderIndex &&
+      item.type === "agentMessage" &&
+      item.id !== placeholderId &&
+      (item.text === placeholder.text ||
+        (item.phase === "final_answer" && placeholder.phase === "final_answer")),
+  );
   if (hasCanonicalMatch) hidden.add(placeholderIndex);
   return hidden;
 }

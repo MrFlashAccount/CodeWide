@@ -16,7 +16,11 @@ export type ThreadEventProjection = {
 };
 
 export type ThreadProjectionStore = {
-  applySnapshot(connectionId: string, snapshots: SyncSnapshotThread[], cursor: number): Promise<void>;
+  applySnapshot(
+    connectionId: string,
+    snapshots: SyncSnapshotThread[],
+    cursor: number,
+  ): Promise<void>;
   applyEvents(connectionId: string, events: SyncEvent[]): Promise<ThreadEventProjection>;
 };
 
@@ -60,7 +64,9 @@ function normalizePersistedSnapshots(snapshots: SyncSnapshotThread[]): SyncSnaps
  * thread's lifecycle projection. Native acknowledgement happens only after
  * both durable Adapter commits resolve.
  */
-export function createThreadProjectionStore(adapters: ThreadProjectionAdapters): ThreadProjectionStore {
+export function createThreadProjectionStore(
+  adapters: ThreadProjectionAdapters,
+): ThreadProjectionStore {
   return {
     async applySnapshot(connectionId, snapshots, cursor) {
       const normalizedSnapshots = normalizePersistedSnapshots(snapshots);
@@ -69,13 +75,21 @@ export function createThreadProjectionStore(adapters: ThreadProjectionAdapters):
       try {
         await adapters.details.applySnapshot(connectionId, normalizedSnapshots, cursor);
       } finally {
-        if (measureDiagnostics) recordDiagnosticTiming("thread_detail_projection_ms", performance.now() - detailStartedAt);
+        if (measureDiagnostics)
+          recordDiagnosticTiming(
+            "thread_detail_projection_ms",
+            performance.now() - detailStartedAt,
+          );
       }
       const summaryStartedAt = measureDiagnostics ? performance.now() : 0;
       try {
         await adapters.summaries.applySnapshot(connectionId, normalizedSnapshots, cursor);
       } finally {
-        if (measureDiagnostics) recordDiagnosticTiming("thread_summary_projection_ms", performance.now() - summaryStartedAt);
+        if (measureDiagnostics)
+          recordDiagnosticTiming(
+            "thread_summary_projection_ms",
+            performance.now() - summaryStartedAt,
+          );
       }
     },
     async applyEvents(connectionId, events) {
@@ -90,13 +104,21 @@ export function createThreadProjectionStore(adapters: ThreadProjectionAdapters):
         // and final TURN content can describe two different journal positions.
         await projected.checkpoint;
       } finally {
-        if (measureDiagnostics) recordDiagnosticTiming("thread_detail_projection_ms", performance.now() - detailStartedAt);
+        if (measureDiagnostics)
+          recordDiagnosticTiming(
+            "thread_detail_projection_ms",
+            performance.now() - detailStartedAt,
+          );
       }
       const summaryStartedAt = measureDiagnostics ? performance.now() : 0;
       try {
         await adapters.summaries.applyEvents(connectionId, events);
       } finally {
-        if (measureDiagnostics) recordDiagnosticTiming("thread_summary_projection_ms", performance.now() - summaryStartedAt);
+        if (measureDiagnostics)
+          recordDiagnosticTiming(
+            "thread_summary_projection_ms",
+            performance.now() - summaryStartedAt,
+          );
       }
       return projected;
     },

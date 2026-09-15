@@ -36,13 +36,15 @@ export class LegacyRemoteStore {
     if (this.#sharedOpen === null) {
       this.#sharedOpen = SQLite.openDatabaseAsync("codex-remote.db", {
         finalizeUnusedStatementsBeforeClosing: false,
-      }).then(async (database) => {
-        await database.execAsync("PRAGMA busy_timeout = 5000");
-        return new LegacyRemoteStore(database);
-      }).catch((cause: unknown) => {
-        this.#sharedOpen = null;
-        throw cause;
-      });
+      })
+        .then(async (database) => {
+          await database.execAsync("PRAGMA busy_timeout = 5000");
+          return new LegacyRemoteStore(database);
+        })
+        .catch((cause: unknown) => {
+          this.#sharedOpen = null;
+          throw cause;
+        });
     }
     return this.#sharedOpen;
   }
@@ -67,28 +69,29 @@ export class LegacyRemoteStore {
         ${optionalColumn(columns, "last_error_at", "NULL")} AS last_error_at
       FROM connections ORDER BY sort_order, id
     `);
-    return await Promise.all(rows.map(async (row) => {
-      let token = this.#tokenCache.get(row.id);
-      if (token === undefined) {
-        token = await SecureStore.getItemAsync(tokenKey(row.id)) ?? "";
-        this.#tokenCache.set(row.id, token);
-      }
-      return {
-        id: row.id,
-        displayName: row.display_name,
-        emoji: row.emoji,
-        endpoint: row.endpoint,
-        ...(row.tls_pin_sha256 === null ? {} : { tlsPinSha256: row.tls_pin_sha256 }),
-        enabled: row.enabled === 1,
-        sortOrder: row.sort_order,
-        state: row.state,
-        lastError: row.last_error,
-        lastErrorAt: row.last_error_at,
-        token,
-      };
-    }));
+    return await Promise.all(
+      rows.map(async (row) => {
+        let token = this.#tokenCache.get(row.id);
+        if (token === undefined) {
+          token = (await SecureStore.getItemAsync(tokenKey(row.id))) ?? "";
+          this.#tokenCache.set(row.id, token);
+        }
+        return {
+          id: row.id,
+          displayName: row.display_name,
+          emoji: row.emoji,
+          endpoint: row.endpoint,
+          ...(row.tls_pin_sha256 === null ? {} : { tlsPinSha256: row.tls_pin_sha256 }),
+          enabled: row.enabled === 1,
+          sortOrder: row.sort_order,
+          state: row.state,
+          lastError: row.last_error,
+          lastErrorAt: row.last_error_at,
+          token,
+        };
+      }),
+    );
   }
-
 }
 
 async function tableExists(database: SQLite.SQLiteDatabase, table: string): Promise<boolean> {
@@ -100,7 +103,7 @@ async function tableExists(database: SQLite.SQLiteDatabase, table: string): Prom
 }
 
 async function tableColumns(database: SQLite.SQLiteDatabase, table: string): Promise<Set<string>> {
-  if (!await tableExists(database, table)) return new Set();
+  if (!(await tableExists(database, table))) return new Set();
   const rows = await database.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
   return new Set(rows.map((row) => row.name));
 }

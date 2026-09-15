@@ -18,7 +18,11 @@ import { matchesCodeReviewInput } from "./code-review";
 
 const EDITOR_URI = "file:///android_asset/code-review-editor.html";
 
-export type { CodeReviewDocument, CodeReviewFileItem, CodeReviewViewMode } from "./code-review-bridge";
+export type {
+  CodeReviewDocument,
+  CodeReviewFileItem,
+  CodeReviewViewMode,
+} from "./code-review-bridge";
 
 type DraftSelection = { start: number; end: number };
 type VoicePhase = "idle" | "starting" | "recording" | "finishing";
@@ -85,11 +89,13 @@ export function CodeReviewEditor({
 
   const send = (message: CodeReviewHostMessage) => {
     sequence.current += 1;
-    webView.current?.postMessage(JSON.stringify({
-      version: CODE_REVIEW_BRIDGE_VERSION,
-      sequence: sequence.current,
-      ...message,
-    } satisfies CodeReviewHostCommand));
+    webView.current?.postMessage(
+      JSON.stringify({
+        version: CODE_REVIEW_BRIDGE_VERSION,
+        sequence: sequence.current,
+        ...message,
+      } satisfies CodeReviewHostCommand),
+    );
   };
 
   useEffect(() => {
@@ -111,21 +117,35 @@ export function CodeReviewEditor({
 
   useEffect(() => {
     if (!ready) return;
-    send({ command: "workspace", payload: { files, revision: workspaceRevision, selectedPath, sidebarOpen, compact } });
+    send({
+      command: "workspace",
+      payload: { files, revision: workspaceRevision, selectedPath, sidebarOpen, compact },
+    });
   }, [ready, files, workspaceRevision, selectedPath, sidebarOpen, compact]);
 
   useEffect(() => {
     if (!ready) return;
-    const payload: CodeReviewComposerState | null = selectedReference === null ? null : {
-      reference: selectedReference,
-      draft: commentDraft,
-      voicePhase,
-      voicePermissionGranted,
-      voiceRetryAvailable,
-      voiceError,
-    };
+    const payload: CodeReviewComposerState | null =
+      selectedReference === null
+        ? null
+        : {
+            reference: selectedReference,
+            draft: commentDraft,
+            voicePhase,
+            voicePermissionGranted,
+            voiceRetryAvailable,
+            voiceError,
+          };
     send({ command: "composer", payload });
-  }, [ready, selectedReference, commentDraft, voicePhase, voicePermissionGranted, voiceRetryAvailable, voiceError]);
+  }, [
+    ready,
+    selectedReference,
+    commentDraft,
+    voicePhase,
+    voicePermissionGranted,
+    voiceRetryAvailable,
+    voiceError,
+  ]);
 
   useEffect(() => {
     if (!ready || revealReference === null) return;
@@ -144,7 +164,10 @@ export function CodeReviewEditor({
     }
     if ("requestId" in message && message.requestId !== requestId.current) return;
     if (message.type === "rendered") {
-      if (__DEV__) console.log(`[CodeWide perf] code_review_rendered_ms=${message.renderMs.toFixed(1)} mode=${mode}`);
+      if (__DEV__)
+        console.log(
+          `[CodeWide perf] code_review_rendered_ms=${message.renderMs.toFixed(1)} mode=${mode}`,
+        );
     } else if (message.type === "fileSelect") {
       onFileSelect(message.path);
     } else if (message.type === "lineTap") {
@@ -187,21 +210,34 @@ export function CodeReviewEditor({
         }}
         onMessage={receive}
         onError={({ nativeEvent }) => {
-          setError({ revision: document?.revision ?? null, message: nativeEvent.description || "Code editor failed to load" });
+          setError({
+            revision: document?.revision ?? null,
+            message: nativeEvent.description || "Code editor failed to load",
+          });
         }}
         onShouldStartLoadWithRequest={({ url }) => url.startsWith("file:///android_asset/")}
       />
-      {visibleError === null && selectedPath !== null && (!ready || loading && document === null && !sidebarOpen) && (
-        <View pointerEvents="none" accessibilityLiveRegion="polite" style={styles.loading}>
-          <ActivityIndicator color={colors.accent} />
-          <Text style={styles.loadingText}>Loading file…</Text>
-        </View>
-      )}
+      {visibleError === null &&
+        selectedPath !== null &&
+        (!ready || (loading && document === null && !sidebarOpen)) && (
+          <View pointerEvents="none" accessibilityLiveRegion="polite" style={styles.loading}>
+            <ActivityIndicator color={colors.accent} />
+            <Text style={styles.loadingText}>Loading file…</Text>
+          </View>
+        )}
       {visibleError !== null && (
         <View style={styles.error}>
-          <Text selectable style={styles.errorTitle}>Code preview failed</Text>
-          <Text selectable style={styles.errorMessage}>{visibleError}</Text>
-          <Pressable accessibilityRole="button" onPress={() => webView.current?.reload()} style={styles.retryButton}>
+          <Text selectable style={styles.errorTitle}>
+            Code preview failed
+          </Text>
+          <Text selectable style={styles.errorMessage}>
+            {visibleError}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => webView.current?.reload()}
+            style={styles.retryButton}
+          >
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
         </View>
@@ -213,8 +249,11 @@ export function CodeReviewEditor({
 function parseClientEvent(value: string): CodeReviewClientEvent | null {
   try {
     const parsed = JSON.parse(value) as Partial<CodeReviewClientEvent>;
-    return parsed !== null && typeof parsed === "object" && parsed.version === CODE_REVIEW_BRIDGE_VERSION && typeof parsed.type === "string"
-      ? parsed as CodeReviewClientEvent
+    return parsed !== null &&
+      typeof parsed === "object" &&
+      parsed.version === CODE_REVIEW_BRIDGE_VERSION &&
+      typeof parsed.type === "string"
+      ? (parsed as CodeReviewClientEvent)
       : null;
   } catch {
     return null;
@@ -222,13 +261,59 @@ function parseClientEvent(value: string): CodeReviewClientEvent | null {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
-  webView: { flex: 1, backgroundColor: colors.background },
-  loading: { position: "absolute", inset: 0, alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.background },
-  loadingText: { color: colors.textMuted, ...typeScale.body },
-  error: { position: "absolute", inset: spacing.md, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg, borderRadius: radii.selected, backgroundColor: colors.surfaceContainer },
-  errorTitle: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
-  errorMessage: { maxWidth: 520, color: colors.textMuted, textAlign: "center" },
-  retryButton: { minWidth: controlSize.regular, minHeight: controlSize.regular, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radii.medium, backgroundColor: colors.accent },
-  retryText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  root: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
+  webView: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  loading: {
+    position: "absolute",
+    inset: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.background,
+  },
+  loadingText: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  error: {
+    position: "absolute",
+    inset: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    padding: spacing.lg,
+    borderRadius: radii.selected,
+    backgroundColor: colors.surfaceContainer,
+  },
+  errorTitle: {
+    color: colors.text,
+    ...typeScale.title,
+    fontWeight: typeWeight.semibold,
+  },
+  errorMessage: {
+    maxWidth: 520,
+    color: colors.textMuted,
+    textAlign: "center",
+  },
+  retryButton: {
+    minWidth: controlSize.regular,
+    minHeight: controlSize.regular,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.medium,
+    backgroundColor: colors.accent,
+  },
+  retryText: {
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
 });

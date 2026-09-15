@@ -37,8 +37,29 @@ export function ControlOption({
       position={position}
       fixedHeight={subtitle === undefined ? listRowHeight.single : listRowHeight.double}
       {...(titleAccessory === undefined
-        ? attention ? { trailingIcon: { name: "alert-circle-outline", size: iconSize.inline, color: colors.amber } } : {}
-        : { trailing: <>{titleAccessory}{attention && <Ionicons name="alert-circle-outline" size={iconSize.inline} color={colors.amber} />}</> })}
+        ? attention
+          ? {
+              trailingIcon: {
+                name: "alert-circle-outline",
+                size: iconSize.inline,
+                color: colors.amber,
+              },
+            }
+          : {}
+        : {
+            trailing: (
+              <>
+                {titleAccessory}
+                {attention && (
+                  <Ionicons
+                    name="alert-circle-outline"
+                    size={iconSize.inline}
+                    color={colors.amber}
+                  />
+                )}
+              </>
+            ),
+          })}
     />
   );
 }

@@ -1,6 +1,6 @@
 import type { ThreadForkParams } from "@codewide/codex-protocol/v0.147.0/v2";
 
-export type ThreadForkBoundary =
+type ThreadForkBoundary =
   | { kind: "all" }
   | { kind: "through"; turnId: string }
   | { kind: "before"; turnId: string };

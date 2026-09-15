@@ -1,4 +1,4 @@
-export const DEFAULT_CHANGED_FILE_PATH_CHARS = 48;
+const DEFAULT_CHANGED_FILE_PATH_CHARS = 48;
 
 export function changedFileDisplayPath(
   filePath: string,
@@ -7,13 +7,14 @@ export function changedFileDisplayPath(
 ): string {
   const normalizedPath = normalizePath(filePath);
   const normalizedCwd = normalizePath(cwd).replace(/\/$/u, "");
-  const relative = normalizedCwd === "" || normalizedCwd === "/"
-    ? normalizedPath
-    : normalizedPath === normalizedCwd
-      ? changedPathBasename(normalizedPath)
-      : pathStartsWith(normalizedPath, `${normalizedCwd}/`)
-        ? normalizedPath.slice(normalizedCwd.length + 1)
-        : normalizedPath;
+  const relative =
+    normalizedCwd === "" || normalizedCwd === "/"
+      ? normalizedPath
+      : normalizedPath === normalizedCwd
+        ? changedPathBasename(normalizedPath)
+        : pathStartsWith(normalizedPath, `${normalizedCwd}/`)
+          ? normalizedPath.slice(normalizedCwd.length + 1)
+          : normalizedPath;
   return collapsePathMiddle(relative.replace(/^\.\//u, ""), maxChars);
 }
 
@@ -51,7 +52,6 @@ function collapsePathMiddle(value: string, maxChars: number): string {
 }
 
 /** V1 changed-file-path owner, extracted without changing interaction or resource lifetime. */
-
 
 export function basename(value: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/\/+$/u, "");

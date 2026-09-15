@@ -15,6 +15,7 @@ import { renderConversationDestinationSurface } from "./ConversationDestinationS
 import type { ConversationDestinationProps } from "./ConversationDetail";
 import { createConversationScopeBindings } from "./conversationScopeBindings";
 import type { ActiveWorkspaceConversationProps } from "./ConversationWorkspace.types";
+
 export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationProps) {
   const scope = useActiveConversationScope({
     destination: props.destination,

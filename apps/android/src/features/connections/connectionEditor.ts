@@ -66,4 +66,5 @@ export function useConnectionEditor({
   };
 }
 
+/** State machine returned by the connection profile editor. */
 export type ConnectionEditor = ReturnType<typeof useConnectionEditor>;

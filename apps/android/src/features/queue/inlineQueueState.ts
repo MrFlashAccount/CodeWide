@@ -4,6 +4,7 @@ import { useEvent } from "../../react/useEvent";
 import { controlSize } from "../../theme";
 import type { InlineQueueOverlayItem, InlineQueueOverlayProps } from "./inlineQueueContract";
 import { calculateQueueLayouts } from "./inlineQueueLayout";
+
 export function useInlineQueueOverlay(props: InlineQueueOverlayProps) {
   const { maxHeight, expanded, items, onClose, onMove, onRefresh } = props;
 

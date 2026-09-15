@@ -6,6 +6,7 @@ import { useEvent } from "../../react/useEvent";
 import { useAsyncResource } from "../../rendering/async-resource-store";
 import type { ProjectPickerProps } from "./projectPickerContract";
 import { useProjectPickerRows, type ProjectSectionId } from "./projectPickerRows";
+
 type PickerMode = "projects" | "directory";
 export function useProjectPickerSession({
   visible,
@@ -186,4 +187,5 @@ export function useProjectPickerSession({
     pinProject,
   };
 }
+/** State machine returned by the project-picker session hook. */
 export type ProjectPickerSession = ReturnType<typeof useProjectPickerSession>;

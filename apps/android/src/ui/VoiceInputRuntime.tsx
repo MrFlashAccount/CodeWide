@@ -14,26 +14,45 @@ export type AppVoiceInputRuntime = {
 
 const VoiceInputRuntimeContext = createContext<AppVoiceInputRuntime | null>(null);
 
-export function AppVoiceInputProvider({ runtime, children }: { runtime: AppVoiceInputRuntime; children: ReactNode }) {
-  return <VoiceInputRuntimeContext.Provider value={runtime}>{children}</VoiceInputRuntimeContext.Provider>;
+export function AppVoiceInputProvider({
+  runtime,
+  children,
+}: {
+  runtime: AppVoiceInputRuntime;
+  children: ReactNode;
+}) {
+  return (
+    <VoiceInputRuntimeContext.Provider value={runtime}>
+      {children}
+    </VoiceInputRuntimeContext.Provider>
+  );
 }
 
 export function useAppVoiceInputRuntime(): AppVoiceInputRuntime | null {
   return useContext(VoiceInputRuntimeContext);
 }
 
-export function useVoiceInputResource(runtime: AppVoiceInputRuntime | null, scope: string | null): VoiceInputRow | null {
+export function useVoiceInputResource(
+  runtime: AppVoiceInputRuntime | null,
+  scope: string | null,
+): VoiceInputRow | null {
   return useScopedVoiceInputResource(runtime?.resources ?? null, scope);
 }
 
 /** Observe only the recording owned by one input, never the global microphone. */
-export function useScopedVoiceInputResource(resources: Pick<WorkspaceResourceDatabase, "voiceInputs"> | null, scope: string | null): VoiceInputRow | null {
+export function useScopedVoiceInputResource(
+  resources: Pick<WorkspaceResourceDatabase, "voiceInputs"> | null,
+  scope: string | null,
+): VoiceInputRow | null {
   return useSyncExternalStore(
     (notify) => {
       if (resources === null || scope === null) return () => {};
-      const subscription = resources.voiceInputs.subscribeChanges((changes) => {
-        if (changes.some((change) => String(change.key) === scope)) notify();
-      }, { includeInitialState: false });
+      const subscription = resources.voiceInputs.subscribeChanges(
+        (changes) => {
+          if (changes.some((change) => String(change.key) === scope)) notify();
+        },
+        { includeInitialState: false },
+      );
       return () => subscription.unsubscribe();
     },
     () => resources?.voiceInputs.get(scope ?? "") ?? null,
@@ -42,12 +61,19 @@ export function useScopedVoiceInputResource(resources: Pick<WorkspaceResourceDat
 }
 
 /** Subscribes only the tiny meter/aura surface to transient PCM levels. */
-export function useVoiceInputLevel(controller: VoiceInputController | null | undefined, scope: string | null): number {
+export function useVoiceInputLevel(
+  controller: VoiceInputController | null | undefined,
+  scope: string | null,
+): number {
   return useSyncExternalStore(
-    (notify) => controller === null || controller === undefined || scope === null
-      ? () => {}
-      : controller.subscribeLevel(scope, notify),
-    () => controller === null || controller === undefined || scope === null ? 0 : controller.level(scope),
+    (notify) =>
+      controller === null || controller === undefined || scope === null
+        ? () => {}
+        : controller.subscribeLevel(scope, notify),
+    () =>
+      controller === null || controller === undefined || scope === null
+        ? 0
+        : controller.level(scope),
     () => 0,
   );
 }

@@ -22,5 +22,8 @@ const IMMEDIATE_EVENT_METHODS = new Set([
 /** Normal text/tool deltas can wait for the render batch; lifecycle and user
  * decisions must flush the older deltas and become visible immediately. */
 export function shouldFlushLiveEventsImmediately(events: SyncEvent[]): boolean {
-  return events.some((event) => typeof event.payload.method === "string" && IMMEDIATE_EVENT_METHODS.has(event.payload.method));
+  return events.some(
+    (event) =>
+      typeof event.payload.method === "string" && IMMEDIATE_EVENT_METHODS.has(event.payload.method),
+  );
 }

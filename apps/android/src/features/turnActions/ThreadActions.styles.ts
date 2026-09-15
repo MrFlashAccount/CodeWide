@@ -9,6 +9,15 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.large,
   },
-  headerMenuAnchor: { width: touchTarget, height: touchTarget, flexShrink: 0 },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  headerMenuAnchor: {
+    width: touchTarget,
+    height: touchTarget,
+    flexShrink: 0,
+  },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
 });

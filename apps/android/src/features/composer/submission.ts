@@ -10,6 +10,7 @@ import {
 } from "./skills/composer-skill-suggestions";
 import type { ComposerSubmissionCapabilities } from "./submissionCapabilities";
 import { mergeFailedComposerAttachments, mergeFailedComposerText } from "./submissionRecovery";
+
 export function useComposerSubmission({
   composerScope,
   composerUploadScope,

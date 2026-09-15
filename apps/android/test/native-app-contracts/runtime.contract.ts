@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { sourceObjectDeclaration } from "../source-contract";
 import {
   legacyRemoteStore,
   ownerWorkspaceRuntime,
@@ -38,9 +39,13 @@ it("preserves runtime integration contracts", () => {
   expect(voiceWorkspace).not.toContain("Audio upload is too slow");
   expect(voiceWorkspace).not.toContain("thread/realtime/");
   expect(voiceWorkspace).not.toContain('config: { "features.realtime_conversation": true }');
-  expect(
-    readFileSync(new URL("../../src/rendering/MarkdownDocumentView.tsx", import.meta.url), "utf8"),
-  ).toContain('block: { width: "100%", alignSelf: "center"');
+  const markdownDocument = readFileSync(
+    new URL("../../src/rendering/MarkdownDocumentView.tsx", import.meta.url),
+    "utf8",
+  );
+  const blockStyle = sourceObjectDeclaration(markdownDocument, "block");
+  expect(blockStyle).toContain('width: "100%"');
+  expect(blockStyle).toContain('alignSelf: "center"');
   expect(voiceWorkspace).not.toContain('reload(["connections"])');
   expect(voiceWorkspace).not.toContain("store.subscribe(");
   expect(ownerWorkspaceRuntime).toContain("createConnectionProfileDatabase()");

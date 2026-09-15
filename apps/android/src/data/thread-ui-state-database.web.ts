@@ -7,12 +7,22 @@ import type { ThreadUiStateRow } from "./thread-ui-state-types";
 export type { ThreadUiStateDatabase } from "./thread-ui-state-database-contract";
 
 export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
-  const reads = new Map<string, Promise<Awaited<ReturnType<ThreadUiStateDatabase["getOrCreate"]>>>>();
+  const reads = new Map<
+    string,
+    Promise<Awaited<ReturnType<ThreadUiStateDatabase["getOrCreate"]>>>
+  >();
   const rows = new Map<string, Observable<ThreadUiStateRow | null>>();
-  const collection = createCollection(localOnlyCollectionOptions<ThreadUiStateRow, string>({ id: "thread-ui-state-web", getKey: (row) => row.id }));
+  const collection = createCollection(
+    localOnlyCollectionOptions<ThreadUiStateRow, string>({
+      id: "thread-ui-state-web",
+      getKey: (row) => row.id,
+    }),
+  );
   return {
     collection,
-    get() { return null; },
+    get() {
+      return null;
+    },
     row$(connectionId, threadId) {
       const key = `${connectionId}\u0000${threadId}`;
       const existing = rows.get(key);
@@ -27,9 +37,11 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
       if (existing !== undefined) return existing;
       const pending = this.getOrCreate(connectionId, threadId);
       reads.set(key, pending);
-      void pending.then((row) => this.row$(connectionId, threadId).set(row)).catch(() => {
-        if (reads.get(key) === pending) reads.delete(key);
-      });
+      void pending
+        .then((row) => this.row$(connectionId, threadId).set(row))
+        .catch(() => {
+          if (reads.get(key) === pending) reads.delete(key);
+        });
       return pending;
     },
     async getOrCreate(connectionId, threadId) {
@@ -60,6 +72,10 @@ export function createThreadUiStateDatabase(): ThreadUiStateDatabase {
         if (key.startsWith(`${connectionId}\u0000`)) rows.delete(key);
       }
     },
-    close() { reads.clear(); rows.clear(); void collection.cleanup(); },
+    close() {
+      reads.clear();
+      rows.clear();
+      void collection.cleanup();
+    },
   };
 }

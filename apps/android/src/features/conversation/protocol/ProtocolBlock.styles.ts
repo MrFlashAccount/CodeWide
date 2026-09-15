@@ -13,8 +13,15 @@ export const styles = StyleSheet.create({
     paddingTop: spacing.xs,
     paddingBottom: spacing.xs,
   },
-  agentMessage: { paddingHorizontal: spacing.optical, paddingVertical: spacing.xxs },
-  cardIconSlot: { flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  agentMessage: {
+    paddingHorizontal: spacing.optical,
+    paddingVertical: spacing.xxs,
+  },
+  cardIconSlot: {
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   cardTitle: {
     minWidth: 0,
     flexShrink: 1,
@@ -22,7 +29,10 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  cardTitleWave: { alignSelf: "center", justifyContent: "center" },
+  cardTitleWave: {
+    alignSelf: "center",
+    justifyContent: "center",
+  },
   thinkingStatus: {
     minWidth: 0,
     minHeight: controlSize.compact,
@@ -32,5 +42,8 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 0,
   },
   thinkingStatusInActivity: { paddingLeft: 0 },
-  turnMetaText: { color: colors.textMuted, ...typeScale.caption },
+  turnMetaText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
 });

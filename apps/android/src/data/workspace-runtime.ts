@@ -50,6 +50,7 @@ import {
 import type { WorkspaceSyncSupervisor } from "./workspace-session";
 import { createWorkspaceSession } from "./workspace-session";
 import { createWorkspaceTelemetryUpload } from "./workspace-telemetry";
+
 export type WorkspaceRuntimeSnapshot = {
   ready: boolean;
   error: string | null;

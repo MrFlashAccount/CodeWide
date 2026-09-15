@@ -46,7 +46,7 @@ function formatThreadGoalDuration(seconds: number): string {
   return `${String(minutes)}m ${String(remainder)}s`;
 }
 
-export function threadGoalStatusLabel(status: ThreadGoalStatus): string {
+function threadGoalStatusLabel(status: ThreadGoalStatus): string {
   switch (status) {
     case "active":
       return "Active";
@@ -68,8 +68,16 @@ function goalChipStyle(state: PressableStateCallbackType): StyleProp<ViewStyle> 
 }
 
 const styles = StyleSheet.create({
-  divider: { color: colors.textDim, flexShrink: 0, ...typeScale.label },
-  duration: { color: colors.textMuted, flexShrink: 0, ...typeScale.label },
+  divider: {
+    color: colors.textDim,
+    flexShrink: 0,
+    ...typeScale.label,
+  },
+  duration: {
+    color: colors.textMuted,
+    flexShrink: 0,
+    ...typeScale.label,
+  },
   pressed: { opacity: 0.72 },
   status: {
     color: colors.text,

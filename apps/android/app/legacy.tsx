@@ -9,6 +9,7 @@ import {
   stopLegacyNativeRuntimeResources,
 } from "../src/native/native-transport";
 
+/** Selects and mounts the complete V1 application route. */
 export default function LegacyRoute(): React.JSX.Element {
   const generation = useUiGenerationSnapshot();
   if (generation.status === "loading") return <></>;

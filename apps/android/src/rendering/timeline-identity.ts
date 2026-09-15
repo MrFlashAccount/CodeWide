@@ -9,7 +9,9 @@ export function remoteTurnTimelineKey(
   turnId: string,
   items: readonly TimelineIdentityItem[],
 ): string {
-  const clientId = items.find((item) => item.type === "userMessage" && typeof item.clientId === "string")?.clientId;
+  const clientId = items.find(
+    (item) => item.type === "userMessage" && typeof item.clientId === "string",
+  )?.clientId;
   return typeof clientId === "string" && clientId.length > 0
     ? optimisticTimelineKey(scope, clientId)
     : `turn-remote:${scope}:${turnId}`;

@@ -9,7 +9,7 @@ import type {
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 
-export type ChangesDisplayMode = "unified" | "split" | "source";
+type ChangesDisplayMode = "unified" | "split" | "source";
 
 export type ChangesPreferences = {
   scope: ThreadChangeScope | null;
@@ -17,9 +17,9 @@ export type ChangesPreferences = {
   wrapLines: boolean;
 };
 
-export const changesPreferencesByThread = new Map<string, ChangesPreferences>();
+const changesPreferencesByThread = new Map<string, ChangesPreferences>();
 
-export function readChangesPreferences(key: string): ChangesPreferences {
+function readChangesPreferences(key: string): ChangesPreferences {
   return changesPreferencesByThread.get(key) ?? { scope: null, mode: "unified", wrapLines: false };
 }
 

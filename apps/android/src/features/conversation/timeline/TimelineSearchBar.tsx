@@ -5,6 +5,7 @@ import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text, AppTextInput as TextInput } from "../../../ui/Typography";
 import { styles } from "./TimelineSearchBar.styles";
 import type { TimelineSearchBarProps } from "./TimelineSearchBarContract";
+
 export function TimelineSearchBar({
   threadSearch,
   updateThreadSearch,

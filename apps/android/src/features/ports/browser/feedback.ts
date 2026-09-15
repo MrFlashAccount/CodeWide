@@ -21,7 +21,7 @@ export interface BrowserFeedbackSubmission {
   readonly screenshot: string | null;
   readonly includeErrors: boolean;
 }
-export interface BrowserFeedbackDestination {
+interface BrowserFeedbackDestination {
   readonly id: string;
   readonly label: string;
 }

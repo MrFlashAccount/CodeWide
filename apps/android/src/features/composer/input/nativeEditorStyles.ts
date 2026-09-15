@@ -16,7 +16,13 @@ export const styles = StyleSheet.create({
     overflow: "visible",
   },
   popoverRoot: { position: "static" },
-  suggestionAnchor: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+  suggestionAnchor: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   suggestionPopover: {
     padding: 0,
     elevation: 8,

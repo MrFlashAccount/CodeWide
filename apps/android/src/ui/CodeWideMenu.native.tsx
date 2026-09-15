@@ -180,7 +180,10 @@ export function CodeWideMenu({
 }
 
 const styles = StyleSheet.create({
-  selectionSlot: { width: iconSize.action, height: iconSize.action },
+  selectionSlot: {
+    width: iconSize.action,
+    height: iconSize.action,
+  },
   sectionText: {
     fontFamily: "RobotoFlex-Medium",
     fontSize: typeScale.label.fontSize,

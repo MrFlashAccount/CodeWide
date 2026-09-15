@@ -20,7 +20,9 @@ export type PendingDeliveryState =
 
 export type VisiblePendingDeliveryState = Exclude<PendingDeliveryState, "accepted" | "delivered">;
 
-export function normalizePendingDeliveryState(state: PendingDeliveryState): VisiblePendingDeliveryState {
+export function normalizePendingDeliveryState(
+  state: PendingDeliveryState,
+): VisiblePendingDeliveryState {
   return state === "accepted" || state === "delivered" ? "companionAccepted" : state;
 }
 
@@ -34,28 +36,48 @@ export function pendingDeliveryStateFromCompanion(
   state: "queued" | "uncertain" | "failed" | "delivered",
 ): VisiblePendingDeliveryState {
   switch (state) {
-    case "queued": return "companionAccepted";
-    case "uncertain": return "uncertain";
-    case "failed": return "failed";
-    case "delivered": return "appServerAccepted";
+    case "queued":
+      return "companionAccepted";
+    case "uncertain":
+      return "uncertain";
+    case "failed":
+      return "failed";
+    case "delivered":
+      return "appServerAccepted";
   }
 }
 
 export function deliveryProgressRank(state: PendingDeliveryState): number {
   switch (normalizePendingDeliveryState(state)) {
-    case "queued": return 0;
-    case "sending": return 1;
-    case "companionAccepted": return 2;
-    case "uncertain": return 3;
-    case "failed": return 4;
-    case "appServerAccepted": return 5;
+    case "queued":
+      return 0;
+    case "sending":
+      return 1;
+    case "companionAccepted":
+      return 2;
+    case "uncertain":
+      return 3;
+    case "failed":
+      return 4;
+    case "appServerAccepted":
+      return 5;
   }
 }
 
-export type QueuedPrompt = { commandId: string; text: string; attachments: RemoteFileAttachment[]; createdAt: number; state: "queued" | "uncertain" | "failed"; lastError: string | null };
+export type QueuedPrompt = {
+  commandId: string;
+  text: string;
+  attachments: RemoteFileAttachment[];
+  createdAt: number;
+  state: "queued" | "uncertain" | "failed";
+  lastError: string | null;
+};
 
 import type { ThreadSettings } from "./turn-controls-types";
-export type SendMode = { type: "start" } | { type: "queue" } | { type: "steer"; expectedTurnId: string };
+export type SendMode =
+  | { type: "start" }
+  | { type: "queue" }
+  | { type: "steer"; expectedTurnId: string };
 export type TurnSendOptions = ThreadSettings & {
   skills?: Array<{ name: string; path: string }>;
   attachments?: RemoteFileAttachment[];

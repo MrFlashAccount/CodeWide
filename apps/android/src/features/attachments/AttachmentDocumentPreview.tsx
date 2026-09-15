@@ -17,6 +17,7 @@ import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AttachmentsFeature.styles";
 
 import type { useAttachmentPreview } from "./attachmentPreview";
+
 export function AttachmentDocumentPreview({
   preview,
   codePreviewMaxHeight,

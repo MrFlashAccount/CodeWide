@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 import { colors, radii, touchTarget } from "../../theme";
+
 export const styles = StyleSheet.create({
   sendButton: {
     width: touchTarget,

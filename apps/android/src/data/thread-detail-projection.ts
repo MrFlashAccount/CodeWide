@@ -1,5 +1,12 @@
 import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
-import { projectedOutputFootprint, projectedTurnMetadata, reconcileTurnItems, sumOutputFootprints, type ProjectedTurnMetadata, type RemoteFileAttachment } from "@codewide/sync-client";
+import {
+  projectedOutputFootprint,
+  projectedTurnMetadata,
+  reconcileTurnItems,
+  sumOutputFootprints,
+  type ProjectedTurnMetadata,
+  type RemoteFileAttachment,
+} from "@codewide/sync-client";
 
 import { cloneProtocolValue } from "./clone-protocol-value";
 import { compactTurnArtifactReferences } from "./turn-artifacts";
@@ -103,15 +110,18 @@ export function projectAuthoritativeTurnOrdinals(
 /** Starts a new contiguous cursor chain when the newest authoritative page has
  * no turn in common with the currently visible history island. */
 export function projectAuthoritativeHistoryEpoch(
-  existingRows: readonly Pick<ThreadDetailRow, "kind" | "remoteTurnId" | "historyEpoch" | "ordinal">[],
+  existingRows: readonly Pick<
+    ThreadDetailRow,
+    "kind" | "remoteTurnId" | "historyEpoch" | "ordinal"
+  >[],
   incomingTurnIds: readonly string[],
 ): number {
   const currentEpoch = existingRows.find((row) => row.kind === "thread")?.historyEpoch ?? 0;
-  const currentTurns = existingRows.flatMap((row) => row.kind === "turn"
-    && row.historyEpoch === currentEpoch
-    && row.remoteTurnId !== null
-    ? [{ id: row.remoteTurnId, ordinal: row.ordinal }]
-    : []);
+  const currentTurns = existingRows.flatMap((row) =>
+    row.kind === "turn" && row.historyEpoch === currentEpoch && row.remoteTurnId !== null
+      ? [{ id: row.remoteTurnId, ordinal: row.ordinal }]
+      : [],
+  );
   if (currentTurns.length === 0 || incomingTurnIds.length === 0) return currentEpoch;
   const ordinalsByTurnId = new Map(currentTurns.map(({ id, ordinal }) => [id, ordinal]));
   const turnIdByOrdinal = new Map(currentTurns.map(({ id, ordinal }) => [ordinal, id]));
@@ -123,8 +133,10 @@ export function projectAuthoritativeHistoryEpoch(
     const projectedOrdinal = baseOrdinal + index;
     const existingOrdinal = ordinalsByTurnId.get(turnId);
     const existingTurnId = turnIdByOrdinal.get(projectedOrdinal);
-    return (existingOrdinal !== undefined && existingOrdinal !== projectedOrdinal)
-      || (existingTurnId !== undefined && existingTurnId !== turnId);
+    return (
+      (existingOrdinal !== undefined && existingOrdinal !== projectedOrdinal) ||
+      (existingTurnId !== undefined && existingTurnId !== turnId)
+    );
   });
   return conflicts ? currentEpoch + 1 : currentEpoch;
 }
@@ -133,22 +145,30 @@ export function projectAuthoritativeHistoryEpoch(
  * minimum. Rows encountered in an obsolete epoch migrate into the current
  * chain instead of preserving their disconnected ordinal. */
 export function projectPrependedTurnOrdinals(
-  existingRows: readonly Pick<ThreadDetailRow, "kind" | "remoteTurnId" | "historyEpoch" | "ordinal">[],
+  existingRows: readonly Pick<
+    ThreadDetailRow,
+    "kind" | "remoteTurnId" | "historyEpoch" | "ordinal"
+  >[],
   historyEpoch: number,
   incomingTurnIds: readonly string[],
 ): ReadonlyMap<string, number> {
-  const currentOrdinals = new Map(existingRows.flatMap((row) => row.kind === "turn"
-    && row.historyEpoch === historyEpoch
-    && row.remoteTurnId !== null
-    ? [[row.remoteTurnId, row.ordinal] as const]
-    : []));
+  const currentOrdinals = new Map(
+    existingRows.flatMap((row) =>
+      row.kind === "turn" && row.historyEpoch === historyEpoch && row.remoteTurnId !== null
+        ? [[row.remoteTurnId, row.ordinal] as const]
+        : [],
+    ),
+  );
   const additions = incomingTurnIds.filter((turnId) => !currentOrdinals.has(turnId));
   const currentValues = [...currentOrdinals.values()];
-  let nextOrdinal = (currentValues.length === 0 ? 0 : Math.min(...currentValues)) - additions.length;
-  return new Map(incomingTurnIds.map((turnId) => {
-    const existing = currentOrdinals.get(turnId);
-    return [turnId, existing ?? nextOrdinal++] as const;
-  }));
+  let nextOrdinal =
+    (currentValues.length === 0 ? 0 : Math.min(...currentValues)) - additions.length;
+  return new Map(
+    incomingTurnIds.map((turnId) => {
+      const existing = currentOrdinals.get(turnId);
+      return [turnId, existing ?? nextOrdinal++] as const;
+    }),
+  );
 }
 
 export type PendingTimelineEntry = {
@@ -195,10 +215,13 @@ export function mergePendingTimelineOverlays(
     if (rows.get(overlay.key)?.kind === "turn") continue;
     rows.set(overlay.key, overlay.row);
   }
-  return [...rows.values()].flatMap((row) => row === null ? [] : [row]);
+  return [...rows.values()].flatMap((row) => (row === null ? [] : [row]));
 }
 
-export function reusableTurnOrdinal(row: ThreadDetailRow | undefined, historyEpoch: number): number | null {
+export function reusableTurnOrdinal(
+  row: ThreadDetailRow | undefined,
+  historyEpoch: number,
+): number | null {
   return row?.kind === "turn" && row.historyEpoch === historyEpoch ? row.ordinal : null;
 }
 
@@ -217,9 +240,13 @@ export function mergePendingTimelineEntry(
   const previousState = normalizePendingDeliveryState(previous.state);
   const incomingState = normalizePendingDeliveryState(incoming.state);
   if (previousState === "appServerAccepted") return { ...previous, state: previousState };
-  if (incomingState === "appServerAccepted") return mergePendingAttachments(previous, { ...incoming, state: incomingState });
-  const retryStarted = (previousState === "failed" || previousState === "uncertain")
-    && (incomingState === "queued" || incomingState === "sending" || incomingState === "companionAccepted");
+  if (incomingState === "appServerAccepted")
+    return mergePendingAttachments(previous, { ...incoming, state: incomingState });
+  const retryStarted =
+    (previousState === "failed" || previousState === "uncertain") &&
+    (incomingState === "queued" ||
+      incomingState === "sending" ||
+      incomingState === "companionAccepted");
   const previousRank = deliveryProgressRank(previousState);
   const incomingRank = deliveryProgressRank(incomingState);
   if (!retryStarted && incomingRank < previousRank) {
@@ -249,12 +276,16 @@ export function planQueuedEditMutation(
 ): PendingTimelineMutation | null {
   if (row?.kind !== "pending" || row.pending?.presentation !== "queue") return null;
   return {
-    upserts: [{ ...row, pending: { ...row.pending, text, attachments, lastError: null, updatedAt } }],
+    upserts: [
+      { ...row, pending: { ...row.pending, text, attachments, lastError: null, updatedAt } },
+    ],
     deletes: [],
   };
 }
 
-export function planQueuedRemovalMutation(row: ThreadDetailRow | undefined): PendingTimelineMutation | null {
+export function planQueuedRemovalMutation(
+  row: ThreadDetailRow | undefined,
+): PendingTimelineMutation | null {
   if (row?.kind !== "pending" || row.pending?.presentation !== "queue") return null;
   return { upserts: [], deletes: [row.id] };
 }
@@ -267,13 +298,26 @@ export function planQueuedMoveMutation(
 ): PendingTimelineMutation | null {
   const rows = candidates
     .filter((row) => row.kind === "pending" && row.pending?.presentation === "queue")
-    .sort((left, right) => left.pending!.order - right.pending!.order || left.pending!.createdAt - right.pending!.createdAt);
+    .sort(
+      (left, right) =>
+        left.pending!.order - right.pending!.order ||
+        left.pending!.createdAt - right.pending!.createdAt,
+    );
   const index = rows.findIndex((row) => row.pending?.commandId === commandId);
   const current = rows[index];
   const neighbor = rows[index + direction];
-  if (current?.pending === null || current?.pending === undefined || neighbor?.pending === null || neighbor?.pending === undefined) return null;
+  if (
+    current?.pending === null ||
+    current?.pending === undefined ||
+    neighbor?.pending === null ||
+    neighbor?.pending === undefined
+  )
+    return null;
   const reordered = rows.slice();
-  [reordered[index], reordered[index + direction]] = [reordered[index + direction]!, reordered[index]!];
+  [reordered[index], reordered[index + direction]] = [
+    reordered[index + direction]!,
+    reordered[index]!,
+  ];
   return {
     upserts: [
       { ...current, pending: { ...current.pending, order: neighbor.pending.order, updatedAt } },
@@ -284,7 +328,11 @@ export function planQueuedMoveMutation(
   };
 }
 
-export function pendingTimelineRowId(connectionId: string, threadId: string, commandId: string): string {
+export function pendingTimelineRowId(
+  connectionId: string,
+  threadId: string,
+  commandId: string,
+): string {
   return `${connectionId}\u0000${threadId}\u0000turnClient\u0000${commandId}`;
 }
 
@@ -295,16 +343,27 @@ export function pendingTimelineRowId(connectionId: string, threadId: string, com
  * available, otherwise represent the shell explicitly as not loaded.
  */
 export function normalizeConversationTurn(turn: Turn, resident: Turn | null = null): Turn {
-  if (turn.itemsView !== "notLoaded" && Array.isArray((turn as unknown as { items?: unknown }).items)) return turn;
+  if (
+    turn.itemsView !== "notLoaded" &&
+    Array.isArray((turn as unknown as { items?: unknown }).items)
+  )
+    return turn;
   if (resident !== null && Array.isArray((resident as unknown as { items?: unknown }).items)) {
     return { ...turn, items: resident.items, itemsView: resident.itemsView };
   }
   return { ...turn, items: [], itemsView: "notLoaded" };
 }
 
-export function authoritativeTimelineRowId(connectionId: string, threadId: string, turn: Turn): string {
+export function authoritativeTimelineRowId(
+  connectionId: string,
+  threadId: string,
+  turn: Turn,
+): string {
   const items = Array.isArray((turn as unknown as { items?: unknown }).items) ? turn.items : [];
-  const user = items.find((item): item is Extract<Turn["items"][number], { type: "userMessage" }> => item.type === "userMessage");
+  const user = items.find(
+    (item): item is Extract<Turn["items"][number], { type: "userMessage" }> =>
+      item.type === "userMessage",
+  );
   return typeof user?.clientId === "string" && user.clientId.length > 0
     ? pendingTimelineRowId(connectionId, threadId, user.clientId)
     : `${connectionId}\u0000${threadId}\u0000turn\u0000${turn.id}`;
@@ -335,7 +394,12 @@ export function materializeThreadDetails(
   return values
     .filter((row) => row.kind === "thread")
     .flatMap((row) => {
-      const snapshot = materializeThreadDetail(values, row.connectionId, row.remoteThreadId, currentSessionId);
+      const snapshot = materializeThreadDetail(
+        values,
+        row.connectionId,
+        row.remoteThreadId,
+        currentSessionId,
+      );
       return snapshot === null ? [] : [snapshot];
     });
 }
@@ -347,26 +411,35 @@ export function materializeThreadDetail(
   currentSessionId: string,
 ): ThreadDetailSnapshot | null {
   const values = [...rows];
-  const meta = values.find((row) => row.connectionId === connectionId
-    && row.remoteThreadId === threadId
-    && row.kind === "thread") ?? null;
+  const meta =
+    values.find(
+      (row) =>
+        row.connectionId === connectionId &&
+        row.remoteThreadId === threadId &&
+        row.kind === "thread",
+    ) ?? null;
   if (meta?.thread === null || meta === null) return null;
   const turns = new Map<string, ThreadDetailRow>();
   const turnMetadata = new Map<string, ProjectedTurnMetadata>();
   const activities = new Map<string, Turn["items"]>();
   for (const row of values) {
     if (row.connectionId !== connectionId || row.remoteThreadId !== threadId) continue;
-    if (row.kind !== "thread" && row.kind !== "pending" && row.historyEpoch !== meta.historyEpoch) continue;
+    if (row.kind !== "thread" && row.kind !== "pending" && row.historyEpoch !== meta.historyEpoch)
+      continue;
     if (row.remoteTurnId !== null && row.kind === "turn") turns.set(row.remoteTurnId, row);
-    else if (row.remoteTurnId !== null && row.kind === "turnMeta" && row.turnMetadata !== null) turnMetadata.set(row.remoteTurnId, row.turnMetadata);
-    else if (row.remoteTurnId !== null && row.kind === "activity" && row.activityItems !== null) activities.set(row.remoteTurnId, row.activityItems);
+    else if (row.remoteTurnId !== null && row.kind === "turnMeta" && row.turnMetadata !== null)
+      turnMetadata.set(row.remoteTurnId, row.turnMetadata);
+    else if (row.remoteTurnId !== null && row.kind === "activity" && row.activityItems !== null)
+      activities.set(row.remoteTurnId, row.activityItems);
   }
-  const ordered = deduplicateThreadTurns([...turns.values()].sort(compareTurnRows).flatMap((row) => {
-    if (row.turn === null) return [];
-    const activity = row.remoteTurnId === null ? undefined : activities.get(row.remoteTurnId);
-    const metadata = row.remoteTurnId === null ? undefined : turnMetadata.get(row.remoteTurnId);
-    return [materializeTurn(row.turn, activity, metadata)];
-  }));
+  const ordered = deduplicateThreadTurns(
+    [...turns.values()].sort(compareTurnRows).flatMap((row) => {
+      if (row.turn === null) return [];
+      const activity = row.remoteTurnId === null ? undefined : activities.get(row.remoteTurnId);
+      const metadata = row.remoteTurnId === null ? undefined : turnMetadata.get(row.remoteTurnId);
+      return [materializeTurn(row.turn, activity, metadata)];
+    }),
+  );
   return {
     connectionId,
     thread: { ...meta.thread, turns: ordered },
@@ -386,23 +459,40 @@ export function materializeThreadTurns(rows: Iterable<ThreadDetailRow>): Turn[] 
   for (const row of rows) {
     if (row.remoteTurnId === null) continue;
     if (row.kind === "turn") turns.set(row.remoteTurnId, row);
-    else if (row.kind === "turnMeta" && row.turnMetadata !== null) turnMetadata.set(row.remoteTurnId, row.turnMetadata);
-    else if (row.kind === "activity" && row.activityItems !== null) activities.set(row.remoteTurnId, row.activityItems);
+    else if (row.kind === "turnMeta" && row.turnMetadata !== null)
+      turnMetadata.set(row.remoteTurnId, row.turnMetadata);
+    else if (row.kind === "activity" && row.activityItems !== null)
+      activities.set(row.remoteTurnId, row.activityItems);
   }
-  return deduplicateThreadTurns([...turns.values()].sort(compareTurnRows).flatMap((row) => {
-    if (row.turn === null || row.remoteTurnId === null) return [];
-    return [materializeTurn(
-      row.turn,
-      activities.get(row.remoteTurnId),
-      turnMetadata.get(row.remoteTurnId),
-    )];
-  }));
+  return deduplicateThreadTurns(
+    [...turns.values()].sort(compareTurnRows).flatMap((row) => {
+      if (row.turn === null || row.remoteTurnId === null) return [];
+      return [
+        materializeTurn(
+          row.turn,
+          activities.get(row.remoteTurnId),
+          turnMetadata.get(row.remoteTurnId),
+        ),
+      ];
+    }),
+  );
 }
 
-export function materializePendingTimeline(rows: Iterable<ThreadDetailRow>): PendingTimelineEntry[] {
+export function materializePendingTimeline(
+  rows: Iterable<ThreadDetailRow>,
+): PendingTimelineEntry[] {
   return [...rows]
-    .flatMap((row) => row.kind === "pending" && row.pending !== null && row.pending !== undefined ? [row.pending] : [])
-    .sort((left, right) => left.order - right.order || left.createdAt - right.createdAt || left.commandId.localeCompare(right.commandId));
+    .flatMap((row) =>
+      row.kind === "pending" && row.pending !== null && row.pending !== undefined
+        ? [row.pending]
+        : [],
+    )
+    .sort(
+      (left, right) =>
+        left.order - right.order ||
+        left.createdAt - right.createdAt ||
+        left.commandId.localeCompare(right.commandId),
+    );
 }
 
 /**
@@ -421,19 +511,27 @@ export function planPendingDeliveryProjectionCleanup(
   for (const row of values) {
     if (row.kind !== "turn" || row.turn === null) continue;
     for (const item of row.turn.items) {
-      if (item.type === "userMessage" && typeof item.clientId === "string" && item.clientId.length > 0) {
-        canonicalRows.add(pendingTimelineRowId(row.connectionId, row.remoteThreadId, item.clientId));
+      if (
+        item.type === "userMessage" &&
+        typeof item.clientId === "string" &&
+        item.clientId.length > 0
+      ) {
+        canonicalRows.add(
+          pendingTimelineRowId(row.connectionId, row.remoteThreadId, item.clientId),
+        );
       }
     }
   }
-  const deletes = values.flatMap((row) => (
-    row.kind === "pending"
-      && row.pending?.presentation === "delivery"
-      && !activeCommandIds.has(row.pending.commandId)
-      && canonicalRows.has(pendingTimelineRowId(row.connectionId, row.remoteThreadId, row.pending.commandId))
+  const deletes = values.flatMap((row) =>
+    row.kind === "pending" &&
+    row.pending?.presentation === "delivery" &&
+    !activeCommandIds.has(row.pending.commandId) &&
+    canonicalRows.has(
+      pendingTimelineRowId(row.connectionId, row.remoteThreadId, row.pending.commandId),
+    )
       ? [row.id]
-      : []
-  ));
+      : [],
+  );
   return { upserts: [], deletes };
 }
 
@@ -443,7 +541,8 @@ export function reconcileAuthoritativeThread(
   currentMutableHead: Thread | null | undefined,
   preserveConcurrentHead: boolean,
 ): Thread {
-  if (!preserveConcurrentHead || currentMutableHead === null || currentMutableHead === undefined) return incoming;
+  if (!preserveConcurrentHead || currentMutableHead === null || currentMutableHead === undefined)
+    return incoming;
   const incomingById = new Map(incoming.turns.map((turn) => [turn.id, turn] as const));
   const turns = incoming.turns.map((turn) => {
     const previous = currentMutableHead.turns.find((candidate) => candidate.id === turn.id);
@@ -477,15 +576,21 @@ export function compactCompletedTurnForStorage(turn: Turn): Turn {
   // is lifecycle evidence, not the chat boundary: compacting around it would
   // discard the visible answer and produce "Completed without final response".
   const finalAgentIndex = explicitFinalAgentIndex >= 0 ? explicitFinalAgentIndex : latestAgentIndex;
-  const retained = turn.items.filter((item, index) => item.type === "userMessage" || index === finalAgentIndex);
-  const kinds = turn.items.flatMap((item, index) => item.type === "userMessage" || index === finalAgentIndex ? [] : [item.type]);
+  const retained = turn.items.filter(
+    (item, index) => item.type === "userMessage" || index === finalAgentIndex,
+  );
+  const kinds = turn.items.flatMap((item, index) =>
+    item.type === "userMessage" || index === finalAgentIndex ? [] : [item.type],
+  );
   if (kinds.length === 0) return turn;
   const metadata = projectedTurnMetadata(turn) ?? {};
   const artifacts = compactTurnArtifactReferences(turn);
-  const outputFootprint = sumOutputFootprints(turn.items.map((item) => {
-    const value = item as unknown as Record<string, unknown>;
-    return projectedOutputFootprint(value.codewideOutputFootprint);
-  }));
+  const outputFootprint = sumOutputFootprints(
+    turn.items.map((item) => {
+      const value = item as unknown as Record<string, unknown>;
+      return projectedOutputFootprint(value.codewideOutputFootprint);
+    }),
+  );
   return {
     ...turn,
     items: retained,
@@ -510,10 +615,16 @@ function materializeTurn(
 ): Turn {
   if (activity === undefined && metadata === undefined) return source;
   const cached = materializedTurnCache.get(source);
-  if (cached !== undefined && cached.activity === activity && cached.metadata === metadata) return cached.value;
-  const value: Turn = activity === undefined
-    ? { ...source }
-    : { ...source, items: mergeSummaryWithActivity(source.items, activity), itemsView: "full" as const };
+  if (cached !== undefined && cached.activity === activity && cached.metadata === metadata)
+    return cached.value;
+  const value: Turn =
+    activity === undefined
+      ? { ...source }
+      : {
+          ...source,
+          items: mergeSummaryWithActivity(source.items, activity),
+          itemsView: "full" as const,
+        };
   if (metadata !== undefined) {
     (value as Turn & { codewide?: ProjectedTurnMetadata }).codewide = cloneProtocolValue(metadata);
   }
@@ -521,7 +632,10 @@ function materializeTurn(
   return value;
 }
 
-export function shouldApplyLiveThreadRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
+export function shouldApplyLiveThreadRow(
+  previous: ThreadDetailRow | undefined,
+  next: ThreadDetailRow,
+): boolean {
   return shouldWriteThreadDetailRow(previous, next);
 }
 
@@ -530,16 +644,19 @@ export function reconcileAuthoritativeThreadDetailRow(
   previous: ThreadDetailRow | undefined,
   next: ThreadDetailRow,
 ): ThreadDetailRow {
-  return previous?.kind === "turn"
-    && previous.sealed
-    && next.kind === "turn"
-    && previous.historyEpoch === next.historyEpoch
+  return previous?.kind === "turn" &&
+    previous.sealed &&
+    next.kind === "turn" &&
+    previous.historyEpoch === next.historyEpoch
     ? previous
     : next;
 }
 
 /** Only a mutable row, or the same turn in a new history generation, is writable. */
-export function shouldWriteAuthoritativeThreadDetailRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
+export function shouldWriteAuthoritativeThreadDetailRow(
+  previous: ThreadDetailRow | undefined,
+  next: ThreadDetailRow,
+): boolean {
   // Sealing protects content inside a chain, not membership in a new chain.
   // Persistence reuses the content revision when only epoch/position changed.
   if (previous?.kind === "turn" && previous.sealed && next.kind === "turn") {
@@ -549,7 +666,10 @@ export function shouldWriteAuthoritativeThreadDetailRow(previous: ThreadDetailRo
 }
 
 /** Large completed content and hydrated activity are immutable cache entries. */
-export function shouldWriteThreadDetailRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
+export function shouldWriteThreadDetailRow(
+  previous: ThreadDetailRow | undefined,
+  next: ThreadDetailRow,
+): boolean {
   if (next.kind === "turn") return previous?.sealed !== true;
   if (next.kind === "activity") return previous === undefined;
   return true;
@@ -560,7 +680,10 @@ export function shouldWriteThreadDetailRow(previous: ThreadDetailRow | undefined
  * assets. Unlike passive history refreshes, it must be allowed to replace an
  * already cached activity row when the companion returns a fresh projection.
  */
-export function shouldWriteHydratedActivityRow(previous: ThreadDetailRow | undefined, next: ThreadDetailRow): boolean {
+export function shouldWriteHydratedActivityRow(
+  previous: ThreadDetailRow | undefined,
+  next: ThreadDetailRow,
+): boolean {
   if (next.kind !== "activity") return false;
   if (previous?.kind !== "activity") return true;
   return JSON.stringify(previous.activityItems) !== JSON.stringify(next.activityItems);
@@ -575,7 +698,13 @@ function mergeSummaryWithActivity(summary: Turn["items"], activity: Turn["items"
 function compareTurnRows(left: ThreadDetailRow, right: ThreadDetailRow): number {
   const leftStartedAt = left.turn?.startedAt;
   const rightStartedAt = right.turn?.startedAt;
-  if (leftStartedAt !== null && leftStartedAt !== undefined && rightStartedAt !== null && rightStartedAt !== undefined && leftStartedAt !== rightStartedAt) {
+  if (
+    leftStartedAt !== null &&
+    leftStartedAt !== undefined &&
+    rightStartedAt !== null &&
+    rightStartedAt !== undefined &&
+    leftStartedAt !== rightStartedAt
+  ) {
     return leftStartedAt - rightStartedAt;
   }
   return left.ordinal - right.ordinal || left.id.localeCompare(right.id);

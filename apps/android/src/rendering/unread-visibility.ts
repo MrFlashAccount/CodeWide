@@ -1,4 +1,4 @@
-export const UNREAD_AGENT_VISIBLE_RATIO = 0.3;
+const UNREAD_AGENT_VISIBLE_RATIO = 0.3;
 
 export function visibleRatioWithinViewport(
   itemY: number,

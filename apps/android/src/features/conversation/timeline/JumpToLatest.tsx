@@ -4,6 +4,7 @@ import { colors, iconSize, spacing } from "../../../theme";
 import { AppText as Text } from "../../../ui/Typography";
 import { styles } from "./JumpToLatest.styles";
 import type { JumpToLatestProps } from "./JumpToLatestContract";
+
 export function JumpToLatest({
   newItemCount,
   bottomChromeHeight,

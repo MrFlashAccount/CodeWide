@@ -1,4 +1,5 @@
 import type { CodeReviewLineReference } from "../../rendering/code-review";
+
 export function shortPath(path: string): string {
   const parts = path.replaceAll("\\", "/").split("/").filter(Boolean);
   return parts.slice(-2).join("/") || path;

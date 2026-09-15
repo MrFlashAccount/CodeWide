@@ -1,17 +1,27 @@
 import type { ThreadResourcesRow } from "./thread-resource-types";
-export type { ThreadChangeResource, ThreadChangeScope, ThreadResourceKind, ThreadAttachmentResource, ThreadResourcesValue, ThreadResourcesRow } from "./thread-resource-types";
+
+export type {
+  ThreadChangeResource,
+  ThreadChangeScope,
+  ThreadResourceKind,
+  ThreadAttachmentResource,
+  ThreadResourcesValue,
+  ThreadResourcesRow,
+} from "./thread-resource-types";
 import { localOnlyCollectionOptions } from "@tanstack/db";
 import { createCollection, type Collection } from "@tanstack/react-db";
 import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import { createTurnControlsCollection } from "./turn-controls-collection";
-import { createThreadHistoryModel, type ThreadHistoryModel, type ThreadHistoryRow } from "./thread-history-model";
+import {
+  createThreadHistoryModel,
+  type ThreadHistoryModel,
+  type ThreadHistoryRow,
+} from "./thread-history-model";
 import type { TurnControlsRow } from "./turn-controls-types";
 import { createThreadResourcesModel, type ThreadResourcesModel } from "./thread-resources-model";
 
 export type { TurnControlsRow, TurnControlsValue } from "./turn-controls-types";
-
-export type { ThreadHistoryRow } from "./thread-history-model";
 
 export type BackgroundTerminalValue = {
   itemId: string;
@@ -67,11 +77,15 @@ export type VoiceInputRow = {
   updatedAt: number;
 };
 
-export type FileTransferRow = {
+type FileTransferRow = {
   id: string;
   scope: string;
   status: "idle" | "authorizing" | "running" | "complete" | "error";
-  progress: { transferred: number; total: number; phase: "hashing" | "transferring" | "verifying" } | null;
+  progress: {
+    transferred: number;
+    total: number;
+    phase: "hashing" | "transferring" | "verifying";
+  } | null;
   result: string | null;
   error: string | null;
   updatedAt: number;
@@ -99,26 +113,36 @@ export type WorkspaceResourceDatabase = {
 export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
   const threadHistories = createThreadHistoryModel();
   const turnControls = createTurnControlsCollection();
-  const backgroundTerminals = createCollection(localOnlyCollectionOptions<BackgroundTerminalsRow, string>({
-    id: "workspace-background-terminals-v1",
-    getKey: (row) => row.id,
-  }));
-  const threadGoals = createCollection(localOnlyCollectionOptions<ThreadGoalRow, string>({
-    id: "workspace-thread-goals-v1",
-    getKey: (row) => row.id,
-  }));
-  const tunnels = createCollection(localOnlyCollectionOptions<TunnelRow, string>({
-    id: "workspace-tunnels-v1",
-    getKey: (row) => row.id,
-  }));
-  const voiceInputs = createCollection(localOnlyCollectionOptions<VoiceInputRow, string>({
-    id: "workspace-voice-inputs-v1",
-    getKey: (row) => row.id,
-  }));
-  const fileTransfers = createCollection(localOnlyCollectionOptions<FileTransferRow, string>({
-    id: "workspace-file-transfers-v1",
-    getKey: (row) => row.id,
-  }));
+  const backgroundTerminals = createCollection(
+    localOnlyCollectionOptions<BackgroundTerminalsRow, string>({
+      id: "workspace-background-terminals-v1",
+      getKey: (row) => row.id,
+    }),
+  );
+  const threadGoals = createCollection(
+    localOnlyCollectionOptions<ThreadGoalRow, string>({
+      id: "workspace-thread-goals-v1",
+      getKey: (row) => row.id,
+    }),
+  );
+  const tunnels = createCollection(
+    localOnlyCollectionOptions<TunnelRow, string>({
+      id: "workspace-tunnels-v1",
+      getKey: (row) => row.id,
+    }),
+  );
+  const voiceInputs = createCollection(
+    localOnlyCollectionOptions<VoiceInputRow, string>({
+      id: "workspace-voice-inputs-v1",
+      getKey: (row) => row.id,
+    }),
+  );
+  const fileTransfers = createCollection(
+    localOnlyCollectionOptions<FileTransferRow, string>({
+      id: "workspace-file-transfers-v1",
+      getKey: (row) => row.id,
+    }),
+  );
   const threadResources = createThreadResourcesModel();
   return {
     threadHistories,
@@ -169,7 +193,10 @@ function put<T extends { id: string }>(collection: LocalCollection<T>, row: T): 
   else collection.insert(row);
 }
 
-function trimOldest<T extends { id: string; updatedAt: number }>(collection: LocalCollection<T>, max: number): void {
+function trimOldest<T extends { id: string; updatedAt: number }>(
+  collection: LocalCollection<T>,
+  max: number,
+): void {
   const rows = collection.toArray;
   const overflow = rows
     .sort((left, right) => left.updatedAt - right.updatedAt)
@@ -177,4 +204,8 @@ function trimOldest<T extends { id: string; updatedAt: number }>(collection: Loc
   if (overflow.length > 0) collection.delete(overflow.map((row) => row.id));
 }
 
-export type ThreadGoalInput = { objective: string; status: ThreadGoalStatus; tokenBudget: number | null };
+export type ThreadGoalInput = {
+  objective: string;
+  status: ThreadGoalStatus;
+  tokenBudget: number | null;
+};

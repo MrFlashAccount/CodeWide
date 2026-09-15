@@ -8,6 +8,7 @@ import type { AnimatedQueueBubbleProps } from "./inlineQueueContract";
 import { CARD_BORDER_WIDTH } from "./inlineQueueLayout";
 import { styles } from "./InlineQueueOverlay.styles";
 import { useQueueBubbleMotion } from "./queueBubbleMotion";
+
 export function AnimatedQueueBubble(props: AnimatedQueueBubbleProps): React.JSX.Element {
   const { children, deleteEnabled, expanded, failed, index, raised, steerEnabled, onMeasure } =
     props;

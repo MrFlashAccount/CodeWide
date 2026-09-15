@@ -14,6 +14,7 @@ import {
 } from "../ConversationHistoryStatus";
 import { styles } from "./ConversationHeader.styles";
 import type { ConversationHeaderProps } from "./ConversationHeaderContract";
+
 export function ConversationHeader({
   compact,
   onBack,

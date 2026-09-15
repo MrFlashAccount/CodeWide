@@ -26,7 +26,10 @@ export type InteractiveTerminalWorkspace = {
   activeId: string | null;
 };
 
-const EMPTY_WORKSPACE: InteractiveTerminalWorkspace = Object.freeze({ tabs: Object.freeze([]), activeId: null });
+const EMPTY_WORKSPACE: InteractiveTerminalWorkspace = Object.freeze({
+  tabs: Object.freeze([]),
+  activeId: null,
+});
 const workspaces = new Map<string, InteractiveTerminalWorkspace>();
 const renderedOffsets = new Map<string, number>();
 const listeners = new Set<() => void>();
@@ -40,12 +43,15 @@ export function useInteractiveTerminalWorkspace(
   const key = workspaceKey(connectionId, threadId);
   return useSyncExternalStore(
     subscribe,
-    () => key === null ? EMPTY_WORKSPACE : workspaces.get(key) ?? EMPTY_WORKSPACE,
+    () => (key === null ? EMPTY_WORKSPACE : (workspaces.get(key) ?? EMPTY_WORKSPACE)),
     () => EMPTY_WORKSPACE,
   );
 }
 
-export function readInteractiveTerminalWorkspace(connectionId: string, threadId: string): InteractiveTerminalWorkspace {
+export function readInteractiveTerminalWorkspace(
+  connectionId: string,
+  threadId: string,
+): InteractiveTerminalWorkspace {
   return workspaces.get(requiredWorkspaceKey(connectionId, threadId)) ?? EMPTY_WORKSPACE;
 }
 
@@ -55,7 +61,8 @@ export function readInteractiveTerminalRenderedOffset(terminalId: string): numbe
 
 export function commitInteractiveTerminalRenderedOffset(terminalId: string, offset: number): void {
   const previous = readInteractiveTerminalRenderedOffset(terminalId);
-  if (!Number.isSafeInteger(offset) || offset < previous) throw new Error("Terminal render offset is invalid");
+  if (!Number.isSafeInteger(offset) || offset < previous)
+    throw new Error("Terminal render offset is invalid");
   renderedOffsets.set(terminalId, offset);
 }
 
@@ -94,23 +101,32 @@ export function createInteractiveTerminalTab(input: {
   return id;
 }
 
-export function selectInteractiveTerminalTab(connectionId: string, threadId: string, terminalId: string): void {
+export function selectInteractiveTerminalTab(
+  connectionId: string,
+  threadId: string,
+  terminalId: string,
+): void {
   const key = requiredWorkspaceKey(connectionId, threadId);
   const current = workspaces.get(key);
   if (current === undefined || !current.tabs.some(({ id }) => id === terminalId)) return;
   setWorkspace(key, { ...current, activeId: terminalId });
 }
 
-export function closeInteractiveTerminalTab(connectionId: string, threadId: string, terminalId: string): void {
+export function closeInteractiveTerminalTab(
+  connectionId: string,
+  threadId: string,
+  terminalId: string,
+): void {
   const key = requiredWorkspaceKey(connectionId, threadId);
   const current = workspaces.get(key);
   if (current === undefined) return;
   const index = current.tabs.findIndex(({ id }) => id === terminalId);
   if (index < 0) return;
   const tabs = current.tabs.filter(({ id }) => id !== terminalId);
-  const activeId = current.activeId === terminalId
-    ? tabs[Math.min(index, tabs.length - 1)]?.id ?? null
-    : current.activeId;
+  const activeId =
+    current.activeId === terminalId
+      ? (tabs[Math.min(index, tabs.length - 1)]?.id ?? null)
+      : current.activeId;
   if (tabs.length === 0) {
     workspaces.delete(key);
     emitChange();
@@ -142,12 +158,16 @@ function applyNativeEvent(event: NativeTerminalEvent): void {
   updateTab(event.sessionId, (tab) => {
     if (event.type === "open") return { ...tab, status: "open", error: null };
     if (event.type === "closed") return { ...tab, status: "closed" };
-    if (event.type === "error") return { ...tab, status: "error", error: event.message ?? "Terminal connection failed" };
+    if (event.type === "error")
+      return { ...tab, status: "error", error: event.message ?? "Terminal connection failed" };
     return { ...tab, status: "connecting", error: null };
   });
 }
 
-function updateTab(id: string, update: (tab: InteractiveTerminalTab) => InteractiveTerminalTab): void {
+function updateTab(
+  id: string,
+  update: (tab: InteractiveTerminalTab) => InteractiveTerminalTab,
+): void {
   for (const [key, workspace] of workspaces) {
     const index = workspace.tabs.findIndex((tab) => tab.id === id);
     if (index < 0) continue;
@@ -166,10 +186,14 @@ function removeTabById(id: string): void {
     if (index < 0) continue;
     const tabs = workspace.tabs.filter((candidate) => candidate.id !== id);
     if (tabs.length === 0) workspaces.delete(key);
-    else setWorkspace(key, {
-      tabs,
-      activeId: workspace.activeId === id ? tabs[Math.min(index, tabs.length - 1)]?.id ?? null : workspace.activeId,
-    });
+    else
+      setWorkspace(key, {
+        tabs,
+        activeId:
+          workspace.activeId === id
+            ? (tabs[Math.min(index, tabs.length - 1)]?.id ?? null)
+            : workspace.activeId,
+      });
     releaseTerminalRenderer(id);
     if (tabs.length === 0) emitChange();
     return;
@@ -196,7 +220,9 @@ function nextTabTitle(tabs: readonly InteractiveTerminalTab[]): string {
 }
 
 function workspaceKey(connectionId: string | null, threadId: string | null): string | null {
-  return connectionId === null || threadId === null ? null : requiredWorkspaceKey(connectionId, threadId);
+  return connectionId === null || threadId === null
+    ? null
+    : requiredWorkspaceKey(connectionId, threadId);
 }
 
 function requiredWorkspaceKey(connectionId: string, threadId: string): string {

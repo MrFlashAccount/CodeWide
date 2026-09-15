@@ -11,6 +11,7 @@ import type { NewChatDraft } from "../navigation/threadNavigation";
 import type { createNewChatSubmission } from "../projects/newChatSubmission";
 import { useQueueCommands } from "../queue/queueCommands";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
+
 type Scope =
   | { kind: "draft"; draft: NewChatDraft; onSend: ReturnType<typeof createNewChatSubmission> }
   | { kind: "thread"; connectionId: string; threadId: string }

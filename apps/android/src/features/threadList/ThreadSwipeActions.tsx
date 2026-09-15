@@ -84,5 +84,8 @@ const styles = StyleSheet.create({
   swipeActionAccent: { backgroundColor: colors.primary },
   swipeActionDanger: { backgroundColor: colors.errorContainer },
   swipeActionPressed: { opacity: 0.72 },
-  swipeActionText: { ...typeScale.label, fontWeight: typeWeight.semibold },
+  swipeActionText: {
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
 });

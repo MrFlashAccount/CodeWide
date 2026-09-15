@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 import { spacing } from "../../../theme";
+
 export const styles = StyleSheet.create({
   timelineShell: { flex: 1 },
   livePlanFloat: {

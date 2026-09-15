@@ -37,10 +37,10 @@ export function replaceEqualDeep(previous: any, next: any, depth = 0): any {
     }
 
     if (
-      previousItem === null
-      || nextItem === null
-      || typeof previousItem !== "object"
-      || typeof nextItem !== "object"
+      previousItem === null ||
+      nextItem === null ||
+      typeof previousItem !== "object" ||
+      typeof nextItem !== "object"
     ) {
       copy[key] = nextItem;
       continue;

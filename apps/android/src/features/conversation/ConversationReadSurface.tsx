@@ -10,6 +10,7 @@ import { useThreadTimeline, useThreadTimelineActions } from "./timeline/ThreadTi
 import { projectTimelineDateLabels } from "./timeline/timelineProjection";
 import { TimelineViewport } from "./timeline/TimelineViewport";
 
+/** Projects authoritative thread data into the read-only conversation surface. */
 export function ConversationReadSurface(props: ConversationReadSurfaceProps) {
   const read = useReadConversationTimelineBindings({
     server: props.server,

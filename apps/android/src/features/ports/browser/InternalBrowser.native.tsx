@@ -15,6 +15,7 @@ import { useBrowserNavigationState } from "./browserNavigationState";
 import { useBrowserPaneLayout } from "./browserPaneLayout";
 import { BROWSER_FEEDBACK_BOOTSTRAP, type BrowserFeedbackCapability } from "./feedback";
 import { styles } from "./InternalBrowser.styles";
+
 export function InternalBrowser({
   url,
   headers,

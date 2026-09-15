@@ -13,7 +13,11 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     paddingHorizontal: spacing.xs,
   },
-  unknownText: { flex: 1, color: colors.textMuted, ...typeScale.label },
+  unknownText: {
+    flex: 1,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   unknownFixButton: {
     minHeight: controlSize.compact,
     paddingHorizontal: spacing.xs,
@@ -30,5 +34,8 @@ export const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
   },
   disabled: { opacity: 0.42 },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

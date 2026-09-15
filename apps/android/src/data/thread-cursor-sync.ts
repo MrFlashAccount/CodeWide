@@ -4,7 +4,7 @@ import { projectedTurnMetadata } from "@codewide/sync-client";
 
 import { isThreadHistorySourceWitness } from "./thread-history-source-witness";
 
-export type ThreadSyncHistory = {
+type ThreadSyncHistory = {
   kind: "current" | "delta" | "reset";
   headTurnId: string | null;
   turns: Turn[];
@@ -33,13 +33,19 @@ export class ThreadSyncCatchUp {
   #reset = false;
   sourceWitness: string | undefined;
 
-  constructor(cached: Thread | null, historyCursor: string | null | undefined, sourceWitness: string | undefined) {
+  constructor(
+    cached: Thread | null,
+    historyCursor: string | null | undefined,
+    sourceWitness: string | undefined,
+  ) {
     this.#thread = cached;
     this.#historyCursor = historyCursor;
     this.sourceWitness = sourceWitness;
   }
 
-  get mode(): "reset" | "merge" { return this.#reset ? "reset" : "merge"; }
+  get mode(): "reset" | "merge" {
+    return this.#reset ? "reset" : "merge";
+  }
 
   accept(response: ThreadSyncResponse): MaterializedThreadSync {
     const next = materializeThreadSync(this.#thread, response, this.#historyCursor);
@@ -77,18 +83,18 @@ export function parseThreadSyncResponse(value: unknown): ThreadSyncResponse {
   const turns = parseHistoryTurns(history.turns);
   const activeTurn = parseActiveTurn(response.activeTurn);
   if (
-    response?.readModelVersion !== 3
-    || typeof response.throughCursor !== "number"
-    || !Number.isSafeInteger(response.throughCursor)
-    || response.throughCursor < 0
-    || !isThread(thread)
-    || (kind !== "current" && kind !== "delta" && kind !== "reset")
-    || turns === null
-    || typeof history.hasMore !== "boolean"
-    || (history.headTurnId !== null && typeof history.headTurnId !== "string")
-    || (history.olderCursor !== null && typeof history.olderCursor !== "string")
-    || (history.sourceWitness !== undefined && !isThreadHistorySourceWitness(history.sourceWitness))
-    || activeTurn === undefined
+    response?.readModelVersion !== 3 ||
+    typeof response.throughCursor !== "number" ||
+    !Number.isSafeInteger(response.throughCursor) ||
+    response.throughCursor < 0 ||
+    !isThread(thread) ||
+    (kind !== "current" && kind !== "delta" && kind !== "reset") ||
+    turns === null ||
+    typeof history.hasMore !== "boolean" ||
+    (history.headTurnId !== null && typeof history.headTurnId !== "string") ||
+    (history.olderCursor !== null && typeof history.olderCursor !== "string") ||
+    (history.sourceWitness !== undefined && !isThreadHistorySourceWitness(history.sourceWitness)) ||
+    activeTurn === undefined
   ) {
     throw new Error("Companion thread sync returned an invalid response");
   }
@@ -118,7 +124,11 @@ export class ThreadSyncLane<Result> {
   readonly #states = new Map<string, ThreadSyncLaneState<Result>>();
 
   /** Invalidation/foreground callers need a new read; ordinary readers can share the current one. */
-  run(key: string, synchronize: () => Promise<Result>, freshness: "inFlight" | "afterCurrent" = "inFlight"): Promise<Result> {
+  run(
+    key: string,
+    synchronize: () => Promise<Result>,
+    freshness: "inFlight" | "afterCurrent" = "inFlight",
+  ): Promise<Result> {
     const existing = this.#states.get(key);
     if (existing !== undefined) {
       if (freshness === "inFlight") return existing.promise;
@@ -145,25 +155,30 @@ export function materializeThreadSync(
   currentHistoryCursor: string | null | undefined,
 ): MaterializedThreadSync {
   if (response.readModelVersion !== 3) {
-    throw new Error(`Unsupported companion thread read model: ${String(response.readModelVersion)}`);
+    throw new Error(
+      `Unsupported companion thread read model: ${String(response.readModelVersion)}`,
+    );
   }
   if (!Array.isArray(response.thread.turns) || !Array.isArray(response.history.turns)) {
     throw new Error("Companion thread sync returned an invalid turn collection");
   }
-  const sealed = response.history.kind === "reset"
-    ? []
-    : (cached?.turns ?? []).filter(({ status }) => status !== "inProgress");
+  const sealed =
+    response.history.kind === "reset"
+      ? []
+      : (cached?.turns ?? []).filter(({ status }) => status !== "inProgress");
   const byId = new Map<string, Turn>();
   for (const turn of sealed) byId.set(turn.id, turn);
   for (const turn of response.history.turns) byId.set(turn.id, turn);
   const turns = [...byId.values()];
-  const activeTurn = mergeActiveTurnCheckpoint(response.history.kind === "reset" ? null : cached, response.activeTurn);
+  const activeTurn = mergeActiveTurnCheckpoint(
+    response.history.kind === "reset" ? null : cached,
+    response.activeTurn,
+  );
   if (activeTurn !== null) turns.push(activeTurn);
   return {
     thread: { ...response.thread, turns },
-    historyCursor: response.history.kind === "reset"
-      ? response.history.olderCursor
-      : currentHistoryCursor,
+    historyCursor:
+      response.history.kind === "reset" ? response.history.olderCursor : currentHistoryCursor,
   };
 }
 
@@ -175,17 +190,17 @@ export async function hydrateThreadSyncActiveText(
   const activeTurn = response.activeTurn;
   if (activeTurn === null) return response;
   let changed = false;
-  const items = await Promise.all(activeTurn.items.map(async (item) => {
-    if (item.type !== "agentMessage") return item;
-    const reference = projectedContentField(item, "/text");
-    if (reference === null) return item;
-    const text = await read(reference);
-    changed = changed || text !== item.text;
-    return text === item.text ? item : { ...item, text };
-  }));
-  return changed
-    ? { ...response, activeTurn: { ...activeTurn, items } }
-    : response;
+  const items = await Promise.all(
+    activeTurn.items.map(async (item) => {
+      if (item.type !== "agentMessage") return item;
+      const reference = projectedContentField(item, "/text");
+      if (reference === null) return item;
+      const text = await read(reference);
+      changed = changed || text !== item.text;
+      return text === item.text ? item : { ...item, text };
+    }),
+  );
+  return changed ? { ...response, activeTurn: { ...activeTurn, items } } : response;
 }
 
 /**
@@ -194,8 +209,14 @@ export async function hydrateThreadSyncActiveText(
  */
 function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | null): Turn | null {
   if (checkpoint === null) return null;
-  const previous = cached?.turns.find((turn) => turn.id === checkpoint.id && turn.status === "inProgress");
-  if (previous === undefined || checkpoint.itemsView !== "summary" || previous.itemsView === "notLoaded") {
+  const previous = cached?.turns.find(
+    (turn) => turn.id === checkpoint.id && turn.status === "inProgress",
+  );
+  if (
+    previous === undefined ||
+    checkpoint.itemsView !== "summary" ||
+    previous.itemsView === "notLoaded"
+  ) {
     return checkpoint;
   }
 
@@ -205,9 +226,9 @@ function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | nul
     if (current === undefined) return item;
     checkpointItems.delete(item.id);
     if (
-      item.type === "agentMessage"
-      && current.type === "agentMessage"
-      && item.text.startsWith(current.text)
+      item.type === "agentMessage" &&
+      current.type === "agentMessage" &&
+      item.text.startsWith(current.text)
     ) {
       return item.text === current.text ? current : { ...current, text: item.text };
     }
@@ -217,14 +238,15 @@ function mergeActiveTurnCheckpoint(cached: Thread | null, checkpoint: Turn | nul
 
   const previousMetadata = projectedTurnMetadata(previous);
   const checkpointMetadata = projectedTurnMetadata(checkpoint);
-  const codewide = previousMetadata === null && checkpointMetadata === null
-    ? {}
-    : {
-        codewide: {
-          ...(previousMetadata ?? {}),
-          ...(checkpointMetadata ?? {}),
-        },
-      };
+  const codewide =
+    previousMetadata === null && checkpointMetadata === null
+      ? {}
+      : {
+          codewide: {
+            ...(previousMetadata ?? {}),
+            ...(checkpointMetadata ?? {}),
+          },
+        };
 
   return {
     ...previous,
@@ -241,9 +263,8 @@ export function assertThreadSyncReachedHead(
 ): void {
   if (response.history.hasMore) return;
   const lastTurnId = response.history.turns.at(-1)?.id;
-  const reachedTurnId = response.history.kind === "reset"
-    ? lastTurnId ?? null
-    : lastTurnId ?? requestedAfterTurnId;
+  const reachedTurnId =
+    response.history.kind === "reset" ? (lastTurnId ?? null) : (lastTurnId ?? requestedAfterTurnId);
   if (reachedTurnId !== response.history.headTurnId) {
     throw new Error("Companion thread sync ended before its advertised history head");
   }
@@ -264,12 +285,13 @@ export function latestSealedTurnId(turns: readonly Turn[]): string | null {
  * answer. Authoritative history pages may seal unphased responses at
  * the storage boundary; an unwitnessed live completion must still be repaired.
  */
-export function isStableThreadCursorTurn(turn: Turn): boolean {
+function isStableThreadCursorTurn(turn: Turn): boolean {
   if (turn.status === "inProgress") return false;
   if (turn.status !== "completed") return true;
-  return turn.items.some((item) => item.type === "agentMessage"
-    && item.phase === "final_answer"
-    && item.text.trim() !== "");
+  return turn.items.some(
+    (item) =>
+      item.type === "agentMessage" && item.phase === "final_answer" && item.text.trim() !== "",
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -281,12 +303,12 @@ function projectedContentField(value: unknown, pointer: string): ThreadContentRe
   const content = isRecord(object?.codewideContent) ? object.codewideContent : null;
   const fields = isRecord(content?.fields) ? content.fields : null;
   const reference = isRecord(fields?.[pointer]) ? fields[pointer] : null;
-  return typeof reference?.id === "string"
-    && /^[a-f0-9]{64}$/u.test(reference.id)
-    && typeof reference.byteLength === "number"
-    && Number.isSafeInteger(reference.byteLength)
-    && reference.byteLength >= 0
-    && typeof reference.contentType === "string"
+  return typeof reference?.id === "string" &&
+    /^[a-f0-9]{64}$/u.test(reference.id) &&
+    typeof reference.byteLength === "number" &&
+    Number.isSafeInteger(reference.byteLength) &&
+    reference.byteLength >= 0 &&
+    typeof reference.contentType === "string"
     ? {
         id: reference.id,
         byteLength: reference.byteLength,
@@ -297,28 +319,34 @@ function projectedContentField(value: unknown, pointer: string): ThreadContentRe
 
 function isThread(value: unknown): value is Thread {
   const thread = isRecord(value) ? value : null;
-  return thread !== null
-    && typeof thread.id === "string"
-    && typeof thread.cwd === "string"
-    && Array.isArray(thread.turns)
-    && thread.turns.every(isTurn)
-    && isRecord(thread.status);
+  return (
+    thread !== null &&
+    typeof thread.id === "string" &&
+    typeof thread.cwd === "string" &&
+    Array.isArray(thread.turns) &&
+    thread.turns.every(isTurn) &&
+    isRecord(thread.status)
+  );
 }
 
 function isTurn(value: unknown): value is Turn {
   const turn = isRecord(value) ? value : null;
-  return turn !== null
-    && typeof turn.id === "string"
-    && typeof turn.status === "string"
-    && Array.isArray(turn.items);
+  return (
+    turn !== null &&
+    typeof turn.id === "string" &&
+    typeof turn.status === "string" &&
+    Array.isArray(turn.items)
+  );
 }
 
 function isMetadataOnlyTurnEnvelope(value: unknown): value is MetadataOnlyTurnEnvelope {
   const turn = isRecord(value) ? value : null;
-  return turn !== null
-    && typeof turn.id === "string"
-    && typeof turn.status === "string"
-    && turn.items === undefined;
+  return (
+    turn !== null &&
+    typeof turn.id === "string" &&
+    typeof turn.status === "string" &&
+    turn.items === undefined
+  );
 }
 
 function isContentBackedMetadataOnlyTurnEnvelope(
@@ -337,14 +365,16 @@ function isContentBackedMetadataOnlyTurnEnvelope(
   if (!isMetadataOnlyTurnEnvelope(value)) return false;
   const content = isRecord(value.codewideContent) ? value.codewideContent : null;
   const whole = isRecord(content?.whole) ? content.whole : null;
-  return content?.version === 1
-    && isRecord(content.fields)
-    && whole !== null
-    && typeof whole.id === "string"
-    && typeof whole.byteLength === "number"
-    && Number.isSafeInteger(whole.byteLength)
-    && whole.byteLength >= 0
-    && typeof whole.contentType === "string";
+  return (
+    content?.version === 1 &&
+    isRecord(content.fields) &&
+    whole !== null &&
+    typeof whole.id === "string" &&
+    typeof whole.byteLength === "number" &&
+    Number.isSafeInteger(whole.byteLength) &&
+    whole.byteLength >= 0 &&
+    typeof whole.contentType === "string"
+  );
 }
 
 function parseActiveTurn(value: unknown): Turn | null | undefined {

@@ -13,24 +13,37 @@ type AppDialogController = {
 const AppDialogContext = createContext<AppDialogController | null>(null);
 
 export function AppDialogProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<{ isOpen: boolean; request: AppDialogRequest | null }>({ isOpen: false, request: null });
-  const alert = useEvent((title: string, message?: string, actions?: readonly AppDialogAction[]) => {
+  const [state, setState] = useState<{ isOpen: boolean; request: AppDialogRequest | null }>({
+    isOpen: false,
+    request: null,
+  });
+  const alert = useEvent(
+    (title: string, message?: string, actions?: readonly AppDialogAction[]) => {
+      setState({
+        isOpen: true,
+        request: {
+          title,
+          ...(message === undefined ? {} : { message }),
+          actions: actions === undefined || actions.length === 0 ? [{ text: "OK" }] : actions,
+        },
+      });
+    },
+  );
+  const error = useEvent((title: string, cause: unknown, actions?: readonly AppDialogAction[]) => {
     setState({
       isOpen: true,
       request: {
         title,
-        ...(message === undefined ? {} : { message }),
+        message:
+          cause instanceof Error
+            ? cause.message
+            : typeof cause === "string"
+              ? cause
+              : "The operation failed",
+        diagnostic: errorDiagnostic(title, cause),
         actions: actions === undefined || actions.length === 0 ? [{ text: "OK" }] : actions,
       },
     });
-  });
-  const error = useEvent((title: string, cause: unknown, actions?: readonly AppDialogAction[]) => {
-    setState({ isOpen: true, request: {
-      title,
-      message: cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "The operation failed",
-      diagnostic: errorDiagnostic(title, cause),
-      actions: actions === undefined || actions.length === 0 ? [{ text: "OK" }] : actions,
-    } });
   });
   const controller = useMemo<AppDialogController>(() => ({ alert, error }), [alert, error]);
   const dismiss = useEvent(() => setState((current) => ({ ...current, isOpen: false })));
@@ -42,7 +55,14 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
   return (
     <AppDialogContext.Provider value={controller}>
       {children}
-      {state.isOpen && <AppDialogSurface isOpen request={state.request} onDismiss={dismiss} onAction={handleAction} />}
+      {state.isOpen && (
+        <AppDialogSurface
+          isOpen
+          request={state.request}
+          onDismiss={dismiss}
+          onAction={handleAction}
+        />
+      )}
     </AppDialogContext.Provider>
   );
 }

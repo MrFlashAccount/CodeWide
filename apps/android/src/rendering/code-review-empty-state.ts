@@ -27,12 +27,16 @@ export function codeReviewDocumentEmptyState(
   if (document.displayState === "deleted" && (mode === "source" || document.patches.length === 0)) {
     return {
       title: "File was deleted",
-      message: document.patches.length > 0
-        ? "Switch to Unified or Split to inspect the deletion."
-        : "No previous contents are available.",
+      message:
+        document.patches.length > 0
+          ? "Switch to Unified or Split to inspect the deletion."
+          : "No previous contents are available.",
     };
   }
-  if (document.displayState === "empty" || document.source === "" && document.patches.length === 0) {
+  if (
+    document.displayState === "empty" ||
+    (document.source === "" && document.patches.length === 0)
+  ) {
     return {
       title: "Nothing to show",
       message: "This file has no content or renderable diff.",

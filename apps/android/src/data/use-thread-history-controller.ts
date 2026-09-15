@@ -5,7 +5,11 @@ import { useEvent } from "../react/useEvent";
 import { useLatest } from "../react/useLatest";
 import { threadHistoryContainsBeginning, type ThreadHistoryState } from "./thread-pagination";
 import { recordThreadHistoryTelemetry, telemetryErrorKind } from "./thread-history-telemetry";
-import { ThreadHistoryLoadCoordinator, type ThreadHistoryLoadDirection, type ThreadHistoryLoadSettlement } from "./thread-history-load-coordinator";
+import {
+  ThreadHistoryLoadCoordinator,
+  type ThreadHistoryLoadDirection,
+  type ThreadHistoryLoadSettlement,
+} from "./thread-history-load-coordinator";
 import { ThreadHistoryViewportFill } from "./thread-history-viewport-fill";
 
 export type ThreadHistoryViewport = {
@@ -42,7 +46,8 @@ async function loadRange(
 ): Promise<boolean> {
   const threadId = context.threadId;
   const state = context.readState();
-  if (!context.enabled || context.connectionId === "" || threadId === null || state === null) return false;
+  if (!context.enabled || context.connectionId === "" || threadId === null || state === null)
+    return false;
   if (state.historyEpoch !== context.historyEpoch) return false;
   const cursor = context.readHistoryCursor();
 
@@ -71,7 +76,11 @@ async function loadRange(
   }
   if (loadedLocally || direction !== "older" || nextCursor === null) {
     recordThreadHistoryTelemetry(context.connectionId, threadId, "chat.history.load_finished", {
-      values: { durationMs: performance.now() - startedAt, historyEpoch: state.historyEpoch, pageCount: 0 },
+      values: {
+        durationMs: performance.now() - startedAt,
+        historyEpoch: state.historyEpoch,
+        pageCount: 0,
+      },
       tags: {
         direction,
         outcome: loadedLocally ? "cache-aside" : nextCursor === null ? "exhausted" : "boundary",
@@ -97,15 +106,17 @@ async function loadRange(
 
 /** LegendList owns position; the controller coalesces pages and continues a
  * bounded viewport-fill intent when measured rows remain too short. */
-export function useThreadHistoryController(options: ThreadHistoryControllerOptions): ThreadHistoryViewport {
+export function useThreadHistoryController(
+  options: ThreadHistoryControllerOptions,
+): ThreadHistoryViewport {
   const contextRef = useLatest(options);
   const loadRuntimeRef = useConversationRef<{
     operations: Partial<Record<ThreadHistoryLoadDirection, Promise<boolean>>>;
     coordinator: ThreadHistoryLoadCoordinator;
-  }>(
-    `${options.connectionId}\u0000${options.threadId}\u0000${options.historyEpoch}`,
-    () => ({ operations: {}, coordinator: new ThreadHistoryLoadCoordinator() }),
-  );
+  }>(`${options.connectionId}\u0000${options.threadId}\u0000${options.historyEpoch}`, () => ({
+    operations: {},
+    coordinator: new ThreadHistoryLoadCoordinator(),
+  }));
 
   const load = useEvent(async (direction: ThreadHistoryLoadDirection): Promise<boolean> => {
     const runtime = loadRuntimeRef.current;
@@ -118,24 +129,29 @@ export function useThreadHistoryController(options: ThreadHistoryControllerOptio
         context.putState({ ...current, status: "loading-history", error: null });
       }
     }
-    let outcome: { status: "succeeded" } | { status: "failed"; cause: unknown } = { status: "succeeded" };
-    const operation = loadRange(context, direction).catch((cause: unknown) => {
-      outcome = { status: "failed", cause };
-      const threadId = context.threadId;
-      if (threadId !== null) {
-        recordThreadHistoryTelemetry(context.connectionId, threadId, "chat.history.load_failed", {
-          values: { historyEpoch: context.historyEpoch },
-          tags: { direction, errorKind: telemetryErrorKind(cause) },
-        });
-      }
-      throw cause;
-    }).finally(() => {
-      if (runtime.operations[direction] === operation) delete runtime.operations[direction];
-      const settlement = outcome.status === "failed"
-        ? runtime.coordinator.fail(direction, outcome.cause)
-        : runtime.coordinator.succeed(direction);
-      publishLoadSettlement(context, settlement);
-    });
+    let outcome: { status: "succeeded" } | { status: "failed"; cause: unknown } = {
+      status: "succeeded",
+    };
+    const operation = loadRange(context, direction)
+      .catch((cause: unknown) => {
+        outcome = { status: "failed", cause };
+        const threadId = context.threadId;
+        if (threadId !== null) {
+          recordThreadHistoryTelemetry(context.connectionId, threadId, "chat.history.load_failed", {
+            values: { historyEpoch: context.historyEpoch },
+            tags: { direction, errorKind: telemetryErrorKind(cause) },
+          });
+        }
+        throw cause;
+      })
+      .finally(() => {
+        if (runtime.operations[direction] === operation) delete runtime.operations[direction];
+        const settlement =
+          outcome.status === "failed"
+            ? runtime.coordinator.fail(direction, outcome.cause)
+            : runtime.coordinator.succeed(direction);
+        publishLoadSettlement(context, settlement);
+      });
     runtime.operations[direction] = operation;
     return await operation;
   });
@@ -146,23 +162,35 @@ export function useThreadHistoryController(options: ThreadHistoryControllerOptio
       const { connectionId, threadId, historyEpoch } = options;
       return new ThreadHistoryViewportFill({
         loadPage: load,
-        afterLayout: async () => await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
-        isCurrent: () => contextRef.current.enabled && contextRef.current.connectionId === connectionId
-          && contextRef.current.threadId === threadId && contextRef.current.historyEpoch === historyEpoch,
+        afterLayout: async () =>
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+        isCurrent: () =>
+          contextRef.current.enabled &&
+          contextRef.current.connectionId === connectionId &&
+          contextRef.current.threadId === threadId &&
+          contextRef.current.historyEpoch === historyEpoch,
       });
     },
   );
-  useConversationCleanup(`${options.connectionId}\u0000${options.threadId}\u0000${options.historyEpoch}`,
-    () => viewportFillRef.current.cancel());
-  const loadOlder = useEvent(async (): Promise<void> => await viewportFillRef.current.load("older"));
-  const loadNewer = useEvent(async (): Promise<void> => await viewportFillRef.current.load("newer"));
+  useConversationCleanup(
+    `${options.connectionId}\u0000${options.threadId}\u0000${options.historyEpoch}`,
+    () => viewportFillRef.current.cancel(),
+  );
+  const loadOlder = useEvent(
+    async (): Promise<void> => await viewportFillRef.current.load("older"),
+  );
+  const loadNewer = useEvent(
+    async (): Promise<void> => await viewportFillRef.current.load("newer"),
+  );
   const loadLatest = useEvent(async (): Promise<void> => {
     viewportFillRef.current.cancel();
     await load("latest");
   });
-  const reportViewport = useEvent(async (viewportHeight: number, contentHeight: number): Promise<void> => {
-    await viewportFillRef.current.reportViewport(viewportHeight, contentHeight);
-  });
+  const reportViewport = useEvent(
+    async (viewportHeight: number, contentHeight: number): Promise<void> => {
+      await viewportFillRef.current.reportViewport(viewportHeight, contentHeight);
+    },
+  );
   const trimAfterGesture = useEvent(async (direction: "older" | "newer"): Promise<void> => {
     const context = contextRef.current;
     const threadId = context.threadId;
@@ -170,17 +198,33 @@ export function useThreadHistoryController(options: ThreadHistoryControllerOptio
     await context.trimRange(direction);
   });
 
-  return useMemo(() => ({
-    readStatus: () => contextRef.current.readState()?.status ?? "initial-loading",
-    completeTurnHeaders: options.isLatestRange && options.cursorState?.nextCursor === null,
-    containsBeginning: threadHistoryContainsBeginning(options.isEarliestRange, options.cursorState?.nextCursor),
-    containsLatest: options.isLatestRange,
-    loadOlder,
-    loadNewer,
-    loadLatest,
-    reportViewport,
-    trimAfterGesture,
-  }), [contextRef, loadLatest, loadNewer, loadOlder, options.cursorState?.nextCursor, options.isLatestRange, options.isEarliestRange, reportViewport, trimAfterGesture]);
+  return useMemo(
+    () => ({
+      readStatus: () => contextRef.current.readState()?.status ?? "initial-loading",
+      completeTurnHeaders: options.isLatestRange && options.cursorState?.nextCursor === null,
+      containsBeginning: threadHistoryContainsBeginning(
+        options.isEarliestRange,
+        options.cursorState?.nextCursor,
+      ),
+      containsLatest: options.isLatestRange,
+      loadOlder,
+      loadNewer,
+      loadLatest,
+      reportViewport,
+      trimAfterGesture,
+    }),
+    [
+      contextRef,
+      loadLatest,
+      loadNewer,
+      loadOlder,
+      options.cursorState?.nextCursor,
+      options.isLatestRange,
+      options.isEarliestRange,
+      reportViewport,
+      trimAfterGesture,
+    ],
+  );
 }
 
 function publishLoadSettlement(
@@ -190,18 +234,23 @@ function publishLoadSettlement(
   if (settlement.status === "pending") return;
   const current = context.readState();
   if (current === null || current.historyEpoch !== context.historyEpoch) return;
-  context.putState(settlement.status === "failed"
-    ? {
-        ...current,
-        status: "background-retrying",
-        error: settlement.cause instanceof Error ? settlement.cause.message : "Could not load messages",
-      }
-    : {
-        ...current,
-        nextCursor: context.readHistoryCursor(),
-        status: "ready",
-        error: null,
-      });
+  context.putState(
+    settlement.status === "failed"
+      ? {
+          ...current,
+          status: "background-retrying",
+          error:
+            settlement.cause instanceof Error
+              ? settlement.cause.message
+              : "Could not load messages",
+        }
+      : {
+          ...current,
+          nextCursor: context.readHistoryCursor(),
+          status: "ready",
+          error: null,
+        },
+  );
 }
 
 const noopLoad = async (): Promise<void> => undefined;

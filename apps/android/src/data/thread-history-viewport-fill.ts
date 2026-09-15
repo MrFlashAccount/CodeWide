@@ -27,7 +27,8 @@ export class ThreadHistoryViewportFill {
   }
 
   reportViewport(viewportHeight: number, contentHeight: number): Promise<void> {
-    if (!Number.isFinite(viewportHeight) || !Number.isFinite(contentHeight)) return Promise.resolve();
+    if (!Number.isFinite(viewportHeight) || !Number.isFinite(contentHeight))
+      return Promise.resolve();
     if (viewportHeight !== this.viewportHeight) {
       this.remaining = MAX_PAGES_PER_VIEWPORT_INTENT;
     }
@@ -38,7 +39,8 @@ export class ThreadHistoryViewportFill {
 
   /** An explicit edge intent permits one page even when the viewport is full. */
   load(direction: Direction): Promise<void> {
-    if (this.pending?.generation === this.generation && this.direction === direction) return this.pending.promise;
+    if (this.pending?.generation === this.generation && this.direction === direction)
+      return this.pending.promise;
     this.cancel();
     this.direction = direction;
     this.remaining = MAX_PAGES_PER_VIEWPORT_INTENT;
@@ -52,22 +54,40 @@ export class ThreadHistoryViewportFill {
 
   private run(forceFirstPage: boolean): Promise<void> {
     if (this.pending?.generation === this.generation) return this.pending.promise;
-    if (!forceFirstPage && (this.remaining === 0 || this.viewportHeight <= 0
-      || this.contentHeight <= 0 || this.contentHeight >= this.viewportHeight)) return Promise.resolve();
+    if (
+      !forceFirstPage &&
+      (this.remaining === 0 ||
+        this.viewportHeight <= 0 ||
+        this.contentHeight <= 0 ||
+        this.contentHeight >= this.viewportHeight)
+    )
+      return Promise.resolve();
     const generation = this.generation;
     const direction = this.direction;
-    const operation = Promise.resolve().then(async () => await this.fill(generation, direction, forceFirstPage)).finally(() => {
-      if (this.pending?.promise === operation) this.pending = null;
-    });
+    const operation = Promise.resolve()
+      .then(async () => await this.fill(generation, direction, forceFirstPage))
+      .finally(() => {
+        if (this.pending?.promise === operation) this.pending = null;
+      });
     this.pending = { generation, promise: operation };
     return operation;
   }
 
-  private async fill(generation: number, direction: Direction, forceFirstPage: boolean): Promise<void> {
+  private async fill(
+    generation: number,
+    direction: Direction,
+    forceFirstPage: boolean,
+  ): Promise<void> {
     try {
-      while (generation === this.generation && this.capabilities.isCurrent() && this.remaining > 0) {
-        const needsContent = this.viewportHeight > 0 && this.contentHeight > 0
-          && this.contentHeight < this.viewportHeight;
+      while (
+        generation === this.generation &&
+        this.capabilities.isCurrent() &&
+        this.remaining > 0
+      ) {
+        const needsContent =
+          this.viewportHeight > 0 &&
+          this.contentHeight > 0 &&
+          this.contentHeight < this.viewportHeight;
         if (!forceFirstPage && !needsContent) return;
         forceFirstPage = false;
         this.remaining -= 1;

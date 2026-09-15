@@ -6,5 +6,5 @@
  */
 export function cloneProtocolValue<T>(value: T): T {
   const serialized = JSON.stringify(value);
-  return serialized === undefined ? value : JSON.parse(serialized) as T;
+  return serialized === undefined ? value : (JSON.parse(serialized) as T);
 }

@@ -1,4 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
+
+/** Search query and match-navigation contract for a thread timeline. */
 export type TimelineSearchBarProps = {
   threadSearch: string;
   updateThreadSearch: (value: string) => void;

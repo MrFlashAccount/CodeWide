@@ -14,7 +14,11 @@ import { ContentReviewKeyboardDock } from "./ContentReviewKeyboardDock";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useEvent } from "../react/useEvent";
-import type { VoiceTranscriptionEvent, VoiceTranscriptionOptions, VoiceTranscriptionSession } from "../data/voice-input-controller";
+import type {
+  VoiceTranscriptionEvent,
+  VoiceTranscriptionOptions,
+  VoiceTranscriptionSession,
+} from "../data/voice-input-controller";
 import type { WorkspaceResourceDatabase } from "../data/workspace-resource-database";
 import type { VoiceInputController } from "../data/voice-input-controller";
 import { colors, radii, spacing, typeScale, typeWeight, iconSize, controlSize } from "../theme";
@@ -76,6 +80,7 @@ export type ContentReviewPoint = {
 const EMPTY_CONTENT_REVIEW_COMMENTS: ContentReviewComment[] = [];
 const ContentReviewContext = createContext<ContentReviewController | null>(null);
 
+/** Owns review comments and active review scope for nested content renderers. */
 export function ContentReviewHost({ children }: { children: ReactNode }) {
   const commentsByScopeRef = useRef(new Map<string, ContentReviewComment[]>());
   const attachmentByScopeRef = useRef(new Map<string, string>());
@@ -138,8 +143,18 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
     const current = activeRef.current;
     const runtime = runtimeRef.current;
     const trimmed = body.trim();
-    if (current === null || current.id !== id || trimmed === "" || runtime === null || runtime.voiceScope !== current.scope) return false;
-    const next = [...(commentsByScopeRef.current.get(current.scope) ?? []), createComment(current.anchor, trimmed)];
+    if (
+      current === null ||
+      current.id !== id ||
+      trimmed === "" ||
+      runtime === null ||
+      runtime.voiceScope !== current.scope
+    )
+      return false;
+    const next = [
+      ...(commentsByScopeRef.current.get(current.scope) ?? []),
+      createComment(current.anchor, trimmed),
+    ];
     const markdown = serializeContentReviewAttachment(next);
     if (markdown === "") return false;
     const attachmentId = await runtime.attach(markdown);
@@ -151,7 +166,12 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
   };
   const registerRuntime = (runtime: ContentReviewRuntime): (() => void) => {
     const previousScope = activeScopeRef.current;
-    if (previousScope !== null && previousScope !== runtime.voiceScope && activeRef.current?.scope === previousScope) settleActive(false);
+    if (
+      previousScope !== null &&
+      previousScope !== runtime.voiceScope &&
+      activeRef.current?.scope === previousScope
+    )
+      settleActive(false);
     activeScopeRef.current = runtime.voiceScope;
     runtimeRef.current = runtime;
     const knownAttachment = attachmentByScopeRef.current.get(runtime.voiceScope) ?? null;
@@ -162,7 +182,9 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
     } else if (runtime.attachmentId !== null) {
       attachmentByScopeRef.current.set(runtime.voiceScope, runtime.attachmentId);
     }
-    setComments(commentsByScopeRef.current.get(runtime.voiceScope) ?? EMPTY_CONTENT_REVIEW_COMMENTS);
+    setComments(
+      commentsByScopeRef.current.get(runtime.voiceScope) ?? EMPTY_CONTENT_REVIEW_COMMENTS,
+    );
     notifyRuntime();
     return () => {
       if (runtimeRef.current !== runtime) return;
@@ -193,7 +215,9 @@ export function ContentReviewHost({ children }: { children: ReactNode }) {
 
 export function useContentReview(): (anchor: ContentReviewAnchor) => Promise<boolean> {
   const controller = useContext(ContentReviewContext);
-  return useEvent(async (anchor: ContentReviewAnchor) => await controller?.begin(anchor) ?? false);
+  return useEvent(
+    async (anchor: ContentReviewAnchor) => (await controller?.begin(anchor)) ?? false,
+  );
 }
 
 export function useContentReviewHighlights(
@@ -223,25 +247,45 @@ export function useContentReviewComments(
   });
 }
 
-export function useContentReviewPoints(targetId: string, diagramId: string): readonly ContentReviewPoint[] {
+export function useContentReviewPoints(
+  targetId: string,
+  diagramId: string,
+): readonly ContentReviewPoint[] {
   const controller = useContext(ContentReviewContext);
   if (controller === null) return [];
   const saved = controller.comments.flatMap((comment) => {
     const anchor = comment.anchor;
-    return anchor.kind === "mermaid" && anchor.target.id === targetId && anchor.diagramId === diagramId
+    return anchor.kind === "mermaid" &&
+      anchor.target.id === targetId &&
+      anchor.diagramId === diagramId
       ? [{ id: comment.id, x: anchor.x, y: anchor.y, pending: false }]
       : [];
   });
   const activeAnchor = controller.active?.anchor;
-  if (activeAnchor?.kind !== "mermaid" || activeAnchor.target.id !== targetId || activeAnchor.diagramId !== diagramId) return saved;
-  return [...saved, { id: controller.active?.id ?? "pending", x: activeAnchor.x, y: activeAnchor.y, pending: true }];
+  if (
+    activeAnchor?.kind !== "mermaid" ||
+    activeAnchor.target.id !== targetId ||
+    activeAnchor.diagramId !== diagramId
+  )
+    return saved;
+  return [
+    ...saved,
+    { id: controller.active?.id ?? "pending", x: activeAnchor.x, y: activeAnchor.y, pending: true },
+  ];
 }
 
 export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
   const controller = useContext(ContentReviewContext);
   const registerRuntime = controller?.registerRuntime;
   const attach = useEvent(runtime.attach);
-  const { attachmentId, thread, voiceScope, resources, voiceController, startVoice: startVoiceInput } = runtime;
+  const {
+    attachmentId,
+    thread,
+    voiceScope,
+    resources,
+    voiceController,
+    startVoice: startVoiceInput,
+  } = runtime;
   useEffect(() => {
     if (registerRuntime === undefined) return;
     return registerRuntime({
@@ -255,7 +299,16 @@ export function useContentReviewRuntime(runtime: ContentReviewRuntime): void {
       // starts. A latest-render callback could connect it to another chat.
       ...(startVoiceInput === undefined ? {} : { startVoice: startVoiceInput }),
     });
-  }, [attach, attachmentId, registerRuntime, startVoiceInput, thread, voiceController, resources, voiceScope]);
+  }, [
+    attach,
+    attachmentId,
+    registerRuntime,
+    startVoiceInput,
+    thread,
+    voiceController,
+    resources,
+    voiceScope,
+  ]);
 }
 
 export function useImageReviewPoints(targetId: string): readonly ContentReviewPoint[] {
@@ -292,7 +345,11 @@ export function ContentReviewComposer({
   if (targetId !== undefined && active.anchor.target.id !== targetId) return null;
   if (targetPrefix !== undefined && !active.anchor.target.id.startsWith(targetPrefix)) return null;
   if (anchorKind !== undefined && active.anchor.kind !== anchorKind) return null;
-  if (diagramId !== undefined && (active.anchor.kind !== "mermaid" || active.anchor.diagramId !== diagramId)) return null;
+  if (
+    diagramId !== undefined &&
+    (active.anchor.kind !== "mermaid" || active.anchor.diagramId !== diagramId)
+  )
+    return null;
   return <InlineContentReviewComposer key={active.id} active={active} controller={controller} />;
 }
 
@@ -311,14 +368,19 @@ export function ContentReviewComments({
   const [expanded, setExpanded] = useState(false);
   const comments = useContentReviewComments(targetId, diagramId);
   const active = controller?.active?.anchor;
-  const editingThisTarget = active?.target.id === targetId
-    && (diagramId === undefined || active.kind === "mermaid" && active.diagramId === diagramId);
+  const editingThisTarget =
+    active?.target.id === targetId &&
+    (diagramId === undefined || (active.kind === "mermaid" && active.diagramId === diagramId));
   if (comments.length === 0 || editingThisTarget) return null;
   const latest = comments.at(-1);
   return (
     <View
       pointerEvents="box-none"
-      style={presentation === "overlay" ? [styles.commentsOverlay, { bottom: bottomOffset }] : styles.commentsInline}
+      style={
+        presentation === "overlay"
+          ? [styles.commentsOverlay, { bottom: bottomOffset }]
+          : styles.commentsInline
+      }
     >
       <View style={styles.commentsCard}>
         <Pressable
@@ -327,20 +389,35 @@ export function ContentReviewComments({
           onPress={() => setExpanded((current) => !current)}
           style={({ pressed }) => [styles.commentsSummary, pressed && styles.pressed]}
         >
-          <Ionicons name="chatbubble-ellipses-outline" size={iconSize.inline} color={REVIEW_PURPLE} />
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={iconSize.inline}
+            color={REVIEW_PURPLE}
+          />
           <Text numberOfLines={1} style={styles.commentsSummaryText}>
-            {comments.length} {comments.length === 1 ? "comment" : "comments"}{latest === undefined ? "" : ` · ${latest.body}`}
+            {comments.length} {comments.length === 1 ? "comment" : "comments"}
+            {latest === undefined ? "" : ` · ${latest.body}`}
           </Text>
-          <Ionicons name={expanded ? "chevron-down" : "chevron-up"} size={iconSize.inline} color={colors.textMuted} />
+          <Ionicons
+            name={expanded ? "chevron-down" : "chevron-up"}
+            size={iconSize.inline}
+            color={colors.textMuted}
+          />
         </Pressable>
         {expanded && (
           <ScrollView nestedScrollEnabled style={styles.commentsList}>
             {comments.map((comment, index) => (
               <View key={comment.id} style={styles.commentRow}>
-                <View style={styles.commentOrdinal}><Text style={styles.commentOrdinalText}>{index + 1}</Text></View>
+                <View style={styles.commentOrdinal}>
+                  <Text style={styles.commentOrdinalText}>{index + 1}</Text>
+                </View>
                 <View style={styles.commentBody}>
-                  <Text numberOfLines={2} style={styles.commentAnchor}>{commentAnchorLabel(comment.anchor)}</Text>
-                  <Text selectable style={styles.commentText}>{comment.body}</Text>
+                  <Text numberOfLines={2} style={styles.commentAnchor}>
+                    {commentAnchorLabel(comment.anchor)}
+                  </Text>
+                  <Text selectable style={styles.commentText}>
+                    {comment.body}
+                  </Text>
                 </View>
               </View>
             ))}
@@ -360,7 +437,11 @@ function InlineContentReviewComposer({
 }) {
   const dialog = useAppDialog();
   const insets = useSafeAreaInsets();
-  const runtime = useSyncExternalStore(controller.runtimeStore.subscribe, controller.runtimeStore.getSnapshot, controller.runtimeStore.getSnapshot);
+  const runtime = useSyncExternalStore(
+    controller.runtimeStore.subscribe,
+    controller.runtimeStore.getSnapshot,
+    controller.runtimeStore.getSnapshot,
+  );
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const draftRef = useRef("");
@@ -369,11 +450,14 @@ function InlineContentReviewComposer({
   const voiceScope = `${active.scope}\u0000content-review\u0000${active.id}`;
   const voiceController = runtime?.voiceController ?? null;
   const voiceResource = useScopedVoiceInputResource(runtime?.resources ?? null, voiceScope);
-  useEffect(() => () => {
-    void voiceController?.finish(voiceScope, false);
-    voiceController?.unbind(voiceScope);
-    cancel(active.id);
-  }, [active.id, cancel, voiceController, voiceScope]);
+  useEffect(
+    () => () => {
+      void voiceController?.finish(voiceScope, false);
+      voiceController?.unbind(voiceScope);
+      cancel(active.id);
+    },
+    [active.id, cancel, voiceController, voiceScope],
+  );
 
   const voicePhase = voiceResource?.phase ?? "idle";
   const microphoneAccess = useMicrophoneAccess();
@@ -422,55 +506,102 @@ function InlineContentReviewComposer({
 
   return (
     <ContentReviewKeyboardDock>
-        <View style={[styles.inlineCard, { paddingBottom: Math.max(spacing.sm, insets.bottom) }]}>
-          <View style={styles.anchorRow}>
-            <View style={styles.anchorMarker} />
-            <AnchorSummary anchor={active.anchor} />
-            <Pressable accessibilityRole="button" accessibilityLabel="Cancel content review" hitSlop={8} onPress={() => controller.cancel(active.id)} style={styles.closeButton}>
-              <Ionicons name="close" size={iconSize.action} color={colors.textMuted} />
-            </Pressable>
-          </View>
-          <View style={styles.composerRow}>
-            <TextInput
-              autoFocus
-              multiline
-              voiceInput={false}
-              value={draft}
-              onChangeText={updateDraft}
-              onSelectionChange={({ nativeEvent }) => { selectionRef.current = nativeEvent.selection; }}
-              placeholder="What should change here?"
-              placeholderTextColor={colors.textDim}
-              style={styles.input}
-            />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={voiceRetryAvailable ? "Retry review voice input" : voicePhase === "idle" ? microphoneAccess.granted ? "Review voice input" : "Allow microphone access" : "Stop review voice input"}
-              disabled={voicePhase === "finishing" && !voiceRetryAvailable}
-              onPress={() => void pressVoice()}
-              style={[styles.circleButton, ((voicePhase === "idle" && !microphoneAccess.granted && !voiceRetryAvailable) || (voicePhase === "finishing" && !voiceRetryAvailable)) && styles.disabled]}
-            >
-              {voicePhase === "starting" || voicePhase === "finishing" && !voiceRetryAvailable
-                ? <ActivityIndicator size="small" color={colors.textMuted} />
-                : <Ionicons name={voiceRetryAvailable ? "refresh" : voicePhase === "idle" ? "mic-outline" : "stop"} size={iconSize.action} color={voicePhase === "recording" ? colors.red : colors.text} />}
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Save review comment" disabled={!canSave} onPress={() => void save()} style={[styles.saveButton, !canSave && styles.disabled]}>
-              {saving ? <ActivityIndicator size="small" color={colors.onPrimary} /> : <Ionicons name="checkmark" size={iconSize.action} color={colors.onPrimary} />}
-            </Pressable>
-          </View>
-          {voiceResource?.error !== null && voiceResource?.error !== undefined && (
-            <Text style={styles.error}>{voiceResource.error}</Text>
-          )}
+      <View style={[styles.inlineCard, { paddingBottom: Math.max(spacing.sm, insets.bottom) }]}>
+        <View style={styles.anchorRow}>
+          <View style={styles.anchorMarker} />
+          <AnchorSummary anchor={active.anchor} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cancel content review"
+            hitSlop={8}
+            onPress={() => controller.cancel(active.id)}
+            style={styles.closeButton}
+          >
+            <Ionicons name="close" size={iconSize.action} color={colors.textMuted} />
+          </Pressable>
         </View>
+        <View style={styles.composerRow}>
+          <TextInput
+            autoFocus
+            multiline
+            voiceInput={false}
+            value={draft}
+            onChangeText={updateDraft}
+            onSelectionChange={({ nativeEvent }) => {
+              selectionRef.current = nativeEvent.selection;
+            }}
+            placeholder="What should change here?"
+            placeholderTextColor={colors.textDim}
+            style={styles.input}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              voiceRetryAvailable
+                ? "Retry review voice input"
+                : voicePhase === "idle"
+                  ? microphoneAccess.granted
+                    ? "Review voice input"
+                    : "Allow microphone access"
+                  : "Stop review voice input"
+            }
+            disabled={voicePhase === "finishing" && !voiceRetryAvailable}
+            onPress={() => void pressVoice()}
+            style={[
+              styles.circleButton,
+              ((voicePhase === "idle" && !microphoneAccess.granted && !voiceRetryAvailable) ||
+                (voicePhase === "finishing" && !voiceRetryAvailable)) &&
+                styles.disabled,
+            ]}
+          >
+            {voicePhase === "starting" || (voicePhase === "finishing" && !voiceRetryAvailable) ? (
+              <ActivityIndicator size="small" color={colors.textMuted} />
+            ) : (
+              <Ionicons
+                name={
+                  voiceRetryAvailable ? "refresh" : voicePhase === "idle" ? "mic-outline" : "stop"
+                }
+                size={iconSize.action}
+                color={voicePhase === "recording" ? colors.red : colors.text}
+              />
+            )}
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Save review comment"
+            disabled={!canSave}
+            onPress={() => void save()}
+            style={[styles.saveButton, !canSave && styles.disabled]}
+          >
+            {saving ? (
+              <ActivityIndicator size="small" color={colors.onPrimary} />
+            ) : (
+              <Ionicons name="checkmark" size={iconSize.action} color={colors.onPrimary} />
+            )}
+          </Pressable>
+        </View>
+        {voiceResource?.error !== null && voiceResource?.error !== undefined && (
+          <Text style={styles.error}>{voiceResource.error}</Text>
+        )}
+      </View>
     </ContentReviewKeyboardDock>
   );
 }
 
 function AnchorSummary({ anchor }: { anchor: ContentReviewAnchor }) {
   if (anchor.kind === "text") {
-    return <Text numberOfLines={2} style={styles.quoteText}>{anchor.quote.trim()}</Text>;
+    return (
+      <Text numberOfLines={2} style={styles.quoteText}>
+        {anchor.quote.trim()}
+      </Text>
+    );
   }
   if (anchor.kind === "response") {
-    return <Text numberOfLines={2} style={styles.quoteText}>Entire agent response</Text>;
+    return (
+      <Text numberOfLines={2} style={styles.quoteText}>
+        Entire agent response
+      </Text>
+    );
   }
   return (
     <View style={styles.pointRow}>
@@ -489,31 +620,172 @@ function commentAnchorLabel(anchor: ContentReviewAnchor): string {
 const REVIEW_PURPLE = "#B794F6";
 
 const styles = StyleSheet.create({
-  host: { flex: 1, minWidth: 0, minHeight: 0 },
-  inlineCard: { width: "100%", maxWidth: 760, alignSelf: "center", gap: spacing.sm, padding: spacing.sm, borderTopWidth: 1, borderColor: "rgba(183, 148, 246, 0.55)", backgroundColor: colors.surfaceRaised },
-  anchorRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  anchorMarker: { width: 3, alignSelf: "stretch", borderRadius: radii.compact, backgroundColor: REVIEW_PURPLE },
-  quoteText: { flex: 1, minWidth: 0, color: colors.textMuted, ...typeScale.body, },
-  pointRow: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.compact },
-  pointText: { flex: 1, minWidth: 0, color: colors.textMuted, ...typeScale.body, },
-  closeButton: { width: controlSize.compact, height: controlSize.compact, alignItems: "center", justifyContent: "center" },
-  composerRow: { minWidth: 0, flexDirection: "row", alignItems: "flex-end", gap: spacing.xs },
-  input: { flex: 1, minWidth: 0, minHeight: controlSize.touch, maxHeight: 160, borderRadius: radii.medium, backgroundColor: colors.surfaceContainerHigh, color: colors.text, paddingHorizontal: spacing.sm, paddingVertical: spacing.inputInset, ...typeScale.body, },
-  circleButton: { width: controlSize.touch, height: controlSize.touch, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceContainerHigh },
-  saveButton: { width: controlSize.touch, height: controlSize.touch, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
-  error: { color: colors.red, paddingHorizontal: spacing.xs, textAlign: "center" },
+  host: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+  },
+  inlineCard: {
+    width: "100%",
+    maxWidth: 760,
+    alignSelf: "center",
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderTopWidth: 1,
+    borderColor: "rgba(183, 148, 246, 0.55)",
+    backgroundColor: colors.surfaceRaised,
+  },
+  anchorRow: {
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  anchorMarker: {
+    width: 3,
+    alignSelf: "stretch",
+    borderRadius: radii.compact,
+    backgroundColor: REVIEW_PURPLE,
+  },
+  quoteText: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  pointRow: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+  },
+  pointText: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  closeButton: {
+    width: controlSize.compact,
+    height: controlSize.compact,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  composerRow: {
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.xs,
+  },
+  input: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: controlSize.touch,
+    maxHeight: 160,
+    borderRadius: radii.medium,
+    backgroundColor: colors.surfaceContainerHigh,
+    color: colors.text,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.inputInset,
+    ...typeScale.body,
+  },
+  circleButton: {
+    width: controlSize.touch,
+    height: controlSize.touch,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceContainerHigh,
+  },
+  saveButton: {
+    width: controlSize.touch,
+    height: controlSize.touch,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: REVIEW_PURPLE,
+  },
+  error: {
+    color: colors.red,
+    paddingHorizontal: spacing.xs,
+    textAlign: "center",
+  },
   disabled: { opacity: 0.4 },
   pressed: { opacity: 0.68 },
-  commentsInline: { width: "100%", minWidth: 0, marginTop: spacing.sm },
-  commentsOverlay: { position: "absolute", left: spacing.sm, right: spacing.sm, zIndex: 90, alignItems: "center" },
-  commentsCard: { width: "100%", maxWidth: 760, borderRadius: radii.large, borderWidth: 1, borderColor: "rgba(183, 148, 246, 0.38)", backgroundColor: "rgba(28, 28, 28, 0.97)", overflow: "hidden" },
-  commentsSummary: { minHeight: controlSize.touch, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.sm },
-  commentsSummaryText: { minWidth: 0, flex: 1, color: colors.text, ...typeScale.body, },
-  commentsList: { maxHeight: 280, borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  commentRow: { minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: spacing.xs, paddingVertical: spacing.xs },
-  commentOrdinal: { width: 22, height: 22, borderRadius: radii.pill, alignItems: "center", justifyContent: "center", backgroundColor: REVIEW_PURPLE },
-  commentOrdinalText: { color: "#0b0b0b", ...typeScale.label, fontWeight: typeWeight.semibold },
-  commentBody: { minWidth: 0, flex: 1, gap: spacing.optical },
-  commentAnchor: { color: colors.textMuted, ...typeScale.label, },
-  commentText: { color: colors.text, ...typeScale.body, },
+  commentsInline: {
+    width: "100%",
+    minWidth: 0,
+    marginTop: spacing.sm,
+  },
+  commentsOverlay: {
+    position: "absolute",
+    left: spacing.sm,
+    right: spacing.sm,
+    zIndex: 90,
+    alignItems: "center",
+  },
+  commentsCard: {
+    width: "100%",
+    maxWidth: 760,
+    borderRadius: radii.large,
+    borderWidth: 1,
+    borderColor: "rgba(183, 148, 246, 0.38)",
+    backgroundColor: "rgba(28, 28, 28, 0.97)",
+    overflow: "hidden",
+  },
+  commentsSummary: {
+    minHeight: controlSize.touch,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  commentsSummaryText: {
+    minWidth: 0,
+    flex: 1,
+    color: colors.text,
+    ...typeScale.body,
+  },
+  commentsList: {
+    maxHeight: 280,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  commentRow: {
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  commentOrdinal: {
+    width: 22,
+    height: 22,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: REVIEW_PURPLE,
+  },
+  commentOrdinalText: {
+    color: "#0b0b0b",
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  commentBody: {
+    minWidth: 0,
+    flex: 1,
+    gap: spacing.optical,
+  },
+  commentAnchor: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  commentText: {
+    color: colors.text,
+    ...typeScale.body,
+  },
 });

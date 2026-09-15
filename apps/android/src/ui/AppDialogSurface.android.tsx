@@ -82,9 +82,21 @@ const styles = StyleSheet.create({
   },
   copy: { flexShrink: 1 },
   copyContent: { gap: spacing.sm },
-  title: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold },
-  message: { color: colors.textMuted, ...typeScale.body },
-  actions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: spacing.xs },
+  title: {
+    color: colors.text,
+    ...typeScale.heading,
+    fontWeight: typeWeight.semibold,
+  },
+  message: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  actions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+    gap: spacing.xs,
+  },
   button: {
     minWidth: controlSize.touch,
     minHeight: controlSize.touch,
@@ -92,6 +104,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  buttonText: { color: colors.primary, ...typeScale.body, fontWeight: typeWeight.semibold },
+  buttonText: {
+    color: colors.primary,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
   destructive: { color: colors.red },
 });

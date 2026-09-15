@@ -3,6 +3,7 @@ import { StyleSheet, View } from "react-native";
 import { colors, spacing, typeScale } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 
+/** Provides the web fallback for the native-only terminal workspace. */
 export function TerminalWorkspace(_props: {
   connectionId: string;
   threadId: string;
@@ -24,5 +25,9 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     backgroundColor: colors.background,
   },
-  title: { color: colors.textMuted, textAlign: "center", ...typeScale.body },
+  title: {
+    color: colors.textMuted,
+    textAlign: "center",
+    ...typeScale.body,
+  },
 });

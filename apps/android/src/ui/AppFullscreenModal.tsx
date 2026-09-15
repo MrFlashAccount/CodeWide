@@ -25,8 +25,18 @@ export function AppFullscreenModal({
   if (!isOpen) return null;
   return (
     <RecoverableRenderBoundary scope="dialog" label="Fullscreen modal" onDismiss={onClose}>
-      <Modal visible animationType="slide" presentationStyle="fullScreen" onShow={onShow} onRequestClose={onClose}>
-        <SafeAreaView testID="fullscreen-modal-safe-area" edges={FULLSCREEN_SAFE_AREA_EDGES} style={styles.root}>
+      <Modal
+        visible
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onShow={onShow}
+        onRequestClose={onClose}
+      >
+        <SafeAreaView
+          testID="fullscreen-modal-safe-area"
+          edges={FULLSCREEN_SAFE_AREA_EDGES}
+          style={styles.root}
+        >
           <FullscreenWindowReadyProvider ready>
             <OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>
               {children}
@@ -40,5 +50,10 @@ export function AppFullscreenModal({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
 });

@@ -14,16 +14,19 @@ export function projectCodexVisibleTurn(turn: Turn): Turn {
   const cached = visibleTurnCache.get(turn);
   if (cached !== undefined) return cached;
 
-  const items = turn.items.filter((item) => !(
-    item.type === "userMessage"
-    && item.content.some((part) => part.type === "text" && isCodexEnvironmentContext(part.text))
-  ));
+  const items = turn.items.filter(
+    (item) =>
+      !(
+        item.type === "userMessage" &&
+        item.content.some((part) => part.type === "text" && isCodexEnvironmentContext(part.text))
+      ),
+  );
   const projected = items.length === turn.items.length ? turn : { ...turn, items };
   visibleTurnCache.set(turn, projected);
   return projected;
 }
 
-export function isCodexEnvironmentContext(value: string): boolean {
+function isCodexEnvironmentContext(value: string): boolean {
   const text = value.trim();
   const [open, close] = ENVIRONMENT_CONTEXT_MARKERS;
   return startsWithAsciiCaseInsensitive(text, open) && endsWithAsciiCaseInsensitive(text, close);

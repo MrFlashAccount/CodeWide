@@ -5,6 +5,7 @@ import type {
   ServiceSegment,
 } from "./portForwardingContract";
 import { groupEntries, serviceEntryMatches } from "./portForwardingList";
+
 export function projectPortList(
   props: Pick<PortForwardingManagerProps, "profiles" | "discoveredPorts">,
   segment: ServiceSegment,

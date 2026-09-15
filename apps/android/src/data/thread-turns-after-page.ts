@@ -9,6 +9,10 @@ export type ThreadTurnsAfterPage = {
 };
 
 /** Validates one Companion-owned forward page before it reaches SQLite. */
-export function parseThreadTurnsAfterPage(value: unknown, afterTurnId: string, requestedLimit: number): ThreadTurnsAfterPage {
+export function parseThreadTurnsAfterPage(
+  value: unknown,
+  afterTurnId: string,
+  requestedLimit: number,
+): ThreadTurnsAfterPage {
   return parseThreadHistorySummaryPage(value, afterTurnId, requestedLimit);
 }

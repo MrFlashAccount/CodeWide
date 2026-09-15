@@ -52,7 +52,12 @@ export const styles = StyleSheet.create({
   },
   threadRowSelected: { backgroundColor: colors.secondaryContainer },
   selectionBar: { display: "none" },
-  threadText: { flex: 1, minWidth: 0, maxWidth: "100%", gap: spacing.optical },
+  threadText: {
+    flex: 1,
+    minWidth: 0,
+    maxWidth: "100%",
+    gap: spacing.optical,
+  },
   threadTitleLine: {
     width: "100%",
     minWidth: 0,
@@ -62,7 +67,11 @@ export const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   threadServerEmoji: { ...typeScale.emoji },
-  threadTitleSlot: { flex: 1, minWidth: 0, alignItems: "flex-start" },
+  threadTitleSlot: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "flex-start",
+  },
   threadStatusIcon: {
     width: 18,
     height: 18,
@@ -70,7 +79,12 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  threadMeta: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  threadMeta: {
+    flexShrink: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+  },
   threadTime: {
     flexShrink: 0,
     color: colors.textMuted,
@@ -108,5 +122,10 @@ export const styles = StyleSheet.create({
     color: colors.textMuted,
     ...typeScale.label,
   },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
 });

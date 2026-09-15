@@ -8,8 +8,13 @@ import {
   typeScale,
   typeWeight,
 } from "../../theme";
+
 export const styles = StyleSheet.create({
-  root: { flex: 1, minHeight: 0, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
   header: {
     minHeight: layoutSize.header,
     flexDirection: "row",
@@ -26,11 +31,31 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.surfaceContainer,
   },
-  headerTitle: { flex: 1, minWidth: 80 },
-  title: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
-  subtitleRow: { minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.xxs },
-  subtitle: { flexShrink: 1, color: colors.textMuted, ...typeScale.label },
-  documentStatus: { flexShrink: 1, color: colors.textDim, ...typeScale.label },
+  headerTitle: {
+    flex: 1,
+    minWidth: 80,
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  subtitleRow: {
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+  },
+  subtitle: {
+    flexShrink: 1,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  documentStatus: {
+    flexShrink: 1,
+    color: colors.textDim,
+    ...typeScale.label,
+  },
   reviewToolbar: {
     minHeight: controlSize.touch,
     flexDirection: "row",
@@ -56,8 +81,14 @@ export const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   modeButtonSelected: { backgroundColor: "#26292E" },
-  modeButtonText: { color: colors.textMuted, ...typeScale.label },
-  modeButtonTextSelected: { color: colors.text, fontWeight: typeWeight.semibold },
+  modeButtonText: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  modeButtonTextSelected: {
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
+  },
   wrapButton: {
     minHeight: controlSize.compact,
     flexDirection: "row",
@@ -69,8 +100,14 @@ export const styles = StyleSheet.create({
     backgroundColor: "#17191C",
   },
   wrapButtonSelected: { backgroundColor: "#242A33" },
-  wrapButtonText: { color: colors.textMuted, ...typeScale.label },
-  wrapButtonTextSelected: { color: colors.text, fontWeight: typeWeight.semibold },
+  wrapButtonText: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  wrapButtonTextSelected: {
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
+  },
   attachButton: {
     minHeight: controlSize.regular,
     flexDirection: "row",
@@ -89,12 +126,35 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 0,
     justifyContent: "center",
   },
-  attachButtonText: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
-  workspace: { flex: 1, minHeight: 0, flexDirection: "row", position: "relative" },
-  editorPane: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "#0B0C0E" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  attachButtonText: {
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  workspace: {
+    flex: 1,
+    minHeight: 0,
+    flexDirection: "row",
+    position: "relative",
+  },
+  editorPane: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: "#0B0C0E",
+  },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+  },
   muted: { color: colors.textMuted },
-  commentStrip: { flexGrow: 0, maxHeight: 48, backgroundColor: "#111214" },
+  commentStrip: {
+    flexGrow: 0,
+    maxHeight: 48,
+    backgroundColor: "#111214",
+  },
   commentStripContent: {
     alignItems: "center",
     gap: spacing.xs,
@@ -117,6 +177,10 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  commentChipBody: { flexShrink: 1, color: colors.text, ...typeScale.label },
+  commentChipBody: {
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.label,
+  },
   disabled: { opacity: 0.38 },
 });

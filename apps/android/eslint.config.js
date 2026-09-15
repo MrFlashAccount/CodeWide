@@ -1,6 +1,10 @@
 const babelParser = require("@babel/eslint-parser");
 const reactHooks = require("eslint-plugin-react-hooks");
 const presentationTokens = require("./eslint-presentation-tokens.cjs");
+const v1Quality = require("./eslint-v1-quality.cjs");
+
+const v1Files = ["app/legacy.tsx", "src/**/*.{js,jsx,ts,tsx}"];
+const v1Ignores = ["src/boot/**", "src/presentation/**", "src/v2/**"];
 
 module.exports = [
   {
@@ -10,6 +14,18 @@ module.exports = [
   },
   {
     ignores: ["android/**", "dist/**", ".expo/**"],
+  },
+  {
+    files: v1Files,
+    ignores: v1Ignores,
+    plugins: {
+      "codewide-v1": v1Quality,
+    },
+    rules: {
+      "codewide-v1/imports-separated-from-code": "error",
+      "codewide-v1/require-public-export-jsdoc": "error",
+      "codewide-v1/stylesheet-properties-multiline": "error",
+    },
   },
   {
     files: ["app/**/*.{js,jsx,ts,tsx}", "src/**/*.{js,jsx,ts,tsx}"],

@@ -19,9 +19,11 @@ function start(): void {
   generation += 1;
   const currentGeneration = generation;
   nativeSubscription = AccessibilityInfo.addEventListener("reduceMotionChanged", publish);
-  void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-    if (currentGeneration === generation) publish(enabled);
-  }).catch(() => undefined);
+  void AccessibilityInfo.isReduceMotionEnabled()
+    .then((enabled) => {
+      if (currentGeneration === generation) publish(enabled);
+    })
+    .catch(() => undefined);
 }
 
 function stop(): void {

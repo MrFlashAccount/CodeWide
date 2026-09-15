@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { sourceObjectDeclaration } from "../source-contract";
 import { calmSpinner, waveText, threadTitle, voiceAura } from "./presentation-sources";
 import { reducedMotionStore, nativeShimmerTextHost, screen } from "./platform-sources";
 import {
@@ -89,7 +90,9 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(nativeShimmerView).not.toContain("setLayerType(");
   expect(performanceModule).toContain('memoryStatBytes(memory, "summary.graphics")');
   expect(performanceModule).toContain('putDouble("graphicsPssBytes"');
-  expect(waveText).toContain('alignSelf: "center", justifyContent: "center"');
+  const shellStyle = sourceObjectDeclaration(waveText, "shell");
+  expect(shellStyle).toContain('alignSelf: "center"');
+  expect(shellStyle).toContain('justifyContent: "center"');
   expect(waveText).not.toContain('alignSelf: "flex-start"');
   expect(screen).not.toContain("cardTitleRunning");
   expect(screen).not.toContain("function WaveTextChunk");

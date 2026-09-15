@@ -2,6 +2,7 @@ import type { QueuedPrompt } from "../../data/thread-delivery-state";
 import type { StoredDraftAttachment } from "../../data/thread-ui-state-types";
 import type { InlineQueueOverlayItem } from "../queue/inlineQueueContract";
 import { InlineQueueOverlay } from "../queue/InlineQueueOverlay";
+
 export function ConversationQueueFooter({
   threadSearchActive,
   inlineQueueExpanded,

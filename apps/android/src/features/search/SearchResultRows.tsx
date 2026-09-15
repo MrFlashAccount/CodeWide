@@ -68,19 +68,19 @@ export function SearchResultRow(props: ResultProps) {
   );
 }
 
-export function formatSearchTimestamp(value: string): string {
+function formatSearchTimestamp(value: string): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime())
     ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
     : "";
 }
 
-export interface HighlightProps {
+interface HighlightProps {
   readonly text: string;
   readonly query: string;
 }
 
-export function SearchHighlightedText(props: HighlightProps) {
+function SearchHighlightedText(props: HighlightProps) {
   const tokens = props.query.toLocaleLowerCase().split(/\s+/u).filter(Boolean);
   return (
     <Text style={styles.label} numberOfLines={3}>

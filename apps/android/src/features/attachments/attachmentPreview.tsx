@@ -28,6 +28,7 @@ import { CodeReviewWorkspace } from "../review/CodeReviewWorkspace";
 import { type ThreadResourceDocumentRoute } from "./documentNavigation";
 
 import type { AttachmentSheetProps } from "./attachmentSheetContract";
+
 export function useAttachmentPreview({
   model,
   resourceId,

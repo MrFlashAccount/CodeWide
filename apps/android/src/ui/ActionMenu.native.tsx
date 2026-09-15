@@ -1,19 +1,9 @@
 import * as Haptics from "expo-haptics";
 import { cloneElement, useState } from "react";
-import {
-  StyleSheet,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { StyleSheet, View, useWindowDimensions } from "react-native";
 
-import type {
-  ActionMenuItem,
-  ActionMenuProps,
-} from "./ActionMenu.types";
-import {
-  CodeWideMenu,
-  type CodeWideMenuAction,
-} from "./CodeWideMenu.native";
+import type { ActionMenuItem, ActionMenuProps } from "./ActionMenu.types";
+import { CodeWideMenu, type CodeWideMenuAction } from "./CodeWideMenu.native";
 
 export type { ActionMenuItem } from "./ActionMenu.types";
 
@@ -50,21 +40,24 @@ export function ActionMenu({
     onOpenChange?.(open);
   };
   const open = () => setOpen(true);
-  const triggerElement = cloneElement(children, trigger === "long-press"
-    ? {
-        accessibilityLabel: triggerAccessibilityLabel,
-        onLongPress: (event) => {
-          children.props.onLongPress?.(event);
-          open();
+  const triggerElement = cloneElement(
+    children,
+    trigger === "long-press"
+      ? {
+          accessibilityLabel: triggerAccessibilityLabel,
+          onLongPress: (event) => {
+            children.props.onLongPress?.(event);
+            open();
+          },
+        }
+      : {
+          accessibilityLabel: triggerAccessibilityLabel,
+          onPress: (event) => {
+            children.props.onPress?.(event);
+            open();
+          },
         },
-      }
-    : {
-        accessibilityLabel: triggerAccessibilityLabel,
-        onPress: (event) => {
-          children.props.onPress?.(event);
-          open();
-        },
-      });
+  );
   const select = (id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
     if (action === undefined || action.disabled === true) return;

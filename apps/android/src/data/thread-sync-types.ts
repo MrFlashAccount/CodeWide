@@ -5,6 +5,7 @@ import type { ThreadDetailDatabase } from "./thread-detail-database-contract";
 import type { ThreadSummaryDatabase } from "./thread-summary-database";
 import type { TurnControlsValue } from "./turn-controls-types";
 import type { createWorkspaceSession } from "./workspace-session";
+
 export type ThreadWindow = { thread: Thread; nextCursor: string | null | undefined };
 export type ThreadTurnPage = {
   turns: Turn[];

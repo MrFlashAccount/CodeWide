@@ -30,22 +30,20 @@ type PersistentCollectionOptions<T extends object, TKey extends string | number>
 export function createPersistentCollectionModel<T extends object, TKey extends string | number>(
   options: PersistentCollectionOptions<T, TKey>,
 ): PersistentCollectionModel<T, TKey> {
-  const {
-    legacyCollectionId,
-    beforeInsert,
-    beforeUpdate,
-    beforeDelete,
-    ...runtimeOptions
-  } = options;
+  const { legacyCollectionId, beforeInsert, beforeUpdate, beforeDelete, ...runtimeOptions } =
+    options;
   const storage = createSqliteSyncRuntime<T, TKey>({
     ...runtimeOptions,
     initialSync: "all",
-    ...(legacyCollectionId === undefined ? {} : {
-      bootstrap: {
-        id: `tanstack-persistence:${legacyCollectionId}:v1`,
-        load: async (executor) => await readLegacyPersistedRows<T>(executor, legacyCollectionId),
-      },
-    }),
+    ...(legacyCollectionId === undefined
+      ? {}
+      : {
+          bootstrap: {
+            id: `tanstack-persistence:${legacyCollectionId}:v1`,
+            load: async (executor) =>
+              await readLegacyPersistedRows<T>(executor, legacyCollectionId),
+          },
+        }),
   });
   const collection = createCollection({
     id: options.id,
@@ -72,7 +70,11 @@ export function createPersistentCollectionModel<T extends object, TKey extends s
     ready,
     close() {
       collection.cleanup();
-      void storage.close().catch((cause: unknown) => console.warn(`Could not close SQLite model ${options.id}`, cause));
+      void storage
+        .close()
+        .catch((cause: unknown) =>
+          console.warn(`Could not close SQLite model ${options.id}`, cause),
+        );
     },
   };
 }

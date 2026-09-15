@@ -18,7 +18,9 @@ export async function migrateHistoryV6(executor: HistoryExecutor): Promise<void>
     await executor.execute(`DROP TRIGGER IF EXISTS codewide_history_content__cache_${suffix}`);
   }
   await executor.execute("DROP TABLE IF EXISTS codewide_thread_detail_cache_meta");
-  await executor.execute(`ALTER TABLE codewide_history_content ADD COLUMN payload_bytes INTEGER NOT NULL DEFAULT 0 CHECK(payload_bytes >= 0)`);
+  await executor.execute(
+    `ALTER TABLE codewide_history_content ADD COLUMN payload_bytes INTEGER NOT NULL DEFAULT 0 CHECK(payload_bytes >= 0)`,
+  );
   // SQLite composite references require a matching unique parent key; the
   // content_id primary key alone cannot enforce membership scope/identity.
   await executor.execute(`CREATE UNIQUE INDEX codewide_history_content_identity
@@ -60,14 +62,22 @@ export async function migrateHistoryV6(executor: HistoryExecutor): Promise<void>
     SELECT m.connection_id, m.thread_id, m.history_epoch, m.__key, m.content_id, c.turn_id
     FROM codewide_history_members m JOIN codewide_history_content c USING(content_id)`);
   await executor.execute("DROP TABLE codewide_history_members");
-  await executor.execute("ALTER TABLE codewide_history_members_v6 RENAME TO codewide_history_members");
-  await executor.execute(`CREATE INDEX codewide_history_members_key ON codewide_history_members(__key)`);
-  await executor.execute(`CREATE INDEX codewide_history_members_content ON codewide_history_members(content_id)`);
+  await executor.execute(
+    "ALTER TABLE codewide_history_members_v6 RENAME TO codewide_history_members",
+  );
+  await executor.execute(
+    `CREATE INDEX codewide_history_members_key ON codewide_history_members(__key)`,
+  );
+  await executor.execute(
+    `CREATE INDEX codewide_history_members_content ON codewide_history_members(content_id)`,
+  );
   await executor.execute(`CREATE INDEX codewide_history_members_turn
     ON codewide_history_members(connection_id, thread_id, history_epoch, turn_id)`);
   await executor.execute(`CREATE INDEX codewide_history_turns_order
     ON codewide_history_turns(connection_id, thread_id, history_epoch, ordinal, turn_id)`);
-  await executor.execute(`CREATE INDEX codewide_history_pending_scope ON codewide_history_pending(connection_id, thread_id)`);
+  await executor.execute(
+    `CREATE INDEX codewide_history_pending_scope ON codewide_history_pending(connection_id, thread_id)`,
+  );
   await executor.execute(`CREATE INDEX codewide_history_content_live
     ON codewide_history_content(connection_id, thread_id, content_id) WHERE sealed=0`);
   await executor.execute(`CREATE TRIGGER codewide_history_revision_replaced

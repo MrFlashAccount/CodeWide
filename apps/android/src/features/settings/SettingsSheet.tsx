@@ -169,10 +169,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.compact,
   },
-  back: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center" },
-  title: { minWidth: 0, flex: 1, color: colors.text, ...typeScale.heading },
-  scroll: { flex: 1, minHeight: 0 },
-  content: { gap: spacing.md, paddingBottom: spacing.sm },
+  back: {
+    width: touchTarget,
+    height: touchTarget,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    minWidth: 0,
+    flex: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
+  scroll: {
+    flex: 1,
+    minHeight: 0,
+  },
+  content: {
+    gap: spacing.md,
+    paddingBottom: spacing.sm,
+  },
   section: { gap: spacing.xs },
   sectionTitle: {
     color: colors.textMuted,
@@ -180,5 +196,9 @@ const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     textTransform: "uppercase",
   },
-  notice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.sm },
+  notice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.sm,
+  },
 });

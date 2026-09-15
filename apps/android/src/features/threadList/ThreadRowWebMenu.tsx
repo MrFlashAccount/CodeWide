@@ -6,6 +6,7 @@ import { copySessionId } from "../turnActions/turnActions";
 import { styles } from "./ThreadRow.styles";
 import type { ThreadRowActions } from "./threadRowActions";
 import type { ThreadRowProps } from "./threadRowContract";
+
 export function ThreadRowWebMenu({
   props,
   actions,

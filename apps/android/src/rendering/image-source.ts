@@ -19,7 +19,8 @@ export type UserImageSourceProjection =
   | { kind: "path"; path: string };
 
 export function safeImageUri(value: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0 || value.length > MAX_INLINE_IMAGE_CHARS) return null;
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_INLINE_IMAGE_CHARS)
+    return null;
   if (isSafeHttpImageUrl(value)) return value;
   if (DATA_IMAGE_PATTERN.test(value)) return value;
   const mimeType = rawImageMimeType(value);
@@ -32,11 +33,20 @@ export function inlineImagePayload(value: string): InlineImagePayload | null {
     const mime = dataMatch[1];
     const base64 = dataMatch[2];
     if (mime === undefined || base64 === undefined) return null;
-    return { base64, extension: (mime === "jpeg" ? "jpg" : mime) as InlineImagePayload["extension"] };
+    return {
+      base64,
+      extension: (mime === "jpeg" ? "jpg" : mime) as InlineImagePayload["extension"],
+    };
   }
   const mimeType = rawImageMimeType(value);
   if (mimeType === null) return null;
-  return { base64: value, extension: mimeType === "image/jpeg" ? "jpg" : mimeType.slice("image/".length) as InlineImagePayload["extension"] };
+  return {
+    base64: value,
+    extension:
+      mimeType === "image/jpeg"
+        ? "jpg"
+        : (mimeType.slice("image/".length) as InlineImagePayload["extension"]),
+  };
 }
 
 /** Validate the private content marker used when inline image bytes are
@@ -44,14 +54,14 @@ export function inlineImagePayload(value: string): InlineImagePayload | null {
 export function privateImageAssetProjection(value: unknown): PrivateImageAssetProjection | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const asset = value as Record<string, unknown>;
-  return asset.version === 1
-    && typeof asset.id === "string"
-    && /^[a-f0-9]{64}$/u.test(asset.id)
-    && typeof asset.byteLength === "number"
-    && Number.isSafeInteger(asset.byteLength)
-    && asset.byteLength > 0
-    && typeof asset.contentType === "string"
-    && asset.contentType.startsWith("image/")
+  return asset.version === 1 &&
+    typeof asset.id === "string" &&
+    /^[a-f0-9]{64}$/u.test(asset.id) &&
+    typeof asset.byteLength === "number" &&
+    Number.isSafeInteger(asset.byteLength) &&
+    asset.byteLength > 0 &&
+    typeof asset.contentType === "string" &&
+    asset.contentType.startsWith("image/")
     ? { id: asset.id, byteLength: asset.byteLength, contentType: asset.contentType }
     : null;
 }

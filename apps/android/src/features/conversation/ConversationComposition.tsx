@@ -18,6 +18,8 @@ import { useConversationTools } from "./ConversationTools";
 import { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
 import { useConversationAndroidBack } from "./timeline/overlayScrollOwnership";
 import { useThreadTimeline, useThreadTimelineActions } from "./timeline/ThreadTimeline";
+
+/** Binds conversation capabilities to the read, tool, and composer surfaces. */
 export function ConversationComposition(props: ConversationCompositionCapabilities) {
   const scoped = useConversationScopeFeatures({
     surfaceInputs: props.surface,

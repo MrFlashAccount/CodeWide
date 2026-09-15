@@ -2,12 +2,19 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View, type ViewStyle } from "react-native";
-import {
-  WebView,
-  type WebViewMessageEvent,
-} from "react-native-webview";
+import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
-import { colors, radii, spacing, touchTarget, typeScale, typeWeight, iconSize, layoutSize, controlSize } from "../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+  iconSize,
+  layoutSize,
+  controlSize,
+} from "../theme";
 import { useAppFullscreenOverlay } from "../ui/AppFullscreenOverlay";
 import { useFullscreenWindowReady } from "../ui/FullscreenWindowReady";
 import { AppText as Text } from "../ui/Typography";
@@ -64,14 +71,19 @@ function parseRendererMessage(value: string): MermaidRendererMessage | null {
   try {
     const parsed: unknown = JSON.parse(value);
     return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as MermaidRendererMessage
+      ? (parsed as MermaidRendererMessage)
       : null;
   } catch {
     return null;
   }
 }
 
-function rendererCommand(engine: DiagramEngine, source: string, requestId: number, mode: "inline" | "fullscreen"): string {
+function rendererCommand(
+  engine: DiagramEngine,
+  source: string,
+  requestId: number,
+  mode: "inline" | "fullscreen",
+): string {
   return `(() => {
     if (typeof window.${engine.renderFunction} !== 'function') {
       window.ReactNativeWebView.postMessage(JSON.stringify({type:'error',requestId:${requestId},message:'Bundled ${engine.title} renderer did not initialize'}));
@@ -81,15 +93,45 @@ function rendererCommand(engine: DiagramEngine, source: string, requestId: numbe
   })();true;`;
 }
 
-export function MermaidDiagram({ source, reviewTarget, diagramId, reveal = false }: { source: string; reviewTarget?: ContentReviewTarget; diagramId?: string; reveal?: boolean }) {
-  return <LocalDiagram engine={MERMAID_ENGINE} source={source} reveal={reveal} {...(reviewTarget === undefined ? {} : { reviewTarget })} {...(diagramId === undefined ? {} : { diagramId })} />;
+export function MermaidDiagram({
+  source,
+  reviewTarget,
+  diagramId,
+  reveal = false,
+}: {
+  source: string;
+  reviewTarget?: ContentReviewTarget;
+  diagramId?: string;
+  reveal?: boolean;
+}) {
+  return (
+    <LocalDiagram
+      engine={MERMAID_ENGINE}
+      source={source}
+      reveal={reveal}
+      {...(reviewTarget === undefined ? {} : { reviewTarget })}
+      {...(diagramId === undefined ? {} : { diagramId })}
+    />
+  );
 }
 
 export function AsciiDiagram({ source }: { source: string }) {
   return <LocalDiagram engine={ASCII_ENGINE} source={source} />;
 }
 
-function LocalDiagram({ engine, source, reviewTarget, diagramId, reveal = false }: { engine: DiagramEngine; source: string; reviewTarget?: ContentReviewTarget; diagramId?: string; reveal?: boolean }) {
+function LocalDiagram({
+  engine,
+  source,
+  reviewTarget,
+  diagramId,
+  reveal = false,
+}: {
+  engine: DiagramEngine;
+  source: string;
+  reviewTarget?: ContentReviewTarget;
+  diagramId?: string;
+  reveal?: boolean;
+}) {
   const fullscreenOverlay = useAppFullscreenOverlay();
   const inlineWebView = useRef<WebView>(null);
   const [copied, setCopied] = useState(false);
@@ -103,57 +145,76 @@ function LocalDiagram({ engine, source, reviewTarget, diagramId, reveal = false 
     setCopied(true);
   };
 
-  const openFullscreen = () => fullscreenOverlay.present(({ close }) => (
-    <FullscreenDiagram
-      engine={engine}
-      source={boundedSource}
-      onClose={close}
-      onCopy={copySource}
-      {...(reviewTarget === undefined || diagramId === undefined ? {} : { reviewTarget, diagramId })}
-    />
-  ));
+  const openFullscreen = () =>
+    fullscreenOverlay.present(({ close }) => (
+      <FullscreenDiagram
+        engine={engine}
+        source={boundedSource}
+        onClose={close}
+        onCopy={copySource}
+        {...(reviewTarget === undefined || diagramId === undefined
+          ? {}
+          : { reviewTarget, diagramId })}
+      />
+    ));
 
   if (tooLarge) {
-    return <DiagramFallback engine={engine} source={source} message="Diagram is too large to preview safely" />;
+    return (
+      <DiagramFallback
+        engine={engine}
+        source={source}
+        message="Diagram is too large to preview safely"
+      />
+    );
   }
 
   return (
     <FluidLayoutFrame animate={reveal} style={styles.inlineReveal}>
-    <NativeRevealSurface animate={reveal} ready={!reveal || renderedKey === renderKey} revealKey={renderKey} style={styles.inlineReveal}>
-      <View
-        accessibilityLabel={`${engine.title} diagram`}
-        style={styles.card}
+      <NativeRevealSurface
+        animate={reveal}
+        ready={!reveal || renderedKey === renderKey}
+        revealKey={renderKey}
+        style={styles.inlineReveal}
       >
-        <View style={styles.header}>
-          <Ionicons name="git-network-outline" size={iconSize.inline} color={colors.textMuted} />
-          <Text style={styles.title}>{engine.title}</Text>
-          <DiagramIconButton
-            accessibilityLabel={`Copy ${engine.title} source`}
-            icon={copied ? "checkmark" : "copy-outline"}
-            color={copied ? colors.green : colors.textMuted}
-            onPress={copySource}
-          />
-          <DiagramIconButton
-            accessibilityLabel="Open diagram fullscreen"
-            icon="expand-outline"
-            onPress={openFullscreen}
-          />
+        <View accessibilityLabel={`${engine.title} diagram`} style={styles.card}>
+          <View style={styles.header}>
+            <Ionicons name="git-network-outline" size={iconSize.inline} color={colors.textMuted} />
+            <Text style={styles.title}>{engine.title}</Text>
+            <DiagramIconButton
+              accessibilityLabel={`Copy ${engine.title} source`}
+              icon={copied ? "checkmark" : "copy-outline"}
+              color={copied ? colors.green : colors.textMuted}
+              onPress={copySource}
+            />
+            <DiagramIconButton
+              accessibilityLabel="Open diagram fullscreen"
+              icon="expand-outline"
+              onPress={openFullscreen}
+            />
+          </View>
+          {engine.kind === "mermaid" ? (
+            <DiagramSvgPreview
+              source={boundedSource}
+              onOpen={openFullscreen}
+              onSettled={() => setRenderedKey(renderKey)}
+            />
+          ) : (
+            <DiagramSurface
+              engine={engine}
+              mode="inline"
+              source={boundedSource}
+              webViewRef={inlineWebView}
+              style={{ height: INLINE_MEDIA_PREVIEW_HEIGHT }}
+              onSettled={() => setRenderedKey(renderKey)}
+            />
+          )}
         </View>
-        {engine.kind === "mermaid" ? (
-          <DiagramSvgPreview source={boundedSource} onOpen={openFullscreen} onSettled={() => setRenderedKey(renderKey)} />
-        ) : <DiagramSurface
-          engine={engine}
-          mode="inline"
-          source={boundedSource}
-          webViewRef={inlineWebView}
-          style={{ height: INLINE_MEDIA_PREVIEW_HEIGHT }}
-          onSettled={() => setRenderedKey(renderKey)}
-        />}
-      </View>
-    </NativeRevealSurface>
-    {reveal && renderedKey !== renderKey && <View pointerEvents="none" style={styles.preparing}>
-      <Text style={styles.title}>Rendering diagram…</Text>
-    </View>}
+      </NativeRevealSurface>
+      {reveal && renderedKey !== renderKey && (
+        <View pointerEvents="none" style={styles.preparing}>
+          <Text style={styles.title}>Rendering diagram…</Text>
+        </View>
+      )}
     </FluidLayoutFrame>
   );
 }
@@ -189,27 +250,82 @@ function FullscreenDiagram({
   };
   return (
     <View style={styles.fullscreen}>
-      <DiagramSurface engine={engine} enabled={fullscreenReady} mode="fullscreen" source={source} webViewRef={fullscreenWebView} style={styles.fullscreenSurface} annotationEnabled={annotating} reviewPoints={reviewPoints} onReviewPoint={reviewPoint} />
+      <DiagramSurface
+        engine={engine}
+        enabled={fullscreenReady}
+        mode="fullscreen"
+        source={source}
+        webViewRef={fullscreenWebView}
+        style={styles.fullscreenSurface}
+        annotationEnabled={annotating}
+        reviewPoints={reviewPoints}
+        onReviewPoint={reviewPoint}
+      />
       <View pointerEvents="box-none" style={styles.fullscreenTopBar}>
-        <DiagramIconButton accessibilityLabel="Close diagram" icon="close" emphasized onPress={onClose} />
+        <DiagramIconButton
+          accessibilityLabel="Close diagram"
+          icon="close"
+          emphasized
+          onPress={onClose}
+        />
         <View style={styles.fullscreenTitle}>
-          <Text numberOfLines={1} style={styles.fullscreenTitleText}>{engine.title} diagram</Text>
-          <Text style={styles.fullscreenHint}>{annotating ? "Tap the diagram to add a review point" : "Pinch or drag to inspect"}</Text>
+          <Text numberOfLines={1} style={styles.fullscreenTitleText}>
+            {engine.title} diagram
+          </Text>
+          <Text style={styles.fullscreenHint}>
+            {annotating ? "Tap the diagram to add a review point" : "Pinch or drag to inspect"}
+          </Text>
         </View>
         {engine.kind === "mermaid" && reviewTarget !== undefined && diagramId !== undefined && (
-          <DiagramIconButton accessibilityLabel={annotating ? "Stop annotating diagram" : "Annotate diagram"} icon="pin-outline" color={annotating ? "#ffffff" : colors.textMuted} emphasized active={annotating} onPress={toggleAnnotating} />
+          <DiagramIconButton
+            accessibilityLabel={annotating ? "Stop annotating diagram" : "Annotate diagram"}
+            icon="pin-outline"
+            color={annotating ? "#ffffff" : colors.textMuted}
+            emphasized
+            active={annotating}
+            onPress={toggleAnnotating}
+          />
         )}
-        <DiagramIconButton accessibilityLabel={`Copy ${engine.title} source`} icon="copy-outline" emphasized onPress={onCopy} />
+        <DiagramIconButton
+          accessibilityLabel={`Copy ${engine.title} source`}
+          icon="copy-outline"
+          emphasized
+          onPress={onCopy}
+        />
       </View>
       <View style={styles.zoomBar}>
-        <DiagramIconButton accessibilityLabel="Zoom out" icon="remove" emphasized onPress={() => inject(fullscreenWebView, "window.diagramZoom(.8,-1);true;")} />
-        <DiagramIconButton accessibilityLabel="Reset zoom" icon="scan-outline" emphasized onPress={() => inject(fullscreenWebView, "window.diagramReset(-1);true;")} />
-        <DiagramIconButton accessibilityLabel="Zoom in" icon="add" emphasized onPress={() => inject(fullscreenWebView, "window.diagramZoom(1.25,-1);true;")} />
+        <DiagramIconButton
+          accessibilityLabel="Zoom out"
+          icon="remove"
+          emphasized
+          onPress={() => inject(fullscreenWebView, "window.diagramZoom(.8,-1);true;")}
+        />
+        <DiagramIconButton
+          accessibilityLabel="Reset zoom"
+          icon="scan-outline"
+          emphasized
+          onPress={() => inject(fullscreenWebView, "window.diagramReset(-1);true;")}
+        />
+        <DiagramIconButton
+          accessibilityLabel="Zoom in"
+          icon="add"
+          emphasized
+          onPress={() => inject(fullscreenWebView, "window.diagramZoom(1.25,-1);true;")}
+        />
       </View>
       {reviewTarget !== undefined && diagramId !== undefined && (
         <>
-          <ContentReviewComments targetId={reviewTarget.id} diagramId={diagramId} presentation="overlay" bottomOffset={76} />
-          <ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />
+          <ContentReviewComments
+            targetId={reviewTarget.id}
+            diagramId={diagramId}
+            presentation="overlay"
+            bottomOffset={76}
+          />
+          <ContentReviewComposer
+            targetId={reviewTarget.id}
+            anchorKind="mermaid"
+            diagramId={diagramId}
+          />
         </>
       )}
     </View>
@@ -263,7 +379,10 @@ function DiagramSurface({
 
   useEffect(() => {
     if (!loaded.current || mode !== "fullscreen") return;
-    inject(webViewRef, `window.diagramSetAnnotationMode(${annotationEnabled ? "true" : "false"});true;`);
+    inject(
+      webViewRef,
+      `window.diagramSetAnnotationMode(${annotationEnabled ? "true" : "false"});true;`,
+    );
   }, [annotationEnabled, mode, webViewRef]);
 
   const reviewPointsKey = JSON.stringify(reviewPoints);
@@ -294,12 +413,16 @@ function DiagramSurface({
     }
     if (message.requestId !== requestId.current) return;
     if (message.type === "reviewPoint") {
-      if (typeof message.x === "number" && typeof message.y === "number") onReviewPoint?.(message.x, message.y);
+      if (typeof message.x === "number" && typeof message.y === "number")
+        onReviewPoint?.(message.x, message.y);
       return;
     }
     if (message.type === "rendered") {
       if (mode === "fullscreen") {
-        inject(webViewRef, `window.diagramSetAnnotationMode(${annotationEnabled ? "true" : "false"});true;`);
+        inject(
+          webViewRef,
+          `window.diagramSetAnnotationMode(${annotationEnabled ? "true" : "false"});true;`,
+        );
         inject(webViewRef, `window.diagramSetReviewPoints(${reviewPointsKey});true;`);
       }
       setStatus("rendered");
@@ -311,8 +434,10 @@ function DiagramSurface({
     }
   };
 
-  const onWebViewError = ({ nativeEvent }: { nativeEvent: { description?: string } }) => fail(nativeEvent.description || `${engine.title} WebView failed to load`);
-  const onHttpError = ({ nativeEvent }: { nativeEvent: { statusCode: number } }) => fail(`${engine.title} asset returned HTTP ${nativeEvent.statusCode}`);
+  const onWebViewError = ({ nativeEvent }: { nativeEvent: { description?: string } }) =>
+    fail(nativeEvent.description || `${engine.title} WebView failed to load`);
+  const onHttpError = ({ nativeEvent }: { nativeEvent: { statusCode: number } }) =>
+    fail(`${engine.title} asset returned HTTP ${nativeEvent.statusCode}`);
   const restartRenderer = () => {
     loaded.current = false;
     setStatus("loading");
@@ -324,37 +449,39 @@ function DiagramSurface({
     <View
       onLayout={({ nativeEvent }) => {
         const nextWidth = Math.max(0, Math.floor(nativeEvent.layout.width));
-        setViewportWidth((current) => current === nextWidth ? current : nextWidth);
+        setViewportWidth((current) => (current === nextWidth ? current : nextWidth));
       }}
       style={[styles.viewport, style]}
     >
-      {enabled && viewportWidth > 0 && <WebView
-        key={`${mode}:${viewportWidth}`}
-        ref={webViewRef}
-        source={{ uri: engine.rendererUri }}
-        originWhitelist={["file://*"]}
-        onLoadStart={() => setStatus("loading")}
-        onMessage={onMessage}
-        onError={onWebViewError}
-        onHttpError={onHttpError}
-        onContentProcessDidTerminate={restartRenderer}
-        onRenderProcessGone={restartRenderer}
-        javaScriptEnabled
-        allowFileAccess
-        allowFileAccessFromFileURLs
-        allowUniversalAccessFromFileURLs={false}
-        javaScriptCanOpenWindowsAutomatically={false}
-        mixedContentMode="never"
-        setSupportMultipleWindows={false}
-        nestedScrollEnabled
-        scrollEnabled={false}
-        setBuiltInZoomControls={false}
-        setDisplayZoomControls={false}
-        showsHorizontalScrollIndicator={false}
-        showsVerticalScrollIndicator={false}
-        androidLayerType="hardware"
-        style={[styles.webView, { width: viewportWidth }]}
-      />}
+      {enabled && viewportWidth > 0 && (
+        <WebView
+          key={`${mode}:${viewportWidth}`}
+          ref={webViewRef}
+          source={{ uri: engine.rendererUri }}
+          originWhitelist={["file://*"]}
+          onLoadStart={() => setStatus("loading")}
+          onMessage={onMessage}
+          onError={onWebViewError}
+          onHttpError={onHttpError}
+          onContentProcessDidTerminate={restartRenderer}
+          onRenderProcessGone={restartRenderer}
+          javaScriptEnabled
+          allowFileAccess
+          allowFileAccessFromFileURLs
+          allowUniversalAccessFromFileURLs={false}
+          javaScriptCanOpenWindowsAutomatically={false}
+          mixedContentMode="never"
+          setSupportMultipleWindows={false}
+          nestedScrollEnabled
+          scrollEnabled={false}
+          setBuiltInZoomControls={false}
+          setDisplayZoomControls={false}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+          androidLayerType="hardware"
+          style={[styles.webView, { width: viewportWidth }]}
+        />
+      )}
       {status === "loading" && (
         <View pointerEvents="none" style={styles.statusOverlay}>
           <ActivityIndicator size="small" color={colors.textMuted} />
@@ -365,17 +492,34 @@ function DiagramSurface({
         <View style={styles.asciiFallback}>
           <View style={styles.asciiFallbackHeader}>
             <Ionicons name="warning-outline" size={iconSize.inline} color={colors.amber} />
-            <Text numberOfLines={2} style={styles.asciiFallbackText}>Could not render diagram · showing source</Text>
-            <DiagramIconButton accessibilityLabel="Retry ASCII diagram" icon="refresh" onPress={render} />
+            <Text numberOfLines={2} style={styles.asciiFallbackText}>
+              Could not render diagram · showing source
+            </Text>
+            <DiagramIconButton
+              accessibilityLabel="Retry ASCII diagram"
+              icon="refresh"
+              onPress={render}
+            />
           </View>
-          <NativeCodeBlock value={source} language="text" maxHeight={mode === "inline" ? INLINE_MEDIA_PREVIEW_HEIGHT - 64 : MAX_HEIGHT - 48} />
+          <NativeCodeBlock
+            value={source}
+            language="text"
+            maxHeight={mode === "inline" ? INLINE_MEDIA_PREVIEW_HEIGHT - 64 : MAX_HEIGHT - 48}
+          />
         </View>
       )}
       {status === "error" && engine.kind !== "ascii" && (
         <View style={styles.statusOverlay}>
           <Ionicons name="warning-outline" size={iconSize.action} color={colors.amber} />
-          <Text selectable numberOfLines={5} style={styles.error}>{error ?? `${engine.title} renderer failed`}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={`Retry ${engine.title} diagram`} onPress={render} style={styles.retryButton}>
+          <Text selectable numberOfLines={5} style={styles.error}>
+            {error ?? `${engine.title} renderer failed`}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Retry ${engine.title} diagram`}
+            onPress={render}
+            style={styles.retryButton}
+          >
             <Ionicons name="refresh" size={iconSize.inline} color={colors.text} />
             <Text style={styles.retryText}>Retry</Text>
           </Pressable>
@@ -410,14 +554,31 @@ function DiagramIconButton({
       accessibilityLabel={accessibilityLabel}
       hitSlop={8}
       onPress={onPress}
-      style={({ pressed }) => [styles.iconButton, emphasized && styles.iconButtonEmphasized, active && styles.iconButtonActive, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.iconButton,
+        emphasized && styles.iconButtonEmphasized,
+        active && styles.iconButtonActive,
+        pressed && styles.pressed,
+      ]}
     >
-      <Ionicons name={icon} size={iconSize.action} color={color ?? (emphasized ? colors.text : colors.textMuted)} />
+      <Ionicons
+        name={icon}
+        size={iconSize.action}
+        color={color ?? (emphasized ? colors.text : colors.textMuted)}
+      />
     </Pressable>
   );
 }
 
-function DiagramFallback({ engine, source, message }: { engine: DiagramEngine; source: string; message: string }) {
+function DiagramFallback({
+  engine,
+  source,
+  message,
+}: {
+  engine: DiagramEngine;
+  source: string;
+  message: string;
+}) {
   const [copied, setCopied] = useState(false);
   return (
     <View style={styles.fallback}>
@@ -443,36 +604,191 @@ function DiagramFallback({ engine, source, message }: { engine: DiagramEngine; s
 }
 
 const styles = StyleSheet.create({
-  preparing: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, justifyContent: "center", alignItems: "center", backgroundColor: colors.code },
-  inlineReveal: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch" },
-  card: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", overflow: "hidden", borderRadius: radii.medium, backgroundColor: colors.surfaceRaised },
-  header: { minWidth: 0, minHeight: layoutSize.header, paddingLeft: spacing.inputInset, paddingRight: spacing.xxs, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  titleBlock: { minWidth: 0, flex: 1 },
-  title: { minWidth: 0, flex: 1, color: colors.text, ...typeScale.label, fontWeight: typeWeight.semibold },
-  subtitle: { color: colors.textMuted, ...typeScale.caption, },
-  viewport: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch", overflow: "hidden", backgroundColor: colors.surfaceRaised },
+  preparing: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: colors.code,
+  },
+  inlineReveal: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    alignSelf: "stretch",
+  },
+  card: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    alignSelf: "stretch",
+    overflow: "hidden",
+    borderRadius: radii.medium,
+    backgroundColor: colors.surfaceRaised,
+  },
+  header: {
+    minWidth: 0,
+    minHeight: layoutSize.header,
+    paddingLeft: spacing.inputInset,
+    paddingRight: spacing.xxs,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  titleBlock: {
+    minWidth: 0,
+    flex: 1,
+  },
+  title: {
+    minWidth: 0,
+    flex: 1,
+    color: colors.text,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  subtitle: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  viewport: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    alignSelf: "stretch",
+    overflow: "hidden",
+    backgroundColor: colors.surfaceRaised,
+  },
   // Android WebView does not reliably infer its cross-axis size from flex alone
   // when it is nested in a measured Markdown block. It then creates a 0px CSS
   // viewport even though the native card itself has a real width.
-  webView: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.surfaceRaised },
-  statusOverlay: { position: "absolute", inset: 0, padding: spacing.md, alignItems: "center", justifyContent: "center", gap: spacing.xs, backgroundColor: colors.surfaceRaised },
-  asciiFallback: { position: "absolute", inset: 0, paddingHorizontal: spacing.xs, paddingBottom: spacing.xs, backgroundColor: colors.surfaceRaised },
-  asciiFallbackHeader: { minHeight: controlSize.regular, flexDirection: "row", alignItems: "center", gap: spacing.compact },
-  asciiFallbackText: { minWidth: 0, flex: 1, color: colors.textMuted, ...typeScale.caption, },
-  statusText: { color: colors.textMuted, ...typeScale.label, },
-  error: { maxWidth: 520, color: colors.textMuted, ...typeScale.code, fontFamily: "monospace",  textAlign: "center" },
-  retryButton: { minHeight: controlSize.regular, paddingHorizontal: spacing.md, borderRadius: radii.selected, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.compact, backgroundColor: colors.surface },
-  retryText: { color: colors.text, ...typeScale.label, fontWeight: typeWeight.semibold },
-  iconButton: { width: touchTarget, height: touchTarget, borderRadius: radii.pill, alignItems: "center", justifyContent: "center" },
+  webView: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: colors.surfaceRaised,
+  },
+  statusOverlay: {
+    position: "absolute",
+    inset: 0,
+    padding: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    backgroundColor: colors.surfaceRaised,
+  },
+  asciiFallback: {
+    position: "absolute",
+    inset: 0,
+    paddingHorizontal: spacing.xs,
+    paddingBottom: spacing.xs,
+    backgroundColor: colors.surfaceRaised,
+  },
+  asciiFallbackHeader: {
+    minHeight: controlSize.regular,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+  },
+  asciiFallbackText: {
+    minWidth: 0,
+    flex: 1,
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  statusText: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  error: {
+    maxWidth: 520,
+    color: colors.textMuted,
+    ...typeScale.code,
+    fontFamily: "monospace",
+    textAlign: "center",
+  },
+  retryButton: {
+    minHeight: controlSize.regular,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.selected,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.compact,
+    backgroundColor: colors.surface,
+  },
+  retryText: {
+    color: colors.text,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  iconButton: {
+    width: touchTarget,
+    height: touchTarget,
+    borderRadius: radii.pill,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   iconButtonEmphasized: { backgroundColor: "rgba(35, 39, 44, .88)" },
-  iconButtonActive: { backgroundColor: "rgba(183, 148, 246, .52)", borderWidth: 1, borderColor: "rgba(255,255,255,.82)" },
+  iconButtonActive: {
+    backgroundColor: "rgba(183, 148, 246, .52)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,.82)",
+  },
   pressed: { opacity: 0.62 },
-  fallback: { width: "100%", minWidth: 0, maxWidth: "100%", borderRadius: radii.medium, backgroundColor: colors.surfaceRaised, paddingVertical: spacing.xxs },
-  fullscreen: { flex: 1, backgroundColor: colors.background },
+  fallback: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    borderRadius: radii.medium,
+    backgroundColor: colors.surfaceRaised,
+    paddingVertical: spacing.xxs,
+  },
+  fullscreen: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   fullscreenSurface: { flex: 1 },
-  fullscreenTopBar: { position: "absolute", top: spacing.xs, left: spacing.sm, right: spacing.sm, minHeight: touchTarget, flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  fullscreenTitle: { minWidth: 0, flex: 1, borderRadius: radii.medium, paddingHorizontal: spacing.sm, paddingVertical: spacing.xxs, backgroundColor: "rgba(35, 39, 44, .88)" },
-  fullscreenTitleText: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
-  fullscreenHint: { color: colors.textMuted, ...typeScale.caption, },
-  zoomBar: { position: "absolute", bottom: spacing.md, alignSelf: "center", flexDirection: "row", alignItems: "center", gap: spacing.xs, padding: spacing.xxs, borderRadius: radii.composer, backgroundColor: "rgba(12, 14, 16, .78)" },
+  fullscreenTopBar: {
+    position: "absolute",
+    top: spacing.xs,
+    left: spacing.sm,
+    right: spacing.sm,
+    minHeight: touchTarget,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  fullscreenTitle: {
+    minWidth: 0,
+    flex: 1,
+    borderRadius: radii.medium,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xxs,
+    backgroundColor: "rgba(35, 39, 44, .88)",
+  },
+  fullscreenTitleText: {
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  fullscreenHint: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  zoomBar: {
+    position: "absolute",
+    bottom: spacing.md,
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    padding: spacing.xxs,
+    borderRadius: radii.composer,
+    backgroundColor: "rgba(12, 14, 16, .78)",
+  },
 });

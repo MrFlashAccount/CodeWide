@@ -33,7 +33,7 @@ export type RealtimeAudioUploaderOptions = {
   batchDurationMs?: number;
 };
 
-export const REALTIME_AUDIO_BATCH_DURATION_MS = 1_000;
+const REALTIME_AUDIO_BATCH_DURATION_MS = 1_000;
 
 /**
  * Ordered bridge between native audio callbacks and the remote host.
@@ -61,7 +61,10 @@ export class RealtimeAudioUploader {
   constructor(options: RealtimeAudioUploaderOptions) {
     this.#send = options.send;
     this.#onError = options.onError;
-    this.#batchDurationMs = positiveInteger(options.batchDurationMs ?? REALTIME_AUDIO_BATCH_DURATION_MS, "batchDurationMs");
+    this.#batchDurationMs = positiveInteger(
+      options.batchDurationMs ?? REALTIME_AUDIO_BATCH_DURATION_MS,
+      "batchDurationMs",
+    );
   }
 
   append(chunk: RealtimeAudioChunk): void {
@@ -75,9 +78,9 @@ export class RealtimeAudioUploader {
     if (this.#format === null) {
       this.#format = { encoding, sampleRate: chunk.sampleRate, numChannels: chunk.numChannels };
     } else if (
-      this.#format.encoding !== encoding
-      || this.#format.sampleRate !== chunk.sampleRate
-      || this.#format.numChannels !== chunk.numChannels
+      this.#format.encoding !== encoding ||
+      this.#format.sampleRate !== chunk.sampleRate ||
+      this.#format.numChannels !== chunk.numChannels
     ) {
       this.#fail("Microphone audio format changed during recording");
       return;
@@ -171,14 +174,19 @@ export class RealtimeAudioUploader {
 function chunkDurationMs(chunk: RealtimeAudioChunk): number | null {
   if (
     chunk.data.length === 0 ||
-    !Number.isSafeInteger(chunk.sampleRate) || chunk.sampleRate <= 0 ||
-    !Number.isSafeInteger(chunk.numChannels) || chunk.numChannels <= 0 ||
-    !Number.isSafeInteger(chunk.samplesPerChannel) || chunk.samplesPerChannel <= 0
-  ) return null;
-  return chunk.samplesPerChannel * 1_000 / chunk.sampleRate;
+    !Number.isSafeInteger(chunk.sampleRate) ||
+    chunk.sampleRate <= 0 ||
+    !Number.isSafeInteger(chunk.numChannels) ||
+    chunk.numChannels <= 0 ||
+    !Number.isSafeInteger(chunk.samplesPerChannel) ||
+    chunk.samplesPerChannel <= 0
+  )
+    return null;
+  return (chunk.samplesPerChannel * 1_000) / chunk.sampleRate;
 }
 
 function positiveInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer`);
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new Error(`${name} must be a positive integer`);
   return value;
 }

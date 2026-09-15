@@ -10,6 +10,7 @@ import type {
 import type { CodeReviewComment } from "../../rendering/code-review";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 
+/** Complete display and action contract for the thread attachment sheet. */
 export type AttachmentSheetProps = {
   visible: boolean;
   codePreviewMaxHeight: number;

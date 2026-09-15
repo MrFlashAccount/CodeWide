@@ -12,6 +12,7 @@ import { colors, iconSize } from "../../theme";
 import { ActionMenu } from "../../ui/ActionMenu";
 import { AppText as Text } from "../../ui/Typography";
 
+/** Composes file selection, diff viewing, and review-comment submission. */
 export function CodeReviewWorkspace(props: CodeReviewWorkspaceProps) {
   const { cwd, scopeLabel } = props;
   const {

@@ -12,6 +12,7 @@ import { useConversationActivation } from "./conversationActivation";
 import { useConversationTools } from "./ConversationTools";
 import { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
 import { useOverlayScrollOwnership } from "./timeline/overlayScrollOwnership";
+
 export function createConversationComposerContent({
   surfaceInputs,
   composerInputs,

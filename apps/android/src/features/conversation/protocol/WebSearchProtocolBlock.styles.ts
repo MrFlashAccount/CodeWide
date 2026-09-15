@@ -7,7 +7,18 @@ export const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
-  rawLink: { color: colors.accent, ...typeScale.label, fontWeight: typeWeight.semibold },
-  menuActionTitle: { color: colors.text, ...typeScale.title },
-  menuActionSubtitle: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.optical },
+  rawLink: {
+    color: colors.accent,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  menuActionTitle: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  menuActionSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.optical,
+  },
 });

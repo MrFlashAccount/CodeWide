@@ -4,11 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { documentPreviewSurface } from "../src/rendering/document-preview";
+import { sourceObjectDeclaration } from "./source-contract";
 
-const readSource = (relativePath: string) => readFileSync(
-  fileURLToPath(new URL(relativePath, import.meta.url)),
-  "utf8",
-);
+const readSource = (relativePath: string) =>
+  readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
 
 describe("document preview surfaces", () => {
   it("keeps interactive documents out of the bottom sheet", () => {
@@ -28,14 +27,18 @@ describe("document preview surfaces", () => {
     expect(appSheet).toContain("showDragHandle={contentProps.enablePanDownToClose ?? true}");
     expect(appSheet).toContain("<RNHostView matchContents={fitToContents}");
     expect(appSheet).toContain("!fitToContents && styles.fixedHostContent");
-    expect(appSheet).toContain("fixedHostContent: { flexGrow: 1, height: 0 }");
-    expect(appSheet).toContain('<ScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />');
+    const fixedHostContent = sourceObjectDeclaration(appSheet, "fixedHostContent");
+    expect(fixedHostContent).toContain("flexGrow: 1");
+    expect(fixedHostContent).toContain("height: 0");
+    expect(appSheet).toContain(
+      "<ScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />",
+    );
     expect(appSheet).toContain("useWindowDimensions");
     expect(appSheet).not.toContain("maxWidth:");
     expect(appSheet).not.toContain("borderRadius:");
     expect(appSheet).not.toContain("backgroundColor:");
     expect(appSheet).toContain("sheetRef.current");
-    expect(appSheet).toContain("sheetRef.current?.hide()");
+    expect(appSheet).toMatch(/sheetRef\.current\s*\?\.hide\(\)/u);
     expect(appSheet).toContain("onOpenChange(false)");
     expect(appSheet).toContain("<RecoverableRenderBoundary");
     expect(appSheet).toContain('label="Bottom sheet content"');
@@ -58,7 +61,7 @@ describe("document preview surfaces", () => {
     const bubble = readSource("../src/rendering/Bubble.tsx");
     const documentPreview = readSource("../src/rendering/DocumentPreviewHost.tsx");
 
-    expect(richMarkdown).toContain('ScrollView as GestureScrollView');
+    expect(richMarkdown).toContain("ScrollView as GestureScrollView");
     expect(richMarkdown).toContain('Platform.OS === "android" ? GestureScrollView : ScrollView');
     expect(richMarkdown).toContain("<HorizontalScrollView");
     expect(richMarkdown).not.toContain("<Text selectable reviewBlockPath={reviewBlockPath}");
@@ -66,7 +69,9 @@ describe("document preview surfaces", () => {
     expect(bubble).not.toContain("onLongPress");
     expect(bubble).not.toContain("<Pressable");
     expect(documentPreview).toContain('if (surface === "fullscreen")');
-    expect(documentPreview).toContain("presentFullscreenDocument(fullscreen, request, downloadFile)");
+    expect(documentPreview).toContain(
+      "presentFullscreenDocument(fullscreen, request, downloadFile)",
+    );
     expect(documentPreview).toContain("<MarkdownDocumentView");
     expect(documentPreview).toContain("paddingBottom: spacing.sm");
   });

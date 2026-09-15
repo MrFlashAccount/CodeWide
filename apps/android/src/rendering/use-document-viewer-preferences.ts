@@ -22,15 +22,18 @@ export function useDocumentViewerPreferences(): {
 } {
   const query = useLiveQuery(() => database.collection);
   const row = query.data?.find((candidate) => candidate.id === DOCUMENT_VIEWER_PREFERENCE_ID);
-  const preferences = row === undefined
-    ? DEFAULT_DOCUMENT_VIEWER_PREFERENCES
-    : decodeDocumentViewerPreferences(row.value);
+  const preferences =
+    row === undefined
+      ? DEFAULT_DOCUMENT_VIEWER_PREFERENCES
+      : decodeDocumentViewerPreferences(row.value);
   const update = (apply: (current: DocumentViewerPreferences) => DocumentViewerPreferences) => {
-    void database.update(DOCUMENT_VIEWER_PREFERENCE_ID, (current) => (
-      encodeDocumentViewerPreferences(apply(decodeDocumentViewerPreferences(current)))
-    )).catch((cause: unknown) => {
-      console.warn("Could not save document viewer preferences", cause);
-    });
+    void database
+      .update(DOCUMENT_VIEWER_PREFERENCE_ID, (current) =>
+        encodeDocumentViewerPreferences(apply(decodeDocumentViewerPreferences(current))),
+      )
+      .catch((cause: unknown) => {
+        console.warn("Could not save document viewer preferences", cause);
+      });
   };
   const changeTextScale = useEvent((delta: number) => {
     update((current) => ({

@@ -108,14 +108,20 @@ function SuggestionRow(props: RowProps) {
 }
 
 const styles = StyleSheet.create({
-  popup: { width: "100%", overflow: "hidden" },
+  popup: {
+    width: "100%",
+    overflow: "hidden",
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
   },
-  heading: { ...typeScale.body, color: colors.text },
+  heading: {
+    ...typeScale.body,
+    color: colors.text,
+  },
   list: { maxHeight: controlSize.regular * 6 },
   group: {
     ...typeScale.caption,
@@ -123,7 +129,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xxs,
   },
-  row: { flexDirection: "row", alignItems: "center" },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   choice: {
     flex: 1,
     minWidth: 0,
@@ -133,7 +142,10 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingHorizontal: spacing.sm,
   },
-  name: { ...typeScale.body, color: colors.text },
+  name: {
+    ...typeScale.body,
+    color: colors.text,
+  },
   info: {
     width: controlSize.regular,
     height: controlSize.regular,

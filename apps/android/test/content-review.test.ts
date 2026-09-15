@@ -12,28 +12,80 @@ import { contentReviewNativeModule } from "../src/rendering/content-review-nativ
 import { compactSource } from "./source-contract";
 
 const target = { id: "answer-1", label: "Completed agent response", reference: "item-1" };
-const contentReviewHost = readFileSync(new URL("../src/rendering/ContentReviewHost.tsx", import.meta.url), "utf8");
-const reviewableText = readFileSync(new URL("../src/rendering/ReviewableText.native.tsx", import.meta.url), "utf8");
-const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
-const selectionModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/rendering/ContentReviewSelectionModule.kt", import.meta.url), "utf8");
-const mermaidDiagram = readFileSync(new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url), "utf8");
-const mermaidRenderer = readFileSync(new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url), "utf8");
+const contentReviewHost = readFileSync(
+  new URL("../src/rendering/ContentReviewHost.tsx", import.meta.url),
+  "utf8",
+);
+const reviewableText = readFileSync(
+  new URL("../src/rendering/ReviewableText.native.tsx", import.meta.url),
+  "utf8",
+);
+const documentPreview = readFileSync(
+  new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url),
+  "utf8",
+);
+const screen = compactSource(
+  readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"),
+);
+const selectionModule = readFileSync(
+  new URL(
+    "../android/app/src/main/java/dev/codewide/app/rendering/ContentReviewSelectionModule.kt",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const mermaidDiagram = readFileSync(
+  new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url),
+  "utf8",
+);
+const mermaidRenderer = readFileSync(
+  new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url),
+  "utf8",
+);
 
-const attachmentDocument = readFileSync(new URL("../src/features/attachments/AttachmentDocumentPreview.tsx", import.meta.url), "utf8");
-const reviewAdmission = readFileSync(new URL("../src/features/composer/attachments/reviewAdmission.ts", import.meta.url), "utf8");
-const reviewFeature = readFileSync(new URL("../src/features/review/ReviewFeature.tsx", import.meta.url), "utf8");
+const attachmentDocument = readFileSync(
+  new URL("../src/features/attachments/AttachmentDocumentPreview.tsx", import.meta.url),
+  "utf8",
+);
+const reviewAdmission = readFileSync(
+  new URL("../src/features/composer/attachments/reviewAdmission.ts", import.meta.url),
+  "utf8",
+);
+const reviewFeature = readFileSync(
+  new URL("../src/features/review/ReviewFeature.tsx", import.meta.url),
+  "utf8",
+);
 
-const ownerAgentResponseMarkdown = compactSource(readFileSync(new URL("../src/features/conversation/content/AgentResponseMarkdown.tsx", import.meta.url), "utf8"));
+const ownerAgentResponseMarkdown = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/content/AgentResponseMarkdown.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const overlays = compactSource(readFileSync(new URL("../src/features/conversation/ConversationOverlayContent.tsx", import.meta.url), "utf8"));
+const overlays = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationOverlayContent.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("content review", () => {
   it("attaches image pin coordinates and comments without treating the image as a Mermaid diagram", () => {
     const image = { id: "image-1", label: "Screenshot", reference: "scoped:attachments:shot.png" };
     const attachment = serializeContentReviewAttachment([
-      { id: "pin-1", createdAt: 1, body: "Move this button", anchor: { kind: "image", target: image, x: 0.25, y: 0.75 } },
-      { id: "pin-2", createdAt: 2, body: "Keep the heading", anchor: { kind: "image", target: image, x: 0.5, y: 0.1 } },
+      {
+        id: "pin-1",
+        createdAt: 1,
+        body: "Move this button",
+        anchor: { kind: "image", target: image, x: 0.25, y: 0.75 },
+      },
+      {
+        id: "pin-2",
+        createdAt: 2,
+        body: "Keep the heading",
+        anchor: { kind: "image", target: image, x: 0.5, y: 0.1 },
+      },
     ]);
     expect(attachment).toContain("scoped:attachments:shot.png");
     expect(attachment).toContain("(25.0%, 75.0%)");
@@ -49,31 +101,47 @@ describe("content review", () => {
     expect(contentReviewHost).toContain("<InlineContentReviewComposer");
     expect(contentReviewHost).not.toContain("useAppFullscreenOverlay");
     expect(contentReviewHost).not.toContain("resumeTray");
-    expect(documentPreview).toContain('<ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />');
+    expect(compactSource(documentPreview)).toContain(
+      '<ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />',
+    );
     expect(overlays).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
-    expect(compactSource(attachmentDocument)).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />');
-    expect(mermaidDiagram).toContain('<ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />');
+    expect(compactSource(attachmentDocument)).toContain(
+      '<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />',
+    );
+    expect(compactSource(mermaidDiagram)).toContain(
+      '<ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />',
+    );
   });
 
   it("keeps Mermaid review state and saved comments inside its fullscreen surface", () => {
-    expect(mermaidDiagram).toContain('active={annotating}');
+    expect(mermaidDiagram).toContain("active={annotating}");
     expect(mermaidDiagram).toContain('color={annotating ? "#ffffff" : colors.textMuted}');
-    expect(mermaidDiagram).toContain('reviewPoints={reviewPoints}');
-    expect(mermaidDiagram).toContain('<ContentReviewComments targetId={reviewTarget.id} diagramId={diagramId} presentation="overlay"');
-    expect(mermaidRenderer).toContain('window.diagramSetReviewPoints = function (points)');
+    expect(mermaidDiagram).toContain("reviewPoints={reviewPoints}");
+    expect(compactSource(mermaidDiagram)).toContain(
+      '<ContentReviewComments targetId={reviewTarget.id} diagramId={diagramId} presentation="overlay"',
+    );
+    expect(mermaidRenderer).toContain("window.diagramSetReviewPoints = function (points)");
     expect(mermaidRenderer).toContain("pending ? '#ffffff' : '#b794f6'");
   });
 
   it("exposes saved review comments on completed responses and Markdown documents", () => {
     expect(contentReviewHost).toContain("export function ContentReviewComments");
-    expect(ownerAgentResponseMarkdown).toContain("<ContentReviewComments targetId={reviewTarget.id} />");
-    expect(attachmentDocument).toContain('<ContentReviewComments targetId={`markdown-document:${document.request.path}`} />');
-    expect(documentPreview).toContain('<ContentReviewComments targetId={markdownReviewTarget.id} presentation="overlay" />');
+    expect(ownerAgentResponseMarkdown).toContain(
+      "<ContentReviewComments targetId={reviewTarget.id} />",
+    );
+    expect(attachmentDocument).toContain(
+      "<ContentReviewComments targetId={`markdown-document:${document.request.path}`} />",
+    );
+    expect(documentPreview).toContain(
+      '<ContentReviewComments targetId={markdownReviewTarget.id} presentation="overlay" />',
+    );
   });
 
   it("updates one regular Markdown attachment as comments are saved", () => {
     expect(contentReviewHost).toContain("const attachmentId = await runtime.attach(markdown)");
-    expect(contentReviewHost).toContain("attachmentByScopeRef.current.set(current.scope, attachmentId)");
+    expect(contentReviewHost).toContain(
+      "attachmentByScopeRef.current.set(current.scope, attachmentId)",
+    );
     expect(reviewAdmission).toContain("candidate.id !== previousAttachmentId");
     expect(reviewFeature).toContain("attachmentId: contentReviewAttachmentId");
   });
@@ -91,29 +159,49 @@ describe("content review", () => {
 
   it("keeps reviewed text ranges highlighted through the native TextView", () => {
     const anchors: ContentReviewComment["anchor"][] = [
-      { kind: "text", target, blockPath: "segment-0/paragraph-2", quote: "first", start: 4, end: 9 },
-      { kind: "text", target: { ...target, id: "other" }, blockPath: "segment-0/paragraph-2", quote: "other", start: 0, end: 5 },
+      {
+        kind: "text",
+        target,
+        blockPath: "segment-0/paragraph-2",
+        quote: "first",
+        start: 4,
+        end: 9,
+      },
+      {
+        kind: "text",
+        target: { ...target, id: "other" },
+        blockPath: "segment-0/paragraph-2",
+        quote: "other",
+        start: 0,
+        end: 5,
+      },
     ];
-    expect(contentReviewTextHighlights(anchors, target.id, "segment-0/paragraph-2", 2)).toEqual([{ start: 2, end: 7 }]);
-    expect(reviewableText).toContain("nativeModule?.setHighlights?.(reactTag, token, reviewHighlights)");
+    expect(contentReviewTextHighlights(anchors, target.id, "segment-0/paragraph-2", 2)).toEqual([
+      { start: 2, end: 7 },
+    ]);
+    expect(reviewableText).toContain(
+      "nativeModule?.setHighlights?.(reactTag, token, reviewHighlights)",
+    );
     expect(selectionModule).toContain("ReviewHighlightSpan");
     expect(selectionModule).toContain("REVIEW_HIGHLIGHT_COLOR");
   });
 
   it("serializes selected text as an inline Markdown quote", () => {
-    const comments: ContentReviewComment[] = [{
-      id: "one",
-      createdAt: 1,
-      body: "Make this claim concrete.",
-      anchor: {
-        kind: "text",
-        target,
-        blockPath: "segment-0/paragraph-2",
-        quote: "First line\nSecond line",
-        start: 4,
-        end: 26,
+    const comments: ContentReviewComment[] = [
+      {
+        id: "one",
+        createdAt: 1,
+        body: "Make this claim concrete.",
+        anchor: {
+          kind: "text",
+          target,
+          blockPath: "segment-0/paragraph-2",
+          quote: "First line\nSecond line",
+          start: 4,
+          end: 26,
+        },
       },
-    }];
+    ];
 
     const attachment = serializeContentReviewAttachment(comments);
     expect(attachment).toContain("kind: codewide-content-review");
@@ -130,7 +218,12 @@ describe("content review", () => {
       body: `Comment ${index + 1}`,
       anchor: {
         kind: "mermaid" as const,
-        target: { ...target, id: "document-1", label: "architecture.md", reference: "/repo/architecture.md" },
+        target: {
+          ...target,
+          id: "document-1",
+          label: "architecture.md",
+          reference: "/repo/architecture.md",
+        },
         diagramId: "segment-0/code-1",
         source,
         x,
@@ -146,12 +239,14 @@ describe("content review", () => {
   });
 
   it("serializes whole-response reviews without duplicating response text", () => {
-    const comments: ContentReviewComment[] = [{
-      id: "response",
-      createdAt: 1,
-      body: "Tighten the conclusion.",
-      anchor: { kind: "response", target },
-    }];
+    const comments: ContentReviewComment[] = [
+      {
+        id: "response",
+        createdAt: 1,
+        body: "Tighten the conclusion.",
+        anchor: { kind: "response", target },
+      },
+    ];
 
     const attachment = serializeContentReviewAttachment(comments);
     expect(attachment).toContain("Comment 1 · whole response");

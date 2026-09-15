@@ -148,9 +148,22 @@ const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  triggerDivider: { flexShrink: 0, color: colors.textDim, ...typeScale.label },
-  triggerCurrentShell: { flex: 1, minWidth: 0, alignSelf: "center" },
-  triggerCurrent: { flex: 1, minWidth: 0, color: colors.textMuted, ...typeScale.label },
+  triggerDivider: {
+    flexShrink: 0,
+    color: colors.textDim,
+    ...typeScale.label,
+  },
+  triggerCurrentShell: {
+    flex: 1,
+    minWidth: 0,
+    alignSelf: "center",
+  },
+  triggerCurrent: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   triggerProgress: {
     flexShrink: 0,
     color: colors.textDim,
@@ -158,8 +171,15 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   pressed: { opacity: 0.72 },
-  popover: { padding: 0, borderRadius: radii.large, overflow: "hidden" },
-  content: { gap: spacing.sm, padding: spacing.sm },
+  popover: {
+    padding: 0,
+    borderRadius: radii.large,
+    overflow: "hidden",
+  },
+  content: {
+    gap: spacing.sm,
+    padding: spacing.sm,
+  },
   heading: {
     minHeight: 22,
     flexDirection: "row",
@@ -167,13 +187,41 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.xs,
   },
-  title: { flex: 1, color: colors.text, ...typeScale.title },
-  progress: { color: colors.textMuted, ...typeScale.label, fontVariant: ["tabular-nums"] },
-  explanation: { color: colors.textMuted, ...typeScale.body },
+  title: {
+    flex: 1,
+    color: colors.text,
+    ...typeScale.title,
+  },
+  progress: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    fontVariant: ["tabular-nums"],
+  },
+  explanation: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
   steps: { gap: spacing.xs },
-  step: { minWidth: 0, flexDirection: "row", alignItems: "flex-start", gap: spacing.xs },
-  stepIcon: { flexShrink: 0, marginTop: spacing.optical },
-  stepTextShell: { flex: 1, minWidth: 0, alignSelf: "flex-start" },
-  stepText: { flex: 1, minWidth: 0, color: colors.text, ...typeScale.body },
+  step: {
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.xs,
+  },
+  stepIcon: {
+    flexShrink: 0,
+    marginTop: spacing.optical,
+  },
+  stepTextShell: {
+    flex: 1,
+    minWidth: 0,
+    alignSelf: "flex-start",
+  },
+  stepText: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    ...typeScale.body,
+  },
   completedStep: { color: colors.textMuted },
 });

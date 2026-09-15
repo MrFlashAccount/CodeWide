@@ -13,9 +13,10 @@ export function useTurnControlsRow(
   resourceId: string | null,
 ): TurnControlsRow | null {
   const query = useLiveQuery(
-    (builder) => database === null || resourceId === null
-      ? undefined
-      : builder.from({ row: database.turnControls }).where(({ row }) => eq(row.id, resourceId)),
+    (builder) =>
+      database === null || resourceId === null
+        ? undefined
+        : builder.from({ row: database.turnControls }).where(({ row }) => eq(row.id, resourceId)),
     [database, resourceId],
   );
   return query.data?.[0] ?? null;
@@ -26,9 +27,12 @@ export function useBackgroundTerminalsRow(
   resourceId: string | null,
 ): BackgroundTerminalsRow | null {
   const query = useLiveQuery(
-    (builder) => database === null || resourceId === null
-      ? undefined
-      : builder.from({ row: database.backgroundTerminals }).where(({ row }) => eq(row.id, resourceId)),
+    (builder) =>
+      database === null || resourceId === null
+        ? undefined
+        : builder
+            .from({ row: database.backgroundTerminals })
+            .where(({ row }) => eq(row.id, resourceId)),
     [database, resourceId],
   );
   return query.data?.[0] ?? null;
@@ -39,9 +43,10 @@ export function useThreadGoalRow(
   resourceId: string | null,
 ): ThreadGoalRow | null {
   const query = useLiveQuery(
-    (builder) => database === null || resourceId === null
-      ? undefined
-      : builder.from({ row: database.threadGoals }).where(({ row }) => eq(row.id, resourceId)),
+    (builder) =>
+      database === null || resourceId === null
+        ? undefined
+        : builder.from({ row: database.threadGoals }).where(({ row }) => eq(row.id, resourceId)),
     [database, resourceId],
   );
   return query.data?.[0] ?? null;
@@ -52,9 +57,10 @@ export function useTunnelRow(
   resourceId: string | null,
 ): TunnelRow | null {
   const query = useLiveQuery(
-    (builder) => database === null || resourceId === null
-      ? undefined
-      : builder.from({ row: database.tunnels }).where(({ row }) => eq(row.id, resourceId)),
+    (builder) =>
+      database === null || resourceId === null
+        ? undefined
+        : builder.from({ row: database.tunnels }).where(({ row }) => eq(row.id, resourceId)),
     [database, resourceId],
   );
   return query.data?.[0] ?? null;

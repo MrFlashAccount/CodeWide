@@ -1,4 +1,4 @@
-export interface DiagramPreview {
+interface DiagramPreview {
   readonly uri: string;
   readonly width: number;
   readonly height: number;
@@ -19,10 +19,20 @@ export function parseDiagramPreviewResult(serialized: string): DiagramPreviewRes
     }
     return { status: "error", message: value.message };
   }
-  if (value.type !== "preview"
-    || !("uri" in value) || typeof value.uri !== "string" || !value.uri.startsWith("file://")
-    || !("width" in value) || typeof value.width !== "number" || !Number.isFinite(value.width) || value.width <= 0
-    || !("height" in value) || typeof value.height !== "number" || !Number.isFinite(value.height) || value.height <= 0) {
+  if (
+    value.type !== "preview" ||
+    !("uri" in value) ||
+    typeof value.uri !== "string" ||
+    !value.uri.startsWith("file://") ||
+    !("width" in value) ||
+    typeof value.width !== "number" ||
+    !Number.isFinite(value.width) ||
+    value.width <= 0 ||
+    !("height" in value) ||
+    typeof value.height !== "number" ||
+    !Number.isFinite(value.height) ||
+    value.height <= 0
+  ) {
     throw new Error("Invalid diagram renderer response");
   }
   return {

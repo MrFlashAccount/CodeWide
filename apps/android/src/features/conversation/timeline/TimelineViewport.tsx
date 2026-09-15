@@ -9,6 +9,7 @@ import { useTimelineMeasurementBindings } from "./timelineMeasurementBindings";
 import { timelineItemKey } from "./timelineProjection";
 import { styles } from "./TimelineViewport.styles";
 import type { TimelineViewportProps } from "./TimelineViewportContract";
+
 export function TimelineViewport(props: TimelineViewportProps) {
   const { timelineRef } = props;
   const gestures = useTimelineGestureBindings(props);

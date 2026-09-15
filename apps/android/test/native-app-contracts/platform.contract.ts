@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { sourceObjectDeclaration } from "../source-contract";
 import {
   screen,
   imagePreviewHost,
@@ -108,22 +109,27 @@ it("preserves platform integration contracts — 1", () => {
   expect(mermaidNative).toContain("onContentProcessDidTerminate={restartRenderer}");
   expect(mermaidNative).toContain("onRenderProcessGone={restartRenderer}");
   expect(richMarkdown).toContain("style={[styles.tableViewport, minimumWidth > 0");
-  expect(richMarkdown).toContain(
-    'codeContainer: { width: "100%", minWidth: 0, maxWidth: "100%", alignSelf: "stretch"',
-  );
+  const codeContainerStyle = sourceObjectDeclaration(richMarkdown, "codeContainer");
+  expect(codeContainerStyle).toContain('width: "100%"');
+  expect(codeContainerStyle).toContain("minWidth: 0");
+  expect(codeContainerStyle).toContain('maxWidth: "100%"');
+  expect(codeContainerStyle).toContain('alignSelf: "stretch"');
   expect(richMarkdown).toContain("style={styles.tableHorizontalScroller}");
   expect(richMarkdown).not.toContain("tableVerticalScroller");
   expect(richMarkdown).not.toContain("showsVerticalScrollIndicator");
-  expect(richMarkdown).toContain("tableHorizontalScroller: { flexGrow: 0");
-  expect(richMarkdown).toContain("tableCell: { flexShrink: 0");
+  expect(sourceObjectDeclaration(richMarkdown, "tableHorizontalScroller")).toContain("flexGrow: 0");
+  expect(sourceObjectDeclaration(richMarkdown, "tableCell")).toContain("flexShrink: 0");
   expect(richMarkdown).not.toContain("borderLeftWidth: 3");
-  expect(richMarkdown).toContain("document: { minWidth: 0, gap: spacing.xxs }");
+  const documentStyle = sourceObjectDeclaration(richMarkdown, "document");
+  expect(documentStyle).toContain("minWidth: 0");
+  expect(documentStyle).toContain("gap: spacing.xxs");
   expect(richMarkdown).not.toContain('document: { minWidth: 0, maxWidth: "100%"');
   expect(richMarkdown).toContain("<View style={styles.document}>");
   expect(richMarkdown).not.toContain("documentFill:");
-  expect(documentPreviewHost).toContain(
-    'document: { width: "100%", minWidth: 0, alignSelf: "center"',
-  );
+  const previewDocumentStyle = sourceObjectDeclaration(documentPreviewHost, "document");
+  expect(previewDocumentStyle).toContain('width: "100%"');
+  expect(previewDocumentStyle).toContain("minWidth: 0");
+  expect(previewDocumentStyle).toContain('alignSelf: "center"');
   expect(documentPreviewHost).toContain("maxWidth: documentReadingWidth(textScale)");
   expect(screen).not.toContain(
     'historyViewport.phase === "loading" || !timelinePositioned ? "updating" : null',

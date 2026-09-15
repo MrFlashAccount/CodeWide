@@ -13,13 +13,17 @@ import { APP_MAX_FONT_SIZE_MULTIPLIER } from "./typography-policy";
 
 Uniwind.setTheme("dark");
 
+/** Provides the web HeroUI theme and overlay context to the application tree. */
 export function HeroUIRoot({ children }: { children: ReactNode }) {
   return (
     <HeroUINativeProviderRaw
       config={{
         devInfo: { stylingPrinciples: false },
         textProps: { allowFontScaling: true, maxFontSizeMultiplier: APP_MAX_FONT_SIZE_MULTIPLIER },
-        textInputProps: { allowFontScaling: true, maxFontSizeMultiplier: APP_MAX_FONT_SIZE_MULTIPLIER },
+        textInputProps: {
+          allowFontScaling: true,
+          maxFontSizeMultiplier: APP_MAX_FONT_SIZE_MULTIPLIER,
+        },
       }}
     >
       <ToastProvider

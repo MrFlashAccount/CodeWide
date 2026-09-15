@@ -20,10 +20,12 @@ export function OverlaySurfaceProvider({
   surface: OverlaySurface;
 }) {
   return (
-    <OverlaySurfaceContext.Provider value={{
-      surface,
-      ...(portalHostName === undefined ? {} : { portalHostName }),
-    }}>
+    <OverlaySurfaceContext.Provider
+      value={{
+        surface,
+        ...(portalHostName === undefined ? {} : { portalHostName }),
+      }}
+    >
       {children}
     </OverlaySurfaceContext.Provider>
   );

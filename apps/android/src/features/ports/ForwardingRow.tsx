@@ -9,6 +9,7 @@ import { type PortForwardingCandidate, type PortForwardingProfile } from "./port
 import { hasProfileError } from "./portForwardingList";
 import { styles } from "./PortForwardingManager.styles";
 import { candidateIcon, ServiceIcon, SmallAction } from "./PortPresentation";
+
 export function ForwardingRow(props: {
   profile: PortForwardingProfile;
   kind: PortForwardingCandidate["kind"];

@@ -7,7 +7,11 @@ export const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
-  rawLink: { color: colors.accent, ...typeScale.label, fontWeight: typeWeight.semibold },
+  rawLink: {
+    color: colors.accent,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
   protocolBody: {
     width: "100%",
     minWidth: 0,
@@ -15,7 +19,11 @@ export const styles = StyleSheet.create({
     alignSelf: "stretch",
     gap: spacing.xxs,
   },
-  menuActionSubtitle: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.optical },
+  menuActionSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.optical,
+  },
   controlSectionLabel: {
     color: colors.textMuted,
     ...typeScale.label,

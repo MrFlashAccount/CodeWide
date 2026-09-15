@@ -7,7 +7,9 @@ export type LegendInitialPositionProps =
   | { initialScrollIndex: { index: number; viewOffset?: number; viewPosition?: number } };
 
 /** LegendList requires its two initial-position modes to be mutually exclusive. */
-export function legendInitialPositionProps(position: TimelineInitialPosition): LegendInitialPositionProps {
+export function legendInitialPositionProps(
+  position: TimelineInitialPosition,
+): LegendInitialPositionProps {
   if (position.kind === "tail") return { initialScrollAtEnd: true };
   return {
     initialScrollIndex: {

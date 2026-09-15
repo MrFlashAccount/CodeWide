@@ -17,7 +17,16 @@ import {
   usePerformanceMetrics,
   type HermesHeapSnapshot,
 } from "../native/performance-metrics";
-import { colors, spacing, typeScale, typeWeight, iconSize, radii, layoutSize, controlSize } from "../theme";
+import {
+  colors,
+  spacing,
+  typeScale,
+  typeWeight,
+  iconSize,
+  radii,
+  layoutSize,
+  controlSize,
+} from "../theme";
 import { useAppFullscreenOverlay } from "./AppFullscreenOverlay";
 import { SpeedscopeProfileViewer } from "./SpeedscopeProfileViewer";
 import { AppText as Text } from "./Typography";
@@ -30,7 +39,10 @@ export function NavigationPerformanceHud() {
     getThreadNavigationProfileSnapshot,
   );
   const insets = useSafeAreaInsets();
-  const fullscreenOverlay = useAppFullscreenOverlay({ scope: "navigation-performance", lifecycle: null });
+  const fullscreenOverlay = useAppFullscreenOverlay({
+    scope: "navigation-performance",
+    lifecycle: null,
+  });
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [heapCaptureRunning, setHeapCaptureRunning] = useState(false);
@@ -41,9 +53,10 @@ export function NavigationPerformanceHud() {
   const current = metrics.current;
   const profile = profiles.active ?? profiles.last;
   const profileText = formatProfile(profile);
-  const frameText = current === null
-    ? "collecting frames"
-    : `${integer(current.renderedFps)} fps · p95 ${decimal(current.p95FrameMs)} ms · ${decimal(current.jankPercent)}% jank · ${bytes(current.pssBytes)}`;
+  const frameText =
+    current === null
+      ? "collecting frames"
+      : `${integer(current.renderedFps)} fps · p95 ${decimal(current.p95FrameMs)} ms · ${decimal(current.jankPercent)}% jank · ${bytes(current.pssBytes)}`;
   const copyReport = async () => {
     if (profile === null) return;
     await Clipboard.setStringAsync(serializeNavigationProfile(profile, current));
@@ -52,9 +65,17 @@ export function NavigationPerformanceHud() {
   };
   const openViewer = (title: string, fileName: string, content: string) => {
     setMenuOpen(false);
-    fullscreenOverlay.present(({ close }) => (
-      <SpeedscopeProfileViewer title={title} fileName={fileName} content={content} onClose={close} />
-    ), { dismissOnScopeUnmount: false });
+    fullscreenOverlay.present(
+      ({ close }) => (
+        <SpeedscopeProfileViewer
+          title={title}
+          fileName={fileName}
+          content={content}
+          onClose={close}
+        />
+      ),
+      { dismissOnScopeUnmount: false },
+    );
   };
   const hermesProfile = profile?.frames?.hermesProfile?.content ?? null;
   const captureHeap = async () => {
@@ -73,7 +94,7 @@ export function NavigationPerformanceHud() {
     ? "Running full GC and writing retained object graph…"
     : heapSnapshot !== null
       ? `Saved ${bytes(heapSnapshot.sizeBytes)} · attach from the chat composer`
-      : heapError ?? "Full retained object graph · saves to Downloads/CodeWide";
+      : (heapError ?? "Full retained object graph · saves to Downloads/CodeWide");
 
   return (
     <>
@@ -86,32 +107,54 @@ export function NavigationPerformanceHud() {
         testID="navigation-performance-hud"
         style={[styles.root, { top: insets.top, left: insets.left, right: insets.right }]}
       >
-        <View style={[styles.status, profile?.status === "active" ? styles.statusActive : styles.statusReady]} />
-        <Text numberOfLines={1} style={styles.text}>{copied ? "Full profile copied" : `${frameText}${profileText === "" ? "" : `  ·  ${profileText}`}`}</Text>
-        <Ionicons name={menuOpen ? "chevron-up" : "chevron-down"} size={iconSize.indicator} color={colors.textMuted} />
+        <View
+          style={[
+            styles.status,
+            profile?.status === "active" ? styles.statusActive : styles.statusReady,
+          ]}
+        />
+        <Text numberOfLines={1} style={styles.text}>
+          {copied
+            ? "Full profile copied"
+            : `${frameText}${profileText === "" ? "" : `  ·  ${profileText}`}`}
+        </Text>
+        <Ionicons
+          name={menuOpen ? "chevron-up" : "chevron-down"}
+          size={iconSize.indicator}
+          color={colors.textMuted}
+        />
       </Pressable>
       {menuOpen && (
-        <View testID="navigation-performance-menu" style={[styles.menu, { top: insets.top + 28, right: insets.right + 8 }]}>
+        <View
+          testID="navigation-performance-menu"
+          style={[styles.menu, { top: insets.top + 28, right: insets.right + 8 }]}
+        >
           {profile === null ? (
-            <Text style={styles.menuEmpty}>A completed navigation profile has not been captured yet.</Text>
+            <Text style={styles.menuEmpty}>
+              A completed navigation profile has not been captured yet.
+            </Text>
           ) : (
             <>
               <MenuAction
                 icon="git-compare-outline"
                 title="Navigation timeline"
                 subtitle={`${profile.stages.length} stages · ${profile.measures.length} measures · ${profile.visualEvents.length} UI events`}
-                onPress={() => openViewer(
-                  "Navigation timeline",
-                  `${profile.id}.speedscope.json`,
-                  serializeNavigationSpeedscopeProfile(profile),
-                )}
+                onPress={() =>
+                  openViewer(
+                    "Navigation timeline",
+                    `${profile.id}.speedscope.json`,
+                    serializeNavigationSpeedscopeProfile(profile),
+                  )
+                }
               />
               {hermesProfile !== null && (
                 <MenuAction
                   icon="flame-outline"
                   title="Hermes CPU profile"
                   subtitle={`${bytes(profile.frames?.hermesProfile?.sizeBytes ?? 0)} · sampled stacks`}
-                  onPress={() => openViewer("Hermes CPU profile", `${profile.id}.cpuprofile`, hermesProfile)}
+                  onPress={() =>
+                    openViewer("Hermes CPU profile", `${profile.id}.cpuprofile`, hermesProfile)
+                  }
                 />
               )}
             </>
@@ -141,7 +184,14 @@ export function NavigationPerformanceHud() {
   );
 }
 
-function MenuAction({ icon, title, subtitle, busy = false, disabled = false, onPress }: {
+function MenuAction({
+  icon,
+  title,
+  subtitle,
+  busy = false,
+  disabled = false,
+  onPress,
+}: {
   icon: ComponentProps<typeof Ionicons>["name"];
   title: string;
   subtitle: string;
@@ -156,12 +206,22 @@ function MenuAction({ icon, title, subtitle, busy = false, disabled = false, onP
       accessibilityState={{ busy, disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.menuAction, disabled && styles.menuActionDisabled, pressed && styles.menuActionPressed]}
+      style={({ pressed }) => [
+        styles.menuAction,
+        disabled && styles.menuActionDisabled,
+        pressed && styles.menuActionPressed,
+      ]}
     >
-      {busy ? <ActivityIndicator size="small" color={colors.textMuted} /> : <Ionicons name={icon} size={iconSize.action} color={colors.textMuted} />}
+      {busy ? (
+        <ActivityIndicator size="small" color={colors.textMuted} />
+      ) : (
+        <Ionicons name={icon} size={iconSize.action} color={colors.textMuted} />
+      )}
       <View style={styles.menuActionText}>
         <Text style={styles.menuActionTitle}>{title}</Text>
-        <Text numberOfLines={1} style={styles.menuActionSubtitle}>{subtitle}</Text>
+        <Text numberOfLines={1} style={styles.menuActionSubtitle}>
+          {subtitle}
+        </Text>
       </View>
     </Pressable>
   );
@@ -180,46 +240,62 @@ function serializeNavigationProfile(
       samplingProfile = hermes.content;
     }
   }
-  return JSON.stringify({
-    version: 2,
-    kind: "codewide-navigation-profile",
-    collectedAt: new Date().toISOString(),
-    app: {
-      version: Constants.expoConfig?.version ?? null,
-      runtimeVersion: Updates.runtimeVersion ?? null,
-      updateId: Updates.updateId ?? null,
-    },
-    navigation: {
-      ...profile,
-      frames: profile.frames === null ? null : {
-        ...profile.frames,
-        hermesProfile: hermes === null ? null : {
-          format: hermes.format,
-          sizeBytes: hermes.sizeBytes,
-          error: hermes.error,
-          included: samplingProfile !== null,
-        },
+  return JSON.stringify(
+    {
+      version: 2,
+      kind: "codewide-navigation-profile",
+      collectedAt: new Date().toISOString(),
+      app: {
+        version: Constants.expoConfig?.version ?? null,
+        runtimeVersion: Updates.runtimeVersion ?? null,
+        updateId: Updates.updateId ?? null,
       },
+      navigation: {
+        ...profile,
+        frames:
+          profile.frames === null
+            ? null
+            : {
+                ...profile.frames,
+                hermesProfile:
+                  hermes === null
+                    ? null
+                    : {
+                        format: hermes.format,
+                        sizeBytes: hermes.sizeBytes,
+                        error: hermes.error,
+                        included: samplingProfile !== null,
+                      },
+              },
+      },
+      nativeSample: current,
+      hermesSamplingProfile: samplingProfile,
     },
-    nativeSample: current,
-    hermesSamplingProfile: samplingProfile,
-  }, null, 2);
+    null,
+    2,
+  );
 }
 
 function formatProfile(profile: ThreadNavigationProfile | null): string {
   if (profile === null) return "chat profile waiting";
-  const prefix = profile.status === "active" ? "chat profiling" : `chat ${integer(profile.totalMs)} ms`;
-  const stage = profile.bottleneckStage === null
-    ? profile.currentStage
-    : `${shortStage(profile.bottleneckStage)} ${integer(profile.bottleneckMs)} ms`;
+  const prefix =
+    profile.status === "active" ? "chat profiling" : `chat ${integer(profile.totalMs)} ms`;
+  const stage =
+    profile.bottleneckStage === null
+      ? profile.currentStage
+      : `${shortStage(profile.bottleneckStage)} ${integer(profile.bottleneckMs)} ms`;
   const rows = `${profile.uniqueRowsCommitted} rows/${profile.rowCommits} commits`;
-  const slowest = profile.measures.reduce<(typeof profile.measures)[number] | null>((current, measure) => (
-    current === null || measure.durationMs > current.durationMs ? measure : current
-  ), null);
-  const hotPath = slowest === null ? "" : ` · hot ${slowest.name} ${integer(slowest.durationMs)} ms`;
-  const frames = profile.frames === null
-    ? ""
-    : ` · ${profile.frames.jankFrames} jank/${profile.frames.droppedFrameEstimate} missed`;
+  const slowest = profile.measures.reduce<(typeof profile.measures)[number] | null>(
+    (current, measure) =>
+      current === null || measure.durationMs > current.durationMs ? measure : current,
+    null,
+  );
+  const hotPath =
+    slowest === null ? "" : ` · hot ${slowest.name} ${integer(slowest.durationMs)} ms`;
+  const frames =
+    profile.frames === null
+      ? ""
+      : ` · ${profile.frames.jankFrames} jank/${profile.frames.droppedFrameEstimate} missed`;
   return `${prefix} · ${stage} · ${rows}${hotPath}${frames}`;
 }
 
@@ -262,10 +338,19 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  status: { width: 6, height: 6, borderRadius: radii.pill, flexShrink: 0 },
+  status: {
+    width: 6,
+    height: 6,
+    borderRadius: radii.pill,
+    flexShrink: 0,
+  },
   statusActive: { backgroundColor: colors.amber },
   statusReady: { backgroundColor: colors.green },
-  text: { color: colors.textMuted, ...typeScale.caption, flexShrink: 1 },
+  text: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    flexShrink: 1,
+  },
   menu: {
     position: "absolute",
     zIndex: 20_001,
@@ -287,8 +372,22 @@ const styles = StyleSheet.create({
   },
   menuActionPressed: { backgroundColor: colors.surfaceHover },
   menuActionDisabled: { opacity: 0.68 },
-  menuActionText: { flex: 1, minWidth: 0 },
-  menuActionTitle: { color: colors.text, ...typeScale.body, fontWeight: typeWeight.medium },
-  menuActionSubtitle: { color: colors.textMuted, ...typeScale.caption, },
-  menuEmpty: { color: colors.textMuted, ...typeScale.label, padding: spacing.md },
+  menuActionText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  menuActionTitle: {
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.medium,
+  },
+  menuActionSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  menuEmpty: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    padding: spacing.md,
+  },
 });

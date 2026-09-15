@@ -2,9 +2,16 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
-  emptyText: { color: colors.textMuted, ...typeScale.title },
+  emptyText: {
+    color: colors.textMuted,
+    ...typeScale.title,
+  },
   conversationBackendRefreshIndicator: { flexShrink: 0 },
-  conversationSubtitle: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.optical },
+  conversationSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.optical,
+  },
   historyLoadingIndicator: {
     position: "absolute",
     top: spacing.xs,

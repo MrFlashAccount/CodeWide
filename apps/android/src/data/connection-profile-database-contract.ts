@@ -2,6 +2,7 @@ import type { Collection } from "@tanstack/react-db";
 import type { ConnectionInput, ConnectionUpdateInput } from "./connection-validation";
 import type { ConnectionProfileRow, StoredConnection } from "./connection-profile-types";
 
+/** Owns persisted connection profiles and their migration into runtime records. */
 export type ConnectionProfileDatabase = {
   collection: Collection<ConnectionProfileRow, string>;
   project(rows?: ConnectionProfileRow[]): StoredConnection[];
@@ -20,6 +21,7 @@ export type ConnectionProfileDatabase = {
   close(): void;
 };
 
+/** Validated connection fields required to start a remote runtime. */
 export type RuntimeConnectionConfig = {
   connectionId: string;
   endpoint: string;

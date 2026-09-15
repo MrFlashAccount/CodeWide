@@ -64,9 +64,9 @@ export function subscribeGlobalError(listener: () => void): () => void {
 function getErrorUtils(): ErrorUtilsLike | null {
   const candidate = (globalThis as typeof globalThis & { ErrorUtils?: ErrorUtilsLike }).ErrorUtils;
   if (
-    candidate === undefined
-    || typeof candidate.getGlobalHandler !== "function"
-    || typeof candidate.setGlobalHandler !== "function"
+    candidate === undefined ||
+    typeof candidate.getGlobalHandler !== "function" ||
+    typeof candidate.setGlobalHandler !== "function"
   ) {
     return null;
   }

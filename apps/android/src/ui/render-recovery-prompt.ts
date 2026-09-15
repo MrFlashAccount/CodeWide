@@ -22,7 +22,9 @@ export function renderRecoveryPrompt(failure: RecoverableRenderFailure): string 
   return [
     "Fix a localized render crash in the CodeWide Android client.",
     `Surface: ${failure.scope} / ${failure.label}`,
-    ...(context === undefined || context === "" ? [] : [`Context:\n${bounded(context, MAX_CONTEXT_CHARS)}`]),
+    ...(context === undefined || context === ""
+      ? []
+      : [`Context:\n${bounded(context, MAX_CONTEXT_CHARS)}`]),
     `Error:\n${failure.error.message || "Unknown React render error"}`,
     `JavaScript stack:\n${bounded(failure.error.stack ?? "Unavailable", MAX_ERROR_STACK_CHARS)}`,
     `React component stack:\n${bounded(failure.componentStack || "Unavailable", MAX_COMPONENT_STACK_CHARS)}`,

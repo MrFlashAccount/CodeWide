@@ -18,6 +18,7 @@ import { formatTurnMeta } from "../turns/turnPresentation";
 import { TurnTimelineItem } from "../turns/TurnTimelineItem";
 import type { UseThreadTimelineProps } from "./ThreadTimeline.types";
 import { type TimelineItem } from "./timelineTypes";
+
 export function useThreadTimeline(props: UseThreadTimelineProps) {
   const renderTimelineItem = ({ item }: LegendListRenderItemProps<TimelineItem>) => {
     const boundaryKey =
@@ -74,9 +75,7 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
                       animateLiveUpdates={props.animateLiveUpdates}
                       usage={usage}
                       forceExpanded={props.threadSearchActive}
-                      requestPrompt={
-                        item.turn.status === "inProgress" ? props.requestPrompt : null
-                      }
+                      requestPrompt={item.turn.status === "inProgress" ? props.requestPrompt : null}
                       {...(props.getTransferAccess === undefined
                         ? {}
                         : { getTransferAccess: props.getStableTransferAccess })}
@@ -158,7 +157,11 @@ export function useThreadTimeline(props: UseThreadTimelineProps) {
 
 const styles = StyleSheet.create({
   timelineRow: { width: "100%" },
-  timelineItem: { width: "100%", maxWidth: 880, alignSelf: "center" },
+  timelineItem: {
+    width: "100%",
+    maxWidth: 880,
+    alignSelf: "center",
+  },
   timelineItemWide: { alignSelf: "flex-start" },
   turnMeta: {
     flexDirection: "row",
@@ -167,7 +170,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xxs,
     paddingVertical: spacing.optical,
   },
-  turnMetaText: { color: colors.textMuted, ...typeScale.caption },
+  turnMetaText: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
 });
 
 export function useThreadTimelineActions(

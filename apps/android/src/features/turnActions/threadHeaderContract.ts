@@ -1,4 +1,6 @@
 import type { ThreadForkOptions } from "../../data/thread-fork";
+
+/** Thread identity, state, and mutation actions exposed to its header. */
 export type ThreadHeaderProps = {
   threadId: string;
   archived: boolean;

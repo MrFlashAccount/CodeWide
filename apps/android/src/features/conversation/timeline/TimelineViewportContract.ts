@@ -7,6 +7,8 @@ import type {
   TimelineInitialPosition,
 } from "../../../rendering/ThreadTimelineList";
 import type { TimelineItem } from "./timelineTypes";
+
+/** Content, measurements, and controls owned by the timeline viewport. */
 export type TimelineViewportProps = {
   footerContent: ReactElement | null;
   emptyContent: ReactElement | null;

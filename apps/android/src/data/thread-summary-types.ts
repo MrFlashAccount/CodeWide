@@ -45,14 +45,18 @@ export function normalizeStoredThreadSummary(row: StoredThreadSummary): StoredTh
 }
 
 export function normalizeThreadStatus(value: unknown): Thread["status"] {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return { type: "notLoaded" };
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return { type: "notLoaded" };
   const status = value as Record<string, unknown>;
   if (status.type === "active") {
     return {
       type: "active",
-      activeFlags: Array.isArray(status.activeFlags) ? status.activeFlags as ActiveThreadStatus["activeFlags"] : [],
+      activeFlags: Array.isArray(status.activeFlags)
+        ? (status.activeFlags as ActiveThreadStatus["activeFlags"])
+        : [],
     };
   }
-  if (status.type === "idle" || status.type === "notLoaded" || status.type === "systemError") return { type: status.type };
+  if (status.type === "idle" || status.type === "notLoaded" || status.type === "systemError")
+    return { type: status.type };
   return { type: "notLoaded" };
 }

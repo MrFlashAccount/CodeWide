@@ -81,11 +81,41 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingVertical: spacing.xs,
   },
-  dot: { width: 8, height: 8, borderRadius: radii.pill, marginTop: spacing.compact },
-  content: { flex: 1, minWidth: 0, gap: spacing.xxs },
-  titleRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
-  name: { flex: 1, minWidth: 0, ...typeScale.body, color: colors.text },
-  metadataRow: { flexDirection: "row", alignItems: "center", gap: spacing.optical, minWidth: 0 },
-  metadata: { ...typeScale.caption, color: colors.textDim, flexShrink: 0 },
-  date: { flexShrink: 1, minWidth: 0 },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: radii.pill,
+    marginTop: spacing.compact,
+  },
+  content: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.xxs,
+  },
+  titleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  name: {
+    flex: 1,
+    minWidth: 0,
+    ...typeScale.body,
+    color: colors.text,
+  },
+  metadataRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.optical,
+    minWidth: 0,
+  },
+  metadata: {
+    ...typeScale.caption,
+    color: colors.textDim,
+    flexShrink: 0,
+  },
+  date: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
 });

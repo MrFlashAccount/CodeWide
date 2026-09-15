@@ -32,15 +32,31 @@ export interface MessageSearchPage {
 /** Validates the remote search surface before results can reach navigation. */
 export function parseMessageSearchPage(value: unknown): MessageSearchPage {
   const page = record(value);
-  if (!Array.isArray(page.data) || typeof page.indexing !== "boolean") throw new Error("Invalid search response");
-  return { data: page.data.map(parseHit), nextOffset: nullableInteger(page.nextOffset), indexing: page.indexing, failedSources: integer(page.failedSources) };
+  if (!Array.isArray(page.data) || typeof page.indexing !== "boolean")
+    throw new Error("Invalid search response");
+  return {
+    data: page.data.map(parseHit),
+    nextOffset: nullableInteger(page.nextOffset),
+    indexing: page.indexing,
+    failedSources: integer(page.failedSources),
+  };
 }
 
 function parseHit(value: unknown): MessageSearchHit {
   const hit = record(value);
-  if (hit.kind !== "user_message" && hit.kind !== "agent_message" && hit.kind !== "thread") throw new Error("Invalid search result kind");
-  return { messageId: integer(hit.messageId), threadId: string(hit.threadId), turnId: string(hit.turnId), title: string(hit.title), project: string(hit.project),
-    timestamp: string(hit.timestamp), sourceOffset: integer(hit.sourceOffset), kind: hit.kind, excerpt: string(hit.excerpt) };
+  if (hit.kind !== "user_message" && hit.kind !== "agent_message" && hit.kind !== "thread")
+    throw new Error("Invalid search result kind");
+  return {
+    messageId: integer(hit.messageId),
+    threadId: string(hit.threadId),
+    turnId: string(hit.turnId),
+    title: string(hit.title),
+    project: string(hit.project),
+    timestamp: string(hit.timestamp),
+    sourceOffset: integer(hit.sourceOffset),
+    kind: hit.kind,
+    excerpt: string(hit.excerpt),
+  };
 }
 
 export interface SearchContextQuery {
@@ -49,7 +65,7 @@ export interface SearchContextQuery {
   readonly direction: "around" | "older" | "newer";
 }
 
-export interface SearchContextMessage {
+interface SearchContextMessage {
   readonly messageId: number;
   readonly turnId: string;
   readonly sourceOffset: number;
@@ -79,30 +95,54 @@ export function parseSearchConversationPage(value: unknown): SearchConversationP
 export function parseSearchContext(value: unknown): SearchContextPage {
   const page = record(value);
   if (!Array.isArray(page.messages)) throw new Error("Invalid search context");
-  return { messages: page.messages.map(parseContextMessage), older: nullableInteger(page.older), newer: nullableInteger(page.newer) };
+  return {
+    messages: page.messages.map(parseContextMessage),
+    older: nullableInteger(page.older),
+    newer: nullableInteger(page.newer),
+  };
 }
 
 function parseContextMessage(value: unknown): SearchContextMessage {
   const message = record(value);
-  if (message.kind !== "user_message" && message.kind !== "agent_message") throw new Error("Invalid context message kind");
-  return { messageId: integer(message.messageId), turnId: string(message.turnId), sourceOffset: integer(message.sourceOffset), timestamp: string(message.timestamp), kind: message.kind, text: string(message.text) };
+  if (message.kind !== "user_message" && message.kind !== "agent_message")
+    throw new Error("Invalid context message kind");
+  return {
+    messageId: integer(message.messageId),
+    turnId: string(message.turnId),
+    sourceOffset: integer(message.sourceOffset),
+    timestamp: string(message.timestamp),
+    kind: message.kind,
+    text: string(message.text),
+  };
 }
 
 function record(value: unknown): Record<string, unknown> {
   if (!isRecord(value)) throw new Error("Invalid search object");
   return value;
 }
-function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
-function string(value: unknown): string { if (typeof value !== "string") throw new Error("Invalid search text"); return value; }
-function integer(value: unknown): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error("Invalid search position"); return value; }
-function nullableInteger(value: unknown): number | null { return value === null ? null : integer(value); }
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function string(value: unknown): string {
+  if (typeof value !== "string") throw new Error("Invalid search text");
+  return value;
+}
+function integer(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new Error("Invalid search position");
+  return value;
+}
+function nullableInteger(value: unknown): number | null {
+  return value === null ? null : integer(value);
+}
 
 /** Inclusive date-picker days become an exclusive next-day boundary in local time. */
 export function searchDateBoundary(value: string, end: boolean): string | null {
   if (value.trim() === "") return null;
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) throw new Error("Use YYYY-MM-DD for dates");
   const date = new Date(`${value}T00:00:00`);
-  if (!Number.isFinite(date.getTime()) || date.getDate() !== Number(value.slice(-2))) throw new Error("Invalid date");
+  if (!Number.isFinite(date.getTime()) || date.getDate() !== Number(value.slice(-2)))
+    throw new Error("Invalid date");
   if (end) date.setDate(date.getDate() + 1);
   return date.toISOString();
 }

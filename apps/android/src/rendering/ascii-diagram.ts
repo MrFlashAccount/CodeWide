@@ -21,7 +21,10 @@ type SvgTextFragment = {
  * presentation. Unicode box drawing is a strong signal; ASCII-only diagrams
  * additionally require an untyped/plain-text fence.
  */
-export function looksLikeAsciiDiagram(source: string, language: string | null | undefined): boolean {
+export function looksLikeAsciiDiagram(
+  source: string,
+  language: string | null | undefined,
+): boolean {
   const lines = source.replace(/\r\n?/gu, "\n").split("\n");
   if (lines.length < 4 || source.length > 128 * 1024) return false;
 
@@ -30,27 +33,41 @@ export function looksLikeAsciiDiagram(source: string, language: string | null | 
   const connectorLines = lines.filter((line) => /[┌┐└┘├┤┬┴┼│─━┃╭╮╯╰╱╲]/u.test(line)).length;
   if (unicodeConnectors >= 4 && unicodeArrows >= 1 && connectorLines >= 3) return true;
 
-  const normalizedLanguage = (language ?? "").trim().toLocaleLowerCase().replace(/^language-/u, "");
+  const normalizedLanguage = (language ?? "")
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/^language-/u, "");
   if (!PLAIN_TEXT_LANGUAGES.has(normalizedLanguage)) return false;
   const asciiConnectors = source.match(ASCII_CONNECTOR_PATTERN)?.length ?? 0;
   const asciiArrows = source.match(ASCII_ARROW_PATTERN)?.length ?? 0;
-  const asciiConnectorLines = lines.filter((line) => /(?:[-=+|.']{3,}|(?:<[-=]+|[-=]+>))/u.test(line)).length;
+  const asciiConnectorLines = lines.filter((line) =>
+    /(?:[-=+|.']{3,}|(?:<[-=]+|[-=]+>))/u.test(line),
+  ).length;
   return asciiConnectors >= 3 && asciiArrows >= 1 && asciiConnectorLines >= 3;
 }
 
 function decodeXmlText(value: string): string {
-  return value.replace(/&(?:#x([\da-f]+)|#(\d+)|(amp|apos|gt|lt|quot));/giu, (entity, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
-    if (hex !== undefined) return String.fromCodePoint(Number.parseInt(hex, 16));
-    if (decimal !== undefined) return String.fromCodePoint(Number.parseInt(decimal, 10));
-    switch (named?.toLocaleLowerCase()) {
-      case "amp": return "&";
-      case "apos": return "'";
-      case "gt": return ">";
-      case "lt": return "<";
-      case "quot": return '"';
-      default: return entity;
-    }
-  });
+  return value.replace(
+    /&(?:#x([\da-f]+)|#(\d+)|(amp|apos|gt|lt|quot));/giu,
+    (entity, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
+      if (hex !== undefined) return String.fromCodePoint(Number.parseInt(hex, 16));
+      if (decimal !== undefined) return String.fromCodePoint(Number.parseInt(decimal, 10));
+      switch (named?.toLocaleLowerCase()) {
+        case "amp":
+          return "&";
+        case "apos":
+          return "'";
+        case "gt":
+          return ">";
+        case "lt":
+          return "<";
+        case "quot":
+          return '"';
+        default:
+          return entity;
+      }
+    },
+  );
 }
 
 function escapeXmlText(value: string): string {
@@ -98,12 +115,20 @@ export function repairSvgbobUnicodeText(source: string): string {
     if (x === null || y === null || match.index === undefined) continue;
     const decoded = decodeXmlText(content);
     if (!/[^\u0000-\u007f]/u.test(decoded)) continue;
-    fragments.push({ attributes, decoded, end: match.index + match[0].length, start: match.index, x, y });
+    fragments.push({
+      attributes,
+      decoded,
+      end: match.index + match[0].length,
+      start: match.index,
+      x,
+      y,
+    });
   }
   if (fragments.length < 2) return source;
 
   const parent = fragments.map((_, index) => index);
-  const find = (index: number): number => parent[index] === index ? index : (parent[index] = find(parent[index]!));
+  const find = (index: number): number =>
+    parent[index] === index ? index : (parent[index] = find(parent[index]!));
   const unite = (left: number, right: number) => {
     const leftRoot = find(left);
     const rightRoot = find(right);
@@ -111,7 +136,12 @@ export function repairSvgbobUnicodeText(source: string): string {
   };
   const range = (fragment: SvgTextFragment) => ({
     start: fragment.x,
-    end: fragment.x + Array.from(fragment.decoded).reduce((width, character) => width + utf8Width(character) * SVGBOB_CELL_WIDTH, 0),
+    end:
+      fragment.x +
+      Array.from(fragment.decoded).reduce(
+        (width, character) => width + utf8Width(character) * SVGBOB_CELL_WIDTH,
+        0,
+      ),
   });
   for (let left = 0; left < fragments.length; left += 1) {
     const leftFragment = fragments[left]!;
@@ -148,11 +178,22 @@ export function repairSvgbobUnicodeText(source: string): string {
     for (let x = occupied[0]![0]; x <= occupied[occupied.length - 1]![0]; x += SVGBOB_CELL_WIDTH) {
       ordered.push([x, cells.get(x) ?? " "]);
     }
-    const leftmost = group.reduce((current, fragment) => fragment.x < current.x ? fragment : current);
-    const keeper = group.reduce((current, fragment) => fragment.start < current.start ? fragment : current);
-    const attributes = replaceSvgAttribute(leftmost.attributes, "x", ordered.map(([x]) => x).join(" "));
+    const leftmost = group.reduce((current, fragment) =>
+      fragment.x < current.x ? fragment : current,
+    );
+    const keeper = group.reduce((current, fragment) =>
+      fragment.start < current.start ? fragment : current,
+    );
+    const attributes = replaceSvgAttribute(
+      leftmost.attributes,
+      "x",
+      ordered.map(([x]) => x).join(" "),
+    );
     const content = ordered.map(([, character]) => character).join("");
-    replacements.set(keeper.start, { end: keeper.end, value: `<text${attributes}>${escapeXmlText(content)}</text>` });
+    replacements.set(keeper.start, {
+      end: keeper.end,
+      value: `<text${attributes}>${escapeXmlText(content)}</text>`,
+    });
     for (const fragment of group) {
       if (fragment !== keeper) replacements.set(fragment.start, { end: fragment.end, value: "" });
     }
@@ -161,7 +202,9 @@ export function repairSvgbobUnicodeText(source: string): string {
 
   let result = "";
   let cursor = 0;
-  for (const [start, replacement] of [...replacements.entries()].sort(([left], [right]) => left - right)) {
+  for (const [start, replacement] of [...replacements.entries()].sort(
+    ([left], [right]) => left - right,
+  )) {
     result += source.slice(cursor, start) + replacement.value;
     cursor = replacement.end;
   }
@@ -179,6 +222,6 @@ export function themedAsciiDiagramSvg(source: string): string {
 `;
   const themed = repairSvgbobUnicodeText(source).replace("</style>", `${theme}</style>`);
   return /<svg\b[^>]*\bclass=/u.test(themed)
-    ? themed.replace(/<svg\b([^>]*\bclass=["'])/u, '<svg$1svgbob ')
+    ? themed.replace(/<svg\b([^>]*\bclass=["'])/u, "<svg$1svgbob ")
     : themed.replace("<svg", '<svg class="svgbob"');
 }

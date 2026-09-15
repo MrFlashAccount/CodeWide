@@ -16,16 +16,17 @@ export function attachmentUploadPath(
 ): string {
   const session = threadId.trim();
   if (
-    session.length === 0
-    || session.length > MAX_THREAD_ID_CHARS
-    || !/^[a-zA-Z0-9_-]+$/u.test(session)
+    session.length === 0 ||
+    session.length > MAX_THREAD_ID_CHARS ||
+    !/^[a-zA-Z0-9_-]+$/u.test(session)
   ) {
     throw new Error("A valid thread ID is required before attaching files");
   }
-  const sanitized = originalName
-    .replace(/[\\/\u0000-\u001f\u007f]/gu, "_")
-    .trim()
-    .slice(-MAX_ATTACHMENT_FILENAME_CHARS) || "attachment";
+  const sanitized =
+    originalName
+      .replace(/[\\/\u0000-\u001f\u007f]/gu, "_")
+      .trim()
+      .slice(-MAX_ATTACHMENT_FILENAME_CHARS) || "attachment";
   const filename = `${Math.max(0, Math.floor(now)).toString(36)}-${nonce.replace(/[^a-z\d_-]/giu, "").slice(0, 16) || "file"}-${sanitized}`;
   return `sessions/${session}/files/${filename}`;
 }

@@ -3,6 +3,8 @@ import type { TimelineItem } from "./timeline/timelineTypes";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { Dispatch, SetStateAction } from "react";
 import type { ThreadCurrentOutcome } from "../../data/thread-current-outcome";
+
+/** Layout and action contract for the conversation's bottom chrome. */
 export type ConversationBottomChromeProps = {
   setBottomChromeHeight: Dispatch<SetStateAction<number>>;
   readOnly: boolean;

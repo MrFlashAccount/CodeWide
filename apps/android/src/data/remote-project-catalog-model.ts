@@ -2,14 +2,18 @@ import { observable, type Observable } from "@legendapp/state";
 
 import type { RemoteProject } from "./remote-projects";
 
-export type RemoteProjectCatalogSnapshot = {
+type RemoteProjectCatalogSnapshot = {
   projectsByConnection: Record<string, RemoteProject[]>;
   errorsByConnection: Record<string, string | null>;
 };
 
 export type RemoteProjectCatalogModel = {
   snapshot$: Observable<RemoteProjectCatalogSnapshot>;
-  resource(connectionId: string, revision: string, loader: () => Promise<RemoteProject[]>): Observable<boolean>;
+  resource(
+    connectionId: string,
+    revision: string,
+    loader: () => Promise<RemoteProject[]>,
+  ): Observable<boolean>;
   retain(connectionId: string): () => void;
   mergeProject(connectionId: string, project: RemoteProject): void;
   clear(): void;
@@ -39,9 +43,18 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
   const resources = new Map<string, ProjectResource>();
   const retainCounts = new Map<string, number>();
 
-  const scheduleRetry = (connectionId: string, record: ProjectResource, immediate: boolean): void => {
-    if (record.retryTimer !== null || record.loadingRevision !== null || (retainCounts.get(connectionId) ?? 0) === 0) return;
-    const delay = immediate ? 0 : Math.min(250 * (2 ** record.retryAttempt), 5_000);
+  const scheduleRetry = (
+    connectionId: string,
+    record: ProjectResource,
+    immediate: boolean,
+  ): void => {
+    if (
+      record.retryTimer !== null ||
+      record.loadingRevision !== null ||
+      (retainCounts.get(connectionId) ?? 0) === 0
+    )
+      return;
+    const delay = immediate ? 0 : Math.min(250 * 2 ** record.retryAttempt, 5_000);
     if (!immediate) record.retryAttempt += 1;
     record.retryTimer = setTimeout(() => {
       record.retryTimer = null;
@@ -66,42 +79,57 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
     record.loader = loader;
     record.failed = false;
     record.mergedWhileLoading.clear();
-    return Promise.resolve().then(loader).then((projects) => {
-      const current = resources.get(connectionId);
-      if (current !== record || current.generation !== generation || current.revision !== revision) return false;
-      current.loadingRevision = null;
-      current.retryAttempt = 0;
-      // A pin/add acknowledgement is newer than the list read already in flight.
-      let resolvedProjects = projects;
-      if (current.mergedWhileLoading.size > 0) {
-        resolvedProjects = projects.map((project) => current.mergedWhileLoading.get(project.path) ?? project);
-        for (const [path, project] of current.mergedWhileLoading) {
-          if (!projects.some((candidate) => candidate.path === path)) resolvedProjects.push(project);
-        }
-      }
-      current.mergedWhileLoading.clear();
-      snapshot$.projectsByConnection.set({
-        ...snapshot$.projectsByConnection.peek(),
-        [connectionId]: resolvedProjects,
-      });
-      snapshot$.errorsByConnection.set({
-        ...snapshot$.errorsByConnection.peek(),
-        [connectionId]: null,
-      });
-      return true;
-    }).catch((cause: unknown) => {
-      const current = resources.get(connectionId);
-      if (current === record && current.generation === generation && current.revision === revision) {
+    return Promise.resolve()
+      .then(loader)
+      .then((projects) => {
+        const current = resources.get(connectionId);
+        if (
+          current !== record ||
+          current.generation !== generation ||
+          current.revision !== revision
+        )
+          return false;
         current.loadingRevision = null;
-        current.failed = true;
+        current.retryAttempt = 0;
+        // A pin/add acknowledgement is newer than the list read already in flight.
+        let resolvedProjects = projects;
+        if (current.mergedWhileLoading.size > 0) {
+          resolvedProjects = projects.map(
+            (project) => current.mergedWhileLoading.get(project.path) ?? project,
+          );
+          for (const [path, project] of current.mergedWhileLoading) {
+            if (!projects.some((candidate) => candidate.path === path))
+              resolvedProjects.push(project);
+          }
+        }
+        current.mergedWhileLoading.clear();
+        snapshot$.projectsByConnection.set({
+          ...snapshot$.projectsByConnection.peek(),
+          [connectionId]: resolvedProjects,
+        });
         snapshot$.errorsByConnection.set({
           ...snapshot$.errorsByConnection.peek(),
-          [connectionId]: cause instanceof Error ? cause.message : "Could not load projects",
+          [connectionId]: null,
         });
-        scheduleRetry(connectionId, current, false);
-      }
-      return false;
-    });
+        return true;
+      })
+      .catch((cause: unknown) => {
+        const current = resources.get(connectionId);
+        if (
+          current === record &&
+          current.generation === generation &&
+          current.revision === revision
+        ) {
+          current.loadingRevision = null;
+          current.failed = true;
+          snapshot$.errorsByConnection.set({
+            ...snapshot$.errorsByConnection.peek(),
+            [connectionId]: cause instanceof Error ? cause.message : "Could not load projects",
+          });
+          scheduleRetry(connectionId, current, false);
+        }
+        return false;
+      });
   }
 
   return {
@@ -121,7 +149,9 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
           mergedWhileLoading: new Map(),
         };
         resources.set(connectionId, record);
-        record.ready$ = observable(beginLoad(connectionId, revision, loader, record)) as unknown as Observable<boolean>;
+        record.ready$ = observable(
+          beginLoad(connectionId, revision, loader, record),
+        ) as unknown as Observable<boolean>;
       } else if (record.revision !== revision && record.loadingRevision !== revision) {
         // Connection reconnection is a stale-while-refresh boundary: keep the
         // last usable catalog until the replacement has completely arrived.
@@ -141,7 +171,8 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
         if (next <= 0) {
           retainCounts.delete(connectionId);
           const current = resources.get(connectionId);
-          if (current?.retryTimer !== null && current?.retryTimer !== undefined) clearTimeout(current.retryTimer);
+          if (current?.retryTimer !== null && current?.retryTimer !== undefined)
+            clearTimeout(current.retryTimer);
           if (current !== undefined) current.retryTimer = null;
         } else {
           retainCounts.set(connectionId, next);
@@ -150,7 +181,8 @@ export function createRemoteProjectCatalogModel(): RemoteProjectCatalogModel {
     },
     mergeProject(connectionId, project) {
       const resource = resources.get(connectionId);
-      if (resource !== undefined && resource.loadingRevision !== null) resource.mergedWhileLoading.set(project.path, project);
+      if (resource !== undefined && resource.loadingRevision !== null)
+        resource.mergedWhileLoading.set(project.path, project);
       const projectsByConnection = snapshot$.projectsByConnection.peek();
       const existing = projectsByConnection[connectionId] ?? [];
       snapshot$.projectsByConnection.set({

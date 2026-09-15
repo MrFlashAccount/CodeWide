@@ -1,5 +1,9 @@
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
-import { type Insets, type LegendListProps, type LegendListRef } from "@legendapp/list/react-native";
+import {
+  type Insets,
+  type LegendListProps,
+  type LegendListRef,
+} from "@legendapp/list/react-native";
 import {
   forwardRef,
   type ForwardedRef,
@@ -12,7 +16,10 @@ import {
 import type { SharedValue } from "react-native-reanimated";
 
 import { useEvent } from "../react/useEvent";
-import { legendInitialPositionProps, type TimelineInitialPosition } from "./timeline-initial-position";
+import {
+  legendInitialPositionProps,
+  type TimelineInitialPosition,
+} from "./timeline-initial-position";
 
 export type { TimelineInitialPosition } from "./timeline-initial-position";
 
@@ -34,7 +41,12 @@ const TIMELINE_TAIL_FOLLOW_CONFIG = {
 export interface ThreadTimelineListRef {
   getItemViewportOffset(itemKey: string): number | null;
   scrollToEnd(options?: { animated?: boolean }): Promise<void>;
-  scrollToIndex(options: { index: number; animated?: boolean; viewOffset?: number; viewPosition?: number }): void | Promise<void>;
+  scrollToIndex(options: {
+    index: number;
+    animated?: boolean;
+    viewOffset?: number;
+    viewPosition?: number;
+  }): void | Promise<void>;
   scrollToOffset(options: { offset: number; animated?: boolean }): void | Promise<void>;
   reportContentInset(inset?: Partial<Insets> | null): void;
 }
@@ -96,25 +108,35 @@ function ThreadTimelineListInner<ItemT>(
     await internalRef.current?.scrollToEnd(options);
   });
   const scrollToIndex = useEvent((options: Parameters<ThreadTimelineListRef["scrollToIndex"]>[0]) =>
-    internalRef.current?.scrollToIndex(options));
-  const scrollToOffset = useEvent((options: Parameters<ThreadTimelineListRef["scrollToOffset"]>[0]) =>
-    internalRef.current?.scrollToOffset(options));
+    internalRef.current?.scrollToIndex(options),
+  );
+  const scrollToOffset = useEvent(
+    (options: Parameters<ThreadTimelineListRef["scrollToOffset"]>[0]) =>
+      internalRef.current?.scrollToOffset(options),
+  );
   const reportContentInset = useEvent((inset?: Partial<Insets> | null) =>
-    internalRef.current?.reportContentInset(inset));
-  useImperativeHandle(ref, () => ({
-    getItemViewportOffset,
-    scrollToEnd,
-    scrollToIndex,
-    scrollToOffset,
-    reportContentInset,
-  }), [getItemViewportOffset, reportContentInset, scrollToEnd, scrollToIndex, scrollToOffset]);
+    internalRef.current?.reportContentInset(inset),
+  );
+  useImperativeHandle(
+    ref,
+    () => ({
+      getItemViewportOffset,
+      scrollToEnd,
+      scrollToIndex,
+      scrollToOffset,
+      reportContentInset,
+    }),
+    [getItemViewportOffset, reportContentInset, scrollToEnd, scrollToIndex, scrollToOffset],
+  );
 
-  const KeyboardAwareTimelineList = KeyboardAwareLegendList as unknown as (props: LegendListProps<ItemT> & {
-    contentInsetEndAdjustment?: SharedValue<number>;
-    keyboardLiftBehavior: "always" | "whenAtEnd" | "persistent" | "never";
-    keyboardOffset: number;
-    ref: ForwardedRef<LegendListRef>;
-  }) => ReactElement;
+  const KeyboardAwareTimelineList = KeyboardAwareLegendList as unknown as (
+    props: LegendListProps<ItemT> & {
+      contentInsetEndAdjustment?: SharedValue<number>;
+      keyboardLiftBehavior: "always" | "whenAtEnd" | "persistent" | "never";
+      keyboardOffset: number;
+      ref: ForwardedRef<LegendListRef>;
+    },
+  ) => ReactElement;
 
   return (
     <KeyboardAwareTimelineList

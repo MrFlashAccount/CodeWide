@@ -12,6 +12,7 @@ import {
   type BrowserFeedbackCapability,
   type BrowserFeedbackDraft,
 } from "./feedback";
+
 export function useBrowserFeedbackSession(
   suppliedFeedback: BrowserFeedbackCapability | undefined,
   webView: RefObject<WebView | null>,

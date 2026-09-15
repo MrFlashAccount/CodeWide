@@ -78,7 +78,8 @@ export function createThreadSyncProjection({
         if (
           event.payload.method === "companion/queue/changed" &&
           params !== null &&
-          "threadId" in params && "data" in params &&
+          "threadId" in params &&
+          "data" in params &&
           typeof params.threadId === "string"
         ) {
           const queueThreadId = params.threadId;

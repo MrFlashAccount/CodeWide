@@ -4,6 +4,7 @@ import { setNativeVoiceAuraOrigin } from "../../native/native-transport";
 import { colors, iconSize } from "../../theme";
 import type { ComposerFeatureProps } from "./ComposerFeatureContract";
 import { styles } from "./ComposerMicrophone.styles";
+
 type Props = Pick<
   ComposerFeatureProps,
   | "microphoneButtonRef"

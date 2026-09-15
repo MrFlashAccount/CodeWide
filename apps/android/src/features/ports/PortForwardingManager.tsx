@@ -25,6 +25,7 @@ import {
 import { styles } from "./PortForwardingManager.styles";
 import { projectPortList } from "./portListProjection";
 import { InfoRow, InlineError, SectionLabel, ServiceIcon } from "./PortPresentation";
+
 export function PortForwardingManager(props: PortForwardingManagerProps) {
   const portForm = usePortForm(props);
   const portActions = usePortActions(props);

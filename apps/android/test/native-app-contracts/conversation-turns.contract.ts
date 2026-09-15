@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { sourceObjectDeclaration } from "../source-contract";
 import {
   ownerOptimisticTurn,
   ownerPreTurnLifecycleRows,
@@ -19,8 +20,14 @@ import {
   ownerTurnTimelineItemStyles,
 } from "./conversation-turns-sources";
 
-const ownerAgentTurnBody = readFileSync(new URL("../../src/features/conversation/turns/AgentTurnBody.tsx", import.meta.url), "utf8");
-const ownerUserTurnBody = readFileSync(new URL("../../src/features/conversation/turns/UserTurnBody.tsx", import.meta.url), "utf8");
+const ownerAgentTurnBody = readFileSync(
+  new URL("../../src/features/conversation/turns/AgentTurnBody.tsx", import.meta.url),
+  "utf8",
+);
+const ownerUserTurnBody = readFileSync(
+  new URL("../../src/features/conversation/turns/UserTurnBody.tsx", import.meta.url),
+  "utf8",
+);
 
 it("preserves conversation turns integration contracts", () => {
   expect(ownerOptimisticTurn).toContain('? "Running"');
@@ -103,17 +110,31 @@ it("preserves conversation turns integration contracts", () => {
   expect(ownerTurnProjection).toMatch(
     /richMarkdownLayout\(latestAgentBlock\??\.body \?\? ""\) === "fill"/u,
   );
-  expect(ownerLiveAgentResponseStyles).toContain(
-    'liveAgentResponse: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start" }',
+  const liveAgentResponseStyle = sourceObjectDeclaration(
+    ownerLiveAgentResponseStyles,
+    "liveAgentResponse",
   );
-  expect(ownerLiveAgentResponseStyles).toContain(
-    'liveAgentResponseFill: { width: "100%", alignSelf: "stretch" }',
+  expect(liveAgentResponseStyle).toContain("minWidth: 0");
+  expect(liveAgentResponseStyle).toContain('maxWidth: "100%"');
+  expect(liveAgentResponseStyle).toContain('alignSelf: "flex-start"');
+  const liveAgentResponseFillStyle = sourceObjectDeclaration(
+    ownerLiveAgentResponseStyles,
+    "liveAgentResponseFill",
   );
-  expect(ownerUserMessageContentStyles).toContain(
-    "userMessageContent: { minWidth: 0, gap: spacing.compact }",
+  expect(liveAgentResponseFillStyle).toContain('width: "100%"');
+  expect(liveAgentResponseFillStyle).toContain('alignSelf: "stretch"');
+  const userMessageContentStyle = sourceObjectDeclaration(
+    ownerUserMessageContentStyles,
+    "userMessageContent",
   );
-  expect(ownerTurnTimelineItemStyles).toContain("userMessageBlock: { minWidth: 0 }");
-  expect(ownerUserMessageContentStyles).toContain("userMessageTextBlock: { minWidth: 0 }");
+  expect(userMessageContentStyle).toContain("minWidth: 0");
+  expect(userMessageContentStyle).toContain("gap: spacing.compact");
+  expect(sourceObjectDeclaration(ownerTurnTimelineItemStyles, "userMessageBlock")).toContain(
+    "minWidth: 0",
+  );
+  expect(sourceObjectDeclaration(ownerUserMessageContentStyles, "userMessageTextBlock")).toContain(
+    "minWidth: 0",
+  );
   expect(ownerTurnTimelineItem).toContain("style={styles.agentMessageRow}");
   expect(ownerTurnActivity).toContain("expanded={visiblyExpanded}");
 });

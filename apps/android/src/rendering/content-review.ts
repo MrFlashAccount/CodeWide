@@ -4,7 +4,7 @@ export type ContentReviewTarget = {
   reference: string | null;
 };
 
-export type TextReviewAnchor = {
+type TextReviewAnchor = {
   kind: "text";
   target: ContentReviewTarget;
   blockPath: string;
@@ -13,7 +13,7 @@ export type TextReviewAnchor = {
   end: number;
 };
 
-export type MermaidReviewAnchor = {
+type MermaidReviewAnchor = {
   kind: "mermaid";
   target: ContentReviewTarget;
   diagramId: string;
@@ -22,19 +22,23 @@ export type MermaidReviewAnchor = {
   y: number;
 };
 
-export type ResponseReviewAnchor = {
+type ResponseReviewAnchor = {
   kind: "response";
   target: ContentReviewTarget;
 };
 
-export type ImageReviewAnchor = {
+type ImageReviewAnchor = {
   kind: "image";
   target: ContentReviewTarget;
   x: number;
   y: number;
 };
 
-export type ContentReviewAnchor = TextReviewAnchor | MermaidReviewAnchor | ResponseReviewAnchor | ImageReviewAnchor;
+export type ContentReviewAnchor =
+  | TextReviewAnchor
+  | MermaidReviewAnchor
+  | ResponseReviewAnchor
+  | ImageReviewAnchor;
 
 export type ContentReviewComment = {
   id: string;
@@ -50,7 +54,8 @@ export function contentReviewTextHighlights(
   offset = 0,
 ): Array<{ start: number; end: number }> {
   return anchors.flatMap((anchor) => {
-    if (anchor.kind !== "text" || anchor.target.id !== targetId || anchor.blockPath !== blockPath) return [];
+    if (anchor.kind !== "text" || anchor.target.id !== targetId || anchor.blockPath !== blockPath)
+      return [];
     const start = Math.max(0, anchor.start - offset);
     const end = Math.max(0, anchor.end - offset);
     return end > start ? [{ start, end }] : [];
@@ -61,7 +66,9 @@ export function normalizedReviewPoint(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-export function serializeContentReviewAttachment(comments: readonly ContentReviewComment[]): string {
+export function serializeContentReviewAttachment(
+  comments: readonly ContentReviewComment[],
+): string {
   const populated = comments.filter((comment) => comment.body.trim() !== "");
   if (populated.length === 0) return "";
   const targetIds = new Set(populated.map((comment) => comment.anchor.target.id));
@@ -90,7 +97,10 @@ export function serializeContentReviewAttachment(comments: readonly ContentRevie
     const ordinal = lines.filter((line) => /^### Comment /u.test(line)).length + 1;
     if (anchor.kind === "text") {
       lines.push(`### Comment ${ordinal} · selected text`, "");
-      lines.push(`Block: \`${escapeInlineCode(anchor.blockPath)}\` · rendered offsets ${anchor.start}–${anchor.end}`, "");
+      lines.push(
+        `Block: \`${escapeInlineCode(anchor.blockPath)}\` · rendered offsets ${anchor.start}–${anchor.end}`,
+        "",
+      );
       lines.push(...quoteMarkdown(anchor.quote), "");
       lines.push(comment.body.trim(), "");
       return;
@@ -103,14 +113,20 @@ export function serializeContentReviewAttachment(comments: readonly ContentRevie
     }
     if (anchor.kind === "image") {
       lines.push(`### Comment ${ordinal} · image point`, "");
-      lines.push(`Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the image top-left.`, "");
+      lines.push(
+        `Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the image top-left.`,
+        "",
+      );
       lines.push(comment.body.trim(), "");
       return;
     }
     const diagramKey = `${anchor.target.id}\u0000${anchor.diagramId}`;
     lines.push(`### Comment ${ordinal} · Mermaid point`, "");
     lines.push(`Diagram: \`${escapeInlineCode(anchor.diagramId)}\``, "");
-    lines.push(`Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the SVG top-left.`, "");
+    lines.push(
+      `Point: **(${formatPercent(anchor.x)}, ${formatPercent(anchor.y)})** from the SVG top-left.`,
+      "",
+    );
     if (!emittedDiagrams.has(diagramKey)) {
       emittedDiagrams.add(diagramKey);
       const fence = markdownFence(anchor.source);
@@ -131,7 +147,10 @@ function formatPercent(value: number): string {
 }
 
 function markdownFence(value: string): string {
-  const longest = [...value.matchAll(/`+/gu)].reduce((length, match) => Math.max(length, match[0].length), 0);
+  const longest = [...value.matchAll(/`+/gu)].reduce(
+    (length, match) => Math.max(length, match[0].length),
+    0,
+  );
   return "`".repeat(Math.max(3, longest + 1));
 }
 

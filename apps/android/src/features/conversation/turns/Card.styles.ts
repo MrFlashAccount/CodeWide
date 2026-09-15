@@ -41,7 +41,11 @@ export const styles = StyleSheet.create({
     gap: spacing.compact,
     opacity: 1,
   },
-  cardIconSlot: { flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  cardIconSlot: {
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   cardTitle: {
     minWidth: 0,
     flexShrink: 1,
@@ -49,7 +53,10 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  cardTitleWave: { alignSelf: "center", justifyContent: "center" },
+  cardTitleWave: {
+    alignSelf: "center",
+    justifyContent: "center",
+  },
   cardStatusIcon: {
     minWidth: typeScale.label.lineHeight,
     minHeight: typeScale.label.lineHeight,
@@ -57,5 +64,10 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  cardStatusDot: { width: 7, height: 7, borderRadius: radii.pill, backgroundColor: colors.green },
+  cardStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: radii.pill,
+    backgroundColor: colors.green,
+  },
 });

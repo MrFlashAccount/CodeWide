@@ -21,13 +21,22 @@ const EMPTY_PORT_FORWARDING_SNAPSHOT: NativePortForwardingSnapshot = {
   discoveryStatus: "idle",
   discoveryError: null,
 };
-const subscribeToNothing = (_listener: Listener): (() => void) => () => undefined;
-const readEmptyPortForwardingSnapshot = (): NativePortForwardingSnapshot => EMPTY_PORT_FORWARDING_SNAPSHOT;
+const subscribeToNothing =
+  (_listener: Listener): (() => void) =>
+  () =>
+    undefined;
+const readEmptyPortForwardingSnapshot = (): NativePortForwardingSnapshot =>
+  EMPTY_PORT_FORWARDING_SNAPSHOT;
 
 class PortForwardScope {
   readonly connectionId: string;
   #listeners = new Set<Listener>();
-  #snapshot: NativePortForwardingSnapshot = { profiles: [], discoveredPorts: [], discoveryStatus: "idle", discoveryError: null };
+  #snapshot: NativePortForwardingSnapshot = {
+    profiles: [],
+    discoveredPorts: [],
+    discoveryStatus: "idle",
+    discoveryError: null,
+  };
   #loaded = false;
   #loading: Promise<void> | null = null;
   #discoveryLoading: Promise<void> | null = null;
@@ -55,7 +64,11 @@ class PortForwardScope {
   }
 
   inventoryFailed(): void {
-    this.#replace({ ...this.#snapshot, discoveryStatus: "error", discoveryError: "Could not update server ports" });
+    this.#replace({
+      ...this.#snapshot,
+      discoveryStatus: "error",
+      discoveryError: "Could not update server ports",
+    });
   }
 
   async load(force = false): Promise<void> {
@@ -66,7 +79,9 @@ class PortForwardScope {
         this.#loaded = true;
         this.#replaceProfiles(profiles);
       })
-      .finally(() => { this.#loading = null; });
+      .finally(() => {
+        this.#loading = null;
+      });
     await this.#loading;
   }
 
@@ -80,7 +95,13 @@ class PortForwardScope {
         // The native push worker reconciles before notifying us. Reload
         // current forwards so missed bridge events cannot retain dead profiles.
         const profiles = await listNativePortForwards(this.connectionId);
-        this.#replace({ ...this.#snapshot, profiles, discoveredPorts: ports, discoveryStatus: scannedAt === 0 ? "loading" : "ready", discoveryError: null });
+        this.#replace({
+          ...this.#snapshot,
+          profiles,
+          discoveredPorts: ports,
+          discoveryStatus: scannedAt === 0 ? "loading" : "ready",
+          discoveryError: null,
+        });
       })
       .catch((cause: unknown) => {
         this.#replace({
@@ -102,7 +123,8 @@ class PortForwardScope {
   async waitUntilLive(profileId: string, timeoutMs = 10_000): Promise<NativePortForwardProfile> {
     const ready = (): NativePortForwardProfile | null => {
       const profile = this.#snapshot.profiles.find((candidate) => candidate.id === profileId);
-      if (profile?.status === "error" || profile?.status === "unavailable") throw new Error(profile.error ?? "Remote port is unavailable");
+      if (profile?.status === "error" || profile?.status === "unavailable")
+        throw new Error(profile.error ?? "Remote port is unavailable");
       return profile?.status === "live" && profile.localPort !== null ? profile : null;
     };
     const current = ready();
@@ -136,7 +158,12 @@ class PortForwardScope {
     if (profile.connectionId !== this.connectionId) return;
     const index = this.#snapshot.profiles.findIndex((candidate) => candidate.id === profile.id);
     if (index < 0) this.#replaceProfiles([profile, ...this.#snapshot.profiles]);
-    else this.#replaceProfiles(this.#snapshot.profiles.map((candidate, candidateIndex) => candidateIndex === index ? profile : candidate));
+    else
+      this.#replaceProfiles(
+        this.#snapshot.profiles.map((candidate, candidateIndex) =>
+          candidateIndex === index ? profile : candidate,
+        ),
+      );
   }
 
   applyStartResult(profile: NativePortForwardProfile): NativePortForwardProfile {
@@ -144,10 +171,13 @@ class PortForwardScope {
     // Native binding happens off-thread. Its live event can beat the bridge
     // Promise carrying the older connecting projection back to JavaScript.
     // Never let that stale method result overwrite the authoritative event.
-    if (profile.status === "connecting"
-      && current !== undefined
-      && ["live", "unavailable", "error"].includes(current.status)
-      && current.updatedAt >= profile.updatedAt) return current;
+    if (
+      profile.status === "connecting" &&
+      current !== undefined &&
+      ["live", "unavailable", "error"].includes(current.status) &&
+      current.updatedAt >= profile.updatedAt
+    )
+      return current;
     this.apply(profile);
     return profile;
   }
@@ -158,7 +188,13 @@ class PortForwardScope {
   }
 
   #replaceProfiles(profiles: readonly NativePortForwardProfile[]): void {
-    this.#replace({ ...this.#snapshot, profiles: [...profiles].sort((left, right) => Number(right.enabled) - Number(left.enabled) || right.updatedAt - left.updatedAt) });
+    this.#replace({
+      ...this.#snapshot,
+      profiles: [...profiles].sort(
+        (left, right) =>
+          Number(right.enabled) - Number(left.enabled) || right.updatedAt - left.updatedAt,
+      ),
+    });
   }
 
   #replace(snapshot: NativePortForwardingSnapshot): void {
@@ -183,7 +219,8 @@ class NativePortForwardingStore {
   constructor() {
     subscribeNativePortForwards((event) => {
       if (event.type === "profile") this.scope(event.profile.connectionId).apply(event.profile);
-      else if (event.type === "removed") for (const scope of this.#scopes.values()) scope.remove(event.id);
+      else if (event.type === "removed")
+        for (const scope of this.#scopes.values()) scope.remove(event.id);
       else if (event.type === "inventory") this.scope(event.connectionId).inventoryUpdated();
       else this.scope(event.connectionId).inventoryFailed();
     });
@@ -294,9 +331,14 @@ class NativePortForwardingStore {
     if (!scope.getSnapshot().discoveredPorts.some((port) => port.port === input.remotePort)) {
       throw new Error("Port is not present in the current inventory");
     }
-    const existing = scope.getSnapshot().profiles
-      .filter((profile) => profile.remotePort === input.remotePort)
-      .sort((left, right) => Number(right.status === "live") - Number(left.status === "live") || right.updatedAt - left.updatedAt)[0];
+    const existing = scope
+      .getSnapshot()
+      .profiles.filter((profile) => profile.remotePort === input.remotePort)
+      .sort(
+        (left, right) =>
+          Number(right.status === "live") - Number(left.status === "live") ||
+          right.updatedAt - left.updatedAt,
+      )[0];
     if (existing?.status === "live" && existing.localPort !== null) return existing;
     if (existing?.status === "connecting") return await scope.waitUntilLive(existing.id);
 
@@ -316,19 +358,14 @@ class NativePortForwardingStore {
     }
     const started = await startNativePortForward(profileId);
     const projected = scope.applyStartResult(started);
-    if (projected.status === "error") throw new Error(projected.error ?? "Could not open phone port");
+    if (projected.status === "error")
+      throw new Error(projected.error ?? "Could not open phone port");
     if (projected.status === "live" && projected.localPort !== null) return projected;
     return await scope.waitUntilLive(profileId);
   }
-
 }
 
 export const nativePortForwardingStore = new NativePortForwardingStore();
-
-export function useNativePortForwards(connectionId: string): readonly NativePortForwardProfile[] {
-  const scope = nativePortForwardingStore.scope(connectionId);
-  return useSyncExternalStore(scope.subscribe, scope.getSnapshot, scope.getSnapshot).profiles;
-}
 
 export function useNativePortForwarding(connectionId: string | null): NativePortForwardingSnapshot {
   const scope = connectionId === null ? null : nativePortForwardingStore.scope(connectionId);

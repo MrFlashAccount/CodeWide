@@ -19,6 +19,8 @@ export function projectThreadHotStates(
   }
   return summaries.map((summary) => {
     const count = counts.get(`${summary.connectionId}\u0000${summary.remoteThreadId}`) ?? 0;
-    return summary.pendingRequestCount === count ? summary : { ...summary, pendingRequestCount: count };
+    return summary.pendingRequestCount === count
+      ? summary
+      : { ...summary, pendingRequestCount: count };
   });
 }

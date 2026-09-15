@@ -8,6 +8,7 @@ import type {
   ProjectManagerSection,
 } from "./projectManagementContract";
 import type { SidebarProject } from "./sidebarProjects";
+
 export function useProjectManagement({ projects, servers, errors }: ProjectManagementProps) {
   const [pending, setPending] = useState<string | null>(null);
   const { fontScale } = useWindowDimensions();

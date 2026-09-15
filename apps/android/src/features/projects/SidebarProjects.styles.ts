@@ -1,6 +1,7 @@
 import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
 import { threadListLayout } from "../../ui/thread-list-layout";
+
 export const SECTION_HEIGHT = controlSize.touch + spacing.sm;
 
 export const styles = StyleSheet.create({
@@ -19,8 +20,16 @@ export const styles = StyleSheet.create({
   },
   sheetList: { flex: 1 },
   sheetListContent: { paddingBottom: spacing.md },
-  section: { height: SECTION_HEIGHT, paddingTop: spacing.sm, justifyContent: "center" },
-  sectionHeading: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  section: {
+    height: SECTION_HEIGHT,
+    paddingTop: spacing.sm,
+    justifyContent: "center",
+  },
+  sectionHeading: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
   sectionToggle: {
     height: controlSize.touch,
     flexDirection: "row",
@@ -33,8 +42,15 @@ export const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     paddingVertical: spacing.sm,
   },
-  sectionCount: { color: colors.textDim, ...typeScale.caption },
-  menuSlot: { minWidth: controlSize.touch, alignItems: "center", justifyContent: "center" },
+  sectionCount: {
+    color: colors.textDim,
+    ...typeScale.caption,
+  },
+  menuSlot: {
+    minWidth: controlSize.touch,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   disabled: { opacity: 0.35 },
   project: {
     minHeight: controlSize.touch,
@@ -50,13 +66,37 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     gap: spacing.xs,
   },
-  shortcutIdentity: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "baseline" },
+  shortcutIdentity: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "baseline",
+  },
   shortcutPressed: { opacity: 0.68 },
-  serverLabel: { maxWidth: "45%", flexShrink: 1, color: colors.textMuted, ...typeScale.label },
-  identity: { flex: 1, minWidth: 0 },
-  name: { flexShrink: 1, color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
-  subtitle: { color: colors.textMuted, ...typeScale.caption },
-  unreadSlot: { width: spacing.sm, alignItems: "center" },
+  serverLabel: {
+    maxWidth: "45%",
+    flexShrink: 1,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  identity: {
+    flex: 1,
+    minWidth: 0,
+  },
+  name: {
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.body,
+    fontWeight: typeWeight.semibold,
+  },
+  subtitle: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  unreadSlot: {
+    width: spacing.sm,
+    alignItems: "center",
+  },
   unread: {
     width: spacing.xs,
     height: spacing.xs,
@@ -76,10 +116,23 @@ export const styles = StyleSheet.create({
     minHeight: controlSize.touch,
     justifyContent: "center",
   },
-  crumbText: { color: colors.text, ...typeScale.title },
-  crumbSeparator: { color: colors.textMuted, ...typeScale.body },
-  projectCrumb: { flex: 1, minWidth: 0 },
-  archiveCrumb: { color: colors.textMuted, ...typeScale.caption, flexShrink: 0 },
+  crumbText: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  crumbSeparator: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
+  projectCrumb: {
+    flex: 1,
+    minWidth: 0,
+  },
+  archiveCrumb: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    flexShrink: 0,
+  },
   back: {
     minWidth: controlSize.touch,
     minHeight: controlSize.touch,
@@ -92,6 +145,14 @@ export const styles = StyleSheet.create({
     ...typeScale.title,
     fontWeight: typeWeight.semibold,
   },
-  empty: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.md },
-  error: { color: colors.red, ...typeScale.body, paddingVertical: spacing.sm },
+  empty: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.md,
+  },
+  error: {
+    color: colors.red,
+    ...typeScale.body,
+    paddingVertical: spacing.sm,
+  },
 });

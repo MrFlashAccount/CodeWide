@@ -33,7 +33,8 @@ const STRUCTURED_INPUT_MODES = new Set([
 export function shouldEnableVoiceInput(policy: VoiceInputPolicy): boolean {
   if (policy.voiceInput !== undefined) return policy.voiceInput;
   if (policy.editable === false || policy.secureTextEntry === true) return false;
-  if (policy.keyboardType !== undefined && STRUCTURED_KEYBOARD_TYPES.has(policy.keyboardType)) return false;
+  if (policy.keyboardType !== undefined && STRUCTURED_KEYBOARD_TYPES.has(policy.keyboardType))
+    return false;
   if (policy.inputMode !== undefined && STRUCTURED_INPUT_MODES.has(policy.inputMode)) return false;
   return true;
 }

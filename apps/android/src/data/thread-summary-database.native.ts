@@ -1,5 +1,6 @@
 import type { ThreadRenameHandler } from "./thread-summary-database-contract";
 import type { ThreadSummaryDatabase } from "./thread-summary-database-contract";
+
 export type { ThreadSummaryDatabase } from "./thread-summary-database-contract";
 import { threadIdFromEvent, type SyncSnapshotThread } from "@codewide/sync-client";
 
@@ -32,9 +33,11 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
 
   const loadConnectionRows = storage.loadConnectionRows;
   const loadRows = storage.loadRows;
-  const loadRow = async (connectionId: string, threadId: string): Promise<StoredThreadSummary | undefined> => (
-    await storage.loadRow(connectionId, threadId) ?? undefined
-  );
+  const loadRow = async (
+    connectionId: string,
+    threadId: string,
+  ): Promise<StoredThreadSummary | undefined> =>
+    (await storage.loadRow(connectionId, threadId)) ?? undefined;
 
   const loadView = async (request: ThreadSummaryViewRequest): Promise<void> => {
     const generation = model.startView(request);
@@ -56,7 +59,10 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
   };
 
   const publishModelChanges = (
-    changes: readonly ({ type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string })[],
+    changes: readonly (
+      | { type: "insert" | "update"; value: StoredThreadSummary }
+      | { type: "delete"; key: string }
+    )[],
     refillBoundedViews = false,
   ): void => {
     for (const change of changes) {
@@ -117,12 +123,22 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     await writes.run(async () => {
       if (disposed) return;
       const currentRows = await loadConnectionRows(connectionId);
-      const current = new Map(currentRows.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]));
+      const current = new Map(
+        currentRows.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
+      );
       const next = new Map<string, StoredThreadSummary>();
       for (const snapshot of snapshots) {
         if (snapshot.thread.ephemeral) continue;
         const key = threadSummaryKey(connectionId, snapshot.thread.id);
-        next.set(key, projectThreadSummarySnapshot(connectionId, snapshot.thread, snapshot.archived, current.get(key)));
+        next.set(
+          key,
+          projectThreadSummarySnapshot(
+            connectionId,
+            snapshot.thread,
+            snapshot.archived,
+            current.get(key),
+          ),
+        );
       }
       const removableKeys = missingScope(currentRows);
       const removed = [...current].filter(([key]) => !next.has(key) && removableKeys.has(key));
@@ -133,15 +149,23 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       if (removed.length === 0 && changed.length === 0) return;
       storage.begin();
       for (const [key] of removed) storage.write({ type: "delete", key });
-      for (const [key, row] of changed) storage.write({ type: current.has(key) ? "update" : "insert", value: row });
+      for (const [key, row] of changed)
+        storage.write({ type: current.has(key) ? "update" : "insert", value: row });
       const checkpoint = storage.commit({ durable: true });
-      publishModelChanges([
-        ...removed.map(([key]) => ({ type: "delete" as const, key })),
-        ...changed.map(([key, row]) => ({ type: current.has(key) ? "update" as const : "insert" as const, value: row })),
-      ], removed.length > 0 || changed.some(([key, row]) => {
-        const previous = current.get(key);
-        return previous !== undefined && summaryViewMembershipChanged(previous, row);
-      }));
+      publishModelChanges(
+        [
+          ...removed.map(([key]) => ({ type: "delete" as const, key })),
+          ...changed.map(([key, row]) => ({
+            type: current.has(key) ? ("update" as const) : ("insert" as const),
+            value: row,
+          })),
+        ],
+        removed.length > 0 ||
+          changed.some(([key, row]) => {
+            const previous = current.get(key);
+            return previous !== undefined && summaryViewMembershipChanged(previous, row);
+          }),
+      );
       await checkpoint;
     });
   };
@@ -163,35 +187,71 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
             await updating;
             return await storage.loadView(request);
           }
-          void updating.catch((cause: unknown) => console.warn("Catalog window refresh failed", cause));
+          void updating.catch((cause: unknown) =>
+            console.warn("Catalog window refresh failed", cause),
+          );
         }
         return cached;
       });
     },
-    setCatalogLoader(loader) { catalogLoader = loader; },
+    setCatalogLoader(loader) {
+      catalogLoader = loader;
+    },
     beginCatalogRead: (connectionId) => catalogReads.begin(connectionId),
-    async applyCatalogPage(connectionId, snapshots, archived, prefixIds, read, replaceHead, projectCwd) {
+    async applyCatalogPage(
+      connectionId,
+      snapshots,
+      archived,
+      prefixIds,
+      read,
+      replaceHead,
+      projectCwd,
+    ) {
       await writes.run(async () => {
         if (disposed) return;
         const count = Math.max(THREAD_CATALOG_PAGE_SIZE, prefixIds.size);
-        const window = await storage.loadView({ connectionId, ...(projectCwd === undefined ? {} : { projectCwd }), recentLimit: archived ? 0 : count,
-          archivedLimit: archived ? count : 0, selectedConnectionId: null, selectedThreadId: null,
-          subagentConnectionId: null, subagentLimit: 0 });
-        const existing = await loadRows(connectionId, snapshots.map(({ thread }) => thread.id));
+        const window = await storage.loadView({
+          connectionId,
+          ...(projectCwd === undefined ? {} : { projectCwd }),
+          recentLimit: archived ? 0 : count,
+          archivedLimit: archived ? count : 0,
+          selectedConnectionId: null,
+          selectedThreadId: null,
+          subagentConnectionId: null,
+          subagentLimit: 0,
+        });
+        const existing = await loadRows(
+          connectionId,
+          snapshots.map(({ thread }) => thread.id),
+        );
         const current = new Map(existing.map((row) => [row.remoteThreadId, row]));
         const changes: import("./thread-summary-sqlite.native").ThreadSummaryChange[] = [];
-        for (const row of replaceHead ? archived ? window.archived : window.recent : []) {
+        for (const row of replaceHead ? (archived ? window.archived : window.recent) : []) {
           // Paging a catalog must not erase device-owned unread state outside its head.
-          if (!prefixIds.has(row.remoteThreadId) && !row.pinned && row.unread === 0 && row.deleteCommandId === null && !read.changed.has(row.remoteThreadId)) {
+          if (
+            !prefixIds.has(row.remoteThreadId) &&
+            !row.pinned &&
+            row.unread === 0 &&
+            row.deleteCommandId === null &&
+            !read.changed.has(row.remoteThreadId)
+          ) {
             // Evict only this stale cached prefix; absence is not a server
             // thread deletion, and older cached ranges are left untouched.
-            changes.push({ type: "delete", key: threadSummaryKey(connectionId, row.remoteThreadId) });
+            changes.push({
+              type: "delete",
+              key: threadSummaryKey(connectionId, row.remoteThreadId),
+            });
           }
         }
         for (const snapshot of snapshots) {
           if (read.changed.has(snapshot.thread.id)) continue;
           const previous = current.get(snapshot.thread.id);
-          const row = projectThreadSummarySnapshot(connectionId, snapshot.thread, archived, previous);
+          const row = projectThreadSummarySnapshot(
+            connectionId,
+            snapshot.thread,
+            archived,
+            previous,
+          );
           if (previous === undefined || !sameThreadSummary(previous, row)) {
             changes.push({ type: previous === undefined ? "insert" : "update", value: row });
           }
@@ -206,46 +266,76 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     },
     loadView,
     async get(connectionId, threadId) {
-      return await loadRow(connectionId, threadId) ?? null;
+      return (await loadRow(connectionId, threadId)) ?? null;
     },
     async insertStartedThread(connectionId, thread) {
       const previous = await loadRow(connectionId, thread.id);
-      const mutation = projectThreadSummaryEvent(connectionId, {
-        method: "thread/started",
-        params: { thread },
-        codewideThreadPatch: {
-          version: 1,
-          threadId: thread.id,
-          operation: { kind: "threadStarted", thread },
+      const mutation = projectThreadSummaryEvent(
+        connectionId,
+        {
+          method: "thread/started",
+          params: { thread },
+          codewideThreadPatch: {
+            version: 1,
+            threadId: thread.id,
+            operation: { kind: "threadStarted", thread },
+          },
         },
-      }, () => previous);
+        () => previous,
+      );
       if (mutation?.value !== null && mutation?.value !== undefined) await publish(mutation.value);
     },
     async applySnapshot(connectionId, snapshots) {
-      await replaceSnapshotRows(connectionId, snapshots, (current) => new Set(current
-        .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
-        .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId))));
+      await replaceSnapshotRows(
+        connectionId,
+        snapshots,
+        (current) =>
+          new Set(
+            current
+              .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
+              .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
+          ),
+      );
     },
     async replaceCatalog(connectionId, snapshots) {
-      await replaceSnapshotRows(connectionId, snapshots, (current) => new Set(current
-        .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
-        .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId))));
+      await replaceSnapshotRows(
+        connectionId,
+        snapshots,
+        (current) =>
+          new Set(
+            current
+              .filter((row) => !retainThreadSummaryMissingFromSnapshot(row))
+              .map((row) => threadSummaryKey(row.connectionId, row.remoteThreadId)),
+          ),
+      );
     },
     async replaceSubagentCatalog(connectionId, rootThreadId, snapshots) {
       const projected = snapshots.filter(({ thread }) => thread.parentThreadId !== null);
-      await replaceSnapshotRows(connectionId, projected, (current) => threadSummaryDescendantKeys(current, rootThreadId));
+      await replaceSnapshotRows(connectionId, projected, (current) =>
+        threadSummaryDescendantKeys(current, rootThreadId),
+      );
     },
     async mergeSnapshots(connectionId, snapshots) {
       await writes.run(async () => {
         if (disposed || snapshots.length === 0) return;
-        const existing = await loadRows(connectionId, snapshots.map(({ thread }) => thread.id));
-        const current = new Map(existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]));
+        const existing = await loadRows(
+          connectionId,
+          snapshots.map(({ thread }) => thread.id),
+        );
+        const current = new Map(
+          existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
+        );
         const changed = new Map<string, StoredThreadSummary>();
         for (const snapshot of snapshots) {
           if (snapshot.thread.ephemeral) continue;
           const key = threadSummaryKey(connectionId, snapshot.thread.id);
           const previous = current.get(key);
-          const row = projectThreadSummarySnapshot(connectionId, snapshot.thread, snapshot.archived, previous);
+          const row = projectThreadSummarySnapshot(
+            connectionId,
+            snapshot.thread,
+            snapshot.archived,
+            previous,
+          );
           if (previous === undefined || !sameThreadSummary(previous, row)) changed.set(key, row);
         }
         if (changed.size === 0) return;
@@ -255,31 +345,46 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           storage.write({ type: previous === undefined ? "insert" : "update", value: row });
         }
         const checkpoint = storage.commit({ durable: true });
-        publishModelChanges([...changed].map(([key, row]) => ({
-          ...(current.has(key) ? { type: "update" as const } : { type: "insert" as const }),
-          value: row,
-        })), [...changed].some(([key, row]) => {
-          const previous = current.get(key);
-          return previous !== undefined && summaryViewMembershipChanged(previous, row);
-        }));
+        publishModelChanges(
+          [...changed].map(([key, row]) => ({
+            ...(current.has(key) ? { type: "update" as const } : { type: "insert" as const }),
+            value: row,
+          })),
+          [...changed].some(([key, row]) => {
+            const previous = current.get(key);
+            return previous !== undefined && summaryViewMembershipChanged(previous, row);
+          }),
+        );
         await checkpoint;
       });
     },
     async applyEvents(connectionId, events) {
       await writes.run(async () => {
         if (disposed || events.length === 0) return;
-        const threadIds = [...new Set(events.flatMap((event) => {
-          const threadId = threadIdFromEvent(event.payload);
-          return threadId === null ? [] : [threadId];
-        }))];
+        const threadIds = [
+          ...new Set(
+            events.flatMap((event) => {
+              const threadId = threadIdFromEvent(event.payload);
+              return threadId === null ? [] : [threadId];
+            }),
+          ),
+        ];
         const existing = await loadRows(connectionId, threadIds);
-        const current = new Map(existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]));
+        const current = new Map(
+          existing.map((row) => [threadSummaryKey(row.connectionId, row.remoteThreadId), row]),
+        );
         const changed = new Map<string, StoredThreadSummary | null>();
         for (const event of events) {
-          const mutation = projectThreadSummaryEvent(connectionId, event.payload, (threadId) => {
-            const key = threadSummaryKey(connectionId, threadId);
-            return changed.get(key) ?? current.get(key) ?? undefined;
-          }, undefined, event.cursor);
+          const mutation = projectThreadSummaryEvent(
+            connectionId,
+            event.payload,
+            (threadId) => {
+              const key = threadSummaryKey(connectionId, threadId);
+              return changed.get(key) ?? current.get(key) ?? undefined;
+            },
+            undefined,
+            event.cursor,
+          );
           if (mutation !== null) changed.set(mutation.key, mutation.value);
         }
         if (changed.size === 0) return;
@@ -293,13 +398,18 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
           }
         }
         const checkpoint = storage.commit({ durable: true });
-        publishModelChanges([...changed].map(([key, row]) => row === null
-          ? { type: "delete" as const, key }
-          : { type: current.has(key) ? "update" as const : "insert" as const, value: row }), [...changed].some(([key, row]) => {
+        publishModelChanges(
+          [...changed].map(([key, row]) =>
+            row === null
+              ? { type: "delete" as const, key }
+              : { type: current.has(key) ? ("update" as const) : ("insert" as const), value: row },
+          ),
+          [...changed].some(([key, row]) => {
             if (row === null) return true;
             const previous = current.get(key);
             return previous !== undefined && summaryViewMembershipChanged(previous, row);
-          }));
+          }),
+        );
         await checkpoint;
       });
     },
@@ -317,7 +427,12 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
       await applyDeleteDelivery(delivery);
     },
     async reconcileDeleteCommands(deliveries) {
-      const byId = new Map(deliveries.map((delivery) => [`${delivery.connectionId}\u0000${delivery.commandId}`, delivery]));
+      const byId = new Map(
+        deliveries.map((delivery) => [
+          `${delivery.connectionId}\u0000${delivery.commandId}`,
+          delivery,
+        ]),
+      );
       for (const row of await storage.loadAll()) {
         if (row.deleteCommandId === null || row.deleteCommandId === undefined) continue;
         const delivery = byId.get(`${row.connectionId}\u0000${row.deleteCommandId}`);
@@ -334,12 +449,16 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     async search(query, connectionId = null) {
       const needle = query.trim().toLocaleLowerCase();
       if (needle === "") return [];
-      const rows = connectionId === null ? await storage.loadAll() : await loadConnectionRows(connectionId);
+      const rows =
+        connectionId === null ? await storage.loadAll() : await loadConnectionRows(connectionId);
       return rows
-        .filter((row) => row.deleteCommandId == null
-          && row.parentThreadId == null
-          && (connectionId === null || row.connectionId === connectionId)
-          && `${row.name ?? ""}\n${row.preview}`.toLocaleLowerCase().includes(needle))
+        .filter(
+          (row) =>
+            row.deleteCommandId == null &&
+            row.parentThreadId == null &&
+            (connectionId === null || row.connectionId === connectionId) &&
+            `${row.name ?? ""}\n${row.preview}`.toLocaleLowerCase().includes(needle),
+        )
         .sort(compareThreadSummaryRecency)
         .slice(0, 200);
     },
@@ -359,51 +478,63 @@ export function createThreadSummaryDatabase(): ThreadSummaryDatabase {
     },
     async markRead(connectionId, threadId) {
       const row = await loadRow(connectionId, threadId);
-      if (row !== undefined) await publish({ ...row, lastSeenCursor: row.latestActivityCursor, unread: 0 });
+      if (row !== undefined)
+        await publish({ ...row, lastSeenCursor: row.latestActivityCursor, unread: 0 });
     },
     close() {
       disposed = true;
       model.close();
       projectUnread.close();
-      void storage.close().catch((cause: unknown) => console.warn("Could not close thread summary model", cause));
+      void storage
+        .close()
+        .catch((cause: unknown) => console.warn("Could not close thread summary model", cause));
     },
   };
-
 }
 
 function sameThreadSummary(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
-  return left.connectionId === right.connectionId
-    && left.remoteThreadId === right.remoteThreadId
-    && left.parentThreadId === right.parentThreadId
-    && left.agentNickname === right.agentNickname
-    && left.agentRole === right.agentRole
-    && left.name === right.name
-    && left.preview === right.preview
-    && left.cwd === right.cwd
-    && (left.gitOriginUrl ?? null) === (right.gitOriginUrl ?? null)
-    && left.updatedAt === right.updatedAt
-    && left.recencyAt === right.recencyAt
-    && left.status.type === right.status.type
-    && left.pinned === right.pinned
-    && left.archived === right.archived
-    && left.pendingRequestCount === right.pendingRequestCount
-    && left.latestActivityCursor === right.latestActivityCursor
-    && left.lastSeenCursor === right.lastSeenCursor
-    && left.unread === right.unread
-    && left.provisionalThread === right.provisionalThread
-    && left.deleteCommandId === right.deleteCommandId;
+  return (
+    left.connectionId === right.connectionId &&
+    left.remoteThreadId === right.remoteThreadId &&
+    left.parentThreadId === right.parentThreadId &&
+    left.agentNickname === right.agentNickname &&
+    left.agentRole === right.agentRole &&
+    left.name === right.name &&
+    left.preview === right.preview &&
+    left.cwd === right.cwd &&
+    (left.gitOriginUrl ?? null) === (right.gitOriginUrl ?? null) &&
+    left.updatedAt === right.updatedAt &&
+    left.recencyAt === right.recencyAt &&
+    left.status.type === right.status.type &&
+    left.pinned === right.pinned &&
+    left.archived === right.archived &&
+    left.pendingRequestCount === right.pendingRequestCount &&
+    left.latestActivityCursor === right.latestActivityCursor &&
+    left.lastSeenCursor === right.lastSeenCursor &&
+    left.unread === right.unread &&
+    left.provisionalThread === right.provisionalThread &&
+    left.deleteCommandId === right.deleteCommandId
+  );
 }
 
-function compareThreadSummaryRecency(left: StoredThreadSummary, right: StoredThreadSummary): number {
+function compareThreadSummaryRecency(
+  left: StoredThreadSummary,
+  right: StoredThreadSummary,
+): number {
   if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
   return (right.recencyAt ?? right.updatedAt) - (left.recencyAt ?? left.updatedAt);
 }
 
-function summaryViewMembershipChanged(left: StoredThreadSummary, right: StoredThreadSummary): boolean {
-  return left.connectionId !== right.connectionId
-    || left.cwd !== right.cwd
-    || left.parentThreadId !== right.parentThreadId
-    || left.pinned !== right.pinned
-    || left.archived !== right.archived
-    || left.deleteCommandId !== right.deleteCommandId;
+function summaryViewMembershipChanged(
+  left: StoredThreadSummary,
+  right: StoredThreadSummary,
+): boolean {
+  return (
+    left.connectionId !== right.connectionId ||
+    left.cwd !== right.cwd ||
+    left.parentThreadId !== right.parentThreadId ||
+    left.pinned !== right.pinned ||
+    left.archived !== right.archived ||
+    left.deleteCommandId !== right.deleteCommandId
+  );
 }

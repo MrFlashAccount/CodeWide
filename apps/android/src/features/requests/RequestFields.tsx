@@ -6,6 +6,7 @@ import { mcpElicitationFields } from "./elicitationForm";
 import { styles } from "./RequestFeature.styles";
 
 import type { Dispatch, SetStateAction } from "react";
+
 type RequestFieldsProps = {
   questions: Record<string, unknown>[];
   elicitationFields: ReturnType<typeof mcpElicitationFields>;

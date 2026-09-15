@@ -47,8 +47,16 @@ export function resetPerformanceExperiments(): void {
 }
 
 export function PerformanceExperimentProvider({ children }: { children: ReactNode }) {
-  const value = useSyncExternalStore(subscribePerformanceExperiments, performanceExperimentSnapshot, performanceExperimentSnapshot);
-  return <PerformanceExperimentContext.Provider value={value}>{children}</PerformanceExperimentContext.Provider>;
+  const value = useSyncExternalStore(
+    subscribePerformanceExperiments,
+    performanceExperimentSnapshot,
+    performanceExperimentSnapshot,
+  );
+  return (
+    <PerformanceExperimentContext.Provider value={value}>
+      {children}
+    </PerformanceExperimentContext.Provider>
+  );
 }
 
 export function usePerformanceExperiments(): PerformanceExperimentSnapshot {

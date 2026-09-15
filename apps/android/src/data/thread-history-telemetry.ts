@@ -1,4 +1,8 @@
-import { recordOperationalTelemetryEvent, recordTelemetryEvent, type TelemetryEventInput } from "./telemetry";
+import {
+  recordOperationalTelemetryEvent,
+  recordTelemetryEvent,
+  type TelemetryEventInput,
+} from "./telemetry";
 
 type ThreadHistoryTelemetryInput = Omit<TelemetryEventInput, "name" | "connectionId" | "threadId">;
 

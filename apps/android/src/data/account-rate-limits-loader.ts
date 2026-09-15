@@ -29,12 +29,7 @@ export function createAccountRateLimitsLoader({
     const database = getDatabase();
     if (database === null) throw new Error("Account limits are not ready");
     const cached = database.get(connectionId);
-    if (
-      !force &&
-      cached != null &&
-      cached.snapshot !== null &&
-      !accountRateLimitsStale(cached)
-    )
+    if (!force && cached != null && cached.snapshot !== null && !accountRateLimitsStale(cached))
       return cached.snapshot;
     const existing = accountRateLimitsInFlight.get(connectionId);
     if (existing !== undefined) return await existing;
@@ -63,7 +58,10 @@ export function createAccountRateLimitsLoader({
     try {
       return await operation;
     } catch (cause) {
-      database.markError(connectionId, cause instanceof Error ? cause.message : "Remote operation failed");
+      database.markError(
+        connectionId,
+        cause instanceof Error ? cause.message : "Remote operation failed",
+      );
       throw cause;
     } finally {
       if (accountRateLimitsInFlight.get(connectionId) === operation) {

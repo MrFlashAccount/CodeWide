@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { BackHandler, Platform } from "react-native";
 import { WebView } from "react-native-webview";
 import type { InternalBrowserHeader } from "./browserContract";
+
 export function useBrowserBack(
   header: InternalBrowserHeader | undefined,
   devToolsUrl: string | null,

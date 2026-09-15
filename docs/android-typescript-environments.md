@@ -42,4 +42,10 @@ Validation: `pnpm typecheck`, `pnpm test`, `pnpm --filter @codewide/android lint
 
 ## Shared quality preset
 
-V1 now extends the same `@sergeigarin/hygene/tsconfig.base.json` as V2. The native and browser graphs enforce its unused-code, control-flow, override, and erasable-syntax checks while preserving their platform libraries. Run `pnpm validate:android:v1` for the current V1 gate; see [the migration status](android-v1-quality-migration.md) for remaining Oxlint, formatting, and dead-code work.
+V1 and V2 use the same pinned `@sergeigarin/hygene` TypeScript and Oxlint presets.
+The native and browser graphs preserve their separate platform libraries. V1's
+required gate also checks formatting, public API documentation, import and
+`StyleSheet` layout, dead code, platform-aware resolution, cycles, and feature
+boundaries. Its checked-in Oxlint baseline is a ratchet over historical debt, not
+a claim of full compliance. Run `pnpm validate:android:v1`; see the
+[V1 quality contract](android-v1-quality-migration.md) for the exact scope.

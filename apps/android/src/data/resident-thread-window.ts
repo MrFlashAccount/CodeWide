@@ -15,21 +15,33 @@ export function residentThreadWindow(
   const minimum = meta.historyCoverageMinOrdinal;
   const maximum = meta.historyCoverageMaxOrdinal;
   if (minimum === undefined || maximum === undefined) return null;
-  const currentRows = rows.filter((row) => row.kind === "pending" || row.historyEpoch === meta.historyEpoch);
+  const currentRows = rows.filter(
+    (row) => row.kind === "pending" || row.historyEpoch === meta.historyEpoch,
+  );
   const sealed = currentRows.filter((row) => row.kind === "turn" && row.sealed);
-  const anchor = request.anchorTurnId === null ? null : currentRows.find((row) => (
-    row.kind === "turn" && row.remoteTurnId === request.anchorTurnId
-  ));
+  const anchor =
+    request.anchorTurnId === null
+      ? null
+      : currentRows.find((row) => row.kind === "turn" && row.remoteTurnId === request.anchorTurnId);
   if (anchor === undefined) return null;
   if (minimum === null || maximum === null) {
-    if (minimum !== null || maximum !== null || sealed.length !== 0 || meta.historyCursor !== null) return null;
+    if (minimum !== null || maximum !== null || sealed.length !== 0 || meta.historyCursor !== null)
+      return null;
     if (meta.historyHadTurns !== false) return null;
   }
-  const end = maximum === null ? null : anchor?.sealed === true
-    ? Math.min(maximum, anchor.ordinal + THREAD_HISTORY_PAGE_SIZE)
-    : maximum;
-  const start = minimum === null || end === null ? null : Math.max(minimum, end - THREAD_RESIDENT_TURN_LIMIT + 1);
-  const turnRows = sealed.filter((row) => start !== null && end !== null && row.ordinal >= start && row.ordinal <= end);
+  const end =
+    maximum === null
+      ? null
+      : anchor?.sealed === true
+        ? Math.min(maximum, anchor.ordinal + THREAD_HISTORY_PAGE_SIZE)
+        : maximum;
+  const start =
+    minimum === null || end === null
+      ? null
+      : Math.max(minimum, end - THREAD_RESIDENT_TURN_LIMIT + 1);
+  const turnRows = sealed.filter(
+    (row) => start !== null && end !== null && row.ordinal >= start && row.ordinal <= end,
+  );
   const ordinals = new Set(turnRows.filter((row) => row.turn !== null).map((row) => row.ordinal));
   if (start !== null && end !== null) {
     for (let ordinal = start; ordinal <= end; ordinal += 1) {
@@ -45,7 +57,12 @@ export function residentThreadWindow(
     latestSealedOrdinal: maximum === null ? null : Math.max(previousMax ?? maximum, maximum),
     earliestSealedOrdinal: minimum === null ? null : Math.min(previousMin ?? minimum, minimum),
     turnRows,
-    detailRows: currentRows.filter((row) => row.sealed && (row.kind === "turnMeta" || row.kind === "activity") && ordinals.has(row.ordinal)),
+    detailRows: currentRows.filter(
+      (row) =>
+        row.sealed &&
+        (row.kind === "turnMeta" || row.kind === "activity") &&
+        ordinals.has(row.ordinal),
+    ),
     liveRows: currentRows.filter((row) => !row.sealed),
   };
 }

@@ -2,7 +2,12 @@ import { StyleSheet } from "react-native";
 import { colors, controlSize, radii, spacing, touchTarget, typeScale } from "../../../theme";
 
 export const styles = StyleSheet.create({
-  root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
   toolbar: {
     minHeight: touchTarget,
     zIndex: 2,
@@ -33,27 +38,71 @@ export const styles = StyleSheet.create({
   },
   disabled: { opacity: 0.35 },
   pressed: { opacity: 0.7 },
-  content: { flex: 1, minHeight: 0 },
+  content: {
+    flex: 1,
+    minHeight: 0,
+  },
   contentRow: { flexDirection: "row" },
   contentRowReverse: { flexDirection: "row-reverse" },
-  targetPane: { flexShrink: 0, minWidth: 0, minHeight: 0 },
-  targetPaneClosed: { flex: 1, minWidth: 0, minHeight: 0 },
-  targetPaneUndocked: { position: "absolute", width: 1, height: 1, opacity: 0 },
+  targetPane: {
+    flexShrink: 0,
+    minWidth: 0,
+    minHeight: 0,
+  },
+  targetPaneClosed: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+  },
+  targetPaneUndocked: {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    opacity: 0,
+  },
   divider: {
     flexShrink: 0,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "transparent",
   },
-  dividerHorizontal: { width: "100%", height: 10 },
-  dividerVertical: { width: 10, height: "100%" },
+  dividerHorizontal: {
+    width: "100%",
+    height: 10,
+  },
+  dividerVertical: {
+    width: 10,
+    height: "100%",
+  },
   dividerHidden: { display: "none" },
-  dividerHandle: { borderRadius: radii.compact, backgroundColor: colors.border },
-  dividerHandleHorizontal: { width: 48, height: 2 },
-  dividerHandleVertical: { width: 2, height: controlSize.touch },
-  webView: { flex: 1, backgroundColor: colors.background },
-  devToolsPane: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "#202124" },
-  devTools: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "#202124" },
+  dividerHandle: {
+    borderRadius: radii.compact,
+    backgroundColor: colors.border,
+  },
+  dividerHandleHorizontal: {
+    width: 48,
+    height: 2,
+  },
+  dividerHandleVertical: {
+    width: 2,
+    height: controlSize.touch,
+  },
+  webView: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  devToolsPane: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: "#202124",
+  },
+  devTools: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: "#202124",
+  },
   devToolsLoading: {
     position: "absolute",
     top: 0,
@@ -77,6 +126,13 @@ export const styles = StyleSheet.create({
     padding: spacing.lg,
     backgroundColor: "#202124",
   },
-  devToolsStatus: { color: colors.textMuted, textAlign: "center", ...typeScale.body },
-  loading: { position: "absolute", inset: 0 },
+  devToolsStatus: {
+    color: colors.textMuted,
+    textAlign: "center",
+    ...typeScale.body,
+  },
+  loading: {
+    position: "absolute",
+    inset: 0,
+  },
 });

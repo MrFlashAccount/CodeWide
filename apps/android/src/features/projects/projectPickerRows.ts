@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import type { RemoteProject } from "../../data/remote-projects";
 import { partitionDiscoveredProjects, projectIncludesDirectory } from "../../data/remote-projects";
 import { listRowPosition, type AppListRowProps } from "../../ui/AppListRow.types";
+
 export type ProjectSectionId = "other" | "recent";
 export type ProjectListItem =
   | {

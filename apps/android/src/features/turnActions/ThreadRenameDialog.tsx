@@ -107,8 +107,16 @@ export function ThreadRenameDialog(props: ThreadRenameDialogProps) {
 }
 
 const styles = StyleSheet.create({
-  portal: { position: "absolute", inset: 0 },
-  keyboardLayout: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.md },
+  portal: {
+    position: "absolute",
+    inset: 0,
+  },
+  keyboardLayout: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.md,
+  },
   content: {
     width: "100%",
     maxWidth: 420,
@@ -117,8 +125,15 @@ const styles = StyleSheet.create({
     borderRadius: radii.large,
     backgroundColor: colors.surfaceContainerHigh,
   },
-  form: { padding: spacing.md, gap: spacing.md },
-  title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
+  form: {
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.title,
+    fontWeight: typeWeight.semibold,
+  },
   input: {
     minHeight: controlSize.touch,
     paddingHorizontal: spacing.sm,
@@ -127,7 +142,11 @@ const styles = StyleSheet.create({
     color: colors.text,
     ...typeScale.body,
   },
-  actions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.xs },
+  actions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: spacing.xs,
+  },
   button: {
     minHeight: controlSize.regular,
     minWidth: controlSize.touch,
@@ -138,7 +157,18 @@ const styles = StyleSheet.create({
   },
   saveButton: { backgroundColor: colors.primary },
   disabled: { opacity: 0.5 },
-  cancelText: { color: colors.textMuted, ...typeScale.body, fontWeight: typeWeight.medium },
-  saveText: { color: colors.onPrimary, ...typeScale.body, fontWeight: typeWeight.medium },
-  error: { color: colors.red, ...typeScale.label },
+  cancelText: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    fontWeight: typeWeight.medium,
+  },
+  saveText: {
+    color: colors.onPrimary,
+    ...typeScale.body,
+    fontWeight: typeWeight.medium,
+  },
+  error: {
+    color: colors.red,
+    ...typeScale.label,
+  },
 });

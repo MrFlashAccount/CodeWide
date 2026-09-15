@@ -88,7 +88,10 @@ export function AttachmentListRow(props: AttachmentListRowProps) {
 }
 
 const localStyles = StyleSheet.create({
-  cell: { width: "100%", height: listRowHeight.double },
+  cell: {
+    width: "100%",
+    height: listRowHeight.double,
+  },
   title: {
     fontSize: typeScale.body.fontSize,
     lineHeight: typeScale.body.lineHeight,

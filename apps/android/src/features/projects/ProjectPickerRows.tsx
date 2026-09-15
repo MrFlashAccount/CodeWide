@@ -9,6 +9,7 @@ import { AppListRow } from "../../ui/AppListRow";
 import { listRowHeight, type AppListRowProps } from "../../ui/AppListRow.types";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./ProjectPickerSheet.styles";
+
 export function SectionLabel({ title, count }: { title: string; count: number }) {
   return (
     <View style={styles.sectionLabel}>

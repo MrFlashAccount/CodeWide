@@ -138,7 +138,7 @@ export function ApprovalPrompt({
   );
 }
 
-export function approvalTitle(method: string): string {
+function approvalTitle(method: string): string {
   if (method === "item/commandExecution/requestApproval") return "Command approval";
   if (method === "item/fileChange/requestApproval") return "File change approval";
   if (method === "item/tool/requestUserInput") return "Codex needs input";

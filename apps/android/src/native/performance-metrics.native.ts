@@ -118,7 +118,8 @@ type PerformanceBridge = {
 
 const EVENT_NAME = "CodexPerformanceSnapshot";
 const bridge = NativeModules.CodexPerformanceNative as PerformanceBridge | undefined;
-const emitter = bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodexPerformanceNative);
+const emitter =
+  bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodexPerformanceNative);
 const listeners = new Set<() => void>();
 let subscription: { remove(): void } | null = null;
 let loading: Promise<void> | null = null;
@@ -148,13 +149,18 @@ function publish(next: PerformanceMetricsSnapshot): void {
 function ensureNativeSubscription(): void {
   if (bridge === undefined || emitter === null) return;
   if (subscription === null) {
-    subscription = emitter.addListener(EVENT_NAME, (next: PerformanceMetricsSnapshot) => publish(next));
+    subscription = emitter.addListener(EVENT_NAME, (next: PerformanceMetricsSnapshot) =>
+      publish(next),
+    );
   }
   if (loading === null) {
-    loading = bridge.getPerformanceSnapshot()
+    loading = bridge
+      .getPerformanceSnapshot()
       .then(publish)
       .catch(() => undefined)
-      .finally(() => { loading = null; });
+      .finally(() => {
+        loading = null;
+      });
   }
 }
 
@@ -180,7 +186,11 @@ export function subscribePerformanceMetrics(listener: () => void): () => void {
 }
 
 export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
-  return useSyncExternalStore(subscribePerformanceMetrics, () => snapshot, () => snapshot);
+  return useSyncExternalStore(
+    subscribePerformanceMetrics,
+    () => snapshot,
+    () => snapshot,
+  );
 }
 
 export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
@@ -195,11 +205,18 @@ export async function setPerformanceMonitoringEnabled(enabled: boolean): Promise
 }
 
 export async function beginNavigationFrameTrace(traceId: string): Promise<boolean> {
-  if (bridge === undefined || !snapshot.enabled || typeof bridge.beginNavigationTrace !== "function") return false;
+  if (
+    bridge === undefined ||
+    !snapshot.enabled ||
+    typeof bridge.beginNavigationTrace !== "function"
+  )
+    return false;
   return await bridge.beginNavigationTrace(traceId).catch(() => false);
 }
 
-export async function endNavigationFrameTrace(traceId: string): Promise<ThreadNavigationFrameProfile | null> {
+export async function endNavigationFrameTrace(
+  traceId: string,
+): Promise<ThreadNavigationFrameProfile | null> {
   if (bridge === undefined || typeof bridge.endNavigationTrace !== "function") return null;
   return await bridge.endNavigationTrace(traceId).catch(() => null);
 }
@@ -218,7 +235,11 @@ export async function captureMemoryReport(): Promise<string> {
     throw new Error("Memory report requires a newer Android APK");
   }
   const report = await bridge.captureMemoryReport();
-  if (typeof report !== "string" || report.length === 0 || report.length > MAX_MEMORY_REPORT_CHARACTERS) {
+  if (
+    typeof report !== "string" ||
+    report.length === 0 ||
+    report.length > MAX_MEMORY_REPORT_CHARACTERS
+  ) {
     throw new Error("Android returned an invalid memory report");
   }
   const parsed: unknown = JSON.parse(report);
@@ -229,16 +250,19 @@ export async function captureMemoryReport(): Promise<string> {
 }
 
 export function memoryReclamationExperimentAvailable(): boolean {
-  return bridge?.captureMemoryCheckpoint !== undefined
-    && bridge.clearNativeCodeMemoryCache !== undefined
-    && bridge.clearImageMemoryCache !== undefined
-    && bridge.collectJavaGarbage !== undefined
-    && bridge.collectHermesGarbage !== undefined
-    && bridge.purgeNativeAllocator !== undefined;
+  return (
+    bridge?.captureMemoryCheckpoint !== undefined &&
+    bridge.clearNativeCodeMemoryCache !== undefined &&
+    bridge.clearImageMemoryCache !== undefined &&
+    bridge.collectJavaGarbage !== undefined &&
+    bridge.collectHermesGarbage !== undefined &&
+    bridge.purgeNativeAllocator !== undefined
+  );
 }
 
 export async function captureMemoryCheckpoint(): Promise<MemoryCheckpoint> {
-  if (bridge?.captureMemoryCheckpoint === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  if (bridge?.captureMemoryCheckpoint === undefined)
+    throw new Error("Memory experiment requires a newer Android APK");
   const encoded = await bridge.captureMemoryCheckpoint();
   if (typeof encoded !== "string" || encoded.length === 0 || encoded.length > 64 * 1_024) {
     throw new Error("Android returned an invalid memory checkpoint");
@@ -249,27 +273,34 @@ export async function captureMemoryCheckpoint(): Promise<MemoryCheckpoint> {
 }
 
 export async function clearNativeCodeMemoryCache(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.clearNativeCodeMemoryCache === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  if (bridge?.clearNativeCodeMemoryCache === undefined)
+    throw new Error("Memory experiment requires a newer Android APK");
   return parseMemoryActionResult(await bridge.clearNativeCodeMemoryCache());
 }
 
 export async function clearImageMemoryCache(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.clearImageMemoryCache === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  if (bridge?.clearImageMemoryCache === undefined)
+    throw new Error("Memory experiment requires a newer Android APK");
   return parseMemoryActionResult(await bridge.clearImageMemoryCache());
 }
 
 export async function collectJavaGarbage(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.collectJavaGarbage === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  if (bridge?.collectJavaGarbage === undefined)
+    throw new Error("Memory experiment requires a newer Android APK");
   return parseMemoryActionResult(await bridge.collectJavaGarbage());
 }
 
 export async function collectHermesGarbage(): Promise<MemoryReclamationActionResult> {
-  if (bridge?.collectHermesGarbage === undefined) throw new Error("Memory experiment requires a newer Android APK");
+  if (bridge?.collectHermesGarbage === undefined)
+    throw new Error("Memory experiment requires a newer Android APK");
   return parseMemoryActionResult(await bridge.collectHermesGarbage());
 }
 
-export async function purgeNativeAllocator(exhaustive: boolean): Promise<MemoryReclamationActionResult> {
-  if (bridge?.purgeNativeAllocator === undefined) throw new Error("Memory experiment requires a newer Android APK");
+export async function purgeNativeAllocator(
+  exhaustive: boolean,
+): Promise<MemoryReclamationActionResult> {
+  if (bridge?.purgeNativeAllocator === undefined)
+    throw new Error("Memory experiment requires a newer Android APK");
   return parseMemoryActionResult(await bridge.purgeNativeAllocator(exhaustive));
 }
 
@@ -294,21 +325,31 @@ function isMemoryCheckpoint(value: unknown): value is MemoryCheckpoint {
     "threads",
   ];
   if (!requiredNumbers.every((key) => typeof Reflect.get(value, key) === "number")) return false;
-  const nullableNumbers = ["procRssBytes", "smapsPssBytes", "smapsRssBytes", "smapsSwapPssBytes", "artAllocatedBytes", "artFreedBytes"];
-  if (!nullableNumbers.every((key) => {
-    const field = Reflect.get(value, key);
-    return field === null || typeof field === "number";
-  })) return false;
+  const nullableNumbers = [
+    "procRssBytes",
+    "smapsPssBytes",
+    "smapsRssBytes",
+    "smapsSwapPssBytes",
+    "artAllocatedBytes",
+    "artFreedBytes",
+  ];
+  if (
+    !nullableNumbers.every((key) => {
+      const field = Reflect.get(value, key);
+      return field === null || typeof field === "number";
+    })
+  )
+    return false;
   return Array.isArray(Reflect.get(value, "errors"));
 }
 
 function parseMemoryActionResult(value: unknown): MemoryReclamationActionResult {
   if (
-    typeof value !== "object"
-    || value === null
-    || Array.isArray(value)
-    || typeof Reflect.get(value, "performed") !== "boolean"
-    || typeof Reflect.get(value, "durationMs") !== "number"
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    typeof Reflect.get(value, "performed") !== "boolean" ||
+    typeof Reflect.get(value, "durationMs") !== "number"
   ) {
     throw new Error("Android returned an invalid memory action result");
   }

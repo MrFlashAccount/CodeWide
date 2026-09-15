@@ -6,13 +6,7 @@ import {
 } from "@expo/ui/community/bottom-sheet";
 import { PortalHost } from "heroui-native/portal";
 import { useId, type ComponentPropsWithRef, type ReactNode } from "react";
-import {
-  Pressable,
-  StyleSheet,
-  View,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 
 import { colors, radii, spacing, layoutSize } from "../theme";
 import type { SheetPerformanceSurface } from "../presentation/diagnostics/sheetPerformanceSurface";
@@ -55,10 +49,12 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
 
   return (
     <BottomSheet
-      index={isOpen ? contentProps.index ?? 0 : -1}
+      index={isOpen ? (contentProps.index ?? 0) : -1}
       {...(contentProps.snapPoints === undefined ? {} : { snapPoints: contentProps.snapPoints })}
       enableDynamicSizing={contentProps.enableDynamicSizing ?? true}
-      {...(contentProps.enableOverDrag === undefined ? {} : { enableOverDrag: contentProps.enableOverDrag })}
+      {...(contentProps.enableOverDrag === undefined
+        ? {}
+        : { enableOverDrag: contentProps.enableOverDrag })}
       enablePanDownToClose={contentProps.enablePanDownToClose ?? true}
       handleComponent={null}
       backgroundStyle={styles.sheetBackground}
@@ -79,7 +75,9 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
               accessibilityLabel={contentProps.dismissLabel ?? "Dismiss sheet"}
               disabled={contentProps.enablePanDownToClose === false}
               onPress={() => onOpenChange(false)}
-              onAccessibilityEscape={contentProps.enablePanDownToClose === false ? undefined : () => onOpenChange(false)}
+              onAccessibilityEscape={
+                contentProps.enablePanDownToClose === false ? undefined : () => onOpenChange(false)
+              }
               style={styles.handleArea}
             >
               <View style={styles.handle} />
@@ -103,7 +101,9 @@ export function AppSheet({ isOpen, onOpenChange, children, contentProps }: AppSh
 
 /** Also serves as LegendList's scroll host, preserving its ref, events and sheet gesture handoff. */
 export function AppSheetScrollView(props: ComponentPropsWithRef<typeof BottomSheetScrollView>) {
-  return <BottomSheetScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />;
+  return (
+    <BottomSheetScrollView {...props} nestedScrollEnabled={props.nestedScrollEnabled ?? true} />
+  );
 }
 
 const styles = StyleSheet.create({

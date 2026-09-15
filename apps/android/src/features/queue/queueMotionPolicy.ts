@@ -1,6 +1,7 @@
 import * as Haptics from "expo-haptics";
 import { Easing } from "react-native-reanimated";
 import { SWIPE_REVEAL } from "./inlineQueueLayout";
+
 export const QUEUE_SPRING_GLIDE = { damping: 32, stiffness: 170, mass: 1 };
 
 export const QUEUE_SPRING_SNAPPY = { damping: 24, stiffness: 280, mass: 0.8 };

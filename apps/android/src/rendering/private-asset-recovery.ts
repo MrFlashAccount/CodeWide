@@ -13,11 +13,7 @@ export async function recoverPrivateAsset(
         refreshedAuthorization = true;
         continue;
       }
-      if (
-        !recoveredMissingContent
-        && recoverMissing !== null
-        && isMissingContent(cause)
-      ) {
+      if (!recoveredMissingContent && recoverMissing !== null && isMissingContent(cause)) {
         recoveredMissingContent = true;
         await recoverMissing();
         continue;
@@ -30,7 +26,9 @@ export async function recoverPrivateAsset(
 
 function isAuthorizationFailure(cause: unknown): boolean {
   const message = cause instanceof Error ? cause.message : String(cause);
-  return /\((?:401|403)\)/u.test(message) || /unauthori[sz]ed|forbidden|session.*expired/iu.test(message);
+  return (
+    /\((?:401|403)\)/u.test(message) || /unauthori[sz]ed|forbidden|session.*expired/iu.test(message)
+  );
 }
 
 function isMissingContent(cause: unknown): boolean {

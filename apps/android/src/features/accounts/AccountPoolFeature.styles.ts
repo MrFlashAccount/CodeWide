@@ -12,11 +12,26 @@ import {
 
 export const styles = StyleSheet.create({
   flex: { flex: 1 },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
-  menuActionSubtitle: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.optical },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
+  menuActionSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.optical,
+  },
   disabled: { opacity: 0.42 },
-  fieldLabel: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.xxs },
-  errorText: { color: colors.red, ...typeScale.body },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.xxs,
+  },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   secondaryButton: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.md,
@@ -26,7 +41,10 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.outline,
   },
-  secondaryButtonText: { color: colors.text, fontWeight: typeWeight.semibold },
+  secondaryButtonText: {
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
+  },
   primaryButton: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.md,
@@ -35,7 +53,10 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.primary,
   },
-  primaryButtonText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  primaryButtonText: {
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
   connectionMiniButton: {
     width: touchTarget,
     height: touchTarget,
@@ -43,8 +64,15 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.medium,
   },
-  connectionStateDot: { width: 7, height: 7, borderRadius: radii.pill },
-  accountPoolEditor: { gap: 0, marginTop: spacing.md },
+  connectionStateDot: {
+    width: 7,
+    height: 7,
+    borderRadius: radii.pill,
+  },
+  accountPoolEditor: {
+    gap: 0,
+    marginTop: spacing.md,
+  },
   accountPoolHeader: {
     minHeight: controlSize.touch,
     flexDirection: "row",
@@ -59,15 +87,25 @@ export const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
-  accountPoolLimitPending: { color: colors.textDim, fontWeight: typeWeight.semibold },
-  accountPoolMenuAnchor: { width: touchTarget, height: touchTarget, flexShrink: 0 },
+  accountPoolLimitPending: {
+    color: colors.textDim,
+    fontWeight: typeWeight.semibold,
+  },
+  accountPoolMenuAnchor: {
+    width: touchTarget,
+    height: touchTarget,
+    flexShrink: 0,
+  },
   accountPoolAddButton: {
     minHeight: controlSize.regular,
     flexDirection: "row",
     gap: spacing.xs,
     marginTop: spacing.xs,
   },
-  accountLoginSheet: { gap: spacing.md, paddingBottom: spacing.xs },
+  accountLoginSheet: {
+    gap: spacing.md,
+    paddingBottom: spacing.xs,
+  },
   accountLoginHeader: {
     minHeight: touchTarget,
     flexDirection: "row",
@@ -82,8 +120,15 @@ export const styles = StyleSheet.create({
     borderRadius: radii.large,
     backgroundColor: colors.primaryContainer,
   },
-  accountLoginTitle: { color: colors.text, ...typeScale.heading },
-  accountLoginSubtitle: { color: colors.textMuted, ...typeScale.body, marginTop: spacing.optical },
+  accountLoginTitle: {
+    color: colors.text,
+    ...typeScale.heading,
+  },
+  accountLoginSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    marginTop: spacing.optical,
+  },
   accountLoginCodeCard: {
     minHeight: 92,
     flexDirection: "row",
@@ -93,11 +138,17 @@ export const styles = StyleSheet.create({
     borderRadius: radii.large,
     backgroundColor: colors.surfaceContainerLow,
   },
-  accountLoginCodeLabel: { color: colors.textMuted, ...typeScale.label },
+  accountLoginCodeLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   accountLoginCode: {
     color: colors.text,
     ...typeScale.heading,
-    fontFamily: Platform.select({ android: "monospace", default: "Courier" }),
+    fontFamily: Platform.select({
+      android: "monospace",
+      default: "Courier",
+    }),
     letterSpacing: typeTracking.pairingCode,
   },
   accountLoginCopyButton: {
@@ -121,7 +172,10 @@ export const styles = StyleSheet.create({
     fontWeight: typeWeight.semibold,
   },
   accountLoginCopyLabelDone: { color: colors.green },
-  accountLoginHint: { color: colors.textMuted, ...typeScale.body },
+  accountLoginHint: {
+    color: colors.textMuted,
+    ...typeScale.body,
+  },
   accountLoginPrimaryButton: {
     minHeight: controlSize.regular,
     flexDirection: "row",

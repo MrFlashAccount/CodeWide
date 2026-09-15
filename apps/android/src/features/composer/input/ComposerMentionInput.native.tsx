@@ -142,7 +142,12 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.compact,
     backgroundColor: colors.surface,
   },
-  row: { minWidth: 0, flexDirection: "row", alignItems: "flex-end", gap: spacing.xs },
+  row: {
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: spacing.xs,
+  },
   inputShell: {
     flex: 1,
     minWidth: 0,
@@ -179,6 +184,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  previewPending: { ...typeScale.body, color: colors.onPrimary },
-  error: { ...typeScale.body, color: colors.error },
+  previewPending: {
+    ...typeScale.body,
+    color: colors.onPrimary,
+  },
+  error: {
+    ...typeScale.body,
+    color: colors.error,
+  },
 });

@@ -13,7 +13,8 @@ export function commandReceiptsFromOperation(
   threadId: string,
   operation: ThreadProjectionPatchV1["operation"],
 ): CommandReceipt[] {
-  if (operation.kind === "itemUpsert") return itemReceipts(threadId, operation.turnId, operation.item);
+  if (operation.kind === "itemUpsert")
+    return itemReceipts(threadId, operation.turnId, operation.item);
   if (operation.kind === "turnStarted" || operation.kind === "turnCompleted") {
     return commandReceiptsFromTurn(threadId, operation.turn);
   }
@@ -29,9 +30,17 @@ export function commandReceiptsFromTurn(threadId: string, value: unknown): Comma
 
 function itemReceipts(threadId: string, turnId: unknown, value: unknown): CommandReceipt[] {
   const item = asRecord(value);
-  if (threadId.length === 0 || typeof turnId !== "string" || turnId.length === 0
-    || item?.type !== "userMessage" || typeof item.id !== "string" || item.id.length === 0
-    || typeof item.clientId !== "string" || item.clientId.length === 0) return [];
+  if (
+    threadId.length === 0 ||
+    typeof turnId !== "string" ||
+    turnId.length === 0 ||
+    item?.type !== "userMessage" ||
+    typeof item.id !== "string" ||
+    item.id.length === 0 ||
+    typeof item.clientId !== "string" ||
+    item.clientId.length === 0
+  )
+    return [];
   return [{ threadId, commandId: item.clientId, turnId, itemId: item.id }];
 }
 
@@ -49,15 +58,15 @@ export function operationConfirmsDeliveredCommand(
 
 function isClientUserMessage(value: unknown): boolean {
   const item = asRecord(value);
-  return item?.type === "userMessage"
-    && typeof item.clientId === "string"
-    && item.clientId.length > 0;
+  return (
+    item?.type === "userMessage" && typeof item.clientId === "string" && item.clientId.length > 0
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    // WHY: JS object narrowing does not provide an index signature. This boundary
-    // only reads unknown properties, which are individually validated above.
-    ? value as Record<string, unknown>
+    ? // WHY: JS object narrowing does not provide an index signature. This boundary
+      // only reads unknown properties, which are individually validated above.
+      (value as Record<string, unknown>)
     : null;
 }

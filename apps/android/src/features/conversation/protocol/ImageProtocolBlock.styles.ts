@@ -19,7 +19,11 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.surfaceRaised,
   },
-  openableImage: { width: "100%", height: "100%", borderRadius: radii.medium },
+  openableImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: radii.medium,
+  },
   imageOpenBadge: {
     position: "absolute",
     right: 8,
@@ -31,5 +35,9 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.62)",
   },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
 });

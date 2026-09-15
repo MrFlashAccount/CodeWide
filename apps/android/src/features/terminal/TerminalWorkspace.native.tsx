@@ -11,8 +11,10 @@ import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { TerminalTab } from "./TerminalTab.native";
 import { styles } from "./TerminalWorkspace.styles";
+
 export const MAX_TABS = 8;
 
+/** Hosts native terminal sessions for the active server and thread. */
 export function TerminalWorkspace({
   connectionId,
   threadId,

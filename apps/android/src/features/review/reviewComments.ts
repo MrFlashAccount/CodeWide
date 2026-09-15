@@ -6,6 +6,7 @@ import {
   type CodeReviewLineReference,
 } from "../../rendering/code-review";
 import { sameLineReference } from "./reviewLocation";
+
 export function useReviewComments() {
   const selectionRef = useRef({ start: 0, end: 0 });
   const [selectedReference, setSelectedReference] = useState<CodeReviewLineReference | null>(null);

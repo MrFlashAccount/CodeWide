@@ -22,7 +22,10 @@ import {
 } from "./thread-chat-timeline";
 
 export { applyThreadSummaryMetadata } from "./thread-metadata-projection";
-export type { ProjectedThreadChatDelivery, ProjectedThreadChatTimelineEntry } from "./thread-chat-timeline";
+export type {
+  ProjectedThreadChatDelivery,
+  ProjectedThreadChatTimelineEntry,
+} from "./thread-chat-timeline";
 
 export type ProjectedThreadChatWindow = {
   remoteThread: Thread | null;
@@ -57,7 +60,9 @@ function projectPendingDelivery(
     targetCommandId: null,
     text: entry.text,
     attachments: entry.attachments,
-    ...(entry.workspaceRequestId === undefined ? {} : { workspaceRequestId: entry.workspaceRequestId }),
+    ...(entry.workspaceRequestId === undefined
+      ? {}
+      : { workspaceRequestId: entry.workspaceRequestId }),
     state: entry.state,
     attempts: entry.attempts,
     lastError: entry.lastError,
@@ -78,13 +83,14 @@ export function projectThreadChatWindow(
   recordNavigationMeasurements: boolean,
   summary: StoredThreadSummary | null = null,
 ): ProjectedThreadChatWindow {
-  const measure = <Value,>(
+  const measure = <Value>(
     name: string,
     operation: () => Value,
     values: Record<string, number>,
-  ): Value => recordNavigationMeasurements
-    ? measureThreadNavigationWork(connectionId, threadId, name, operation, { values })
-    : operation();
+  ): Value =>
+    recordNavigationMeasurements
+      ? measureThreadNavigationWork(connectionId, threadId, name, operation, { values })
+      : operation();
   const pendingTimeline = materializePendingTimeline(view.liveRows);
   const pendingDeliveries: ProjectedThreadChatDelivery[] = pendingTimeline
     .filter(({ presentation }) => presentation === "delivery")
@@ -116,7 +122,10 @@ export function projectThreadChatWindow(
       currentOutcome: null,
       remoteSealedTurns: [],
       remoteLiveTurns: [],
-      timeline: projectResidentThreadTimeline([], pendingDeliveries, { includesEarliest: true, includesLatest: true }),
+      timeline: projectResidentThreadTimeline([], pendingDeliveries, {
+        includesEarliest: true,
+        includesLatest: true,
+      }),
       queuedPrompts,
     };
   }
@@ -125,11 +134,16 @@ export function projectThreadChatWindow(
     () => mergeThreadPartitions(sealedTurns, liveSnapshot.thread.turns),
     { sealedTurnCount: sealedTurns.length, liveTurnCount: liveSnapshot.thread.turns.length },
   );
-  const projectedThread = applyThreadSummaryMetadata({ ...liveSnapshot.thread, turns: mergedTurns }, summary);
+  const projectedThread = applyThreadSummaryMetadata(
+    { ...liveSnapshot.thread, turns: mergedTurns },
+    summary,
+  );
   const residentLiveTurnIds = new Set(liveSnapshot.thread.turns.map(({ id }) => id));
-  const liveTurnIds = new Set(projectedThread.turns.flatMap((turn) => (
-    residentLiveTurnIds.has(turn.id) && turn.status === "inProgress" ? [turn.id] : []
-  )));
+  const liveTurnIds = new Set(
+    projectedThread.turns.flatMap((turn) =>
+      residentLiveTurnIds.has(turn.id) && turn.status === "inProgress" ? [turn.id] : [],
+    ),
+  );
   const partitions = measure(
     "split_visible_turn_partitions",
     () => ({
@@ -138,14 +152,18 @@ export function projectThreadChatWindow(
     }),
     { mergedTurnCount: projectedThread.turns.length },
   );
-  const residentOrdinals = view.turnRows.flatMap((row) => row.kind === "turn" && row.sealed ? [row.ordinal] : []);
+  const residentOrdinals = view.turnRows.flatMap((row) =>
+    row.kind === "turn" && row.sealed ? [row.ordinal] : [],
+  );
   const residentMinimum = residentOrdinals.length === 0 ? null : Math.min(...residentOrdinals);
   const residentMaximum = residentOrdinals.length === 0 ? null : Math.max(...residentOrdinals);
   const timeline = projectResidentThreadTimeline(projectedThread.turns, pendingDeliveries, {
-    includesEarliest: view.snapshot.earliestSealedOrdinal === null
-      || (residentMinimum !== null && residentMinimum <= view.snapshot.earliestSealedOrdinal),
-    includesLatest: view.snapshot.latestSealedOrdinal === null
-      || (residentMaximum !== null && residentMaximum >= view.snapshot.latestSealedOrdinal),
+    includesEarliest:
+      view.snapshot.earliestSealedOrdinal === null ||
+      (residentMinimum !== null && residentMinimum <= view.snapshot.earliestSealedOrdinal),
+    includesLatest:
+      view.snapshot.latestSealedOrdinal === null ||
+      (residentMaximum !== null && residentMaximum >= view.snapshot.latestSealedOrdinal),
   });
   return {
     remoteThread: projectedThread,

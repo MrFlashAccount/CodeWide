@@ -1,5 +1,12 @@
-import type { LoadedThreadSummaryView, ThreadSummaryViewRequest } from "./thread-summary-view-types";
-export type { LoadedThreadSummaryView, ThreadSummaryViewRequest } from "./thread-summary-view-types";
+import type {
+  LoadedThreadSummaryView,
+  ThreadSummaryViewRequest,
+} from "./thread-summary-view-types";
+
+export type {
+  LoadedThreadSummaryView,
+  ThreadSummaryViewRequest,
+} from "./thread-summary-view-types";
 import { batch, observable, opaqueObject, type Observable } from "@legendapp/state";
 
 import { replaceEqualDeep } from "./replace-equal-deep";
@@ -18,12 +25,24 @@ export type ThreadSummaryViewSnapshot = LoadedThreadSummaryView & {
 
 export type ThreadSummaryModel = {
   view$(request: ThreadSummaryViewRequest): Observable<ThreadSummaryViewSnapshot>;
-  resource(request: ThreadSummaryViewRequest, loader: () => Promise<LoadedThreadSummaryView>): ThreadSummaryViewResource;
+  resource(
+    request: ThreadSummaryViewRequest,
+    loader: () => Promise<LoadedThreadSummaryView>,
+  ): ThreadSummaryViewResource;
   retainView(request: Pick<ThreadSummaryViewRequest, "viewId" | "connectionId">): () => void;
   startView(request: ThreadSummaryViewRequest): number;
-  commitView(request: ThreadSummaryViewRequest, generation: number, loaded: LoadedThreadSummaryView): boolean;
+  commitView(
+    request: ThreadSummaryViewRequest,
+    generation: number,
+    loaded: LoadedThreadSummaryView,
+  ): boolean;
   failView(request: ThreadSummaryViewRequest, generation: number, cause: unknown): void;
-  publish(changes: readonly ({ type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string })[]): void;
+  publish(
+    changes: readonly (
+      | { type: "insert" | "update"; value: StoredThreadSummary }
+      | { type: "delete"; key: string }
+    )[],
+  ): void;
   activeRequests(): readonly ThreadSummaryViewRequest[];
   close(): void;
 };
@@ -38,17 +57,22 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
   const requests = new Map<string, ThreadSummaryViewRequest>();
   const generations = new Map<string, number>();
   const retainCounts = new Map<string, number>();
-  const resources = new Map<string, {
-    ready$: Observable<boolean>;
-    requestRevision: string;
-    loadingRevision: string | null;
-    generation: number;
-    hasReadySnapshot: boolean;
-    initialFailed: boolean;
-    retryAttempt: number;
-    retryTimer: ReturnType<typeof setTimeout> | null;
-    pendingChanges: Array<{ type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string }>;
-  }>();
+  const resources = new Map<
+    string,
+    {
+      ready$: Observable<boolean>;
+      requestRevision: string;
+      loadingRevision: string | null;
+      generation: number;
+      hasReadySnapshot: boolean;
+      initialFailed: boolean;
+      retryAttempt: number;
+      retryTimer: ReturnType<typeof setTimeout> | null;
+      pendingChanges: Array<
+        { type: "insert" | "update"; value: StoredThreadSummary } | { type: "delete"; key: string }
+      >;
+    }
+  >();
   let closed = false;
 
   // Views are atomic snapshots: consumers subscribe to the root, and this owner
@@ -66,7 +90,8 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
 
   const evict = (key: string): void => {
     const resource = resources.get(key);
-    if (resource?.retryTimer !== null && resource?.retryTimer !== undefined) clearTimeout(resource.retryTimer);
+    if (resource?.retryTimer !== null && resource?.retryTimer !== undefined)
+      clearTimeout(resource.retryTimer);
     views.delete(key);
     resources.delete(key);
     requests.delete(key);
@@ -95,52 +120,70 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
       record.initialFailed = false;
       record.retryAttempt = retryAttempt;
     }
-    return Promise.resolve().then(loader).then((loaded) => {
-      const current = resources.get(key);
-      if (closed || current === undefined || current.generation !== generation || current.requestRevision !== requestRevision) return false;
-      const projected = reprojectThreadSummaryChanges(loaded, current.pendingChanges, request);
-      current.pendingChanges = [];
-      current.loadingRevision = null;
-      current.hasReadySnapshot = true;
-      current.retryAttempt = 0;
-      const node = view$(request);
-      const previous = node.peek();
-      const content = reconcileSummaryContent(previous, projected);
-      const contentChanged = summaryContentChanged(previous, content);
-      const next = replaceEqualDeep<ThreadSummaryViewSnapshot>(previous, {
-        requestKey: requestRevision,
-        phase: "ready",
-        error: null,
-        ...content,
-        revision: previous.revision + (contentChanged ? 1 : 0),
+    return Promise.resolve()
+      .then(loader)
+      .then((loaded) => {
+        const current = resources.get(key);
+        if (
+          closed ||
+          current === undefined ||
+          current.generation !== generation ||
+          current.requestRevision !== requestRevision
+        )
+          return false;
+        const projected = reprojectThreadSummaryChanges(loaded, current.pendingChanges, request);
+        current.pendingChanges = [];
+        current.loadingRevision = null;
+        current.hasReadySnapshot = true;
+        current.retryAttempt = 0;
+        const node = view$(request);
+        const previous = node.peek();
+        const content = reconcileSummaryContent(previous, projected);
+        const contentChanged = summaryContentChanged(previous, content);
+        const next = replaceEqualDeep<ThreadSummaryViewSnapshot>(previous, {
+          requestKey: requestRevision,
+          phase: "ready",
+          error: null,
+          ...content,
+          revision: previous.revision + (contentChanged ? 1 : 0),
+        });
+        if (next !== previous) node.set(opaqueObject(next));
+        return true;
+      })
+      .catch((cause: unknown) => {
+        const current = resources.get(key);
+        const ownsLoad =
+          !closed &&
+          current !== undefined &&
+          current.generation === generation &&
+          current.requestRevision === requestRevision;
+        if (!ownsLoad) return false;
+        current.loadingRevision = null;
+        current.initialFailed = initial;
+        const node = view$(request);
+        const previous = node.peek();
+        node.set(
+          opaqueObject<ThreadSummaryViewSnapshot>({
+            ...previous,
+            phase: hasSummaryRows(previous) ? "ready" : "error",
+            error: cause instanceof Error ? cause.message : "Could not load chats",
+          }),
+        );
+        if (initial) throw cause;
+        const retryDelay = Math.min(250 * 2 ** current.retryAttempt, 5_000);
+        current.retryTimer = setTimeout(() => {
+          const latest = resources.get(key);
+          if (
+            closed ||
+            latest !== current ||
+            latest.requestRevision !== requestRevision ||
+            latest.loadingRevision !== null
+          )
+            return;
+          void beginResourceLoad(request, loader, false, current.retryAttempt + 1);
+        }, retryDelay);
+        return false;
       });
-      if (next !== previous) node.set(opaqueObject(next));
-      return true;
-    }).catch((cause: unknown) => {
-      const current = resources.get(key);
-      const ownsLoad = !closed
-        && current !== undefined
-        && current.generation === generation
-        && current.requestRevision === requestRevision;
-      if (!ownsLoad) return false;
-      current.loadingRevision = null;
-      current.initialFailed = initial;
-      const node = view$(request);
-      const previous = node.peek();
-      node.set(opaqueObject<ThreadSummaryViewSnapshot>({
-        ...previous,
-        phase: hasSummaryRows(previous) ? "ready" : "error",
-        error: cause instanceof Error ? cause.message : "Could not load chats",
-      }));
-      if (initial) throw cause;
-      const retryDelay = Math.min(250 * (2 ** current.retryAttempt), 5_000);
-      current.retryTimer = setTimeout(() => {
-        const latest = resources.get(key);
-        if (closed || latest !== current || latest.requestRevision !== requestRevision || latest.loadingRevision !== null) return;
-        void beginResourceLoad(request, loader, false, current.retryAttempt + 1);
-      }, retryDelay);
-      return false;
-    });
   };
 
   return {
@@ -170,12 +213,19 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
         holder.generation = generations.get(key) ?? 0;
         record = holder;
       } else if (record.initialFailed && record.loadingRevision === null) {
-        record.ready$ = observable(beginResourceLoad(request, loader, true)) as unknown as Observable<boolean>;
-      } else if (record.requestRevision !== requestRevision && record.loadingRevision !== requestRevision) {
+        record.ready$ = observable(
+          beginResourceLoad(request, loader, true),
+        ) as unknown as Observable<boolean>;
+      } else if (
+        record.requestRevision !== requestRevision &&
+        record.loadingRevision !== requestRevision
+      ) {
         // A larger list range or a changed selected/subagent projection keeps
         // the complete resident snapshot visible. Only the atomic replacement
         // is published when the new SQLite range is ready.
-        const blocksNavigation = !record.hasReadySnapshot || !summaryViewSatisfiesSelection(view$(request).peek(), request);
+        const blocksNavigation =
+          !record.hasReadySnapshot ||
+          !summaryViewSatisfiesSelection(view$(request).peek(), request);
         const load = beginResourceLoad(request, loader, blocksNavigation);
         if (blocksNavigation) record.ready$ = observable(load) as unknown as Observable<boolean>;
         else void load;
@@ -248,15 +298,27 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
           const request = requests.get(key);
           if (request === undefined) continue;
           const resource = resources.get(key);
-          if (resource !== undefined && resource.loadingRevision !== null) resource.pendingChanges.push(...changes);
+          if (resource !== undefined && resource.loadingRevision !== null)
+            resource.pendingChanges.push(...changes);
           const previous = node.peek();
           // A pending request can change membership before its replacement rows
           // arrive. Reproject that transition; settled views consume only deltas.
-          const content = resource?.loadingRevision != null || previous.requestKey !== threadSummaryViewRequestKey(request)
-            ? reconcileSummaryContent(previous, reprojectThreadSummaryChanges(previous, changes, request))
-            : updateThreadSummaryView(previous, changes, request);
+          const content =
+            resource?.loadingRevision != null ||
+            previous.requestKey !== threadSummaryViewRequestKey(request)
+              ? reconcileSummaryContent(
+                  previous,
+                  reprojectThreadSummaryChanges(previous, changes, request),
+                )
+              : updateThreadSummaryView(previous, changes, request);
           if (!summaryContentChanged(previous, content)) continue;
-          node.set(opaqueObject<ThreadSummaryViewSnapshot>({ ...previous, ...content, revision: previous.revision + 1 }));
+          node.set(
+            opaqueObject<ThreadSummaryViewSnapshot>({
+              ...previous,
+              ...content,
+              revision: previous.revision + 1,
+            }),
+          );
         }
       });
     },
@@ -265,7 +327,8 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
     },
     close() {
       closed = true;
-      for (const resource of resources.values()) if (resource.retryTimer !== null) clearTimeout(resource.retryTimer);
+      for (const resource of resources.values())
+        if (resource.retryTimer !== null) clearTimeout(resource.retryTimer);
       views.clear();
       resources.clear();
       requests.clear();
@@ -275,11 +338,11 @@ export function createThreadSummaryModel(): ThreadSummaryModel {
   };
 }
 
-export function threadSummaryViewKey(request: ThreadSummaryViewRequest): string {
+function threadSummaryViewKey(request: ThreadSummaryViewRequest): string {
   return `${request.viewId ?? "default"}\u0000${request.connectionId ?? "*"}`;
 }
 
-export function threadSummaryViewRequestKey(request: ThreadSummaryViewRequest): string {
+function threadSummaryViewRequestKey(request: ThreadSummaryViewRequest): string {
   return [
     request.viewId ?? "default",
     request.connectionId ?? "*",
@@ -309,14 +372,27 @@ function emptyThreadSummaryView(): ThreadSummaryViewSnapshot {
 
 function summaryRows(snapshot: ThreadSummaryViewSnapshot): StoredThreadSummary[] {
   const rows = new Map<string, StoredThreadSummary>();
-  for (const row of [...snapshot.pinned, ...snapshot.recent, ...snapshot.archived, ...snapshot.selected, ...snapshot.subagents]) {
+  for (const row of [
+    ...snapshot.pinned,
+    ...snapshot.recent,
+    ...snapshot.archived,
+    ...snapshot.selected,
+    ...snapshot.subagents,
+  ]) {
     rows.set(threadSummaryKey(row.connectionId, row.remoteThreadId), row);
   }
   return [...rows.values()];
 }
 
 function hasSummaryRows(snapshot: ThreadSummaryViewSnapshot): boolean {
-  return snapshot.pinned.length + snapshot.recent.length + snapshot.archived.length + snapshot.selected.length + snapshot.subagents.length > 0;
+  return (
+    snapshot.pinned.length +
+      snapshot.recent.length +
+      snapshot.archived.length +
+      snapshot.selected.length +
+      snapshot.subagents.length >
+    0
+  );
 }
 
 function reconcileSummaryContent(
@@ -332,17 +408,27 @@ function reconcileSummaryContent(
   };
 }
 
-function summaryContentChanged(previous: ThreadSummaryViewSnapshot, next: LoadedThreadSummaryView): boolean {
-  return previous.pinned !== next.pinned
-    || previous.recent !== next.recent
-    || previous.archived !== next.archived
-    || previous.selected !== next.selected
-    || previous.subagents !== next.subagents;
+function summaryContentChanged(
+  previous: ThreadSummaryViewSnapshot,
+  next: LoadedThreadSummaryView,
+): boolean {
+  return (
+    previous.pinned !== next.pinned ||
+    previous.recent !== next.recent ||
+    previous.archived !== next.archived ||
+    previous.selected !== next.selected ||
+    previous.subagents !== next.subagents
+  );
 }
 
-function summaryViewSatisfiesSelection(snapshot: ThreadSummaryViewSnapshot, request: ThreadSummaryViewRequest): boolean {
+function summaryViewSatisfiesSelection(
+  snapshot: ThreadSummaryViewSnapshot,
+  request: ThreadSummaryViewRequest,
+): boolean {
   if (request.selectedConnectionId === null || request.selectedThreadId === null) return true;
-  return summaryRows(snapshot).some((row) =>
-    row.connectionId === request.selectedConnectionId && row.remoteThreadId === request.selectedThreadId,
+  return summaryRows(snapshot).some(
+    (row) =>
+      row.connectionId === request.selectedConnectionId &&
+      row.remoteThreadId === request.selectedThreadId,
   );
 }

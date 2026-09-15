@@ -3,6 +3,7 @@ import { SwipeDiscardAction } from "../../ui/SwipeDiscardAction";
 import { ComposerDeliveryMenu } from "./ComposerDeliveryMenu";
 import type { ComposerFeatureProps } from "./ComposerFeatureContract";
 import { styles } from "./ComposerSubmitAction.styles";
+
 type Props = Pick<
   ComposerFeatureProps,
   | "editingQueuedMessage"

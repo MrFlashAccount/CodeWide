@@ -34,6 +34,15 @@ export function ComposerDeliveryMenu(props: ComposerDeliveryMenuProps) {
 }
 
 const styles = StyleSheet.create({
-  root: { width: touchTarget, height: touchTarget, flexShrink: 0, overflow: "visible", zIndex: 4 },
-  anchor: { width: touchTarget, height: touchTarget },
+  root: {
+    width: touchTarget,
+    height: touchTarget,
+    flexShrink: 0,
+    overflow: "visible",
+    zIndex: 4,
+  },
+  anchor: {
+    width: touchTarget,
+    height: touchTarget,
+  },
 });

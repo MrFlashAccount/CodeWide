@@ -31,6 +31,13 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  preTurnLifecycleWave: { minWidth: 0, flexShrink: 1 },
-  preTurnLifecycleDetail: { width: "100%", minWidth: 0, alignSelf: "stretch" },
+  preTurnLifecycleWave: {
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  preTurnLifecycleDetail: {
+    width: "100%",
+    minWidth: 0,
+    alignSelf: "stretch",
+  },
 });

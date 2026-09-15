@@ -6,22 +6,37 @@ import type { ConnectionProfileDatabase } from "./connection-profile-database-co
 export type { ConnectionProfileDatabase } from "./connection-profile-database-contract";
 
 export function createConnectionProfileDatabase(): ConnectionProfileDatabase {
-  const collection = createCollection(localOnlyCollectionOptions<ConnectionProfileRow, string>({ id: "connection-profiles-web", getKey: (row) => row.id }));
+  const collection = createCollection(
+    localOnlyCollectionOptions<ConnectionProfileRow, string>({
+      id: "connection-profiles-web",
+      getKey: (row) => row.id,
+    }),
+  );
   return {
     collection,
-    project() { return []; },
+    project() {
+      return [];
+    },
     async importLegacyUiCache() {},
     async importLegacy() {},
-    async hydrate() { return []; },
+    async hydrate() {
+      return [];
+    },
     async migrateLegacyCredentials() {},
     async purgeLegacyCredentials() {},
     async reconcileRuntimeConfigs() {},
-    async add() { throw new Error("Android only"); },
+    async add() {
+      throw new Error("Android only");
+    },
     async delete() {},
     async setEnabled() {},
     async updateProfile() {},
-    async update() { throw new Error("Android only"); },
+    async update() {
+      throw new Error("Android only");
+    },
     async move() {},
-    close() { void collection.cleanup(); },
+    close() {
+      void collection.cleanup();
+    },
   };
 }

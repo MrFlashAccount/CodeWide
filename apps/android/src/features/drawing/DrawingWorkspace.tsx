@@ -25,6 +25,7 @@ export type DrawingCommit = {
   snapshot: Record<string, unknown>;
 };
 
+/** Owns drawing-tool editing, preview, and explicit completion actions. */
 export function DrawingWorkspace({
   editing,
   initialSnapshot,
@@ -170,7 +171,10 @@ export function DrawingWorkspace({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   header: {
     minHeight: layoutSize.header,
     paddingHorizontal: spacing.md,
@@ -188,9 +192,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  titleBlock: { flex: 1, minWidth: 0 },
-  title: { color: colors.text, ...typeScale.title, fontWeight: typeWeight.semibold },
-  subtitle: { color: colors.textMuted, ...typeScale.label },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  title: {
+    color: colors.text,
+    ...typeScale.title,
+    fontWeight: typeWeight.semibold,
+  },
+  subtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   saveButton: {
     height: controlSize.compact,
     paddingHorizontal: spacing.sm,
@@ -199,7 +213,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.accent,
   },
-  saveText: { color: colors.onPrimary, ...typeScale.label, fontWeight: typeWeight.semibold },
+  saveText: {
+    color: colors.onPrimary,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
   errorBar: {
     flexDirection: "row",
     alignItems: "center",
@@ -208,10 +226,24 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     backgroundColor: colors.surfaceRaised,
   },
-  errorText: { flex: 1, color: colors.red, ...typeScale.label },
-  board: { flex: 1, position: "relative" },
+  errorText: {
+    flex: 1,
+    color: colors.red,
+    ...typeScale.label,
+  },
+  board: {
+    flex: 1,
+    position: "relative",
+  },
   quickdraw: { flex: 1 },
-  loader: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 1 },
+  loader: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1,
+  },
   pressed: { backgroundColor: colors.surfaceHover },
   savePressed: { opacity: 0.82 },
   disabled: { opacity: 0.45 },

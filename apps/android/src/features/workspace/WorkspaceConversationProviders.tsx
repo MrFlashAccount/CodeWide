@@ -8,6 +8,7 @@ import { workspaceConversationScope } from "../navigation/conversationScope";
 import { type ThreadNavigationModel } from "../navigation/threadNavigation";
 import { BrowserFeedbackContext } from "../ports/browser/BrowserFeedbackContext";
 import type { BrowserFeedbackCapability } from "../ports/browser/feedback";
+
 export function WorkspaceConversationProviders({
   navigation,
   runtime,

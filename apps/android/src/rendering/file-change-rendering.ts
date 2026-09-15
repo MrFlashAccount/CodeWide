@@ -9,9 +9,12 @@ export type FileChangeProjection = {
 };
 
 export function normalizeFileChangeKind(value: unknown): FileChangeKind {
-  const candidate = typeof value === "string"
-    ? value
-    : isRecord(value) && typeof value.type === "string" ? value.type : "update";
+  const candidate =
+    typeof value === "string"
+      ? value
+      : isRecord(value) && typeof value.type === "string"
+        ? value.type
+        : "update";
   if (candidate === "add" || candidate === "delete") return candidate;
   return "update";
 }
@@ -60,11 +63,13 @@ function isUnifiedDiff(lines: string[]): boolean {
 
 function isUnifiedDiffMetadata(lines: string[], index: number, sawHunk: boolean): boolean {
   const line = lines[index] ?? "";
-  return line.startsWith("diff --git ")
-    || line.startsWith("index ")
-    || (!sawHunk && line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ") === true)
-    || (!sawHunk && line.startsWith("+++ ") && lines[index - 1]?.startsWith("--- ") === true)
-    || line.startsWith("\\ No newline at end of file");
+  return (
+    line.startsWith("diff --git ") ||
+    line.startsWith("index ") ||
+    (!sawHunk && line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ") === true) ||
+    (!sawHunk && line.startsWith("+++ ") && lines[index - 1]?.startsWith("--- ") === true) ||
+    line.startsWith("\\ No newline at end of file")
+  );
 }
 
 function logicalLines(value: string): string[] {

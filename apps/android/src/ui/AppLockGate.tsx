@@ -11,7 +11,16 @@ import {
 import { getUserPreferencesDatabase } from "../data/user-preferences-database";
 import { authenticateWithDevice } from "../native/local-authentication";
 import { useEvent } from "../react/useEvent";
-import { colors, radii, spacing, touchTarget, typeScale, typeWeight, iconSize, layoutSize } from "../theme";
+import {
+  colors,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+  iconSize,
+  layoutSize,
+} from "../theme";
 import { AppText as Text } from "./Typography";
 
 type AppLockContextValue = {
@@ -25,8 +34,9 @@ const database = getUserPreferencesDatabase();
 export function AppLockGate({ children }: { children: ReactNode }) {
   use(database.ready);
   const query = useLiveQuery(() => database.collection);
-  const row = query.data?.find((candidate) => candidate.id === APP_LOCK_PREFERENCE_ID)
-    ?? database.collection.get(APP_LOCK_PREFERENCE_ID);
+  const row =
+    query.data?.find((candidate) => candidate.id === APP_LOCK_PREFERENCE_ID) ??
+    database.collection.get(APP_LOCK_PREFERENCE_ID);
   const enabled = row === undefined ? false : decodeAppLockPreferences(row.value).enabled;
   const [unlocked, setUnlocked] = useState(false);
   const [authenticating, setAuthenticating] = useState(false);
@@ -54,9 +64,9 @@ export function AppLockGate({ children }: { children: ReactNode }) {
       const result = await authenticateWithDevice("Turn on CodeWide app lock");
       if (!result.success) throw new Error(result.message);
     }
-    await database.update(APP_LOCK_PREFERENCE_ID, () => (
-      encodeAppLockPreferences({ enabled: nextEnabled })
-    ));
+    await database.update(APP_LOCK_PREFERENCE_ID, () =>
+      encodeAppLockPreferences({ enabled: nextEnabled }),
+    );
     setUnlocked(true);
     setMessage(null);
   });
@@ -80,7 +90,11 @@ export function AppLockGate({ children }: { children: ReactNode }) {
   if (enabled && !unlocked) {
     return (
       <AppLockContext.Provider value={context}>
-        <LockedSurface loading={authenticating} message={message} onUnlock={() => void authenticate()} />
+        <LockedSurface
+          loading={authenticating}
+          message={message}
+          onUnlock={() => void authenticate()}
+        />
       </AppLockContext.Provider>
     );
   }
@@ -93,7 +107,15 @@ export function useAppLockSettings(): AppLockContextValue {
   return context;
 }
 
-function LockedSurface({ loading, message = null, onUnlock }: { loading: boolean; message?: string | null; onUnlock?(): void }) {
+function LockedSurface({
+  loading,
+  message = null,
+  onUnlock,
+}: {
+  loading: boolean;
+  message?: string | null;
+  onUnlock?(): void;
+}) {
   return (
     <View accessibilityLabel="CodeWide is locked" style={styles.root} testID="app-lock-screen">
       <View style={styles.icon}>
@@ -101,11 +123,19 @@ function LockedSurface({ loading, message = null, onUnlock }: { loading: boolean
       </View>
       <Text style={styles.title}>CodeWide is locked</Text>
       <Text style={styles.message}>{message ?? "Verify with your device to continue."}</Text>
-      {loading ? <ActivityIndicator color={colors.textMuted} /> : onUnlock !== undefined && (
-        <Pressable accessibilityRole="button" onPress={onUnlock} style={({ pressed }) => [styles.button, pressed && styles.pressed]}>
-          <Ionicons name="finger-print" color={colors.background} size={iconSize.action} />
-          <Text style={styles.buttonText}>Unlock</Text>
-        </Pressable>
+      {loading ? (
+        <ActivityIndicator color={colors.textMuted} />
+      ) : (
+        onUnlock !== undefined && (
+          <Pressable
+            accessibilityRole="button"
+            onPress={onUnlock}
+            style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+          >
+            <Ionicons name="finger-print" color={colors.background} size={iconSize.action} />
+            <Text style={styles.buttonText}>Unlock</Text>
+          </Pressable>
+        )
       )}
     </View>
   );
@@ -129,8 +159,16 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     width: 72,
   },
-  title: { color: colors.text, ...typeScale.heading, fontWeight: typeWeight.semibold },
-  message: { color: colors.textMuted, maxWidth: 320, textAlign: "center" },
+  title: {
+    color: colors.text,
+    ...typeScale.heading,
+    fontWeight: typeWeight.semibold,
+  },
+  message: {
+    color: colors.textMuted,
+    maxWidth: 320,
+    textAlign: "center",
+  },
   button: {
     alignItems: "center",
     backgroundColor: colors.text,
@@ -141,6 +179,9 @@ const styles = StyleSheet.create({
     minHeight: touchTarget,
     paddingHorizontal: spacing.lg,
   },
-  buttonText: { color: colors.background, fontWeight: typeWeight.semibold },
+  buttonText: {
+    color: colors.background,
+    fontWeight: typeWeight.semibold,
+  },
   pressed: { opacity: 0.78 },
 });

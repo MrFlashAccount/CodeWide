@@ -18,7 +18,12 @@ export function latestThreadOutcome(turns: readonly Turn[]): ThreadCurrentOutcom
 
 function turnOutcome(turn: Turn): ThreadCurrentOutcome {
   return turn.status === "failed"
-    ? { turnId: turn.id, startedAt: turn.startedAt, status: "failed", message: turn.error?.message || "The server could not complete this response." }
+    ? {
+        turnId: turn.id,
+        startedAt: turn.startedAt,
+        status: "failed",
+        message: turn.error?.message || "The server could not complete this response.",
+      }
     : { turnId: turn.id, startedAt: turn.startedAt, status: turn.status };
 }
 
@@ -30,7 +35,8 @@ export function advanceThreadOutcome(
 ): ThreadCurrentOutcome | null {
   // An ordered turnStarted event proves the new head even when timestamps are
   // absent or two turns began in the same second. Use its final batch state.
-  const started = startedTurnId === null ? undefined : turns.find((turn) => turn.id === startedTurnId);
+  const started =
+    startedTurnId === null ? undefined : turns.find((turn) => turn.id === startedTurnId);
   if (started !== undefined) return turnOutcome(started);
   const next = latestThreadOutcome(turns);
   if (next === null) return previous;
@@ -45,7 +51,11 @@ export function threadFailureNotice(
   thread: Thread | null | undefined,
 ): { message: string; acceptsInput: boolean } | null {
   if (thread?.status.type === "active" || outcome?.status === "inProgress") return null;
-  const message = outcome?.status === "failed" ? outcome.message
-    : thread?.status.type === "systemError" ? "The server reported an error. Details are unavailable." : null;
+  const message =
+    outcome?.status === "failed"
+      ? outcome.message
+      : thread?.status.type === "systemError"
+        ? "The server reported an error. Details are unavailable."
+        : null;
   return message === null ? null : { message, acceptsInput: thread?.canAcceptDirectInput === true };
 }

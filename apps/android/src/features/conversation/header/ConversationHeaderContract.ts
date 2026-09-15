@@ -7,6 +7,8 @@ import type { ThreadForkOptions } from "../../../data/thread-fork";
 import type { ThreadHistoryModel } from "../../../data/thread-history-model";
 import type { ThreadListServer } from "../../connections/connectionPresentation";
 import type { ThreadListItem } from "../../threadList/threadListTypes";
+
+/** Display state and actions accepted by the conversation header. */
 export type ConversationHeaderProps = {
   compact: boolean;
   onBack: (() => void) | undefined;

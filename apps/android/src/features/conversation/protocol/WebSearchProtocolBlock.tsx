@@ -23,7 +23,7 @@ export function WebSearchProtocolBlock({ block }: { block: RenderBlock }) {
   );
 }
 
-export function WebSearchProtocolDetails({ block }: { block: RenderBlock }) {
+function WebSearchProtocolDetails({ block }: { block: RenderBlock }) {
   const results = Array.isArray(block.raw.results)
     ? block.raw.results.filter(
         (result): result is Record<string, unknown> =>

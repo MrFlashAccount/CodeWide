@@ -3,6 +3,7 @@ import { useHistoryAnchorState } from "./historyAnchor";
 import { useTimelineSearchState } from "./timelineSearch";
 import { useTimelineViewportState } from "./timelineViewport";
 import { useUnreadReceiptState } from "./unreadReceipt";
+
 export function useConversationTimelineState({
   composerScope,
   searchWindow,

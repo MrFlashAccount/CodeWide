@@ -60,9 +60,30 @@ export type CodeReviewClientEvent =
   | BridgeEvent<"rendered", { requestId: number; renderMs: number }>
   | BridgeEvent<"fileSelect", { requestId: number; path: string }>
   | BridgeEvent<"lineTap", { requestId: number; reference: CodeReviewLineReference }>
-  | BridgeEvent<"draftChanged", { requestId: number; reference: CodeReviewLineReference; draft: string; selectionStart: number; selectionEnd: number }>
-  | BridgeEvent<"commentSubmit", { requestId: number; reference: CodeReviewLineReference; draft: string }>
-  | BridgeEvent<"voiceAction", { requestId: number; reference: CodeReviewLineReference; draft: string; selectionStart: number; selectionEnd: number }>
+  | BridgeEvent<
+      "draftChanged",
+      {
+        requestId: number;
+        reference: CodeReviewLineReference;
+        draft: string;
+        selectionStart: number;
+        selectionEnd: number;
+      }
+    >
+  | BridgeEvent<
+      "commentSubmit",
+      { requestId: number; reference: CodeReviewLineReference; draft: string }
+    >
+  | BridgeEvent<
+      "voiceAction",
+      {
+        requestId: number;
+        reference: CodeReviewLineReference;
+        draft: string;
+        selectionStart: number;
+        selectionEnd: number;
+      }
+    >
   | BridgeEvent<"diffUnavailable", { requestId: number; message: string }>
   | BridgeEvent<"error", { requestId: number; message: string }>;
 
@@ -73,13 +94,21 @@ type BridgeCommand<TCommand extends string, TPayload> = {
   payload: TPayload;
 };
 
-type BridgeEvent<TType extends string, TPayload extends Record<string, unknown> = Record<never, never>> = {
+type BridgeEvent<
+  TType extends string,
+  TPayload extends Record<string, unknown> = Record<never, never>,
+> = {
   version: typeof CODE_REVIEW_BRIDGE_VERSION;
   type: TType;
 } & TPayload;
 
 export function codeReviewWorkspaceRevision(files: readonly CodeReviewFileItem[]): string {
-  return files.map((file) => `${file.treePath}\u0000${file.status}\u0000${file.additions}\u0000${file.deletions}\u0000${file.sourceOnly === true ? 1 : 0}`).join("\u0001");
+  return files
+    .map(
+      (file) =>
+        `${file.treePath}\u0000${file.status}\u0000${file.additions}\u0000${file.deletions}\u0000${file.sourceOnly === true ? 1 : 0}`,
+    )
+    .join("\u0001");
 }
 
 export function codeReviewDocumentRevision(

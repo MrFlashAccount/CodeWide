@@ -1,4 +1,4 @@
-export type MentionedUserFile = {
+type MentionedUserFile = {
   name: string;
   path: string;
 };
@@ -10,7 +10,8 @@ export type NormalizedUserMessage = {
 
 const REQUEST_HEADING = /^## My request for Codex:\s*$/m;
 // The short heading is ordinary Markdown unless preceded by Desktop's complete browser envelope.
-const DESKTOP_BROWSER_REQUEST = /^\s*<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>\s*## My request:[ \t]*(?:\r?\n|$)/;
+const DESKTOP_BROWSER_REQUEST =
+  /^\s*<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>\s*## My request:[ \t]*(?:\r?\n|$)/;
 const FILES_HEADING = /^# Files mentioned by the user:\s*$/m;
 const AMBIENT_CONTEXT = /<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>/gi;
 const IMAGE_TAG = /<\/?image(?:\s[^>]*)?>/gi;
@@ -26,17 +27,13 @@ export function normalizeUserMessage(source: string): NormalizedUserMessage {
   const request = DESKTOP_BROWSER_REQUEST.exec(source) ?? REQUEST_HEADING.exec(source);
   const filesHeading = FILES_HEADING.exec(source);
   const metadataEnd = request?.index ?? source.length;
-  const files = filesHeading !== null && filesHeading.index < metadataEnd
-    ? parseMentionedFiles(source.slice(filesHeading.index, metadataEnd))
-    : [];
-  const authored = request === null
-    ? source
-    : source.slice(request.index + request[0].length);
+  const files =
+    filesHeading !== null && filesHeading.index < metadataEnd
+      ? parseMentionedFiles(source.slice(filesHeading.index, metadataEnd))
+      : [];
+  const authored = request === null ? source : source.slice(request.index + request[0].length);
   return {
-    text: authored
-      .replace(AMBIENT_CONTEXT, "")
-      .replace(IMAGE_TAG, "")
-      .trim(),
+    text: authored.replace(AMBIENT_CONTEXT, "").replace(IMAGE_TAG, "").trim(),
     files,
   };
 }

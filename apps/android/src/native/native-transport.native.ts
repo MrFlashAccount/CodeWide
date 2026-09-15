@@ -1,5 +1,40 @@
-import type { NativeVoiceEvent, CapturedAudioChunk, PcmCaptureInfo, NativeConnectionConfig, NativeBrowserDevToolsBridge, NativeBrowserTrace, NativePortForwardProfile, NativePortForwardingPreference, NativePortForwardEvent, NativeTerminalEvent, NativeTerminalOutput, NativeDiscoveredPort, NativeCommandDelivery, MicrophonePermission, NativeCommandMethod } from "./native-transport-contract";
-export type { NativeVoiceEvent, PcmAudioChunk, OpusAudioChunk, CapturedAudioChunk, PcmCaptureInfo, NativeConnectionConfig, NativeBrowserDevToolsBridge, NativeBrowserTrace, NativePortForwardProfile, NativePortForwardingPreference, NativePortForwardEvent, NativeTerminalEvent, NativeTerminalOutput, NativeDiscoveredPort, NativeCommandDelivery, MicrophonePermission, NativeCommandMethod } from "./native-transport-contract";
+import type {
+  NativeVoiceEvent,
+  CapturedAudioChunk,
+  PcmCaptureInfo,
+  NativeConnectionConfig,
+  NativeBrowserDevToolsBridge,
+  NativeBrowserTrace,
+  NativePortForwardProfile,
+  NativePortForwardingPreference,
+  NativePortForwardEvent,
+  NativeTerminalEvent,
+  NativeTerminalOutput,
+  NativeDiscoveredPort,
+  NativeCommandDelivery,
+  MicrophonePermission,
+  NativeCommandMethod,
+} from "./native-transport-contract";
+
+export type {
+  NativeVoiceEvent,
+  PcmAudioChunk,
+  OpusAudioChunk,
+  CapturedAudioChunk,
+  PcmCaptureInfo,
+  NativeConnectionConfig,
+  NativeBrowserDevToolsBridge,
+  NativeBrowserTrace,
+  NativePortForwardProfile,
+  NativePortForwardingPreference,
+  NativePortForwardEvent,
+  NativeTerminalEvent,
+  NativeTerminalOutput,
+  NativeDiscoveredPort,
+  NativeCommandDelivery,
+  MicrophonePermission,
+  NativeCommandMethod,
+} from "./native-transport-contract";
 import { NativeEventEmitter, NativeModules, PermissionsAndroid, Platform } from "react-native";
 import type { RemoteFileAttachment } from "@codewide/sync-client";
 
@@ -11,9 +46,28 @@ type NativeAudioEvent = CapturedAudioChunk & {
 type NativeBridge = {
   microphonePermissionGranted?: boolean;
   refreshMicrophonePermission?(): void;
-  claimPairing(savedServerId: string, endpoint: string, pairingToken: string, deviceName: string, tlsPinSha256: string): Promise<{ deviceId: string; capabilityToken: string }>;
-  saveConnectionCredentials(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean): Promise<void>;
-  saveConnectionCredentialsV2?(connectionId: string, endpoint: string, token: string | null, tlsPinSha256: string | null, enabled: boolean, deviceId: string): Promise<void>;
+  claimPairing(
+    savedServerId: string,
+    endpoint: string,
+    pairingToken: string,
+    deviceName: string,
+    tlsPinSha256: string,
+  ): Promise<{ deviceId: string; capabilityToken: string }>;
+  saveConnectionCredentials(
+    connectionId: string,
+    endpoint: string,
+    token: string | null,
+    tlsPinSha256: string | null,
+    enabled: boolean,
+  ): Promise<void>;
+  saveConnectionCredentialsV2?(
+    connectionId: string,
+    endpoint: string,
+    token: string | null,
+    tlsPinSha256: string | null,
+    enabled: boolean,
+    deviceId: string,
+  ): Promise<void>;
   listConnectionConfigs(): Promise<NativeConnectionConfig[]>;
   purgeLegacyDerivedStorage?(): Promise<number>;
   startBrowserDevToolsBridge?(): Promise<NativeBrowserDevToolsBridge>;
@@ -40,14 +94,26 @@ type NativeBridge = {
   startPortForward(profileId: string): Promise<string>;
   stopPortForward(profileId: string): Promise<string>;
   removePortForward(profileId: string): Promise<void>;
-  openTerminal?(sessionId: string, connectionId: string, threadId: string, cwd: string | null, cols: number, rows: number): Promise<void>;
+  openTerminal?(
+    sessionId: string,
+    connectionId: string,
+    threadId: string,
+    cwd: string | null,
+    cols: number,
+    rows: number,
+  ): Promise<void>;
   writeTerminal?(sessionId: string, base64: string): Promise<void>;
   resizeTerminal?(sessionId: string, cols: number, rows: number): Promise<void>;
   readTerminalOutput?(sessionId: string, offset: number, maxBytes: number): Promise<string>;
   closeTerminal?(sessionId: string): void;
   startLegacyRuntimeResources?: () => Promise<void>;
   stopLegacyRuntimeResources?: () => Promise<void>;
-  engineEnqueueCommand(connectionId: string, commandId: string, method: string, paramsJson: string): Promise<string>;
+  engineEnqueueCommand(
+    connectionId: string,
+    commandId: string,
+    method: string,
+    paramsJson: string,
+  ): Promise<string>;
   engineListCommands(): Promise<string>;
   engineRetryCommand?(connectionId: string, commandId: string): Promise<string>;
   engineAcknowledgeCommandReceipt?(connectionId: string, commandId: string): Promise<void>;
@@ -68,7 +134,8 @@ type NativeBridge = {
 const bridge = NativeModules.CodeWideNative as NativeBridge | undefined;
 const emitter = bridge === undefined ? null : new NativeEventEmitter(NativeModules.CodeWideNative);
 
-let microphonePermission: MicrophonePermission = bridge?.microphonePermissionGranted === true ? "granted" : "denied";
+let microphonePermission: MicrophonePermission =
+  bridge?.microphonePermissionGranted === true ? "granted" : "denied";
 const microphonePermissionListeners = new Set<() => void>();
 
 function publishMicrophonePermission(next: MicrophonePermission): void {
@@ -79,21 +146,31 @@ function publishMicrophonePermission(next: MicrophonePermission): void {
 
 emitter?.addListener("CodeWideMicrophonePermission", (granted: unknown) => {
   if (typeof granted !== "boolean") return;
-  publishMicrophonePermission(granted ? "granted" : microphonePermission === "blocked" ? "blocked" : "denied");
+  publishMicrophonePermission(
+    granted ? "granted" : microphonePermission === "blocked" ? "blocked" : "denied",
+  );
 });
 
-export function getMicrophonePermission(): MicrophonePermission { return microphonePermission; }
+export function getMicrophonePermission(): MicrophonePermission {
+  return microphonePermission;
+}
 
 export function subscribeMicrophonePermission(notify: () => void): () => void {
   microphonePermissionListeners.add(notify);
-  return () => { microphonePermissionListeners.delete(notify); };
+  return () => {
+    microphonePermissionListeners.delete(notify);
+  };
 }
 
 /** Only an explicit permission-dialog action may open Android's permission prompt. */
 export async function requestMicrophonePermission(): Promise<MicrophonePermission> {
   const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-  const permission = result === PermissionsAndroid.RESULTS.GRANTED ? "granted"
-    : result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN ? "blocked" : "denied";
+  const permission =
+    result === PermissionsAndroid.RESULTS.GRANTED
+      ? "granted"
+      : result === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN
+        ? "blocked"
+        : "denied";
   publishMicrophonePermission(permission);
   bridge?.refreshMicrophonePermission?.();
   return permission;
@@ -106,12 +183,17 @@ export async function claimNativePairing(input: {
   deviceName: string;
   tlsPinSha256: string;
 }): Promise<{ deviceId: string; capabilityToken: string }> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native secure pairing is unavailable in this build");
-  const claimed = await bridge.claimPairing(input.savedServerId, input.endpoint, input.pairingToken, input.deviceName, input.tlsPinSha256);
-  if (
-    typeof claimed.deviceId !== "string"
-    || typeof claimed.capabilityToken !== "string"
-  ) throw new Error("Native pairing returned an invalid security state");
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native secure pairing is unavailable in this build");
+  const claimed = await bridge.claimPairing(
+    input.savedServerId,
+    input.endpoint,
+    input.pairingToken,
+    input.deviceName,
+    input.tlsPinSha256,
+  );
+  if (typeof claimed.deviceId !== "string" || typeof claimed.capabilityToken !== "string")
+    throw new Error("Native pairing returned an invalid security state");
   return claimed;
 }
 
@@ -123,11 +205,25 @@ export async function saveNativeConnectionCredentials(input: {
   enabled: boolean;
   deviceId?: string;
 }): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native credential storage is unavailable in this build");
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native credential storage is unavailable in this build");
   if (input.deviceId !== undefined && bridge.saveConnectionCredentialsV2 !== undefined) {
-    await bridge.saveConnectionCredentialsV2(input.connectionId, input.endpoint, input.token ?? null, input.tlsPinSha256 ?? null, input.enabled, input.deviceId);
+    await bridge.saveConnectionCredentialsV2(
+      input.connectionId,
+      input.endpoint,
+      input.token ?? null,
+      input.tlsPinSha256 ?? null,
+      input.enabled,
+      input.deviceId,
+    );
   } else {
-    await bridge.saveConnectionCredentials(input.connectionId, input.endpoint, input.token ?? null, input.tlsPinSha256 ?? null, input.enabled);
+    await bridge.saveConnectionCredentials(
+      input.connectionId,
+      input.endpoint,
+      input.token ?? null,
+      input.tlsPinSha256 ?? null,
+      input.enabled,
+    );
   }
 }
 
@@ -140,20 +236,31 @@ export async function listNativeConnectionConfigs(): Promise<NativeConnectionCon
     const savedServerId = candidate.savedServerId ?? candidate.connectionId;
     const deviceId = candidate.deviceId ?? null;
     if (
-      value === null || typeof value !== "object"
-      || typeof candidate.connectionId !== "string" || candidate.connectionId.length < 1
-      || typeof savedServerId !== "string" || savedServerId !== candidate.connectionId
-      || typeof candidate.endpoint !== "string"
-      || !(candidate.tlsPinSha256 === null || typeof candidate.tlsPinSha256 === "string")
-      || typeof candidate.enabled !== "boolean"
-      || !(deviceId === null || (typeof deviceId === "string" && /^device-[a-f0-9]{64}$/u.test(deviceId)))
-    ) throw new Error("Native connection config projection is invalid");
+      value === null ||
+      typeof value !== "object" ||
+      typeof candidate.connectionId !== "string" ||
+      candidate.connectionId.length < 1 ||
+      typeof savedServerId !== "string" ||
+      savedServerId !== candidate.connectionId ||
+      typeof candidate.endpoint !== "string" ||
+      !(candidate.tlsPinSha256 === null || typeof candidate.tlsPinSha256 === "string") ||
+      typeof candidate.enabled !== "boolean" ||
+      !(
+        deviceId === null ||
+        (typeof deviceId === "string" && /^device-[a-f0-9]{64}$/u.test(deviceId))
+      )
+    )
+      throw new Error("Native connection config projection is invalid");
     return { ...candidate, savedServerId, deviceId } as NativeConnectionConfig;
   });
 }
 
-export async function nativeCompanionHttpOrigin(connectionId: string, _endpoint: string): Promise<string> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native pinned HTTP transport is unavailable in this build");
+export async function nativeCompanionHttpOrigin(
+  connectionId: string,
+  _endpoint: string,
+): Promise<string> {
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native pinned HTTP transport is unavailable in this build");
   const origin = await bridge.companionHttpOrigin(connectionId);
   if (!/^http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]{43}$/u.test(origin)) {
     throw new Error("Native pinned HTTP transport returned an invalid origin");
@@ -164,67 +271,110 @@ export async function nativeCompanionHttpOrigin(connectionId: string, _endpoint:
 export async function purgeLegacyDerivedStorage(): Promise<number> {
   // An OTA may briefly run on an older native shell. Cleanup is retried on
   // every startup once a compatible APK is installed.
-  if (bridge === undefined || Platform.OS !== "android" || bridge.purgeLegacyDerivedStorage === undefined) return 0;
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    bridge.purgeLegacyDerivedStorage === undefined
+  )
+    return 0;
   const reclaimedBytes = await bridge.purgeLegacyDerivedStorage();
   return Number.isFinite(reclaimedBytes) && reclaimedBytes >= 0 ? reclaimedBytes : 0;
 }
 
 export async function startNativeBrowserDevToolsBridge(): Promise<NativeBrowserDevToolsBridge> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.startBrowserDevToolsBridge !== "function") {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.startBrowserDevToolsBridge !== "function"
+  ) {
     throw new Error("This app build does not include Chromium DevTools");
   }
   const result = await bridge.startBrowserDevToolsBridge();
   if (
-    result === null || typeof result !== "object"
-    || result.host !== "127.0.0.1"
-    || !Number.isInteger(result.port) || result.port < 1 || result.port > 65_535
-    || typeof result.token !== "string" || !/^[a-f0-9]{64}$/u.test(result.token)
-    || typeof result.tracingSupported !== "boolean"
-  ) throw new Error("Native Chromium DevTools bridge returned an invalid endpoint");
+    result === null ||
+    typeof result !== "object" ||
+    result.host !== "127.0.0.1" ||
+    !Number.isInteger(result.port) ||
+    result.port < 1 ||
+    result.port > 65_535 ||
+    typeof result.token !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(result.token) ||
+    typeof result.tracingSupported !== "boolean"
+  )
+    throw new Error("Native Chromium DevTools bridge returned an invalid endpoint");
   return result;
 }
 
 export function stopNativeBrowserDevToolsBridge(): void {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.stopBrowserDevToolsBridge !== "function") return;
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.stopBrowserDevToolsBridge !== "function"
+  )
+    return;
   bridge.stopBrowserDevToolsBridge();
 }
 
 export async function startNativeBrowserTracing(): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.startBrowserTracing !== "function") {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.startBrowserTracing !== "function"
+  ) {
     throw new Error("Native WebView performance tracing is unavailable in this build");
   }
   await bridge.startBrowserTracing();
 }
 
 export async function stopNativeBrowserTracing(): Promise<NativeBrowserTrace> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.stopBrowserTracing !== "function") {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.stopBrowserTracing !== "function"
+  ) {
     throw new Error("Native WebView performance tracing is unavailable in this build");
   }
   const result = await bridge.stopBrowserTracing();
-  if (result === null || typeof result !== "object" || typeof result.path !== "string" || result.path === "" || !Number.isFinite(result.size) || result.size < 0) {
+  if (
+    result === null ||
+    typeof result !== "object" ||
+    typeof result.path !== "string" ||
+    result.path === "" ||
+    !Number.isFinite(result.size) ||
+    result.size < 0
+  ) {
     throw new Error("Native WebView performance trace result is invalid");
   }
   return result;
 }
 
 export async function deleteNativeConnection(connectionId: string): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native connection storage is unavailable");
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native connection storage is unavailable");
   await bridge.deleteConnectionCredentials(connectionId);
 }
 
-export async function setNativeConnectionEnabled(connectionId: string, enabled: boolean): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native connection lifecycle is unavailable in this build");
+export async function setNativeConnectionEnabled(
+  connectionId: string,
+  enabled: boolean,
+): Promise<void> {
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native connection lifecycle is unavailable in this build");
   await bridge.setConnectionEnabled(connectionId, enabled);
 }
 
-export async function mintNativeSession(connectionId: string): Promise<{ sessionToken: string; expiresAt: number }> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native session proof is unavailable in this build");
+export async function mintNativeSession(
+  connectionId: string,
+): Promise<{ sessionToken: string; expiresAt: number }> {
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native session proof is unavailable in this build");
   return await bridge.mintStoredSession(connectionId);
 }
 
 /** Permanently disables the service-owned session and removes its credentials. */
 export function reconnectNativeConnection(connectionId: string): void {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native remote transport is unavailable");
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native remote transport is unavailable");
   bridge.resetSocket(connectionId, "user_reconnect");
 }
 
@@ -233,24 +383,39 @@ export function wakeNativeConnection(connectionId: string): void {
   bridge.wakeSocket(connectionId);
 }
 
-export async function listNativePortForwards(connectionId: string): Promise<NativePortForwardProfile[]> {
+export async function listNativePortForwards(
+  connectionId: string,
+): Promise<NativePortForwardProfile[]> {
   // OTA JavaScript can run briefly on an older native shell. Port forwarding
   // is ancillary to opening a conversation, so an unavailable bridge method
   // must degrade to an empty catalog instead of producing a global LogBox.
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.listPortForwards !== "function") return [];
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.listPortForwards !== "function"
+  )
+    return [];
   const value = JSON.parse(await bridge.listPortForwards(connectionId)) as unknown;
   if (!Array.isArray(value)) throw new Error("Native port-forward projection is invalid");
   return value.map(parseNativePortForwardProfile);
 }
 
-export async function discoverNativePorts(connectionId: string): Promise<{ ports: NativeDiscoveredPort[]; scannedAt: number }> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.discoverPorts !== "function") {
+export async function discoverNativePorts(
+  connectionId: string,
+): Promise<{ ports: NativeDiscoveredPort[]; scannedAt: number }> {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.discoverPorts !== "function"
+  ) {
     return { ports: [], scannedAt: Date.now() };
   }
   const value = JSON.parse(await bridge.discoverPorts(connectionId)) as unknown;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Native port discovery projection is invalid");
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Native port discovery projection is invalid");
   const row = value as { ports?: unknown; scannedAt?: unknown };
-  if (!Array.isArray(row.ports) || typeof row.scannedAt !== "number") throw new Error("Native port discovery projection is invalid");
+  if (!Array.isArray(row.ports) || typeof row.scannedAt !== "number")
+    throw new Error("Native port discovery projection is invalid");
   return { ports: row.ports.map(parseNativeDiscoveredPort), scannedAt: row.scannedAt };
 }
 
@@ -263,38 +428,48 @@ export async function upsertNativePortForward(input: {
   serviceKey?: string | null;
   preference?: NativePortForwardingPreference;
 }): Promise<NativePortForwardProfile> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native port forwarding is available on Android only");
-  return parseNativePortForwardProfile(JSON.parse(await bridge.upsertPortForward(
-    input.connectionId,
-    input.profileId,
-    input.label,
-    input.remotePort,
-    input.preferredLocalPort,
-    input.serviceKey ?? null,
-    input.preference ?? "included",
-  )));
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native port forwarding is available on Android only");
+  return parseNativePortForwardProfile(
+    JSON.parse(
+      await bridge.upsertPortForward(
+        input.connectionId,
+        input.profileId,
+        input.label,
+        input.remotePort,
+        input.preferredLocalPort,
+        input.serviceKey ?? null,
+        input.preference ?? "included",
+      ),
+    ),
+  );
 }
 
 export async function startNativePortForward(profileId: string): Promise<NativePortForwardProfile> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native port forwarding is available on Android only");
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native port forwarding is available on Android only");
   return parseNativePortForwardProfile(JSON.parse(await bridge.startPortForward(profileId)));
 }
 
 export async function stopNativePortForward(profileId: string): Promise<NativePortForwardProfile> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native port forwarding is available on Android only");
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native port forwarding is available on Android only");
   return parseNativePortForwardProfile(JSON.parse(await bridge.stopPortForward(profileId)));
 }
 
 export async function removeNativePortForward(profileId: string): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native port forwarding is available on Android only");
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native port forwarding is available on Android only");
   await bridge.removePortForward(profileId);
 }
 
-export function subscribeNativePortForwards(listener: (event: NativePortForwardEvent) => void): () => void {
+export function subscribeNativePortForwards(
+  listener: (event: NativePortForwardEvent) => void,
+): () => void {
   if (emitter === null || Platform.OS !== "android") return () => {};
   const subscription = emitter.addListener("CodeWidePortForwardEvent", (raw: unknown) => {
     try {
-      const value = typeof raw === "string" ? JSON.parse(raw) as unknown : raw;
+      const value = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
       listener(parseNativePortForwardEvent(value));
     } catch (error) {
       console.warn("Ignored invalid native port-forward event", error);
@@ -311,39 +486,74 @@ export async function openNativeTerminal(input: {
   cols: number;
   rows: number;
 }): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.openTerminal !== "function") {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.openTerminal !== "function"
+  ) {
     throw new Error("This app build does not include terminal support");
   }
-  await bridge.openTerminal(input.sessionId, input.connectionId, input.threadId, input.cwd, input.cols, input.rows);
+  await bridge.openTerminal(
+    input.sessionId,
+    input.connectionId,
+    input.threadId,
+    input.cwd,
+    input.cols,
+    input.rows,
+  );
 }
 
 export async function writeNativeTerminal(sessionId: string, base64: string): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.writeTerminal !== "function") {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.writeTerminal !== "function"
+  ) {
     throw new Error("This app build does not include terminal support");
   }
   await bridge.writeTerminal(sessionId, base64);
 }
 
-export async function resizeNativeTerminal(sessionId: string, cols: number, rows: number): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.resizeTerminal !== "function") {
+export async function resizeNativeTerminal(
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.resizeTerminal !== "function"
+  ) {
     throw new Error("This app build does not include terminal support");
   }
   await bridge.resizeTerminal(sessionId, cols, rows);
 }
 
-export async function readNativeTerminalOutput(sessionId: string, offset: number, maxBytes = 256 * 1024): Promise<NativeTerminalOutput> {
-  if (bridge === undefined || Platform.OS !== "android" || typeof bridge.readTerminalOutput !== "function") {
+export async function readNativeTerminalOutput(
+  sessionId: string,
+  offset: number,
+  maxBytes = 256 * 1024,
+): Promise<NativeTerminalOutput> {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    typeof bridge.readTerminalOutput !== "function"
+  ) {
     throw new Error("This app build does not include resumable terminal output");
   }
   const value = JSON.parse(await bridge.readTerminalOutput(sessionId, offset, maxBytes)) as unknown;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Native terminal output is invalid");
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Native terminal output is invalid");
   const row = value as Partial<NativeTerminalOutput>;
   if (
-    typeof row.data !== "string"
-    || typeof row.nextOffset !== "number" || !Number.isSafeInteger(row.nextOffset) || row.nextOffset < offset
-    || typeof row.hasMore !== "boolean"
-    || typeof row.finished !== "boolean"
-  ) throw new Error("Native terminal output is invalid");
+    typeof row.data !== "string" ||
+    typeof row.nextOffset !== "number" ||
+    !Number.isSafeInteger(row.nextOffset) ||
+    row.nextOffset < offset ||
+    typeof row.hasMore !== "boolean" ||
+    typeof row.finished !== "boolean"
+  )
+    throw new Error("Native terminal output is invalid");
   return row as NativeTerminalOutput;
 }
 
@@ -359,11 +569,13 @@ export function stopLegacyNativeRuntimeResources(): Promise<void> {
   return bridge?.stopLegacyRuntimeResources?.() ?? Promise.resolve();
 }
 
-export function subscribeNativeTerminal(listener: (event: NativeTerminalEvent) => void): () => void {
+export function subscribeNativeTerminal(
+  listener: (event: NativeTerminalEvent) => void,
+): () => void {
   if (emitter === null || Platform.OS !== "android") return () => {};
   const subscription = emitter.addListener("CodeWideTerminalEvent", (raw: unknown) => {
     try {
-      const value = typeof raw === "string" ? JSON.parse(raw) as unknown : raw;
+      const value = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
       listener(parseNativeTerminalEvent(value));
     } catch (error) {
       console.warn("Ignored invalid native terminal event", error);
@@ -373,18 +585,26 @@ export function subscribeNativeTerminal(listener: (event: NativeTerminalEvent) =
 }
 
 function parseNativeTerminalEvent(value: unknown): NativeTerminalEvent {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Native terminal event is invalid");
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Native terminal event is invalid");
   const row = value as Partial<NativeTerminalEvent>;
   if (
-    typeof row.sessionId !== "string" || row.sessionId.length === 0
-    || typeof row.threadId !== "string" || row.threadId.length === 0
-    || !["connecting", "open", "output", "closed", "error", "removed"].includes(row.type ?? "")
-    || !(row.data === undefined || typeof row.data === "string")
-    || !(row.code === undefined || (typeof row.code === "number" && Number.isInteger(row.code)))
-    || !(row.message === undefined || typeof row.message === "string")
-    || !(row.offset === undefined || (typeof row.offset === "number" && Number.isSafeInteger(row.offset) && row.offset >= 0))
-  ) throw new Error("Native terminal event is invalid");
-  if (row.type === "output" && row.offset === undefined) throw new Error("Native terminal output offset is missing");
+    typeof row.sessionId !== "string" ||
+    row.sessionId.length === 0 ||
+    typeof row.threadId !== "string" ||
+    row.threadId.length === 0 ||
+    !["connecting", "open", "output", "closed", "error", "removed"].includes(row.type ?? "") ||
+    !(row.data === undefined || typeof row.data === "string") ||
+    !(row.code === undefined || (typeof row.code === "number" && Number.isInteger(row.code))) ||
+    !(row.message === undefined || typeof row.message === "string") ||
+    !(
+      row.offset === undefined ||
+      (typeof row.offset === "number" && Number.isSafeInteger(row.offset) && row.offset >= 0)
+    )
+  )
+    throw new Error("Native terminal event is invalid");
+  if (row.type === "output" && row.offset === undefined)
+    throw new Error("Native terminal output offset is missing");
   return row as NativeTerminalEvent;
 }
 
@@ -394,22 +614,33 @@ export function parseNativePortForwardProfile(value: unknown): NativePortForward
   }
   const row = value as Partial<NativePortForwardProfile>;
   if (
-    typeof row.id !== "string" || row.id.length === 0
-    || typeof row.connectionId !== "string" || row.connectionId.length === 0
-    || typeof row.label !== "string" || row.label.length === 0
-    || row.remoteHost !== "127.0.0.1"
-    || !isPort(row.remotePort)
-    || !(row.preferredLocalPort === null || isPort(row.preferredLocalPort))
-    || !(row.serviceKey === null || (typeof row.serviceKey === "string" && /^[a-f0-9]{64}$/u.test(row.serviceKey)))
-    || !["automatic", "included", "excluded"].includes(row.preference ?? "")
-    || !(row.localPort === null || isPort(row.localPort))
-    || typeof row.enabled !== "boolean"
-    || !["stopped", "connecting", "live", "unavailable", "error"].includes(row.status ?? "")
+    typeof row.id !== "string" ||
+    row.id.length === 0 ||
+    typeof row.connectionId !== "string" ||
+    row.connectionId.length === 0 ||
+    typeof row.label !== "string" ||
+    row.label.length === 0 ||
+    row.remoteHost !== "127.0.0.1" ||
+    !isPort(row.remotePort) ||
+    !(row.preferredLocalPort === null || isPort(row.preferredLocalPort)) ||
+    !(
+      row.serviceKey === null ||
+      (typeof row.serviceKey === "string" && /^[a-f0-9]{64}$/u.test(row.serviceKey))
+    ) ||
+    !["automatic", "included", "excluded"].includes(row.preference ?? "") ||
+    !(row.localPort === null || isPort(row.localPort)) ||
+    typeof row.enabled !== "boolean" ||
+    !["stopped", "connecting", "live", "unavailable", "error"].includes(row.status ?? "") ||
     // Native-136 uses raw loopback URLs; older shells retain the capability path.
-    || !(row.previewUrl === null || (typeof row.previewUrl === "string" && /^http:\/\/127\.0\.0\.1:\d+\/(?:[A-Za-z0-9_-]{43}\/)?$/u.test(row.previewUrl)))
-    || !(row.error === null || typeof row.error === "string")
-    || typeof row.updatedAt !== "number"
-  ) throw new Error("Native port-forward projection is invalid");
+    !(
+      row.previewUrl === null ||
+      (typeof row.previewUrl === "string" &&
+        /^http:\/\/127\.0\.0\.1:\d+\/(?:[A-Za-z0-9_-]{43}\/)?$/u.test(row.previewUrl))
+    ) ||
+    !(row.error === null || typeof row.error === "string") ||
+    typeof row.updatedAt !== "number"
+  )
+    throw new Error("Native port-forward projection is invalid");
   return row as NativePortForwardProfile;
 }
 
@@ -418,29 +649,54 @@ function parseNativePortForwardEvent(value: unknown): NativePortForwardEvent {
     throw new Error("Native port-forward event is invalid");
   }
   const type = Reflect.get(value, "type");
-  if (type === "profile") return { type, profile: parseNativePortForwardProfile(Reflect.get(value, "profile")) };
+  if (type === "profile")
+    return { type, profile: parseNativePortForwardProfile(Reflect.get(value, "profile")) };
   const id = Reflect.get(value, "id");
   if (type === "removed" && typeof id === "string" && id.length > 0) return { type, id };
   const connectionId = Reflect.get(value, "connectionId");
-  if ((type === "inventory" || type === "inventoryError") && typeof connectionId === "string" && connectionId.length > 0) return { type, connectionId };
+  if (
+    (type === "inventory" || type === "inventoryError") &&
+    typeof connectionId === "string" &&
+    connectionId.length > 0
+  )
+    return { type, connectionId };
   throw new Error("Native port-forward event is invalid");
 }
 
 function parseNativeDiscoveredPort(value: unknown): NativeDiscoveredPort {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Native discovered port is invalid");
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Native discovered port is invalid");
   const row = value as Partial<NativeDiscoveredPort>;
   if (
-    !isPort(row.port)
-    || typeof row.name !== "string" || row.name.length === 0
-    || typeof row.group !== "string" || row.group.length === 0
-    || typeof row.details !== "string"
-    || !(row.process === null || typeof row.process === "string")
-    || !(row.pid === null || (typeof row.pid === "number" && Number.isSafeInteger(row.pid) && row.pid > 0))
-    || !(row.cwd === null || typeof row.cwd === "string")
-    || !["docker", "hermes", "kubernetes", "minikube", "vite", "node", "python", "zrok", "process", "system"].includes(row.kind ?? "")
-    || typeof row.forwardingKey !== "string" || !/^[a-f0-9]{64}$/u.test(row.forwardingKey)
-    || typeof row.defaultForwardingEnabled !== "boolean"
-  ) throw new Error("Native discovered port is invalid");
+    !isPort(row.port) ||
+    typeof row.name !== "string" ||
+    row.name.length === 0 ||
+    typeof row.group !== "string" ||
+    row.group.length === 0 ||
+    typeof row.details !== "string" ||
+    !(row.process === null || typeof row.process === "string") ||
+    !(
+      row.pid === null ||
+      (typeof row.pid === "number" && Number.isSafeInteger(row.pid) && row.pid > 0)
+    ) ||
+    !(row.cwd === null || typeof row.cwd === "string") ||
+    ![
+      "docker",
+      "hermes",
+      "kubernetes",
+      "minikube",
+      "vite",
+      "node",
+      "python",
+      "zrok",
+      "process",
+      "system",
+    ].includes(row.kind ?? "") ||
+    typeof row.forwardingKey !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(row.forwardingKey) ||
+    typeof row.defaultForwardingEnabled !== "boolean"
+  )
+    throw new Error("Native discovered port is invalid");
   return row as NativeDiscoveredPort;
 }
 
@@ -454,8 +710,14 @@ export async function enqueueNativeCommand(
   method: NativeCommandMethod,
   params: Record<string, unknown>,
 ): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native durable command queue is unavailable");
-  const raw = await bridge.engineEnqueueCommand(connectionId, commandId, method, JSON.stringify(params));
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native durable command queue is unavailable");
+  const raw = await bridge.engineEnqueueCommand(
+    connectionId,
+    commandId,
+    method,
+    JSON.stringify(params),
+  );
   const envelope = JSON.parse(raw) as { ok?: boolean; message?: string };
   if (envelope.ok !== true) throw new Error(envelope.message ?? "Could not persist native command");
 }
@@ -470,9 +732,14 @@ export async function listNativeCommands(): Promise<NativeCommandDelivery[]> {
   return envelope.result.map(parseNativeCommandDelivery);
 }
 
-export async function retryNativeCommand(connectionId: string, commandId: string): Promise<NativeCommandDelivery> {
-  if (bridge === undefined || Platform.OS !== "android") throw new Error("Native durable command queue is unavailable");
-  if (bridge.engineRetryCommand === undefined) throw new Error("Retry requires the latest Android app version");
+export async function retryNativeCommand(
+  connectionId: string,
+  commandId: string,
+): Promise<NativeCommandDelivery> {
+  if (bridge === undefined || Platform.OS !== "android")
+    throw new Error("Native durable command queue is unavailable");
+  if (bridge.engineRetryCommand === undefined)
+    throw new Error("Retry requires the latest Android app version");
   const raw = await bridge.engineRetryCommand(connectionId, commandId);
   const envelope = JSON.parse(raw) as { ok?: boolean; result?: unknown; message?: string };
   if (envelope.ok !== true) throw new Error(envelope.message ?? "Could not retry message");
@@ -484,32 +751,53 @@ export async function retryNativeCommand(connectionId: string, commandId: string
  * authoritative projection. Older installed shells do not expose this bridge;
  * the UI projection can still reconcile it locally until the next APK update.
  */
-export async function acknowledgeNativeCommandReceipt(connectionId: string, commandId: string): Promise<void> {
-  if (bridge === undefined || Platform.OS !== "android" || bridge.engineAcknowledgeCommandReceipt === undefined) return;
+export async function acknowledgeNativeCommandReceipt(
+  connectionId: string,
+  commandId: string,
+): Promise<void> {
+  if (
+    bridge === undefined ||
+    Platform.OS !== "android" ||
+    bridge.engineAcknowledgeCommandReceipt === undefined
+  )
+    return;
   await bridge.engineAcknowledgeCommandReceipt(connectionId, commandId);
 }
 
 export function parseNativeCommandDelivery(value: unknown): NativeCommandDelivery {
-  if (value === null || typeof value !== "object") throw new Error("Native command projection is invalid");
+  if (value === null || typeof value !== "object")
+    throw new Error("Native command projection is invalid");
   const row = value as Partial<NativeCommandDelivery>;
-  const attachments = Array.isArray(row.attachments) ? row.attachments.filter((attachment): attachment is RemoteFileAttachment => (
-    attachment !== null
-      && typeof attachment === "object"
-      && typeof attachment.id === "string"
-      && typeof attachment.rootId === "string"
-      && typeof attachment.path === "string"
-      && typeof attachment.name === "string"
-      && (attachment.kind === "image" || attachment.kind === "audio" || attachment.kind === "file")
-  )) : [];
+  const attachments = Array.isArray(row.attachments)
+    ? row.attachments.filter(
+        (attachment): attachment is RemoteFileAttachment =>
+          attachment !== null &&
+          typeof attachment === "object" &&
+          typeof attachment.id === "string" &&
+          typeof attachment.rootId === "string" &&
+          typeof attachment.path === "string" &&
+          typeof attachment.name === "string" &&
+          (attachment.kind === "image" ||
+            attachment.kind === "audio" ||
+            attachment.kind === "file"),
+      )
+    : [];
   if (
-    typeof row.connectionId !== "string" || typeof row.commandId !== "string" ||
-    typeof row.method !== "string" || !(row.threadId === null || typeof row.threadId === "string") ||
+    typeof row.connectionId !== "string" ||
+    typeof row.commandId !== "string" ||
+    typeof row.method !== "string" ||
+    !(row.threadId === null || typeof row.threadId === "string") ||
     !(row.targetCommandId === null || typeof row.targetCommandId === "string") ||
     typeof row.text !== "string" ||
-    !["queued", "sending", "accepted", "uncertain", "failed", "delivered"].includes(row.state ?? "") ||
-    typeof row.attempts !== "number" || typeof row.createdAt !== "number" || typeof row.updatedAt !== "number" ||
+    !["queued", "sending", "accepted", "uncertain", "failed", "delivered"].includes(
+      row.state ?? "",
+    ) ||
+    typeof row.attempts !== "number" ||
+    typeof row.createdAt !== "number" ||
+    typeof row.updatedAt !== "number" ||
     !(row.lastError === null || typeof row.lastError === "string")
-  ) throw new Error("Native command projection is invalid");
+  )
+    throw new Error("Native command projection is invalid");
   return { ...(row as NativeCommandDelivery), attachments };
 }
 
@@ -517,7 +805,8 @@ export async function startVoiceRecognition(
   onEvent: (event: NativeVoiceEvent) => void,
   localeTag: string | null = null,
 ): Promise<() => void> {
-  if (bridge === undefined || emitter === null || Platform.OS !== "android") throw new Error("Native voice input is unavailable");
+  if (bridge === undefined || emitter === null || Platform.OS !== "android")
+    throw new Error("Native voice input is unavailable");
   if (getMicrophonePermission() !== "granted") throw new Error("Microphone permission is required");
   let armed = false;
   let stopped = false;
@@ -559,8 +848,13 @@ export function cancelVoiceRecognition(): void {
   bridge?.stopVoiceInput();
 }
 
-export function setNativeVoiceAuraState(active: boolean, level: number, reducedMotion: boolean): void {
-  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraState === undefined) return;
+export function setNativeVoiceAuraState(
+  active: boolean,
+  level: number,
+  reducedMotion: boolean,
+): void {
+  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraState === undefined)
+    return;
   bridge.setVoiceAuraState(active, Math.max(0, Math.min(1, level)), reducedMotion);
 }
 
@@ -571,7 +865,8 @@ export function setNativeVoiceAuraOrigin(reactTag: number | null): void {
 }
 
 export function setNativeVoiceAuraTarget(reactTag: number | null): void {
-  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraTarget === undefined) return;
+  if (bridge === undefined || Platform.OS !== "android" || bridge.setVoiceAuraTarget === undefined)
+    return;
   bridge.setVoiceAuraTarget(reactTag);
 }
 
@@ -583,7 +878,8 @@ export async function startPcmCapture(
   onChunk: (chunk: CapturedAudioChunk) => void,
   onError: (message: string) => void,
 ): Promise<{ stop(): Promise<void>; info: PcmCaptureInfo | null }> {
-  if (bridge === undefined || emitter === null || Platform.OS !== "android") throw new Error("Native audio capture is unavailable");
+  if (bridge === undefined || emitter === null || Platform.OS !== "android")
+    throw new Error("Native audio capture is unavailable");
   if (getMicrophonePermission() !== "granted") throw new Error("Microphone permission is required");
   let stopped = false;
   let stopPromise: Promise<void> | null = null;
@@ -603,7 +899,7 @@ export async function startPcmCapture(
     if (info !== null) {
       console.info(
         `CodeWide microphone: ${info.sampleRate} Hz, ${info.source}, ` +
-        `noiseSuppressor=${info.noiseSuppressor}, automaticGainControl=${info.automaticGainControl}`,
+          `noiseSuppressor=${info.noiseSuppressor}, automaticGainControl=${info.automaticGainControl}`,
       );
     } else {
       console.info("CodeWide microphone started with a legacy native capture bridge");
@@ -630,12 +926,16 @@ export async function startPcmCapture(
 function isPcmCaptureInfo(value: unknown): value is PcmCaptureInfo {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const info = value as Partial<PcmCaptureInfo>;
-  return Number.isSafeInteger(info.sampleRate)
-    && (info.sampleRate ?? 0) >= 8_000
-    && (info.sampleRate ?? 0) <= 96_000
-    && (info.source === "voice_recognition" || info.source === "voice_communication" || info.source === "mic")
-    && typeof info.noiseSuppressor === "boolean"
-    && typeof info.automaticGainControl === "boolean";
+  return (
+    Number.isSafeInteger(info.sampleRate) &&
+    (info.sampleRate ?? 0) >= 8_000 &&
+    (info.sampleRate ?? 0) <= 96_000 &&
+    (info.source === "voice_recognition" ||
+      info.source === "voice_communication" ||
+      info.source === "mic") &&
+    typeof info.noiseSuppressor === "boolean" &&
+    typeof info.automaticGainControl === "boolean"
+  );
 }
 
 export function stopPcmCapture(): void {

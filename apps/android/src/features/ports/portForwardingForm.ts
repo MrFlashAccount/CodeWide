@@ -1,4 +1,5 @@
 import type { PortForwardingDraft } from "./portForwardingContract";
+
 export type FormState = {
   id: string | null;
   label: string;
@@ -30,7 +31,7 @@ export function parseForwardingDraft(
   };
 }
 
-export function parsePort(raw: string, label: string): number {
+function parsePort(raw: string, label: string): number {
   const port = Number(raw);
   if (!/^\d{1,5}$/u.test(raw.trim()) || !Number.isSafeInteger(port) || port < 1 || port > 65_535)
     throw new Error(`${label} must be between 1 and 65535`);

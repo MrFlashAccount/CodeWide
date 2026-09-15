@@ -2,6 +2,7 @@ import { useEvent } from "../../react/useEvent";
 import { useMicrophoneAccess } from "../../ui/use-microphone-access";
 import type { ComposerSendPreference } from "./deliveryMode";
 import type { VoiceBindingCapabilities } from "./voice/voiceBindingCapabilities";
+
 export function useVoiceBinding({
   captureDraftMutations,
   captureSend,

@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 import { touchTarget } from "../../theme";
+
 export const styles = StyleSheet.create({
   composerIcon: {
     width: touchTarget,

@@ -27,10 +27,29 @@ export function MenuAction({
       disabled={onPress === undefined}
       {...(onPress === undefined ? {} : { onPress })}
       {...(isComposeIconName(icon)
-        ? { leadingIcon: { name: icon, size: iconSize.action, color: danger ? colors.red : colors.textMuted } }
-        : { leading: icon === "push-pin"
-          ? <MaterialIcons name="push-pin" size={iconSize.action} color={danger ? colors.red : colors.textMuted} />
-          : <Ionicons name={icon} size={iconSize.action} color={danger ? colors.red : colors.textMuted} /> })}
+        ? {
+            leadingIcon: {
+              name: icon,
+              size: iconSize.action,
+              color: danger ? colors.red : colors.textMuted,
+            },
+          }
+        : {
+            leading:
+              icon === "push-pin" ? (
+                <MaterialIcons
+                  name="push-pin"
+                  size={iconSize.action}
+                  color={danger ? colors.red : colors.textMuted}
+                />
+              ) : (
+                <Ionicons
+                  name={icon}
+                  size={iconSize.action}
+                  color={danger ? colors.red : colors.textMuted}
+                />
+              ),
+          })}
     />
   );
 }

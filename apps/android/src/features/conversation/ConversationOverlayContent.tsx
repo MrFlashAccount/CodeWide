@@ -26,6 +26,7 @@ import { useComposerState } from "../composer/composerState";
 import { useConversationTools } from "./ConversationTools";
 import { TOOL_RESULT_MAX_HEIGHT } from "./protocol/ToolContent";
 import { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
+
 export function createConversationOverlayContent({
   surfaceInputs,
   composerStateBinding,

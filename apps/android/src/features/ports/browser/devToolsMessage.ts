@@ -1,5 +1,6 @@
 export type DevToolsDockSide = "bottom" | "left" | "right" | "undocked";
 
+/** Validated message accepted from the embedded browser DevTools surface. */
 export type DevToolsMessage =
   | { source: "codewide-devtools-health"; state: "ready" | "error"; message?: string }
   | { source: "codewide-devtools-dock"; side: DevToolsDockSide }
@@ -41,7 +42,7 @@ export function parseDevToolsMessage(value: string): DevToolsMessage | null {
   }
 }
 
-export function isDevToolsDockSide(value: unknown): value is DevToolsDockSide {
+function isDevToolsDockSide(value: unknown): value is DevToolsDockSide {
   return value === "bottom" || value === "left" || value === "right" || value === "undocked";
 }
 

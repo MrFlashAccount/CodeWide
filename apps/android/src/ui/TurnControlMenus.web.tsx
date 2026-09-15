@@ -1,9 +1,6 @@
 import { Pressable } from "react-native";
 
-import type {
-  ModelThinkingMenuProps,
-  PermissionsMenuProps,
-} from "./TurnControlMenus.types";
+import type { ModelThinkingMenuProps, PermissionsMenuProps } from "./TurnControlMenus.types";
 
 export function ModelThinkingMenu({
   accessibilityLabel,

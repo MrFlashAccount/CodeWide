@@ -21,9 +21,7 @@ export function AppPopover(props: AppPopoverProps) {
           className="border border-border"
           style={{ padding: 0, borderRadius: radii.selected, overflow: "hidden" }}
         >
-          <ScrollView style={{ maxHeight: Math.max(1, height - 24) }}>
-            {props.children}
-          </ScrollView>
+          <ScrollView style={{ maxHeight: Math.max(1, height - 24) }}>{props.children}</ScrollView>
         </Popover.Content>
       </Popover.Portal>
     </Popover>

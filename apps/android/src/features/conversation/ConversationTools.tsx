@@ -16,6 +16,7 @@ import { useTerminalActions, useTerminalDeletion } from "../terminal/terminalAct
 import { useTerminalFeature } from "../terminal/TerminalFeature";
 import type { UseConversationToolsProps } from "./ConversationTools.types";
 import { SubagentConversation } from "./SubagentConversation";
+
 export function useConversationTools(props: UseConversationToolsProps) {
   const currentSubagentSummaries = useAgentSelection(
     props.composerScope,

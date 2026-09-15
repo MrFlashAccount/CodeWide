@@ -7,9 +7,15 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { colors, spacing, touchTarget, typeScale, iconSize, layoutSize } from "../theme";
 import { AppText as Text } from "./Typography";
 
-const SPEEDSCOPE_URL = "file:///android_asset/speedscope/index.html#localProfilePath=android_asset%2Fspeedscope%2Fcodewide-loader.js&view=time-ordered";
+const SPEEDSCOPE_URL =
+  "file:///android_asset/speedscope/index.html#localProfilePath=android_asset%2Fspeedscope%2Fcodewide-loader.js&view=time-ordered";
 
-export function SpeedscopeProfileViewer({ title, fileName, content, onClose }: {
+export function SpeedscopeProfileViewer({
+  title,
+  fileName,
+  content,
+  onClose,
+}: {
   title: string;
   fileName: string;
   content: string;
@@ -113,14 +119,25 @@ export function SpeedscopeProfileViewer({ title, fileName, content, onClose }: {
   return (
     <View style={styles.root}>
       <View style={styles.header}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close performance profile" onPress={onClose} style={styles.closeButton}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close performance profile"
+          onPress={onClose}
+          style={styles.closeButton}
+        >
           <Ionicons name="close" size={iconSize.navigation} color={colors.text} />
         </Pressable>
         <View style={styles.titleBlock}>
-          <Text numberOfLines={1} style={styles.title}>{title}</Text>
-          <Text numberOfLines={1} style={styles.subtitle}>Speedscope · local profile viewer</Text>
+          <Text numberOfLines={1} style={styles.title}>
+            {title}
+          </Text>
+          <Text numberOfLines={1} style={styles.subtitle}>
+            Speedscope · local profile viewer
+          </Text>
         </View>
-        {(status === "waiting" || status === "loading") && <ActivityIndicator color={colors.textMuted} />}
+        {(status === "waiting" || status === "loading") && (
+          <ActivityIndicator color={colors.textMuted} />
+        )}
       </View>
       {error !== null && <Text style={styles.error}>{error}</Text>}
       <WebView
@@ -153,7 +170,12 @@ function utf8Base64(value: string): string {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
   header: {
     minHeight: layoutSize.header,
     flexDirection: "row",
@@ -164,10 +186,31 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     backgroundColor: colors.surface,
   },
-  closeButton: { width: touchTarget, height: touchTarget, alignItems: "center", justifyContent: "center" },
-  titleBlock: { flex: 1, minWidth: 0 },
-  title: { ...typeScale.title, color: colors.text },
-  subtitle: { ...typeScale.label, color: colors.textMuted },
-  error: { color: colors.red, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
-  webView: { flex: 1, backgroundColor: colors.background },
+  closeButton: {
+    width: touchTarget,
+    height: touchTarget,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  title: {
+    ...typeScale.title,
+    color: colors.text,
+  },
+  subtitle: {
+    ...typeScale.label,
+    color: colors.textMuted,
+  },
+  error: {
+    color: colors.red,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  webView: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
 });

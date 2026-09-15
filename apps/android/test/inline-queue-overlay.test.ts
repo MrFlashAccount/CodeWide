@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { compactSource } from "./source-contract";
+import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const readSource = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -16,14 +16,34 @@ const state = readSource("../src/features/queue/inlineQueueState.ts");
 const styles = readSource("../src/features/queue/InlineQueueOverlay.styles.ts");
 const workspace = readSource("../src/data/command-delivery.ts");
 
-const ownerConversationQueueFooter = compactSource(readFileSync(new URL("../src/features/conversation/ConversationQueueFooter.tsx", import.meta.url), "utf8"));
-const ownerTimelineViewport = compactSource(readFileSync(new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url), "utf8"));
+const ownerConversationQueueFooter = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationQueueFooter.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTimelineViewport = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const footer = compactSource(readFileSync(new URL("../src/features/conversation/ConversationQueueFooter.tsx", import.meta.url), "utf8"));
+const footer = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/ConversationQueueFooter.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const ownerInlineQueueItem = readFileSync(new URL("../src/features/queue/InlineQueueItem.tsx", import.meta.url), "utf8");
+const ownerInlineQueueItem = readFileSync(
+  new URL("../src/features/queue/InlineQueueItem.tsx", import.meta.url),
+  "utf8",
+);
 
-const queueItem = compactSource(readFileSync(new URL("../src/features/queue/InlineQueueItem.tsx", import.meta.url), "utf8"));
+const queueItem = compactSource(
+  readFileSync(new URL("../src/features/queue/InlineQueueItem.tsx", import.meta.url), "utf8"),
+);
 
 describe("inline queue overlay", () => {
   it("springs one measured set of cards from a two-layer stack into the floating list", () => {
@@ -35,7 +55,9 @@ describe("inline queue overlay", () => {
     expect(overlay).toContain('testID="inline-queue-list"');
     expect(overlay).toContain("<ScrollView");
     expect(layout).toContain("const STACK_VISIBLE_ITEMS = 2");
-    expect(bubble).toContain("expanded ? styles.expandedBubbleContent : styles.collapsedBubbleContent");
+    expect(bubble).toContain(
+      "expanded ? styles.expandedBubbleContent : styles.collapsedBubbleContent",
+    );
     expect(state).toContain("calculateQueueLayouts(items, measuredHeights, expanded)");
     expect(motion).toContain("layoutY.set(withSpring(targetY, QUEUE_SPRING_GLIDE))");
     expect(overlay).not.toContain("withDelay(delay");
@@ -52,7 +74,7 @@ describe("inline queue overlay", () => {
     expect(ownerInlineQueueItem).toMatch(
       /<Text numberOfLines=\{1\} ellipsizeMode="tail" style=\{styles\.stackLine\}>[\s\S]*styles\.stackTitle[\s\S]*styles\.stackPreview[\s\S]*<\/Text>/u,
     );
-    expect(styles).toContain('contentRow: { alignItems: "center"');
+    expect(sourceObjectDeclaration(styles, "contentRow")).toContain('alignItems: "center"');
     expect(overlay).not.toContain("styles.headerBubble");
     expect(overlay).not.toContain('name="close"');
     expect(overlay).not.toContain("AppSheet");
@@ -66,25 +88,35 @@ describe("inline queue overlay", () => {
     expect(motion).toContain('withTestId("queued-prompt-reorder")');
     expect(motion).toContain("activateAfterLongPress(240)");
     expect(bubble).toContain("Gesture.Race(reorderGesture, swipeGesture)");
-    expect(bubble).toContain('pointerEvents={expanded ? "box-none" : index === 0 ? "auto" : "none"}');
+    expect(bubble).toContain(
+      'pointerEvents={expanded ? "box-none" : index === 0 ? "auto" : "none"}',
+    );
     expect(motion).toContain("expanded ? 1 : itemCount - index");
-    expect(ownerInlineQueueItem).toContain("raised={props.expanded && overlay.openMenuId === item.id}");
-    expect(ownerInlineQueueItem).toContain("onOpenChange={(open) =>\n                overlay.setOpenMenuId");
-    expect(bubble).toContain('<Text style={styles.swipeActionText}>Delete</Text>');
-    expect(bubble).toContain('<Text style={[styles.swipeActionText, styles.steerSwipeActionText]}>Steer</Text>');
-    expect(queueItem).toContain("name=\"ellipsis-vertical\"");
+    expect(ownerInlineQueueItem).toContain(
+      "raised={props.expanded && overlay.openMenuId === item.id}",
+    );
+    expect(ownerInlineQueueItem).toContain(
+      "onOpenChange={(open) =>\n                overlay.setOpenMenuId",
+    );
+    expect(bubble).toContain("<Text style={styles.swipeActionText}>Delete</Text>");
+    expect(bubble).toContain(
+      "<Text style={[styles.swipeActionText, styles.steerSwipeActionText]}>Steer</Text>",
+    );
+    expect(queueItem).toContain('name="ellipsis-vertical"');
     expect(overlay).not.toContain('name="ellipsis-horizontal"');
     expect(bubble).toContain('name="navigate-outline" role="label" color={colors.onPrimary}');
     expect(motion).toContain("rawTranslation >= 8 && steerEnabled");
-    expect(ownerInlineQueueItem).toContain("swipeDismissDistance={overlay.viewportWidth + spacing.md}");
+    expect(ownerInlineQueueItem).toContain(
+      "swipeDismissDistance={overlay.viewportWidth + spacing.md}",
+    );
     expect(motion).toContain("dismissOpacity.set(withDelay(170, withTiming(0");
     expect(queueItem).toContain("<ActionMenu");
-    expect(ownerInlineQueueItem).toContain("accessibilityLabel=\"Queued prompt actions\"");
-    expect(queueItem).toContain("label: \"Edit\"");
-    expect(ownerInlineQueueItem).toContain("label: \"Delete\"");
+    expect(ownerInlineQueueItem).toContain('accessibilityLabel="Queued prompt actions"');
+    expect(queueItem).toContain('label: "Edit"');
+    expect(ownerInlineQueueItem).toContain('label: "Delete"');
     expect(overlay).not.toContain('label: "Up in queue"');
     expect(overlay).not.toContain('label: "Down in queue"');
-    expect(overlay).not.toContain('<Text style={styles.actionText}>Edit</Text>');
+    expect(overlay).not.toContain("<Text style={styles.actionText}>Edit</Text>");
     expect(overlay).not.toContain('accessibilityLabel="Move queued prompt earlier"');
     expect(ownerInlineQueueItem).toContain("numberOfLines={props.expanded ? 2 : 1}");
     expect(styles).toContain("left: 0");
@@ -102,7 +134,9 @@ describe("inline queue overlay", () => {
   });
 
   it("renders at the timeline tail without adding queue height to the composer", () => {
-    expect(footer).toContain("!queuedPromptEditing && !threadSearchActive && inlineQueueOverlayItems.length > 0");
+    expect(footer).toContain(
+      "!queuedPromptEditing && !threadSearchActive && inlineQueueOverlayItems.length > 0",
+    );
     expect(ownerConversationQueueFooter).toContain("maxHeight={inlineQueueMaxHeight}");
     expect(screen).not.toContain("inlineQueueAnchor");
     expect(screen).not.toContain("measureInlineQueueOverlayAnchor");
@@ -116,8 +150,8 @@ describe("inline queue overlay", () => {
   });
 
   it("offers a real retry for failed queued messages using the original command id", () => {
-    expect(ownerInlineQueueItem).toContain("item.state === \"failed\" && onRetry !== undefined");
-    expect(ownerInlineQueueItem).toContain("accessibilityLabel=\"Retry queued prompt\"");
+    expect(ownerInlineQueueItem).toContain('item.state === "failed" && onRetry !== undefined');
+    expect(ownerInlineQueueItem).toContain('accessibilityLabel="Retry queued prompt"');
     expect(queueItem).toContain("onRetry(item.id)");
     expect(footer).toContain("onRetry: onRetryFailedMessage");
     expect(workspace).toMatch(/"companion\/queue\/retry",\s*\{\s*commandId,?\s*\}/u);

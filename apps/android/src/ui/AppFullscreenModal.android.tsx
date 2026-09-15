@@ -2,10 +2,18 @@ import { BasicAlertDialog, Host, RNHostView } from "@expo/ui/jetpack-compose";
 import { background, fillMaxSize } from "@expo/ui/jetpack-compose/modifiers";
 import { PortalHost } from "heroui-native/portal";
 import { useEffect, useId, useRef, useState, type ComponentRef, type ReactNode } from "react";
-import { findNodeHandle, StyleSheet, useWindowDimensions, type LayoutChangeEvent } from "react-native";
+import {
+  findNodeHandle,
+  StyleSheet,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from "react-native";
 import { SafeAreaProvider, SafeAreaView, type Edge } from "react-native-safe-area-context";
 
-import { configureNativeFullscreenWindow, setNativeVoiceAuraTarget } from "../native/native-transport";
+import {
+  configureNativeFullscreenWindow,
+  setNativeVoiceAuraTarget,
+} from "../native/native-transport";
 import { useEvent } from "../react/useEvent";
 import { colors } from "../theme";
 import { FullscreenWindowReadyProvider } from "./FullscreenWindowReady";
@@ -57,10 +65,13 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
       props.onShow?.();
     });
   };
-  useEffect(() => () => {
-    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-    setNativeVoiceAuraTarget(null);
-  }, []);
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+      setNativeVoiceAuraTarget(null);
+    },
+    [],
+  );
 
   return (
     <Host colorScheme="dark" pointerEvents="none" style={{ position: "absolute", width }}>
@@ -79,9 +90,16 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
               style={styles.root}
               onLayout={onLayout}
             >
-              <RecoverableRenderBoundary scope="dialog" label="Fullscreen modal" onDismiss={props.onClose}>
+              <RecoverableRenderBoundary
+                scope="dialog"
+                label="Fullscreen modal"
+                onDismiss={props.onClose}
+              >
                 <FullscreenWindowReadyProvider ready={windowReady}>
-                  <OverlaySurfaceProvider surface="fullscreen-modal" portalHostName={portalHostName}>
+                  <OverlaySurfaceProvider
+                    surface="fullscreen-modal"
+                    portalHostName={portalHostName}
+                  >
                     {props.children}
                     <PortalHost name={portalHostName} />
                   </OverlaySurfaceProvider>
@@ -96,5 +114,10 @@ function VisibleFullscreenModal(props: FullscreenModalProps) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: colors.background },
+  root: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: colors.background,
+  },
 });

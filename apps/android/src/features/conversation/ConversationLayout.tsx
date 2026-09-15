@@ -8,6 +8,7 @@ import { MessageActionMenuProvider } from "../../ui/MessageActionMenu";
 import { styles } from "./ConversationLayout.styles";
 import type { ConversationLayoutProps } from "./ConversationLayoutContract";
 import { ThreadCwdContext } from "./turns/turnContexts";
+
 export function ConversationLayout({
   searchContent,
   jumpContent,

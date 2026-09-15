@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { compactSource } from "../source-contract";
 import { heroUIRoot } from "./presentation-sources";
 import { ownerUserMessageContent } from "./conversation-turns-sources";
 import {
@@ -44,7 +45,10 @@ import { navigationActions } from "./navigation-sources";
 import { ownerConversationPresentation } from "./conversation-composition-sources";
 import { newChat } from "./projects-sources";
 
-const ownerAttachmentDocumentResource = readFileSync(new URL("../../src/features/attachments/attachmentDocumentResource.ts", import.meta.url), "utf8");
+const ownerAttachmentDocumentResource = readFileSync(
+  new URL("../../src/features/attachments/attachmentDocumentResource.ts", import.meta.url),
+  "utf8",
+);
 
 it("renders attached Markdown and isolated HTML with the reusable document preview", () => {
   expect(heroUIRoot).toContain("<ImagePreviewHost>");
@@ -73,13 +77,13 @@ it("renders attached Markdown and isolated HTML with the reusable document previ
   expect(documentPreviewHost).toContain(
     "startPreviewDownload(request.getTransferAccess, directory, source.path",
   );
-  expect(documentPreviewHost).toContain(
-    "startDownload(request.getTransferAccess, directory, source.rootId, source.path",
+  expect(documentPreviewHost).toMatch(
+    /startDownload\(\s*request\.getTransferAccess,\s*directory,\s*source\.rootId,\s*source\.path/u,
   );
   expect(documentPreviewHost).toContain("startDocumentDownload(request, directory)");
   expect(documentPreviewHost).toContain("void materializePrivateAsset(");
   expect(documentPreviewHost).toContain("source,");
-  expect(documentPreviewHost).toContain("openImagePreview({");
+  expect(documentPreviewHost).toMatch(/openImagePreview\(\s*\{/u);
   expect(documentPreviewHost).toContain("onDownload");
   expect(imagePreviewHost).toContain('{ id: "download", label: "Download"');
   expect(imagePreviewHost).toContain('accessibilityLabel="Image actions"');
@@ -257,7 +261,9 @@ it("keeps async data ownership in resources and event-driven preview controllers
   expect(documentPreviewHost).toContain(
     "presentFullscreenDocument(fullscreen, request, downloadFile)",
   );
-  expect(documentPreviewHost).toContain("useEphemeralAsyncResource<Extract<DocumentPreviewResult");
+  expect(compactSource(documentPreviewHost)).toContain(
+    "useEphemeralAsyncResource< Extract<DocumentPreviewResult",
+  );
   expect(documentPreviewHost).toContain("await loadDocumentPreview(preview, signal)");
   expect(mermaidWeb).not.toContain("useEffect(");
   expect(mermaidWeb).toContain("useAsyncResource");

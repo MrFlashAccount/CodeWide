@@ -6,6 +6,7 @@ import { AppListRow } from "../../ui/AppListRow";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./PortForwardingManager.styles";
 import { type PortForwardingCandidate } from "./portForwardingContract";
+
 export function ServiceIcon({
   name,
   live = false,

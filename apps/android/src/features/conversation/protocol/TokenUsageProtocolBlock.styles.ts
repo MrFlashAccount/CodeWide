@@ -20,7 +20,11 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.surfaceContainerLow,
   },
-  tokenStripTitle: { flexDirection: "row", alignItems: "center", gap: spacing.compact },
+  tokenStripTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+  },
   tokenMetrics: {
     flex: 1,
     flexDirection: "row",
@@ -29,7 +33,11 @@ export const styles = StyleSheet.create({
     justifyContent: "flex-end",
     gap: spacing.xxs,
   },
-  tokenMetric: { flexDirection: "row", alignItems: "center", gap: spacing.xxs },
+  tokenMetric: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+  },
   tokenMetricValue: {
     color: colors.textMuted,
     ...typeScale.caption,

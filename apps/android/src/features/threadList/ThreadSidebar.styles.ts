@@ -19,8 +19,14 @@ export const styles = StyleSheet.create({
     backgroundColor: colors.threadListSurface,
     overflow: "hidden",
   },
-  threadListHeaderChrome: { flexShrink: 0, backgroundColor: colors.threadListSurface },
-  threadListContentSurface: { flex: 1, minHeight: 0 },
+  threadListHeaderChrome: {
+    flexShrink: 0,
+    backgroundColor: colors.threadListSurface,
+  },
+  threadListContentSurface: {
+    flex: 1,
+    minHeight: 0,
+  },
   threadListSuspended: { flex: 1 },
   sidebarHeader: {
     paddingLeft: spacing.md,
@@ -55,7 +61,12 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.optical,
   },
-  threadSearchBox: { ...searchFieldLayout, height: controlSize.regular, flex: 1, minWidth: 0 },
+  threadSearchBox: {
+    ...searchFieldLayout,
+    height: controlSize.regular,
+    flex: 1,
+    minWidth: 0,
+  },
   searchBox: {
     height: controlSize.touch,
     borderRadius: radii.large,
@@ -65,7 +76,13 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     gap: spacing.xs,
   },
-  searchInput: { flex: 1, minWidth: 0, color: colors.text, ...typeScale.body, paddingVertical: 0 },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    color: colors.text,
+    ...typeScale.body,
+    paddingVertical: 0,
+  },
   mobileSearchWrap: {
     paddingLeft: spacing.md,
     paddingRight: threadListLayout.edgeInset,

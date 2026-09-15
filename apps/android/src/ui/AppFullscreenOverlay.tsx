@@ -49,7 +49,11 @@ type OverlayEntry = OverlayBinding & {
 };
 
 type OverlayHostController = {
-  present(binding: OverlayBinding, render: AppFullscreenOverlayRender, options?: AppFullscreenOverlayOptions): AppFullscreenOverlayHandle;
+  present(
+    binding: OverlayBinding,
+    render: AppFullscreenOverlayRender,
+    options?: AppFullscreenOverlayOptions,
+  ): AppFullscreenOverlayHandle;
   dismissScope(scope: string): void;
   dismissUnmountedScope(scope: string): void;
 };
@@ -61,7 +65,10 @@ type OverlayPresentation = {
 };
 
 export type AppFullscreenOverlayController = {
-  present(render: AppFullscreenOverlayRender, options?: AppFullscreenOverlayOptions): AppFullscreenOverlayHandle;
+  present(
+    render: AppFullscreenOverlayRender,
+    options?: AppFullscreenOverlayOptions,
+  ): AppFullscreenOverlayHandle;
   dismissAll(): void;
   dismissScope(scope: string): void;
 };
@@ -137,7 +144,9 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
       for (const entry of matching.reverse()) entry.lifecycle?.didClose?.(entry.id);
     },
     dismissUnmountedScope(scope) {
-      const matching = entriesRef.current.filter((entry) => entry.scope === scope && entry.dismissOnScopeUnmount);
+      const matching = entriesRef.current.filter(
+        (entry) => entry.scope === scope && entry.dismissOnScopeUnmount,
+      );
       if (matching.length === 0) return;
       const matchingIds = new Set(matching.map((entry) => entry.id));
       publish(entriesRef.current.filter((entry) => !matchingIds.has(entry.id)));
@@ -147,11 +156,13 @@ export function AppFullscreenOverlayProvider({ children }: { children: ReactNode
 
   return (
     <AppFullscreenOverlayHostContext.Provider value={controller}>
-      <AppFullscreenOverlayPresentationContext.Provider value={{
-        entries,
-        close,
-        markAllShown,
-      }}>
+      <AppFullscreenOverlayPresentationContext.Provider
+        value={{
+          entries,
+          close,
+          markAllShown,
+        }}
+      >
         {children}
       </AppFullscreenOverlayPresentationContext.Provider>
     </AppFullscreenOverlayHostContext.Provider>
@@ -206,7 +217,11 @@ export function AppFullscreenOverlayHost() {
 
 function FullscreenOverlaySuspenseFallback() {
   return (
-    <View accessibilityLabel="Loading view" style={styles.suspenseFallback} testID="fullscreen-overlay-suspense-fallback">
+    <View
+      accessibilityLabel="Loading view"
+      style={styles.suspenseFallback}
+      testID="fullscreen-overlay-suspense-fallback"
+    >
       <ActivityIndicator color={colors.accent} />
     </View>
   );
@@ -222,7 +237,10 @@ export function AppFullscreenOverlayBoundary({
   children: ReactNode;
 }) {
   const host = useContext(AppFullscreenOverlayHostContext);
-  if (host === null) throw new Error("AppFullscreenOverlayBoundary must be used inside AppFullscreenOverlayProvider");
+  if (host === null)
+    throw new Error(
+      "AppFullscreenOverlayBoundary must be used inside AppFullscreenOverlayProvider",
+    );
   useLayoutEffect(() => () => host.dismissUnmountedScope(scope), [host, scope]);
 
   return (
@@ -241,19 +259,25 @@ export function useAppFullscreenOverlay(
     scope: override?.scope ?? inherited.scope,
     lifecycle: override?.lifecycle === undefined ? inherited.lifecycle : override.lifecycle,
   };
-  const present = useEvent((render: AppFullscreenOverlayRender, options?: AppFullscreenOverlayOptions) => {
-    if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
-    return host.present(binding, render, options);
-  });
+  const present = useEvent(
+    (render: AppFullscreenOverlayRender, options?: AppFullscreenOverlayOptions) => {
+      if (host === null)
+        throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
+      return host.present(binding, render, options);
+    },
+  );
   const dismissAll = useEvent(() => {
-    if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
+    if (host === null)
+      throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
     host.dismissScope(binding.scope);
   });
   const dismissScope = useEvent((scope: string) => {
-    if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
+    if (host === null)
+      throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
     host.dismissScope(scope);
   });
-  if (host === null) throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
+  if (host === null)
+    throw new Error("useAppFullscreenOverlay must be used inside AppFullscreenOverlayProvider");
   return {
     present,
     dismissAll,
@@ -262,11 +286,27 @@ export function useAppFullscreenOverlay(
 }
 
 const styles = StyleSheet.create({
-  stack: { flex: 1, minWidth: 0, minHeight: 0, backgroundColor: "transparent" },
-  layer: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
+  stack: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    backgroundColor: "transparent",
+  },
+  layer: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   // Keep parent workspaces mounted while a child fullscreen surface is open.
   // `display: none` preserves React and native view state (including ScrollView
   // offset) without painting an inactive WebView behind the active layer.
   hiddenLayer: { display: "none" },
-  suspenseFallback: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.background },
+  suspenseFallback: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.background,
+  },
 });

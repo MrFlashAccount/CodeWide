@@ -10,7 +10,7 @@ import {
 import { getPerformanceMetricsSnapshot } from "../../native/performance-metrics";
 import { delay } from "./performanceDelay";
 
-export const EXPERIMENT_PHASE_MS = 7_000;
+const EXPERIMENT_PHASE_MS = 7_000;
 
 export const STAGE_METRICS: ReadonlyArray<{ id: TimingMetric; label: string }> = [
   { id: "live_event_ingress_ms", label: "Native callback → JS" },
@@ -58,7 +58,7 @@ export const EXPERIMENTS: ReadonlyArray<{
   },
 ];
 
-export type ExperimentWindow = {
+type ExperimentWindow = {
   cpuPercent: number;
   pssBytes: number;
   stages: Partial<Record<TimingMetric, number>>;
@@ -70,7 +70,7 @@ export type ExperimentResult = {
   variant: ExperimentWindow;
 };
 
-export function measureWindow(
+function measureWindow(
   startedAtMs: number,
   before: OperationalMetricsSnapshot,
   after: OperationalMetricsSnapshot,
@@ -115,11 +115,11 @@ export async function collectExperiment(
   return { id, baseline, variant };
 }
 
-export function currentPerformanceSampleAt(): number {
+function currentPerformanceSampleAt(): number {
   const current = getPerformanceMetricsSnapshot().current;
   return current === null ? 0 : current.sampledAtMs;
 }
 
-export function average(values: number[]): number {
+function average(values: number[]): number {
   return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
 }

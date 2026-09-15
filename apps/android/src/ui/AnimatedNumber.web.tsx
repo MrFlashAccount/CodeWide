@@ -27,7 +27,13 @@ export function AnimatedNumber({
 }) {
   const renderedText = `${prefix}${formatNumber(value, format)}${suffix}`;
   return (
-    <View accessible accessibilityRole="text" accessibilityLabel={accessibilityLabel ?? renderedText} testID={testID} style={containerStyle}>
+    <View
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={accessibilityLabel ?? renderedText}
+      testID={testID}
+      style={containerStyle}
+    >
       <Text style={style}>{renderedText}</Text>
     </View>
   );

@@ -7,7 +7,16 @@ import type { TimelineViewportProps } from "./TimelineViewportContract";
 
 /** Synchronizes existing viewport lifetime callbacks without owning history state. */
 export function useTimelineGestureBindings(props: TimelineViewportProps) {
-  const { awayFromLatestRef, firstVisibleHistoryAnchorRef, lastTimelineOffsetYRef, paginationEdgeLockRef, scrollGestureStartedAtRef, scrollOffsetRef, timelineContentHeightRef, timelineViewportHeightRef } = props;
+  const {
+    awayFromLatestRef,
+    firstVisibleHistoryAnchorRef,
+    lastTimelineOffsetYRef,
+    paginationEdgeLockRef,
+    scrollGestureStartedAtRef,
+    scrollOffsetRef,
+    timelineContentHeightRef,
+    timelineViewportHeightRef,
+  } = props;
   const onScrollBeginDrag = useEvent<
     NonNullable<ThreadTimelineListProps<TimelineItem>["onScrollBeginDrag"]>
   >(({ nativeEvent }) => {

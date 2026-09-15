@@ -11,7 +11,11 @@ interface FrameContext {
 const contexts: FrameContext[] = [];
 
 /** Correlate delayed native reports with their original destination, not the current chat. */
-export function recordFrameContext(connectionId: string, threadId: string, requestId: string): void {
+export function recordFrameContext(
+  connectionId: string,
+  threadId: string,
+  requestId: string,
+): void {
   contexts.push({ connectionId, threadId, requestId, selectedAtUnixMs: Date.now() });
   if (contexts.length > 128) contexts.shift();
 }
@@ -47,11 +51,21 @@ export function publishFrameIncidents(input: unknown): void {
       threadId: context.threadId,
       requestId: context.requestId,
       values,
-      tags: { source: "android_frame_metrics", attribution: "last_selection_at_window_end", surface: sample.surface, activity: sample.activity },
+      tags: {
+        source: "android_frame_metrics",
+        attribution: "last_selection_at_window_end",
+        surface: sample.surface,
+        activity: sample.activity,
+      },
     });
   }
   const context = contexts.at(-1);
-  if (context !== undefined && typeof input.droppedWindows === "number" && Number.isSafeInteger(input.droppedWindows) && input.droppedWindows > 0) {
+  if (
+    context !== undefined &&
+    typeof input.droppedWindows === "number" &&
+    Number.isSafeInteger(input.droppedWindows) &&
+    input.droppedWindows > 0
+  ) {
     recordOperationalTelemetryEvent(context.connectionId, {
       name: "ui.frame_reports_dropped",
       values: { windows: input.droppedWindows },

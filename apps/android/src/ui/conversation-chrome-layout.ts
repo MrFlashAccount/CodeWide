@@ -14,8 +14,5 @@ export function conversationBottomContentInset(
   composerHeight: number,
   liveStatusVisible: boolean,
 ): number {
-  return (
-    composerHeight +
-    (liveStatusVisible ? controlSize.touch + spacing.sm : 0)
-  );
+  return composerHeight + (liveStatusVisible ? controlSize.touch + spacing.sm : 0);
 }

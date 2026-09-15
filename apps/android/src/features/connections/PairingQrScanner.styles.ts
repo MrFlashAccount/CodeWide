@@ -24,9 +24,20 @@ export const styles = StyleSheet.create({
     gap: spacing.sm,
     backgroundColor: colors.conversationSurface,
   },
-  emptyText: { color: colors.textMuted, ...typeScale.title },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
-  errorText: { color: colors.red, ...typeScale.body },
+  emptyText: {
+    color: colors.textMuted,
+    ...typeScale.title,
+  },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   primaryButton: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.md,
@@ -35,8 +46,14 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.primary,
   },
-  primaryButtonText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
-  scannerRoot: { flex: 1, backgroundColor: colors.background },
+  primaryButtonText: {
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
+  scannerRoot: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   scannerHeader: {
     minHeight: layoutSize.header,
     paddingHorizontal: spacing.md,
@@ -45,7 +62,11 @@ export const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  scannerCamera: { flex: 1, alignItems: "center", justifyContent: "center" },
+  scannerCamera: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   scannerFrame: {
     width: 260,
     height: 260,

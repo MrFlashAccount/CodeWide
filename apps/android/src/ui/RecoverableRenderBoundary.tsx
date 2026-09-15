@@ -1,4 +1,11 @@
-import { Component, createContext, type ErrorInfo, type ReactNode, useContext, useState } from "react";
+import {
+  Component,
+  createContext,
+  type ErrorInfo,
+  type ReactNode,
+  useContext,
+  useState,
+} from "react";
 import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
 
 import { colors, radii, spacing, typeScale, controlSize } from "../theme";
@@ -9,11 +16,18 @@ type RecoveryHandler = (failure: RecoverableRenderFailure) => Promise<void>;
 
 const RenderRecoveryContext = createContext<RecoveryHandler | null>(null);
 
-export class RenderRecoveryProvider extends Component<{ children: ReactNode; onFix: RecoveryHandler }> {
+export class RenderRecoveryProvider extends Component<{
+  children: ReactNode;
+  onFix: RecoveryHandler;
+}> {
   private fix: RecoveryHandler = async (failure) => await this.props.onFix(failure);
 
   override render(): ReactNode {
-    return <RenderRecoveryContext.Provider value={this.fix}>{this.props.children}</RenderRecoveryContext.Provider>;
+    return (
+      <RenderRecoveryContext.Provider value={this.fix}>
+        {this.props.children}
+      </RenderRecoveryContext.Provider>
+    );
   }
 }
 
@@ -41,7 +55,10 @@ function normalizeError(value: unknown): Error {
   }
 }
 
-class RecoverableRenderBoundaryImpl extends Component<BoundaryProps & { onFix: RecoveryHandler | null }, BoundaryState> {
+class RecoverableRenderBoundaryImpl extends Component<
+  BoundaryProps & { onFix: RecoveryHandler | null },
+  BoundaryState
+> {
   override state: BoundaryState = { error: null, componentStack: "" };
 
   static getDerivedStateFromError(value: unknown): Partial<BoundaryState> {
@@ -49,7 +66,11 @@ class RecoverableRenderBoundaryImpl extends Component<BoundaryProps & { onFix: R
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error(`CodeWide ${this.props.scope} render failed: ${this.props.label}`, error, info.componentStack);
+    console.error(
+      `CodeWide ${this.props.scope} render failed: ${this.props.label}`,
+      error,
+      info.componentStack,
+    );
     this.setState({ componentStack: info.componentStack ?? "" });
   }
 
@@ -83,6 +104,7 @@ class RecoverableRenderBoundaryImpl extends Component<BoundaryProps & { onFix: R
   }
 }
 
+/** Catches a local render failure and delegates recovery to the nearest owner. */
 export function RecoverableRenderBoundary(props: BoundaryProps) {
   const onFix = useContext(RenderRecoveryContext);
   return <RecoverableRenderBoundaryImpl {...props} onFix={onFix} />;
@@ -116,17 +138,40 @@ function RenderFailureFallback({
     if (completed) onDismiss?.();
   };
   return (
-    <View accessibilityRole="alert" style={[styles.failure, failure.scope === "dialog" && styles.dialogFailure]} testID={`render-error-${failure.scope}`}>
-      <Text style={styles.title}>{failure.scope === "bubble" ? "This message could not be rendered" : "This view could not be opened"}</Text>
-      <Text numberOfLines={3} selectable style={styles.message}>{failure.error.message || "Unknown React render error"}</Text>
-      {fixError !== null && <Text accessibilityLiveRegion="polite" style={styles.fixError}>{fixError}</Text>}
+    <View
+      accessibilityRole="alert"
+      style={[styles.failure, failure.scope === "dialog" && styles.dialogFailure]}
+      testID={`render-error-${failure.scope}`}
+    >
+      <Text style={styles.title}>
+        {failure.scope === "bubble"
+          ? "This message could not be rendered"
+          : "This view could not be opened"}
+      </Text>
+      <Text numberOfLines={3} selectable style={styles.message}>
+        {failure.error.message || "Unknown React render error"}
+      </Text>
+      {fixError !== null && (
+        <Text accessibilityLiveRegion="polite" style={styles.fixError}>
+          {fixError}
+        </Text>
+      )}
       <View style={styles.actions}>
         <Pressable accessibilityRole="button" onPress={onRetry} style={styles.secondaryButton}>
           <Text style={styles.secondaryLabel}>Retry</Text>
         </Pressable>
         {onFix !== null && (
-          <Pressable accessibilityRole="button" disabled={fixing} onPress={() => void fix()} style={styles.primaryButton}>
-            {fixing ? <ActivityIndicator color={colors.onPrimary} size="small" /> : <Text style={styles.primaryLabel}>Fix this in chat</Text>}
+          <Pressable
+            accessibilityRole="button"
+            disabled={fixing}
+            onPress={() => void fix()}
+            style={styles.primaryButton}
+          >
+            {fixing ? (
+              <ActivityIndicator color={colors.onPrimary} size="small" />
+            ) : (
+              <Text style={styles.primaryLabel}>Fix this in chat</Text>
+            )}
           </Pressable>
         )}
         {onDismiss !== undefined && (
@@ -156,17 +201,14 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontFamily: "RobotoFlex-SemiBold",
     ...typeScale.body,
-
   },
   message: {
     color: colors.textMuted,
     ...typeScale.label,
-
   },
   fixError: {
     color: colors.red,
     ...typeScale.label,
-
   },
   actions: {
     flexDirection: "row",

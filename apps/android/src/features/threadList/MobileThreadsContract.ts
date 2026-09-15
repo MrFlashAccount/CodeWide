@@ -3,6 +3,8 @@ import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ThreadListFilter } from "./threadListFilters";
 import type { SidebarProjectsNavigation, ThreadListMode } from "./threadListModel";
 import type { ThreadListItem } from "./threadListTypes";
+
+/** Thread-list data and navigation actions used by the compact mobile surface. */
 export type MobileThreadsProps = {
   servers: ThreadListServer[];
   activeServerId: string;

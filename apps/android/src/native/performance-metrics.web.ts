@@ -1,7 +1,12 @@
 import { useSyncExternalStore } from "react";
 import type { WindowFrameReport } from "../data/window-frame-report";
 
-import type { HermesHeapSnapshot, MemoryCheckpoint, MemoryReclamationActionResult, PerformanceMetricsSnapshot } from "./performance-metrics.native";
+import type {
+  HermesHeapSnapshot,
+  MemoryCheckpoint,
+  MemoryReclamationActionResult,
+  PerformanceMetricsSnapshot,
+} from "./performance-metrics.native";
 import type { ThreadNavigationFrameProfile } from "../data/thread-navigation-metrics";
 
 const snapshot: PerformanceMetricsSnapshot = {
@@ -25,7 +30,11 @@ export function subscribePerformanceMetrics(_listener: () => void): () => void {
 }
 
 export function usePerformanceMetrics(): PerformanceMetricsSnapshot {
-  return useSyncExternalStore(subscribePerformanceMetrics, () => snapshot, () => snapshot);
+  return useSyncExternalStore(
+    subscribePerformanceMetrics,
+    () => snapshot,
+    () => snapshot,
+  );
 }
 
 export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
@@ -34,13 +43,17 @@ export function getPerformanceMetricsSnapshot(): PerformanceMetricsSnapshot {
 
 export async function setPerformanceMonitoringEnabled(_enabled: boolean): Promise<void> {}
 
-export async function getWindowFrameReport(): Promise<WindowFrameReport | null> { return null; }
+export async function getWindowFrameReport(): Promise<WindowFrameReport | null> {
+  return null;
+}
 
 export async function beginNavigationFrameTrace(_traceId: string): Promise<boolean> {
   return false;
 }
 
-export async function endNavigationFrameTrace(_traceId: string): Promise<ThreadNavigationFrameProfile | null> {
+export async function endNavigationFrameTrace(
+  _traceId: string,
+): Promise<ThreadNavigationFrameProfile | null> {
   return null;
 }
 
@@ -52,7 +65,9 @@ export async function captureMemoryReport(): Promise<string> {
   throw new Error("Memory report is available only in the Android app");
 }
 
-export function memoryReclamationExperimentAvailable(): boolean { return false; }
+export function memoryReclamationExperimentAvailable(): boolean {
+  return false;
+}
 
 export async function captureMemoryCheckpoint(): Promise<MemoryCheckpoint> {
   throw new Error("Memory experiment is available only in the Android app");
@@ -74,8 +89,16 @@ export async function collectHermesGarbage(): Promise<MemoryReclamationActionRes
   throw new Error("Memory experiment is available only in the Android app");
 }
 
-export async function purgeNativeAllocator(_exhaustive: boolean): Promise<MemoryReclamationActionResult> {
+export async function purgeNativeAllocator(
+  _exhaustive: boolean,
+): Promise<MemoryReclamationActionResult> {
   throw new Error("Memory experiment is available only in the Android app");
 }
 
-export type { HermesHeapSnapshot, MemoryCheckpoint, MemoryReclamationActionResult, PerformanceMetricPoint, PerformanceMetricsSnapshot } from "./performance-metrics.native";
+export type {
+  HermesHeapSnapshot,
+  MemoryCheckpoint,
+  MemoryReclamationActionResult,
+  PerformanceMetricPoint,
+  PerformanceMetricsSnapshot,
+} from "./performance-metrics.native";

@@ -39,8 +39,10 @@ export function latestThreadMessagePreview(thread: Thread): string | null {
           .join(" ");
         const text = compactPreview(authored);
         if (text !== "") return text;
-        if (item.content.some((part) => part.type === "image" || part.type === "localImage")) return "Photo";
-        if (item.content.some((part) => part.type === "audio" || part.type === "localAudio")) return "Audio";
+        if (item.content.some((part) => part.type === "image" || part.type === "localImage"))
+          return "Photo";
+        if (item.content.some((part) => part.type === "audio" || part.type === "localAudio"))
+          return "Audio";
         if (item.content.some((part) => part.type === "skill")) return "Skill";
       }
     }
@@ -50,7 +52,9 @@ export function latestThreadMessagePreview(thread: Thread): string | null {
 
 export function plainThreadPreview(value: string): string {
   return value
-    .replace(/!\[([^\]]*)\]\([^)]*\)/gu, (_match, alt: string) => alt.trim() === "" ? "Photo" : alt)
+    .replace(/!\[([^\]]*)\]\([^)]*\)/gu, (_match, alt: string) =>
+      alt.trim() === "" ? "Photo" : alt,
+    )
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
     .replace(/^\s{0,3}(?:#{1,6}\s+|>\s*|[-+*]\s+|\d+[.)]\s+)/gmu, "")
     .replace(/```[^\n]*\n?|```/gu, " ")
@@ -75,7 +79,8 @@ export function serializeThreadForCache(thread: Thread): string {
     if (turn === undefined) continue;
     const turnChars = JSON.stringify(turn).length;
     const commaChars = selected.length === 0 ? 0 : 1;
-    if (emptyRaw.length + selectedChars + commaChars + turnChars > MAX_CACHED_THREAD_JSON_CHARS) break;
+    if (emptyRaw.length + selectedChars + commaChars + turnChars > MAX_CACHED_THREAD_JSON_CHARS)
+      break;
     selected.unshift(turn);
     selectedChars += commaChars + turnChars;
   }

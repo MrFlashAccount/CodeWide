@@ -1,5 +1,6 @@
 import type { ThreadChangeDiffValue } from "./thread-resource-types";
 import type { ThreadChangeScope, ThreadResourcesValue } from "./workspace-resource-database";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

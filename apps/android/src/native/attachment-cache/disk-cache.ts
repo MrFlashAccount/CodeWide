@@ -37,18 +37,18 @@ export class AttachmentDiskCache {
   private readonly now: () => number;
   private readonly limit: number;
 
-  constructor(
-    storage: AttachmentStorage,
-    now: () => number,
-    limit = ATTACHMENT_CACHE_BYTES,
-  ) {
+  constructor(storage: AttachmentStorage, now: () => number, limit = ATTACHMENT_CACHE_BYTES) {
     this.storage = storage;
     this.now = now;
     this.limit = limit;
   }
 
   /** Null means bypass the optional cache; a large attachment must remain readable. */
-  async acquire(key: string, bytes: number, write: () => Promise<void>): Promise<AttachmentLease | null> {
+  async acquire(
+    key: string,
+    bytes: number,
+    write: () => Promise<void>,
+  ): Promise<AttachmentLease | null> {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > this.limit) return null;
     if (this.initialized === null) {
       const initialization = this.initialize();
@@ -60,7 +60,11 @@ export class AttachmentDiskCache {
     await this.initialized;
     const admitted = await this.exclusive(async () => {
       let entry = this.entries.get(key);
-      if (entry !== undefined && !this.pending.has(key) && !await this.storage.exists(key, bytes)) {
+      if (
+        entry !== undefined &&
+        !this.pending.has(key) &&
+        !(await this.storage.exists(key, bytes))
+      ) {
         await this.remove(entry);
         entry = undefined;
       }
@@ -70,21 +74,26 @@ export class AttachmentDiskCache {
         entry.readers += 1;
         return { entry, ready: this.pending.get(key) ?? Promise.resolve() };
       }
-      if (!await this.makeRoom(bytes)) return null;
+      if (!(await this.makeRoom(bytes))) return null;
       const created: ResidentEntry = { value: { key, bytes, touchedAt: this.now() }, readers: 1 };
       this.entries.set(key, created);
       this.bytes += bytes;
       // Download outside the metadata queue; one failed generation cleans itself up exactly once.
-      const operation = Promise.resolve().then(write).then(() => this.exclusive(async () => {
-        await this.storage.touch(created.value);
-        this.pending.delete(key);
-      })).catch(async (cause: unknown) => {
-        await this.exclusive(async () => {
-          if (this.entries.get(key) === created) await this.remove(created);
-          this.pending.delete(key);
+      const operation = Promise.resolve()
+        .then(write)
+        .then(() =>
+          this.exclusive(async () => {
+            await this.storage.touch(created.value);
+            this.pending.delete(key);
+          }),
+        )
+        .catch(async (cause: unknown) => {
+          await this.exclusive(async () => {
+            if (this.entries.get(key) === created) await this.remove(created);
+            this.pending.delete(key);
+          });
+          throw cause;
         });
-        throw cause;
-      });
       this.pending.set(key, operation);
       void operation.catch(() => undefined);
       return { entry: created, ready: operation };
@@ -146,7 +155,10 @@ export class AttachmentDiskCache {
 
   private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.queue.then(operation);
-    this.queue = result.then(() => undefined, () => undefined);
+    this.queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
   }
 }

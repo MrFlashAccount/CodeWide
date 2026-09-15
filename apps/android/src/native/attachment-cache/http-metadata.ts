@@ -9,7 +9,10 @@ export interface AttachmentMetadata {
 }
 
 /** A mutable URL is cacheable only with a server-proven content revision. */
-export function attachmentMetadata(headers: Headers, range: string | null): AttachmentMetadata | null {
+export function attachmentMetadata(
+  headers: Headers,
+  range: string | null,
+): AttachmentMetadata | null {
   const length = headers.get("content-length");
   const totalBytes = length === null ? NaN : Number(length);
   if (!Number.isSafeInteger(totalBytes) || totalBytes < 0) return null;
@@ -25,15 +28,37 @@ export function attachmentMetadata(headers: Headers, range: string | null): Atta
     if (match === null) return null;
     start = Number(match[1]);
     const end = Number(match[2]);
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= totalBytes) return null;
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start ||
+      start >= totalBytes
+    )
+      return null;
     bytes = Math.min(end + 1, totalBytes) - start;
   }
-  return { revision, totalBytes, bytes, start, ranged: range !== null, contentType: headers.get("content-type") ?? "application/octet-stream", sha256 };
+  return {
+    revision,
+    totalBytes,
+    bytes,
+    start,
+    ranged: range !== null,
+    contentType: headers.get("content-type") ?? "application/octet-stream",
+    sha256,
+  };
 }
 
 export function cachedResponseHeaders(metadata: AttachmentMetadata): Headers {
-  const headers = new Headers({ "content-type": metadata.contentType, "content-length": String(metadata.bytes) });
+  const headers = new Headers({
+    "content-type": metadata.contentType,
+    "content-length": String(metadata.bytes),
+  });
   if (metadata.sha256 !== null) headers.set("x-content-sha256", metadata.sha256);
-  if (metadata.ranged) headers.set("content-range", `bytes ${metadata.start}-${metadata.start + metadata.bytes - 1}/${metadata.totalBytes}`);
+  if (metadata.ranged)
+    headers.set(
+      "content-range",
+      `bytes ${metadata.start}-${metadata.start + metadata.bytes - 1}/${metadata.totalBytes}`,
+    );
   return headers;
 }

@@ -5,6 +5,7 @@ import { useComposerState } from "./composerState";
 import type { ComposerWorkspaceCapabilities } from "./composerWorkspaceCapabilities";
 import { useQueueEditActions } from "./queueEdit";
 import { useComposerControlActions } from "./settings";
+
 export function useComposerCommands({
   composerStateBinding,
   queueVisibilityBinding,

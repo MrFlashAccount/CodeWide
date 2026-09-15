@@ -50,11 +50,24 @@ export function Bubble({
       resetKey={errorResetKey ?? `${variant}:${testID ?? "bubble"}`}
     >
       {variant === "agent" ? (
-        <View testID="agent-bubble-frame" style={[styles.agentFrame, fill && styles.agentFrameFill, footer != null && styles.agentFrameWithFooter]}>
-          <FluidLayoutFrame animate={animateLayout} testID={testID} style={surfaceStyle}>{children}</FluidLayoutFrame>
+        <View
+          testID="agent-bubble-frame"
+          style={[
+            styles.agentFrame,
+            fill && styles.agentFrameFill,
+            footer != null && styles.agentFrameWithFooter,
+          ]}
+        >
+          <FluidLayoutFrame animate={animateLayout} testID={testID} style={surfaceStyle}>
+            {children}
+          </FluidLayoutFrame>
           {footer != null && <FluidLayoutFrame animate={animateLayout}>{footer}</FluidLayoutFrame>}
         </View>
-      ) : <View testID={testID} style={surfaceStyle}>{children}</View>}
+      ) : (
+        <View testID={testID} style={surfaceStyle}>
+          {children}
+        </View>
+      )}
     </RecoverableRenderBoundary>
   );
 }

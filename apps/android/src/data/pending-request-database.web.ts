@@ -1,4 +1,5 @@
 import type { PendingRequestDatabase } from "./pending-request-database-contract";
+
 export type * from "./pending-request-database-contract";
 
 export function createPendingRequestDatabase(): PendingRequestDatabase {

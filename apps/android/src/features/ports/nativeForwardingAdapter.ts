@@ -6,7 +6,7 @@ import {
 } from "../../data/native-port-forwarding-store";
 import type { PortForwardingManagerProps } from "./portForwardingContract";
 
-export function nativePortForwardingManagerProps(
+function nativePortForwardingManagerProps(
   connectionId: string,
   serverName: string,
   snapshot: NativePortForwardingSnapshot,

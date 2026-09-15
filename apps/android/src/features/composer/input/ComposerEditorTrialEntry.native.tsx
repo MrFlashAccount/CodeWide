@@ -28,5 +28,8 @@ export function ComposerEditorTrialEntry() {
 }
 
 const styles = StyleSheet.create({
-  hint: { ...typeScale.caption, color: colors.textMuted },
+  hint: {
+    ...typeScale.caption,
+    color: colors.textMuted,
+  },
 });

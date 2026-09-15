@@ -9,6 +9,8 @@ import { ThreadHistoryLoadingIndicator } from "../ConversationHistoryStatus";
 import { styles } from "./ConversationTimelineSurface.styles";
 import type { ConversationTimelineSurfaceProps } from "./ConversationTimelineSurfaceContract";
 import { ThreadTimelineNavigationCommit } from "./ThreadTimelineNavigationCommit";
+
+/** Composes timeline viewport, search, pending state, and scroll controls. */
 export function ConversationTimelineSurface({
   timelineViewportRef,
   draftConnectionId,

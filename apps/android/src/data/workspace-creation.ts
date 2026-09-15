@@ -44,15 +44,16 @@ export function parseWorkspaceSupport(value: unknown): WorkspaceSupport | null {
   if (envelope.support === null) return null;
   const support = record(envelope.support);
   if (
-    support === null
-    || support.capability !== WORKSPACE_CREATE_CAPABILITY
-    || typeof support.provider !== "string"
-    || support.provider === ""
-    || typeof support.displayName !== "string"
-    || support.displayName === ""
-    || typeof support.repositoryRoot !== "string"
-    || support.repositoryRoot === ""
-  ) throw new Error("Companion returned invalid workspace capability metadata");
+    support === null ||
+    support.capability !== WORKSPACE_CREATE_CAPABILITY ||
+    typeof support.provider !== "string" ||
+    support.provider === "" ||
+    typeof support.displayName !== "string" ||
+    support.displayName === "" ||
+    typeof support.repositoryRoot !== "string" ||
+    support.repositoryRoot === ""
+  )
+    throw new Error("Companion returned invalid workspace capability metadata");
   return {
     capability: WORKSPACE_CREATE_CAPABILITY,
     provider: support.provider,
@@ -65,16 +66,17 @@ export function parseCreatedWorkspace(value: unknown): CreatedWorkspace {
   const envelope = record(value);
   const workspace = record(envelope?.workspace);
   if (
-    workspace === null
-    || workspace.capability !== WORKSPACE_CREATE_CAPABILITY
-    || typeof workspace.provider !== "string"
-    || workspace.provider === ""
-    || typeof workspace.repositoryRoot !== "string"
-    || workspace.repositoryRoot === ""
-    || typeof workspace.cwd !== "string"
-    || workspace.cwd === ""
-    || typeof workspace.created !== "boolean"
-  ) throw new Error("Companion returned an invalid created workspace");
+    workspace === null ||
+    workspace.capability !== WORKSPACE_CREATE_CAPABILITY ||
+    typeof workspace.provider !== "string" ||
+    workspace.provider === "" ||
+    typeof workspace.repositoryRoot !== "string" ||
+    workspace.repositoryRoot === "" ||
+    typeof workspace.cwd !== "string" ||
+    workspace.cwd === "" ||
+    typeof workspace.created !== "boolean"
+  )
+    throw new Error("Companion returned an invalid created workspace");
   return {
     capability: WORKSPACE_CREATE_CAPABILITY,
     provider: workspace.provider,
@@ -86,6 +88,6 @@ export function parseCreatedWorkspace(value: unknown): CreatedWorkspace {
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }

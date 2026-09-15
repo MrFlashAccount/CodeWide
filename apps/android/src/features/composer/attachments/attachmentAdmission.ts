@@ -14,6 +14,7 @@ import {
 import { useEvent } from "../../../react/useEvent";
 import { useAppDialog } from "../../../ui/AppDialog";
 import type { AttachmentAdmissionCapabilities } from "./attachmentCapabilities";
+
 export function useAttachmentAdmission({
   composerScope,
   composerUploadScope,

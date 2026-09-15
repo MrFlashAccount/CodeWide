@@ -1,6 +1,9 @@
 import { threadSummaryDescendants } from "./thread-summary-descendants";
 import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
-import { threadProjectionPatchFromEvent, type ThreadProjectionPatchV1 } from "@codewide/sync-client";
+import {
+  threadProjectionPatchFromEvent,
+  type ThreadProjectionPatchV1,
+} from "@codewide/sync-client";
 
 import { normalizeThreadStatus, type StoredThreadSummary } from "./thread-summary-types";
 import { subagentOwnTurns } from "./subagent-projection";
@@ -41,9 +44,8 @@ export function projectThreadSummarySnapshot(
 ): StoredThreadSummary {
   const isSubagent = thread.parentThreadId != null;
   const previewThread = isSubagent ? { ...thread, turns: subagentOwnTurns(thread) } : thread;
-  const snapshotPreview = previewThread.turns.length > 0
-    ? latestThreadMessagePreview(previewThread)
-    : "";
+  const snapshotPreview =
+    previewThread.turns.length > 0 ? latestThreadMessagePreview(previewThread) : "";
   const listedPreview = plainThreadPreview(thread.preview);
   return {
     connectionId,
@@ -56,7 +58,9 @@ export function projectThreadSummarySnapshot(
     // conversation message into `preview`. A detailed snapshot with turns is
     // still more authoritative than the list projection.
     preview: isSubagent
-      ? snapshotPreview || listedPreview || ((previous?.latestActivityCursor ?? 0) > 0 ? previous?.preview ?? "" : "")
+      ? snapshotPreview ||
+        listedPreview ||
+        ((previous?.latestActivityCursor ?? 0) > 0 ? (previous?.preview ?? "") : "")
       : snapshotPreview || listedPreview || previous?.preview || "",
     cwd: thread.cwd,
     gitOriginUrl: thread.gitInfo?.originUrl ?? previous?.gitOriginUrl ?? null,
@@ -129,8 +133,10 @@ function projectThreadSummaryPatch(
   const previous = previousFor(patch.threadId);
   if (previous === undefined) return null;
   const next: StoredThreadSummary = { ...previous };
-  if (operation.kind === "threadName") next.name = typeof operation.threadName === "string" ? operation.threadName : null;
-  else if (operation.kind === "threadStatus" && object(operation.status) !== null) next.status = normalizeThreadStatus(operation.status);
+  if (operation.kind === "threadName")
+    next.name = typeof operation.threadName === "string" ? operation.threadName : null;
+  else if (operation.kind === "threadStatus" && object(operation.status) !== null)
+    next.status = normalizeThreadStatus(operation.status);
   else if (operation.kind === "threadArchived") next.archived = operation.archived === true;
   else {
     const lifecycleChanged = operation.kind === "turnStarted" || operation.kind === "turnCompleted";
@@ -140,7 +146,8 @@ function projectThreadSummaryPatch(
       next.status = { type: "idle" };
     }
     const summary = object(operation.summary);
-    if (summary === null || summary.activity !== true) return lifecycleChanged ? { key, value: next } : null;
+    if (summary === null || summary.activity !== true)
+      return lifecycleChanged ? { key, value: next } : null;
     if (typeof summary.previewText === "string") {
       const preview = plainThreadPreview(summary.previewText);
       if (preview !== "") next.preview = preview;
@@ -148,12 +155,16 @@ function projectThreadSummaryPatch(
     next.provisionalThread = null;
     next.updatedAt = Math.max(next.updatedAt, nowSeconds);
     next.latestActivityCursor = Math.max(next.latestActivityCursor, cursor);
-    if (summary.conversationMessage === true) next.recencyAt = Math.max(next.recencyAt ?? 0, nowSeconds);
-    if (summary.finalAgentResponse === true) next.unread = next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
+    if (summary.conversationMessage === true)
+      next.recencyAt = Math.max(next.recencyAt ?? 0, nowSeconds);
+    if (summary.finalAgentResponse === true)
+      next.unread = next.latestActivityCursor > next.lastSeenCursor ? 1 : 0;
   }
   return { key, value: next };
 }
 
 function object(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

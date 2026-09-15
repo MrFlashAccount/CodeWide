@@ -3,6 +3,7 @@ import type { MessageSearchCapability } from "./searchCapabilities";
 import { type SearchProject, type SearchServer, type SearchThread } from "./SearchFilters";
 import type { SearchResultTarget } from "./searchResultTypes";
 
+/** Search capability, scope data, and navigation actions for global search. */
 export interface SearchScreenProps {
   readonly remote: MessageSearchCapability;
   readonly servers: readonly SearchServer[];

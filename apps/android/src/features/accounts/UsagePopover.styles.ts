@@ -12,8 +12,15 @@ import {
 
 export const styles = StyleSheet.create({
   content: { paddingVertical: spacing.xxs },
-  section: { gap: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  dividedSection: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  section: {
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  dividedSection: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
   sessionSummaryRow: {
     minHeight: controlSize.regular,
     flexDirection: "row",
@@ -36,7 +43,11 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontVariant: ["tabular-nums"],
   },
-  sessionSummarySeparator: { flexShrink: 0, color: colors.textMuted, ...typeScale.label },
+  sessionSummarySeparator: {
+    flexShrink: 0,
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   sessionCostText: {
     flexShrink: 0,
     color: colors.textMuted,
@@ -55,7 +66,10 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  contextRingNumber: { width: "100%", alignItems: "center" },
+  contextRingNumber: {
+    width: "100%",
+    alignItems: "center",
+  },
   contextRingLabelText: {
     width: "100%",
     color: colors.text,
@@ -63,16 +77,29 @@ export const styles = StyleSheet.create({
     textAlign: "center",
     includeFontPadding: false,
   },
-  grow: { flex: 1, minWidth: 0 },
-  title: { color: colors.textMuted, ...typeScale.label },
+  grow: {
+    flex: 1,
+    minWidth: 0,
+  },
+  title: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
   primaryValue: {
     color: colors.text,
     ...typeScale.heading,
     fontWeight: typeWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
-  secondaryValue: { color: colors.textMuted, ...typeScale.body, fontVariant: ["tabular-nums"] },
-  meta: { color: colors.textDim, ...typeScale.label },
+  secondaryValue: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    fontVariant: ["tabular-nums"],
+  },
+  meta: {
+    color: colors.textDim,
+    ...typeScale.label,
+  },
   unavailable: { color: colors.textMuted },
   weeklyHeader: {
     minHeight: controlSize.compact,
@@ -81,7 +108,11 @@ export const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: spacing.xs,
   },
-  weeklyTitle: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  weeklyTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
   weeklyValue: {
     flexShrink: 1,
     color: colors.text,
@@ -108,7 +139,10 @@ export const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
   },
-  dividedAction: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  dividedAction: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
   actionIcon: {
     width: 20,
     height: 20,
@@ -116,8 +150,14 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  actionTitle: { color: colors.text, ...typeScale.body },
-  error: { color: colors.red, ...typeScale.label },
+  actionTitle: {
+    color: colors.text,
+    ...typeScale.body,
+  },
+  error: {
+    color: colors.red,
+    ...typeScale.label,
+  },
   disabled: { opacity: 0.4 },
   pressed: { opacity: 0.7 },
 });

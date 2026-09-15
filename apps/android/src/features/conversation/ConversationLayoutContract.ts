@@ -4,6 +4,8 @@ import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost
 import type { Dispatch, SetStateAction } from "react";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
+
+/** Visual regions and layout state consumed by the conversation shell. */
 export type ConversationLayoutProps = {
   searchContent: ReactElement;
   jumpContent: ReactElement;

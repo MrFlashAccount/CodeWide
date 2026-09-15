@@ -75,11 +75,18 @@ export function recordTelemetryEvent(connectionId: string, input: TelemetryEvent
 }
 
 /** Records low-volume transport and synchronization health even when performance diagnostics are off. */
-export function recordOperationalTelemetryEvent(connectionId: string, input: TelemetryEventInput): void {
+export function recordOperationalTelemetryEvent(
+  connectionId: string,
+  input: TelemetryEventInput,
+): void {
   enqueueTelemetryEvent(connectionId, input, true);
 }
 
-function enqueueTelemetryEvent(connectionId: string, input: TelemetryEventInput, operational: boolean): void {
+function enqueueTelemetryEvent(
+  connectionId: string,
+  input: TelemetryEventInput,
+  operational: boolean,
+): void {
   if (!validIdentifier(connectionId) || !validName(input.name)) return;
   const event = sanitizeEvent(input);
   if (event === null) return;
@@ -149,8 +156,18 @@ function scheduleFlush(delayMs: number): void {
 }
 
 function sanitizeEvent(input: TelemetryEventInput): TelemetryEventInput | null {
-  const dimensions: Pick<TelemetryEventInput, "sessionId" | "requestId" | "connectionId" | "threadId" | "turnId" | "itemId"> = {};
-  for (const key of ["sessionId", "requestId", "connectionId", "threadId", "turnId", "itemId"] as const) {
+  const dimensions: Pick<
+    TelemetryEventInput,
+    "sessionId" | "requestId" | "connectionId" | "threadId" | "turnId" | "itemId"
+  > = {};
+  for (const key of [
+    "sessionId",
+    "requestId",
+    "connectionId",
+    "threadId",
+    "turnId",
+    "itemId",
+  ] as const) {
     const value = input[key];
     if (value !== undefined) {
       if (!validIdentifier(value)) return null;
@@ -159,7 +176,8 @@ function sanitizeEvent(input: TelemetryEventInput): TelemetryEventInput | null {
   }
   const values: Record<string, number> = {};
   for (const [name, value] of Object.entries(input.values ?? {}).slice(0, 32)) {
-    if (safeAttributeName(name) && Number.isFinite(value)) values[name] = Math.max(-Number.MAX_SAFE_INTEGER, Math.min(Number.MAX_SAFE_INTEGER, value));
+    if (safeAttributeName(name) && Number.isFinite(value))
+      values[name] = Math.max(-Number.MAX_SAFE_INTEGER, Math.min(Number.MAX_SAFE_INTEGER, value));
   }
   const tags: Record<string, string> = {};
   for (const [name, value] of Object.entries(input.tags ?? {}).slice(0, 32)) {
@@ -182,12 +200,20 @@ function validName(value: string): boolean {
 }
 
 function safeAttributeName(value: string): boolean {
-  return validName(value) && !["content", "message", "payload", "prompt", "raw", "response", "text"].includes(value.toLowerCase());
+  return (
+    validName(value) &&
+    !["content", "message", "payload", "prompt", "raw", "response", "text"].includes(
+      value.toLowerCase(),
+    )
+  );
 }
 
 function createId(): string {
   const runtimeCrypto = globalThis.crypto as { randomUUID?: () => string } | undefined;
-  return runtimeCrypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return (
+    runtimeCrypto?.randomUUID?.() ??
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  );
 }
 
 export function resetTelemetryForTests(): void {

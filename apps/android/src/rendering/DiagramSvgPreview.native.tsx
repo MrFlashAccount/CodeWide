@@ -37,16 +37,20 @@ function DiagramImagePreview({
   const key = diagramPreviewKey(source);
   const [copied, setCopied] = useState(false);
   const resource = useAsyncResource<DiagramPreviewResult>(
-    activated ? key : null, 0,
+    activated ? key : null,
+    0,
     async (_publish, signal) => {
       try {
         return await renderDiagramPreview(source, signal);
       } catch (cause) {
         checkAborted(signal);
-        return { status: "error", message: cause instanceof Error ? cause.message : "Diagram renderer failed" };
+        return {
+          status: "error",
+          message: cause instanceof Error ? cause.message : "Diagram renderer failed",
+        };
       }
     },
-    (value) => value.status === "ready" ? value.preview.uri.length * 2 : value.message.length * 2,
+    (value) => (value.status === "ready" ? value.preview.uri.length * 2 : value.message.length * 2),
   );
   const settled = useEvent(onSettled);
   useEffect(() => {
@@ -57,47 +61,109 @@ function DiagramImagePreview({
   const error = result?.status === "error" ? result.message : null;
   if (error !== null) {
     return (
-      <InlineMediaFrame><View accessibilityRole="alert" style={[styles.preview, styles.errorPreview]}>
-        <View style={styles.errorHeader}>
-          <AppText style={styles.errorTitle}>Could not render diagram</AppText>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Copy diagram error"
-            onPress={() => {
-              void Clipboard.setStringAsync(error);
-              setCopied(true);
-            }}
-            style={styles.copyButton}
-          >
-            <Ionicons name={copied ? "checkmark" : "copy-outline"} size={iconSize.inline} color={copied ? colors.green : colors.textMuted} />
-            <AppText style={styles.copyLabel}>{copied ? "Copied" : "Copy error"}</AppText>
-          </Pressable>
+      <InlineMediaFrame>
+        <View accessibilityRole="alert" style={[styles.preview, styles.errorPreview]}>
+          <View style={styles.errorHeader}>
+            <AppText style={styles.errorTitle}>Could not render diagram</AppText>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Copy diagram error"
+              onPress={() => {
+                void Clipboard.setStringAsync(error);
+                setCopied(true);
+              }}
+              style={styles.copyButton}
+            >
+              <Ionicons
+                name={copied ? "checkmark" : "copy-outline"}
+                size={iconSize.inline}
+                color={copied ? colors.green : colors.textMuted}
+              />
+              <AppText style={styles.copyLabel}>{copied ? "Copied" : "Copy error"}</AppText>
+            </Pressable>
+          </View>
+          <AppText selectable numberOfLines={4} style={styles.errorMessage}>
+            {error}
+          </AppText>
         </View>
-        <AppText selectable numberOfLines={4} style={styles.errorMessage}>{error}</AppText>
-      </View></InlineMediaFrame>
+      </InlineMediaFrame>
     );
   }
   return (
-    <InlineMediaFrame><Pressable accessibilityRole="button" accessibilityLabel="Open diagram fullscreen" onPress={onOpen} style={styles.preview}>
-      {!near || preview === null ? (
-        <View style={styles.placeholder}>
-          <Ionicons name="git-network-outline" size={iconSize.inline} color={colors.textMuted} />
-          <AppText style={styles.hint}>{near ? "Rendering diagram…" : "Diagram preview"}</AppText>
-        </View>
-      ) : <Image source={{ uri: preview.uri }} resizeMode="contain" style={styles.image} />}
-    </Pressable></InlineMediaFrame>
+    <InlineMediaFrame>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open diagram fullscreen"
+        onPress={onOpen}
+        style={styles.preview}
+      >
+        {!near || preview === null ? (
+          <View style={styles.placeholder}>
+            <Ionicons name="git-network-outline" size={iconSize.inline} color={colors.textMuted} />
+            <AppText style={styles.hint}>{near ? "Rendering diagram…" : "Diagram preview"}</AppText>
+          </View>
+        ) : (
+          <Image source={{ uri: preview.uri }} resizeMode="contain" style={styles.image} />
+        )}
+      </Pressable>
+    </InlineMediaFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  preview: { flex: 1, width: "100%", padding: spacing.xs, backgroundColor: colors.surfaceRaised },
-  placeholder: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs },
-  image: { width: "100%", height: "100%" },
-  hint: { color: colors.textMuted, ...typeScale.label },
-  errorPreview: { minHeight: 120, gap: spacing.xs, justifyContent: "center" },
-  errorHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  errorTitle: { flex: 1, color: colors.text, ...typeScale.label, fontWeight: typeWeight.semibold },
-  errorMessage: { color: colors.textMuted, ...typeScale.caption },
-  copyButton: { flexDirection: "row", alignItems: "center", gap: spacing.xs, borderRadius: radii.medium, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  copyLabel: { color: colors.textMuted, ...typeScale.caption, fontWeight: typeWeight.medium },
+  preview: {
+    flex: 1,
+    width: "100%",
+    padding: spacing.xs,
+    backgroundColor: colors.surfaceRaised,
+  },
+  placeholder: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+  },
+  image: {
+    width: "100%",
+    height: "100%",
+  },
+  hint: {
+    color: colors.textMuted,
+    ...typeScale.label,
+  },
+  errorPreview: {
+    minHeight: 120,
+    gap: spacing.xs,
+    justifyContent: "center",
+  },
+  errorHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.sm,
+  },
+  errorTitle: {
+    flex: 1,
+    color: colors.text,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  errorMessage: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+  },
+  copyButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    borderRadius: radii.medium,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  copyLabel: {
+    color: colors.textMuted,
+    ...typeScale.caption,
+    fontWeight: typeWeight.medium,
+  },
 });

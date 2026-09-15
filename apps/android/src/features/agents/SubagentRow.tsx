@@ -8,6 +8,7 @@ import { colors, iconSize } from "../../theme";
 import { AppText as Text } from "../../ui/Typography";
 import { WaveText } from "../../ui/WaveText";
 import { styles } from "./SubagentWorkspace.styles";
+
 export function SubagentRow({
   summary,
   selected,
@@ -83,7 +84,7 @@ export function subagentSubtitle(summary: StoredThreadSummary): string {
   return summary.agentRole ? `${summary.agentRole} · ${state}` : state;
 }
 
-export function subagentPreview(summary: StoredThreadSummary): string {
+function subagentPreview(summary: StoredThreadSummary): string {
   const preview = plainThreadPreview(summary.preview);
   return preview === "" ? subagentSubtitle(summary) : preview;
 }

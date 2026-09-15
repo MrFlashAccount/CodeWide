@@ -59,7 +59,11 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
     this.cancelWhenUnobserved = cancelWhenUnobserved;
     this.weight = initialValue === null ? 0 : estimateWeight(initialValue);
     residentResourceBytes += this.weight;
-    this.snapshot$ = observable<AsyncResourceSnapshot<T>>({ status: "loading", value: initialValue, error: null });
+    this.snapshot$ = observable<AsyncResourceSnapshot<T>>({
+      status: "loading",
+      value: initialValue,
+      error: null,
+    });
     this.load();
   }
 
@@ -107,9 +111,8 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
   }
 
   private update(snapshot: AsyncResourceSnapshot<T>): void {
-    const nextWeight = snapshot.value === null
-      ? 0
-      : Math.max(0, Math.ceil(this.estimateWeight(snapshot.value)));
+    const nextWeight =
+      snapshot.value === null ? 0 : Math.max(0, Math.ceil(this.estimateWeight(snapshot.value)));
     residentResourceBytes += nextWeight - this.weight;
     this.weight = nextWeight;
     this.snapshot$.set(snapshot);
@@ -124,43 +127,48 @@ class AsyncResource<T> implements AsyncResourceHandle<T> {
     if (previous.status === "error") {
       this.update({ status: "loading", value: previous.value, error: null });
     }
-    const operation = Promise.resolve().then(() => loader((value) => {
-      if (!this.controller.signal.aborted) this.update({ status: "loading", value, error: null });
-    }, this.controller.signal));
+    const operation = Promise.resolve().then(() =>
+      loader((value) => {
+        if (!this.controller.signal.aborted) this.update({ status: "loading", value, error: null });
+      }, this.controller.signal),
+    );
     this.promise = operation;
-    void operation.then((value) => {
-      if (this.controller.signal.aborted) return;
-      this.loading = false;
-      this.retryAttempt = 0;
-      this.retryable = true;
-      // A ready revision is immutable. Retain its result, not the loader's
-      // captured source (which may contain an entire base64 image or thread).
-      this.loader = null;
-      this.update({ status: "ready", value, error: null });
-    }).catch((cause: unknown) => {
-      if (this.controller.signal.aborted) return;
-      this.loading = false;
-      this.retryable = isRetryableResourceFailure(cause);
-      const current = this.snapshot$.peek();
-      this.update({
-        status: "error",
-        value: current.value,
-        error: cause instanceof Error ? cause.message : "Resource unavailable",
+    void operation
+      .then((value) => {
+        if (this.controller.signal.aborted) return;
+        this.loading = false;
+        this.retryAttempt = 0;
+        this.retryable = true;
+        // A ready revision is immutable. Retain its result, not the loader's
+        // captured source (which may contain an entire base64 image or thread).
+        this.loader = null;
+        this.update({ status: "ready", value, error: null });
+      })
+      .catch((cause: unknown) => {
+        if (this.controller.signal.aborted) return;
+        this.loading = false;
+        this.retryable = isRetryableResourceFailure(cause);
+        const current = this.snapshot$.peek();
+        this.update({
+          status: "error",
+          value: current.value,
+          error: cause instanceof Error ? cause.message : "Resource unavailable",
+        });
+        this.scheduleRetry();
       });
-      this.scheduleRetry();
-    });
   }
 
   private scheduleRetry(): void {
     if (
-      !this.retryable
-      || this.retryAttempt >= MAX_AUTO_RETRY_ATTEMPTS
-      || this.retryTimer !== null
-      || this.loading
-      || this.controller.signal.aborted
-      || this.retainCount === 0
-    ) return;
-    const delay = AUTO_RETRY_BASE_MS * (2 ** this.retryAttempt);
+      !this.retryable ||
+      this.retryAttempt >= MAX_AUTO_RETRY_ATTEMPTS ||
+      this.retryTimer !== null ||
+      this.loading ||
+      this.controller.signal.aborted ||
+      this.retainCount === 0
+    )
+      return;
+    const delay = AUTO_RETRY_BASE_MS * 2 ** this.retryAttempt;
     this.retryAttempt += 1;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
@@ -206,12 +214,22 @@ function useAsyncResourceLifetime<T>(
   cancelWhenUnobserved: boolean,
   preservePrevious = false,
 ): AsyncResourceSnapshot<T> {
-  const resource = key === null ? null : getAsyncResource<T>(key, revision, loader, estimateWeight, cancelWhenUnobserved, preservePrevious);
+  const resource =
+    key === null
+      ? null
+      : getAsyncResource<T>(
+          key,
+          revision,
+          loader,
+          estimateWeight,
+          cancelWhenUnobserved,
+          preservePrevious,
+        );
   useEffect(() => {
     if (resource === null) return;
     return resource.retain();
   }, [resource]);
-  return useSelector(() => resource === null ? getEmptySnapshot<T>() : resource.snapshot$.get());
+  return useSelector(() => (resource === null ? getEmptySnapshot<T>() : resource.snapshot$.get()));
 }
 
 export function getAsyncResource<T>(
@@ -235,19 +253,35 @@ export function getAsyncResource<T>(
       if (snapshot.value !== null) initialValue = snapshot.value;
     }
   }
-  const resource = new AsyncResource<T>(key, cacheKey, revision, loader, estimateWeight, cancelWhenUnobserved, initialValue);
+  const resource = new AsyncResource<T>(
+    key,
+    cacheKey,
+    revision,
+    loader,
+    estimateWeight,
+    cancelWhenUnobserved,
+    initialValue,
+  );
   resources.set(cacheKey, resource as unknown as AsyncResource<unknown>);
   pruneResources(cacheKey);
   return resource;
 }
 
 function pruneResources(protectedCacheKey: string | null = null): void {
-  if (resources.size <= MAX_RESIDENT_RESOURCES && residentResourceBytes <= MAX_RESIDENT_RESOURCE_BYTES) return;
+  if (
+    resources.size <= MAX_RESIDENT_RESOURCES &&
+    residentResourceBytes <= MAX_RESIDENT_RESOURCE_BYTES
+  )
+    return;
   for (const [key, resource] of resources) {
     if (key === protectedCacheKey || resource.isObserved()) continue;
     resources.delete(key);
     resource.dispose();
-    if (resources.size <= MAX_RESIDENT_RESOURCES && residentResourceBytes <= MAX_RESIDENT_RESOURCE_BYTES) return;
+    if (
+      resources.size <= MAX_RESIDENT_RESOURCES &&
+      residentResourceBytes <= MAX_RESIDENT_RESOURCE_BYTES
+    )
+      return;
   }
 }
 
@@ -258,9 +292,10 @@ function defaultResourceWeight(): number {
 function isRetryableResourceFailure(cause: unknown): boolean {
   if (!(cause instanceof Error) || cause.name === "AbortError") return false;
   const explicitStatus = Reflect.get(cause, "status");
-  const status = typeof explicitStatus === "number" && Number.isInteger(explicitStatus)
-    ? explicitStatus
-    : httpStatusFromMessage(cause.message);
+  const status =
+    typeof explicitStatus === "number" && Number.isInteger(explicitStatus)
+      ? explicitStatus
+      : httpStatusFromMessage(cause.message);
   if (status !== null) {
     return status === 408 || status === 425 || status === 429 || status >= 500;
   }

@@ -3,7 +3,12 @@ import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../.
 
 export const styles = StyleSheet.create({
   flex: { flex: 1 },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
   menuTitleRow: {
     minHeight: touchTarget,
     marginBottom: spacing.xs,
@@ -11,7 +16,10 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.compact,
   },
-  menuScroll: { flex: 1, minHeight: 0 },
+  menuScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
   menuScrollContent: { paddingBottom: spacing.sm },
   controlSectionLabel: {
     color: colors.textMuted,
@@ -22,8 +30,14 @@ export const styles = StyleSheet.create({
     paddingBottom: spacing.xs,
   },
   disabled: { opacity: 0.42 },
-  modeSelector: { width: "100%", minHeight: touchTarget },
-  successText: { color: colors.green, ...typeScale.label },
+  modeSelector: {
+    width: "100%",
+    minHeight: touchTarget,
+  },
+  successText: {
+    color: colors.green,
+    ...typeScale.label,
+  },
   fieldInput: {
     minHeight: touchTarget,
     color: colors.text,
@@ -34,7 +48,10 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     ...typeScale.body,
   },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   primaryButton: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.md,
@@ -43,5 +60,8 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.primary,
   },
-  primaryButtonText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  primaryButtonText: {
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
 });

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { ComposeIconName } from "../presentation/icons/composeIconNames";
 
 /** Display data lets each platform draw accessories without embedding another UI runtime. */
-export interface AppListRowIcon {
+interface AppListRowIcon {
   readonly name: ComposeIconName;
   readonly size?: number;
   readonly color?: string;

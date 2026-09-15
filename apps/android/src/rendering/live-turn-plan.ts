@@ -11,7 +11,10 @@ export type LiveTurnPlanProgress = {
   current: TurnPlanStep | null;
 };
 
-export function selectLiveTurnPlan(thread: Thread | null | undefined, turnId: string | null): LiveTurnPlan | null {
+export function selectLiveTurnPlan(
+  thread: Thread | null | undefined,
+  turnId: string | null,
+): LiveTurnPlan | null {
   if (thread === null || thread === undefined || turnId === null) return null;
   const turn = thread.turns.find((candidate) => candidate.id === turnId);
   if (turn === undefined || turn.status !== "inProgress") return null;
@@ -22,9 +25,10 @@ export function selectLiveTurnPlan(thread: Thread | null | undefined, turnId: st
 export function liveTurnPlanProgress(plan: LiveTurnPlan): LiveTurnPlanProgress {
   return {
     completed: plan.steps.filter((step) => step.status === "completed").length,
-    current: plan.steps.find((step) => step.status === "inProgress")
-      ?? plan.steps.find((step) => step.status === "pending")
-      ?? plan.steps.at(-1)
-      ?? null,
+    current:
+      plan.steps.find((step) => step.status === "inProgress") ??
+      plan.steps.find((step) => step.status === "pending") ??
+      plan.steps.at(-1) ??
+      null,
   };
 }

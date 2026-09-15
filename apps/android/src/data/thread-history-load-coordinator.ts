@@ -5,9 +5,7 @@ export type ThreadHistoryLoadSettlement =
   | { status: "ready" }
   | { status: "failed"; cause: unknown };
 
-type ThreadHistoryLoadFailure =
-  | { status: "none" }
-  | { status: "failed"; cause: unknown };
+type ThreadHistoryLoadFailure = { status: "none" } | { status: "failed"; cause: unknown };
 
 /** Owns one visible loading state across independently coalesced directions. */
 export class ThreadHistoryLoadCoordinator {
@@ -36,8 +34,6 @@ export class ThreadHistoryLoadCoordinator {
     if (this.#active.size > 0) return { status: "pending" };
     const failure = this.#failure;
     this.#failure = { status: "none" };
-    return failure.status === "failed"
-      ? failure
-      : { status: "ready" };
+    return failure.status === "failed" ? failure : { status: "ready" };
   }
 }

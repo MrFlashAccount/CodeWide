@@ -2,7 +2,8 @@ import type { ThreadDetailRow } from "./thread-detail-projection";
 import { historyContentPayload, migrateHistoryV6 } from "./thread-history-schema";
 
 import type { HistoryExecutor } from "./thread-history-sql-contract";
-export type { HistoryExecutor, HistorySqlValue } from "./thread-history-sql-contract";
+
+export type { HistoryExecutor } from "./thread-history-sql-contract";
 
 const HEADS = "codewide_history_heads";
 const CHAINS = "codewide_history_chains";
@@ -16,10 +17,15 @@ const RUNTIME = "thread-details-v2";
 const META = "__tanstack_db_sqlite_meta";
 
 function rows(result: unknown): readonly Record<string, unknown>[] {
-  const value = Array.isArray(result) ? result
-    : typeof result === "object" && result !== null && "rows" in result ? result.rows : [];
+  const value = Array.isArray(result)
+    ? result
+    : typeof result === "object" && result !== null && "rows" in result
+      ? result.rows
+      : [];
   if (!Array.isArray(value)) throw new Error("Invalid history SQL result");
-  return value.filter((entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null);
+  return value.filter(
+    (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null,
+  );
 }
 
 function headPayload(expression: string): string {
@@ -42,13 +48,17 @@ async function createTables(executor: HistoryExecutor): Promise<void> {
     connection_id TEXT NOT NULL, thread_id TEXT NOT NULL, turn_id TEXT,
     kind TEXT NOT NULL CHECK(kind IN ('turn', 'turnMeta', 'activity')),
     sealed INTEGER NOT NULL, payload TEXT NOT NULL)`);
-  await executor.execute(`CREATE INDEX IF NOT EXISTS ${CONTENT}_key ON ${CONTENT}(__key, content_id DESC)`);
+  await executor.execute(
+    `CREATE INDEX IF NOT EXISTS ${CONTENT}_key ON ${CONTENT}(__key, content_id DESC)`,
+  );
   await executor.execute(`CREATE TABLE IF NOT EXISTS ${MEMBERS} (
     connection_id TEXT NOT NULL, thread_id TEXT NOT NULL, history_epoch INTEGER NOT NULL,
     __key TEXT NOT NULL, content_id INTEGER NOT NULL REFERENCES ${CONTENT}(content_id), ordinal REAL NOT NULL,
     PRIMARY KEY(connection_id, thread_id, history_epoch, __key),
     FOREIGN KEY(connection_id, thread_id, history_epoch) REFERENCES ${CHAINS}(connection_id, thread_id, history_epoch))`);
-  await executor.execute(`CREATE INDEX IF NOT EXISTS ${MEMBERS}_range ON ${MEMBERS}(connection_id, thread_id, history_epoch, ordinal)`);
+  await executor.execute(
+    `CREATE INDEX IF NOT EXISTS ${MEMBERS}_range ON ${MEMBERS}(connection_id, thread_id, history_epoch, ordinal)`,
+  );
   await executor.execute(`CREATE INDEX IF NOT EXISTS ${MEMBERS}_content ON ${MEMBERS}(content_id)`);
   await executor.execute(`CREATE TABLE IF NOT EXISTS ${PENDING} (
     __key TEXT PRIMARY KEY, connection_id TEXT NOT NULL, thread_id TEXT NOT NULL,
@@ -136,79 +146,160 @@ async function createReadProjection(executor: HistoryExecutor): Promise<void> {
 
 /** Non-destructive v4/v5-to-v6 migration; invoke inside one SQLite transaction. */
 export async function prepareHistoryRelations(executor: HistoryExecutor): Promise<void> {
-  await executor.execute(`CREATE TABLE IF NOT EXISTS ${META} (runtime_id TEXT PRIMARY KEY NOT NULL, schema_version INTEGER NOT NULL)`);
-  const version = rows(await executor.execute(`SELECT schema_version FROM ${META} WHERE runtime_id=?`, [RUNTIME]))[0]?.schema_version;
-  if (version !== undefined && (typeof version !== "number" || !Number.isInteger(version) || version < 1 || version > VERSION)) {
+  await executor.execute(
+    `CREATE TABLE IF NOT EXISTS ${META} (runtime_id TEXT PRIMARY KEY NOT NULL, schema_version INTEGER NOT NULL)`,
+  );
+  const version = rows(
+    await executor.execute(`SELECT schema_version FROM ${META} WHERE runtime_id=?`, [RUNTIME]),
+  )[0]?.schema_version;
+  if (
+    version !== undefined &&
+    (typeof version !== "number" || !Number.isInteger(version) || version < 1 || version > VERSION)
+  ) {
     throw new Error("Unsupported thread history schema version");
   }
-  const legacy = rows(await executor.execute(`SELECT type FROM sqlite_master WHERE name=?`, [VIEW]))[0]?.type === "table";
+  const legacy =
+    rows(await executor.execute(`SELECT type FROM sqlite_master WHERE name=?`, [VIEW]))[0]?.type ===
+    "table";
   if (version !== VERSION) {
     await createTables(executor);
     if (legacy) await migrateRows(executor);
     await migrateHistoryV6(executor);
   }
   await createReadProjection(executor);
-  await executor.execute(`INSERT INTO ${META}(runtime_id, schema_version) VALUES (?, ?)
-    ON CONFLICT(runtime_id) DO UPDATE SET schema_version=excluded.schema_version`, [RUNTIME, VERSION]);
+  await executor.execute(
+    `INSERT INTO ${META}(runtime_id, schema_version) VALUES (?, ?)
+    ON CONFLICT(runtime_id) DO UPDATE SET schema_version=excluded.schema_version`,
+    [RUNTIME, VERSION],
+  );
 }
 
 /** Stores chain facts independently from content; unchanged payloads retain their revision. */
-export async function persistHistoryRow(executor: HistoryExecutor, row: ThreadDetailRow): Promise<void> {
+export async function persistHistoryRow(
+  executor: HistoryExecutor,
+  row: ThreadDetailRow,
+): Promise<void> {
   const key = `string:${row.id}`;
   if (row.kind === "pending") {
     // A canonical receipt survives late off-window native/queue mirrors. Only
     // canonical content taking over this identity may retire the authored row.
-    await executor.execute(`INSERT INTO ${PENDING} SELECT ?, ?, ?, ?, ?, ?
+    await executor.execute(
+      `INSERT INTO ${PENDING} SELECT ?, ?, ?, ?, ?, ?
       WHERE NOT EXISTS (SELECT 1 FROM ${CONTENT} WHERE __key=? AND kind='turn')
       ON CONFLICT(__key) DO UPDATE SET payload=excluded.payload, ordinal=excluded.ordinal, history_epoch=excluded.history_epoch
       WHERE json_type(${PENDING}.payload, '$.pending.confirmation') IS NULL`,
-    [key, row.connectionId, row.remoteThreadId, row.historyEpoch, row.ordinal, JSON.stringify(row), key]);
+      [
+        key,
+        row.connectionId,
+        row.remoteThreadId,
+        row.historyEpoch,
+        row.ordinal,
+        JSON.stringify(row),
+        key,
+      ],
+    );
     return;
   }
-  await executor.execute(`INSERT INTO ${CHAINS}(connection_id, thread_id, history_epoch) VALUES (?, ?, ?)
-    ON CONFLICT(connection_id, thread_id, history_epoch) DO NOTHING`, [row.connectionId, row.remoteThreadId, row.historyEpoch]);
+  await executor.execute(
+    `INSERT INTO ${CHAINS}(connection_id, thread_id, history_epoch) VALUES (?, ?, ?)
+    ON CONFLICT(connection_id, thread_id, history_epoch) DO NOTHING`,
+    [row.connectionId, row.remoteThreadId, row.historyEpoch],
+  );
   if (row.kind === "thread") {
-    const { historyEpoch, historyCursor, historyHadTurns,
-      historyCoverageMinOrdinal, historyCoverageMaxOrdinal, ...content } = row;
-    await executor.execute(`INSERT INTO ${CHAINS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    const {
+      historyEpoch,
+      historyCursor,
+      historyHadTurns,
+      historyCoverageMinOrdinal,
+      historyCoverageMaxOrdinal,
+      ...content
+    } = row;
+    await executor.execute(
+      `INSERT INTO ${CHAINS} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(connection_id, thread_id, history_epoch) DO UPDATE SET
         cursor=excluded.cursor, cursor_known=excluded.cursor_known, had_turns=excluded.had_turns,
         min_ordinal=excluded.min_ordinal, min_known=excluded.min_known, max_ordinal=excluded.max_ordinal, max_known=excluded.max_known`,
-    [row.connectionId, row.remoteThreadId, historyEpoch, historyCursor ?? null, historyCursor === undefined ? 0 : 1,
-      historyHadTurns === undefined ? null : historyHadTurns ? 1 : 0,
-      historyCoverageMinOrdinal ?? null, historyCoverageMinOrdinal === undefined ? 0 : 1,
-      historyCoverageMaxOrdinal ?? null, historyCoverageMaxOrdinal === undefined ? 0 : 1]);
-    await executor.execute(`INSERT INTO ${HEADS} VALUES (?, ?, ?, ?, ?)
+      [
+        row.connectionId,
+        row.remoteThreadId,
+        historyEpoch,
+        historyCursor ?? null,
+        historyCursor === undefined ? 0 : 1,
+        historyHadTurns === undefined ? null : historyHadTurns ? 1 : 0,
+        historyCoverageMinOrdinal ?? null,
+        historyCoverageMinOrdinal === undefined ? 0 : 1,
+        historyCoverageMaxOrdinal ?? null,
+        historyCoverageMaxOrdinal === undefined ? 0 : 1,
+      ],
+    );
+    await executor.execute(
+      `INSERT INTO ${HEADS} VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(__key) DO UPDATE SET active_epoch=excluded.active_epoch, payload=excluded.payload`,
-    [key, row.connectionId, row.remoteThreadId, historyEpoch, JSON.stringify(content)]);
+      [key, row.connectionId, row.remoteThreadId, historyEpoch, JSON.stringify(content)],
+    );
     return;
   }
   const { historyEpoch, ordinal, ...content } = row;
   const payload = JSON.stringify(content);
-  const items = JSON.stringify(row.kind === "turn" ? row.turn?.items ?? [] : row.kind === "activity" ? row.activityItems ?? [] : []);
+  const items = JSON.stringify(
+    row.kind === "turn"
+      ? (row.turn?.items ?? [])
+      : row.kind === "activity"
+        ? (row.activityItems ?? [])
+        : [],
+  );
   const envelope = `CASE ? WHEN 'turn' THEN json_remove(?, '$.turn.items')
     WHEN 'activity' THEN json_remove(?, '$.activityItems') ELSE ? END`;
-  let contentId = rows(await executor.execute(`SELECT content_id FROM ${CONTENT} c
+  let contentId = rows(
+    await executor.execute(
+      `SELECT content_id FROM ${CONTENT} c
     WHERE __key=? AND payload=(${envelope}) AND COALESCE((SELECT json_group_array(json(payload))
       FROM (SELECT payload FROM codewide_history_items WHERE content_id=c.content_id ORDER BY position)), '[]')=json(?)
-    ORDER BY content_id DESC LIMIT 1`, [key, row.kind, payload, payload, payload, items]))[0]?.content_id;
+    ORDER BY content_id DESC LIMIT 1`,
+      [key, row.kind, payload, payload, payload, items],
+    ),
+  )[0]?.content_id;
   if (contentId === undefined) {
-    contentId = rows(await executor.execute(`INSERT INTO ${CONTENT}
+    contentId = rows(
+      await executor.execute(
+        `INSERT INTO ${CONTENT}
       (__key, connection_id, thread_id, turn_id, kind, sealed, payload, payload_bytes)
       VALUES (?, ?, ?, ?, ?, ?, (${envelope}), LENGTH(CAST(? AS BLOB))) RETURNING content_id`,
-    [key, row.connectionId, row.remoteThreadId, row.remoteTurnId, row.kind, row.sealed ? 1 : 0,
-      row.kind, payload, payload, payload, payload]))[0]?.content_id;
-    if (typeof contentId !== "number") throw new Error("History revision insert returned no identity");
-    await executor.execute(`INSERT INTO codewide_history_items
-      SELECT ?, j.key, json_extract(j.value, '$.id'), json_extract(j.value, '$.type'), j.value FROM json_each(?) j`, [contentId, items]);
+        [
+          key,
+          row.connectionId,
+          row.remoteThreadId,
+          row.remoteTurnId,
+          row.kind,
+          row.sealed ? 1 : 0,
+          row.kind,
+          payload,
+          payload,
+          payload,
+          payload,
+        ],
+      ),
+    )[0]?.content_id;
+    if (typeof contentId !== "number")
+      throw new Error("History revision insert returned no identity");
+    await executor.execute(
+      `INSERT INTO codewide_history_items
+      SELECT ?, j.key, json_extract(j.value, '$.id'), json_extract(j.value, '$.type'), j.value FROM json_each(?) j`,
+      [contentId, items],
+    );
   }
   if (typeof contentId !== "number") throw new Error("Invalid history revision identity");
-  await executor.execute(`INSERT INTO codewide_history_turns VALUES (?, ?, ?, ?, ?)
+  await executor.execute(
+    `INSERT INTO codewide_history_turns VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(connection_id, thread_id, history_epoch, turn_id) DO UPDATE SET ordinal=excluded.ordinal
-      WHERE ?='turn'`, [row.connectionId, row.remoteThreadId, historyEpoch, row.remoteTurnId, ordinal, row.kind]);
-  await executor.execute(`INSERT INTO ${MEMBERS} VALUES (?, ?, ?, ?, ?, ?)
+      WHERE ?='turn'`,
+    [row.connectionId, row.remoteThreadId, historyEpoch, row.remoteTurnId, ordinal, row.kind],
+  );
+  await executor.execute(
+    `INSERT INTO ${MEMBERS} VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(connection_id, thread_id, history_epoch, __key) DO UPDATE SET content_id=excluded.content_id`,
-  [row.connectionId, row.remoteThreadId, historyEpoch, key, contentId, row.remoteTurnId]);
+    [row.connectionId, row.remoteThreadId, historyEpoch, key, contentId, row.remoteTurnId],
+  );
   await executor.execute(`DELETE FROM ${PENDING} WHERE __key=?`, [key]);
 }
 
@@ -224,5 +315,7 @@ export async function collectUnreferencedHistoryContent(executor: HistoryExecuto
   await executor.execute(`DELETE FROM codewide_history_turns AS p WHERE NOT EXISTS (
     SELECT 1 FROM ${MEMBERS} m WHERE m.connection_id=p.connection_id AND m.thread_id=p.thread_id
       AND m.history_epoch=p.history_epoch AND m.turn_id=p.turn_id)`);
-  await executor.execute(`DELETE FROM ${CONTENT} WHERE NOT EXISTS (SELECT 1 FROM ${MEMBERS} WHERE ${MEMBERS}.content_id=${CONTENT}.content_id)`);
+  await executor.execute(
+    `DELETE FROM ${CONTENT} WHERE NOT EXISTS (SELECT 1 FROM ${MEMBERS} WHERE ${MEMBERS}.content_id=${CONTENT}.content_id)`,
+  );
 }

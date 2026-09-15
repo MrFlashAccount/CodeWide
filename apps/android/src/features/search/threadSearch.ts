@@ -5,6 +5,7 @@ import type { SidebarProject } from "../projects/sidebarProjects";
 import { storedThreadToListItem } from "../threadList/threadListProjection";
 import type { ThreadListItem } from "../threadList/threadListTypes";
 import { abortableDelay } from "./searchDelay";
+
 type ThreadSearch = (query: string, connectionId?: string | null) => Promise<StoredThreadSummary[]>;
 /** Debounced catalog search retains the existing model-owned resource key. */
 export function useThreadSearch(

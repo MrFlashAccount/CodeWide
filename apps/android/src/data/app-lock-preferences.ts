@@ -4,7 +4,7 @@ export type AppLockPreferences = {
   enabled: boolean;
 };
 
-export const DEFAULT_APP_LOCK_PREFERENCES: AppLockPreferences = {
+const DEFAULT_APP_LOCK_PREFERENCES: AppLockPreferences = {
   enabled: false,
 };
 

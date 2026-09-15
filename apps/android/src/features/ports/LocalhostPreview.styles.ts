@@ -19,8 +19,15 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     borderRadius: radii.large,
   },
-  conversationTitle: { color: colors.text, ...typeScale.title },
-  conversationSubtitle: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.optical },
+  conversationTitle: {
+    color: colors.text,
+    ...typeScale.title,
+  },
+  conversationSubtitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.optical,
+  },
   composerContextText: {
     flexGrow: 0,
     flexShrink: 0,
@@ -28,9 +35,21 @@ export const styles = StyleSheet.create({
     ...typeScale.label,
     fontWeight: typeWeight.semibold,
   },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
-  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
-  previewRoot: { flex: 1, backgroundColor: colors.background },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
+  menuNotice: {
+    color: colors.textMuted,
+    ...typeScale.body,
+    paddingVertical: spacing.xs,
+  },
+  previewRoot: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   previewEmbeddedRoot: {
     width: "100%",
     minHeight: 0,
@@ -47,7 +66,10 @@ export const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  previewIdentity: { flex: 1, minWidth: 0 },
+  previewIdentity: {
+    flex: 1,
+    minWidth: 0,
+  },
   previewSetup: {
     width: "100%",
     maxWidth: 520,
@@ -62,7 +84,11 @@ export const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     ...typeScale.label,
   },
-  tunnelTtlChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.compact },
+  tunnelTtlChoices: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.compact,
+  },
   tunnelTtlChip: {
     minHeight: controlSize.compact,
     paddingHorizontal: spacing.sm,
@@ -78,8 +104,16 @@ export const styles = StyleSheet.create({
     borderRadius: radii.pill,
     backgroundColor: colors.successContainer,
   },
-  livePillText: { color: colors.green, ...typeScale.label, fontWeight: typeWeight.semibold },
-  fieldLabel: { color: colors.textMuted, ...typeScale.label, marginTop: spacing.xxs },
+  livePillText: {
+    color: colors.green,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  fieldLabel: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    marginTop: spacing.xxs,
+  },
   fieldInput: {
     minHeight: touchTarget,
     color: colors.text,
@@ -90,7 +124,10 @@ export const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     ...typeScale.body,
   },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
   primaryButton: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.md,
@@ -99,5 +136,8 @@ export const styles = StyleSheet.create({
     borderRadius: radii.medium,
     backgroundColor: colors.primary,
   },
-  primaryButtonText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  primaryButtonText: {
+    color: colors.onPrimary,
+    fontWeight: typeWeight.semibold,
+  },
 });

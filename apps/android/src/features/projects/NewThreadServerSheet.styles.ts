@@ -3,7 +3,12 @@ import { colors, spacing, touchTarget, typeScale } from "../../theme";
 
 export const styles = StyleSheet.create({
   flex: { flex: 1 },
-  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  sheetTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.heading,
+  },
   menuTitleRow: {
     minHeight: touchTarget,
     marginBottom: spacing.xs,
@@ -11,7 +16,13 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.compact,
   },
-  menuScroll: { flex: 1, minHeight: 0 },
+  menuScroll: {
+    flex: 1,
+    minHeight: 0,
+  },
   menuScrollContent: { paddingBottom: spacing.sm },
-  errorText: { color: colors.red, ...typeScale.body },
+  errorText: {
+    color: colors.red,
+    ...typeScale.body,
+  },
 });

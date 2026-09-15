@@ -9,42 +9,99 @@ const readSource = (path: string) => readFileSync(new URL(path, import.meta.url)
 const screen = compactSource(readSource("../src/CodeWideScreen.tsx"));
 const workspace = readSource("../src/data/thread-sync-projection.ts");
 const nativeTransport = readSource("../src/native/native-transport.native.ts");
-const nativeModule = readSource("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt");
-const commandStore = readSource("../android/app/src/main/java/dev/codewide/app/remote/NativeCommandStore.kt");
-const commandPolicy = readSource("../android/app/src/main/java/dev/codewide/app/remote/NativeCommandPolicy.kt");
-const connectionService = readSource("../android/app/src/main/java/dev/codewide/app/remote/CodexConnectionService.kt");
+const nativeModule = readSource(
+  "../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt",
+);
+const commandStore = readSource(
+  "../android/app/src/main/java/dev/codewide/app/remote/NativeCommandStore.kt",
+);
+const commandPolicy = readSource(
+  "../android/app/src/main/java/dev/codewide/app/remote/NativeCommandPolicy.kt",
+);
+const connectionService = readSource(
+  "../android/app/src/main/java/dev/codewide/app/remote/CodexConnectionService.kt",
+);
 
-const ownerOptimisticTurn = compactSource(readFileSync(new URL("../src/features/conversation/turns/OptimisticTurn.tsx", import.meta.url), "utf8"));
-const ownerUserMessageContent = compactSource(readFileSync(new URL("../src/features/conversation/turns/UserMessageContent.tsx", import.meta.url), "utf8"));
-const ownerTurnTimelineItem = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url), "utf8"));
-const ownerTurnFooter = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnFooter.tsx", import.meta.url), "utf8"));
-const ownerTurnTimelineItemStyles = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.styles.ts", import.meta.url), "utf8"));
+const ownerOptimisticTurn = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/OptimisticTurn.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerUserMessageContent = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/UserMessageContent.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTurnTimelineItem = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTurnFooter = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/TurnFooter.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const ownerTurnTimelineItemStyles = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/TurnTimelineItem.styles.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
-const turnOwner = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url), "utf8"));
+const turnOwner = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
-const ownerCommandDelivery = readFileSync(new URL("../src/data/command-delivery.ts", import.meta.url), "utf8");
-const ownerThreadSyncProjection = readFileSync(new URL("../src/data/thread-sync-projection.ts", import.meta.url), "utf8");
+const ownerCommandDelivery = readFileSync(
+  new URL("../src/data/command-delivery.ts", import.meta.url),
+  "utf8",
+);
+const ownerThreadSyncProjection = readFileSync(
+  new URL("../src/data/thread-sync-projection.ts", import.meta.url),
+  "utf8",
+);
 
-const userTurnBody = compactSource(readFileSync(new URL("../src/features/conversation/turns/UserTurnBody.tsx", import.meta.url), "utf8"));
+const userTurnBody = compactSource(
+  readFileSync(
+    new URL("../src/features/conversation/turns/UserTurnBody.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("failed message retry", () => {
   it("requeues the original durable command instead of creating a duplicate message", () => {
     expect(commandStore).toContain("fun retryFailed(connectionId: String, commandId: String)");
     expect(commandStore).toContain("SET state = 'uncertain', last_error = NULL");
-    expect(nativeModule).toContain("fun engineRetryCommand(connectionId: String, commandId: String, promise: Promise)");
-    expect(nativeTransport).toContain("retryNativeCommand(connectionId: string, commandId: string)");
-    expect(ownerCommandDelivery).toContain("retryFailedMessage = async (connectionId: string, commandId: string)");
+    expect(nativeModule).toContain(
+      "fun engineRetryCommand(connectionId: String, commandId: String, promise: Promise)",
+    );
+    expect(nativeTransport).toMatch(
+      /retryNativeCommand\(\s*connectionId: string,\s*commandId: string,?\s*\)/u,
+    );
+    expect(ownerCommandDelivery).toContain(
+      "retryFailedMessage = async (connectionId: string, commandId: string)",
+    );
   });
 
   it("retries an uncertain turn admission through the idempotent companion queue", () => {
     expect(commandPolicy).toContain('"turn/start" to NativeCommandReconciliation.IDEMPOTENT_RETRY');
-    expect(connectionService).toContain('return "companion/queue/put" to JSONObject().put("command", queued)');
+    expect(connectionService).toContain(
+      'return "companion/queue/put" to JSONObject().put("command", queued)',
+    );
     expect(connectionService).toContain('.put("commandId", command.commandId)');
   });
 
   it("places Retry beside the failed status", () => {
     expect(ownerOptimisticTurn).toContain('accessibilityLabel="Retry message"');
-    expect(ownerOptimisticTurn).toContain('<Text style={styles.retryMessageText}>Retry</Text>');
+    expect(ownerOptimisticTurn).toContain("<Text style={styles.retryMessageText}>Retry</Text>");
     expect(ownerOptimisticTurn).toContain("style={[styles.turnFooter, styles.turnFooterEnd]}");
   });
 
@@ -52,7 +109,9 @@ describe("failed message retry", () => {
     expect(ownerOptimisticTurn).toContain("pendingText={!failed}");
     expect(ownerUserMessageContent).toContain('testID="pending-user-message-shimmer"');
     expect(screen).not.toContain('testID="optimistic-turn-footer-spacer"');
-    expect(ownerOptimisticTurn).toContain('accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`} style={styles.userMessageRow}');
+    expect(ownerOptimisticTurn).toContain(
+      "accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`} style={styles.userMessageRow}",
+    );
   });
 
   it("does not describe transport acceptance as canonical delivery", () => {
@@ -74,9 +133,13 @@ describe("failed message retry", () => {
     expect(repairStart).toBeGreaterThanOrEqual(0);
     expect(repairEnd).toBeGreaterThan(repairStart);
     expect(repairSource).toMatch(/void sync\s*\.repairThreadProjection\(connectionId, threadId\)/u);
-    expect(repairSource).not.toContain("const repaired = await sync.repairThreadProjection(connectionId, threadId)");
+    expect(repairSource).not.toContain(
+      "const repaired = await sync.repairThreadProjection(connectionId, threadId)",
+    );
     expect(repairSource).toContain("Accepted message receipt repair returned no thread");
-    expect(repairSource).toContain("await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread])");
+    expect(repairSource).toContain(
+      "await reconcileDeliveredCommandReceipts(connectionId, [repaired.thread])",
+    );
   });
 
   it("keeps delivery state on optimistic user messages and turn metadata under the agent message", () => {
@@ -84,7 +147,9 @@ describe("failed message retry", () => {
     const turnEnd = turnOwner.length;
     const turnSource = turnOwner.slice(turnStart, turnEnd);
     const userStart = turnSource.indexOf("{userBlocks.length > 0 && (");
-    const agentStart = turnSource.indexOf('<RecoverableRenderBoundary scope="bubble" label="Agent message"');
+    const agentStart = turnSource.indexOf(
+      '<RecoverableRenderBoundary scope="bubble" label="Agent message"',
+    );
     const userSource = turnSource.slice(userStart, agentStart);
 
     expect(turnStart).toBeGreaterThanOrEqual(0);
@@ -93,14 +158,18 @@ describe("failed message retry", () => {
     expect(userSource).not.toContain("<TurnFooter");
     expect(turnSource.indexOf("<TurnFooter")).toBeGreaterThan(agentStart);
     expect(ownerOptimisticTurn).toContain('testID="optimistic-turn-footer"');
-    expect(ownerOptimisticTurn).toContain('style={[styles.turnFooter, styles.turnFooterEnd]}');
-    expect(ownerTurnFooter).toContain('<MessageFooterRow time={completedAt === null ? null : formatClockTime(completedAt)}');
+    expect(ownerOptimisticTurn).toContain("style={[styles.turnFooter, styles.turnFooterEnd]}");
+    expect(ownerTurnFooter).toContain(
+      "<MessageFooterRow time={completedAt === null ? null : formatClockTime(completedAt)}",
+    );
   });
 
   it("renders timestamps outside the narrower message bubbles", () => {
     expect(ownerTurnTimelineItemStyles).toContain("userMessageRow:");
     expect(ownerTurnTimelineItemStyles).toContain("agentMessageRow:");
-    expect(readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8")).toContain('maxWidth: "82%"');
+    expect(readFileSync(new URL("../src/rendering/Bubble.tsx", import.meta.url), "utf8")).toContain(
+      'maxWidth: "82%"',
+    );
     expect(screen).not.toContain("bubbleTime:");
     expect(screen).not.toContain("agentReplyMeta:");
   });

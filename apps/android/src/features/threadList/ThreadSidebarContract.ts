@@ -4,6 +4,8 @@ import type { ThreadNavigationModel } from "../navigation/threadNavigation";
 import type { ThreadListFilter } from "./threadListFilters";
 import type { SidebarProjectsNavigation, ThreadListMode } from "./threadListModel";
 import type { ThreadListItem } from "./threadListTypes";
+
+/** Thread-list state, layout, and actions used by the desktop sidebar. */
 export type ThreadSidebarProps = {
   width: number;
   initialOffset: number;

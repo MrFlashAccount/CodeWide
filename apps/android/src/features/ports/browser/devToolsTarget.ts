@@ -1,6 +1,7 @@
 import { WebView } from "react-native-webview";
 import type { NativeBrowserDevToolsBridge } from "../../../native/native-transport";
 
+/** Inspectable browser target returned by the local DevTools endpoint. */
 export type DevToolsTarget = {
   id: string;
   type: string;

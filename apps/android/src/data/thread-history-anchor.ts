@@ -10,8 +10,8 @@ export function sanitizeHistoryAnchorOffset(offset: number | null): number | nul
  * end as a semantic history position races optimistic -> canonical and live ->
  * sealed handoffs, so only stable rows away from the end are resumable.
  *
-   * A semantic anchor is therefore valid only inside a bounded historical
-   * window, and never while the anchor turn itself is still mutable.
+ * A semantic anchor is therefore valid only inside a bounded historical
+ * window, and never while the anchor turn itself is still mutable.
  */
 export function isPersistableHistoryAnchor({
   atEnd,
@@ -24,8 +24,10 @@ export function isPersistableHistoryAnchor({
   anchorTurnStatus: string | null;
   activeTurnId: string | null;
 }): boolean {
-  return !atEnd
-    && anchorTurnId !== null
-    && anchorTurnStatus !== "inProgress"
-    && anchorTurnId !== activeTurnId;
+  return (
+    !atEnd &&
+    anchorTurnId !== null &&
+    anchorTurnStatus !== "inProgress" &&
+    anchorTurnId !== activeTurnId
+  );
 }

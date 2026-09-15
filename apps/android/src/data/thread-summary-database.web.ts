@@ -1,4 +1,5 @@
 import type { ThreadSummaryDatabase } from "./thread-summary-database-contract";
+
 export type * from "./thread-summary-database-contract";
 
 export function createThreadSummaryDatabase(): ThreadSummaryDatabase {

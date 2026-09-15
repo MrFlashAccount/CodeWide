@@ -142,18 +142,39 @@ function SessionUsageRow({
 }
 
 const styles = StyleSheet.create({
-  content: { gap: spacing.optical, paddingBottom: spacing.xxs },
-  heading: { flexDirection: "row", gap: spacing.xs, paddingVertical: spacing.xxs },
+  content: {
+    gap: spacing.optical,
+    paddingBottom: spacing.xxs,
+  },
+  heading: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    paddingVertical: spacing.xxs,
+  },
   row: {
     flexDirection: "row",
     alignItems: "center",
     minHeight: controlSize.compact,
     gap: spacing.xs,
   },
-  labelColumn: { flex: 1, minWidth: 0 },
-  numberColumn: { flex: 1, minWidth: 0, alignSelf: "center", textAlign: "right" },
-  columnHeading: { ...typeScale.caption, color: colors.textDim },
-  label: { ...typeScale.label, color: colors.textMuted },
+  labelColumn: {
+    flex: 1,
+    minWidth: 0,
+  },
+  numberColumn: {
+    flex: 1,
+    minWidth: 0,
+    alignSelf: "center",
+    textAlign: "right",
+  },
+  columnHeading: {
+    ...typeScale.caption,
+    color: colors.textDim,
+  },
+  label: {
+    ...typeScale.label,
+    color: colors.textMuted,
+  },
   value: {
     ...typeScale.label,
     color: colors.text,
@@ -166,14 +187,20 @@ const styles = StyleSheet.create({
     marginTop: spacing.xxs,
     paddingTop: spacing.xxs,
   },
-  emphasized: { color: colors.text, fontWeight: typeWeight.semibold },
+  emphasized: {
+    color: colors.text,
+    fontWeight: typeWeight.semibold,
+  },
   compactions: {
     flexDirection: "row",
     justifyContent: "space-between",
     gap: spacing.xs,
     paddingVertical: spacing.xs,
   },
-  caption: { ...typeScale.caption, color: colors.textDim },
+  caption: {
+    ...typeScale.caption,
+    color: colors.textDim,
+  },
   explanationButton: {
     flexDirection: "row",
     alignItems: "center",

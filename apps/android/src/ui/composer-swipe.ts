@@ -15,9 +15,10 @@ export function composerSwipeDirection(x: number, y: number): ComposerSwipeDirec
 export function composerSwipeTravel(distance: number): number {
   "worklet";
   const positive = Math.max(0, distance);
-  if (positive <= COMPOSER_SWIPE_THRESHOLD) return positive * COMPOSER_SWIPE_TARGET / COMPOSER_SWIPE_THRESHOLD;
+  if (positive <= COMPOSER_SWIPE_THRESHOLD)
+    return (positive * COMPOSER_SWIPE_TARGET) / COMPOSER_SWIPE_THRESHOLD;
   const excess = positive - COMPOSER_SWIPE_THRESHOLD;
-  return COMPOSER_SWIPE_TARGET + ELASTIC_TRAVEL * excess / (excess + COMPOSER_SWIPE_THRESHOLD);
+  return COMPOSER_SWIPE_TARGET + (ELASTIC_TRAVEL * excess) / (excess + COMPOSER_SWIPE_THRESHOLD);
 }
 
 /** Returning below the threshold disarms the action before release. */

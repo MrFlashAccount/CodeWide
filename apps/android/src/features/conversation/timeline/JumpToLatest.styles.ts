@@ -1,5 +1,6 @@
 import { StyleSheet } from "react-native";
 import { colors, radii, spacing, touchTarget, typeScale, typeWeight } from "../../../theme";
+
 export const styles = StyleSheet.create({
   pressed: { opacity: 0.68 },
   jumpToLatest: {
