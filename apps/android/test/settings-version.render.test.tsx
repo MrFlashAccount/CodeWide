@@ -1,7 +1,7 @@
 import { fireEvent, render } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 
-import { SettingsVersion } from "../src/ui/SettingsVersion";
+import { SettingsVersion } from "../src/features/settings/SettingsVersion";
 
 it("keeps version copyable without a selectable Android focus anchor", () => {
   const copy = jest.spyOn(Clipboard, "setStringAsync");

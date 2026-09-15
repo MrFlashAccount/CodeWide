@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
 import { fireEvent, render } from "@testing-library/react-native";
 
-import { SessionUsageDetails } from "../src/ui/SessionUsageDetails";
+import { SessionUsageDetails } from "../src/features/accounts/SessionUsageDetails";
 
 const tokens = { input: 8475604, cached: 8000412, output: 39332, total: 8514936 };
 const cost = { input: 10.45, cached: 0.8, output: 1.97, total: 12.42 };

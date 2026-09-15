@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource } from "./source-contract";
 
 const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
-const terminal = readFileSync(new URL("../src/ui/TerminalWorkspace.native.tsx", import.meta.url), "utf8");
+const terminal = readFileSync(new URL("../src/features/terminal/TerminalWorkspace.native.tsx", import.meta.url), "utf8");
 const transport = readFileSync(new URL("../src/native/native-transport.native.ts", import.meta.url), "utf8");
 const store = readFileSync(new URL("../src/data/interactive-terminal-store.native.ts", import.meta.url), "utf8");
 const nativeManager = readFileSync(
@@ -13,27 +13,40 @@ const nativeManager = readFileSync(
   "utf8",
 );
 
+const ownerTerminalFeature = compactSource(readFileSync(new URL("../src/features/terminal/TerminalFeature.tsx", import.meta.url), "utf8"));
+const ownerComposerTerminalContextChip = compactSource(readFileSync(new URL("../src/features/terminal/ComposerTerminalContextChip.tsx", import.meta.url), "utf8"));
+const ownerTerminalTabNative = readFileSync(new URL("../src/features/terminal/TerminalTab.native.tsx", import.meta.url), "utf8");
+
+const ownerTerminalActions = readFileSync(new URL("../src/features/terminal/terminalActions.ts", import.meta.url), "utf8");
+const terminalStyles = readFileSync(new URL("../src/features/terminal/TerminalWorkspace.styles.ts", import.meta.url), "utf8");
+
+const ownerComposerAccessoryTray = compactSource(readFileSync(new URL("../src/features/composer/ComposerAccessoryTray.tsx", import.meta.url), "utf8"));
+const ownerComposerFeatureActions = compactSource(readFileSync(new URL("../src/features/composer/composerFeatureActions.ts", import.meta.url), "utf8"));
+
+const detailOwner = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDetail.tsx", import.meta.url), "utf8"));
+
+const publication = compactSource(readFileSync(new URL("../src/features/conversation/MainConversationPublication.tsx", import.meta.url), "utf8"));
+
+const historyBinding = compactSource(readFileSync(new URL("../src/features/conversation/mainConversationHistory.ts", import.meta.url), "utf8"));
+
 describe("native terminal integration", () => {
   it("opens a thread-bound workspace through the shared fullscreen overlay host", () => {
-    expect(screen).toContain('{ id: "terminal", label: "Terminal"');
-    expect(screen).toContain('{ id: "ports", label: "Port forward"');
+    expect(ownerComposerAccessoryTray).toContain('{ id: "terminal", label: "Terminal"');
+    expect(ownerComposerAccessoryTray).toContain('{ id: "ports", label: "Port forward"');
     expect(screen).not.toContain('label: "Open terminal"');
-    expect(screen).toContain("const createAndOpenTerminal = () => {");
-    expect(screen).toContain("createAndOpenTerminal();");
-    expect(screen).toContain("fullscreenOverlay.present(({ close }) => (");
-    expect(screen).toContain("<TerminalWorkspace connectionId={draftConnectionId} threadId={draftThreadId}");
-    expect(screen).toContain("{ dismissOnScopeUnmount: false }");
-    expect(screen).toContain('ComposerContextCount label="Terminals"');
-    expect(screen).toContain("workspace.tabs.length");
+    expect(ownerTerminalActions).toContain("const createAndOpenTerminal = useEvent(() => {");
+    expect(ownerComposerFeatureActions).toContain("createAndOpenTerminal();");
+    expect(ownerTerminalFeature).toContain("fullscreenOverlay.present( ({ close }) => (");
+    expect(ownerTerminalFeature).toContain("<TerminalWorkspace connectionId={draftConnectionId} threadId={draftThreadId}");
+    expect(ownerTerminalFeature).toContain("{ dismissOnScopeUnmount: false }");
+    expect(ownerComposerTerminalContextChip).toContain('ComposerContextCount label="Terminals"');
+    expect(ownerComposerTerminalContextChip).toContain("workspace.tabs.length");
   });
 
   it("uses the exact loaded thread cwd instead of the list-loading fallback", () => {
-    const detail = screen.slice(
-      screen.indexOf("function MainConversationDetail"),
-      screen.indexOf("type NewConversationDetailProps"),
-    );
+    const detail = historyBinding;
     expect(detail).toContain('const conversationCwd = remoteThread?.cwd ?? storedThread?.cwd ?? conversation.cwd ?? "/workspace";');
-    expect(detail).toContain("cwd={conversationCwd}");
+    expect(publication).toContain("cwd: history.conversationCwd");
   });
 
   it("keeps the live terminal renderer mounted across responsive layout changes", () => {
@@ -51,12 +64,12 @@ describe("native terminal integration", () => {
   });
 
   it("minimizes without closing tabs or replaying consumed PTY bytes into libghostty", () => {
-    expect(terminal).toContain('from "expo-libghostty"');
+    expect(ownerTerminalTabNative).toContain('from "expo-libghostty"');
     expect(terminal).toContain('accessibilityLabel="Minimize terminal"');
-    expect(terminal).toContain("persistentSessionId={tab.id}");
-    expect(terminal).toContain("readInteractiveTerminalRenderedOffset(tab.id)");
-    expect(terminal).toContain("commitInteractiveTerminalRenderedOffset(tab.id, chunk.nextOffset)");
-    expect(terminal).toContain("readNativeTerminalOutput(tab.id, nextOffsetRef.current)");
+    expect(ownerTerminalTabNative).toContain("persistentSessionId={tab.id}");
+    expect(ownerTerminalTabNative).toContain("readInteractiveTerminalRenderedOffset(tab.id)");
+    expect(ownerTerminalTabNative).toContain("commitInteractiveTerminalRenderedOffset(tab.id, chunk.nextOffset)");
+    expect(ownerTerminalTabNative).toContain("readNativeTerminalOutput(tab.id, nextOffsetRef.current)");
     expect(terminal).not.toContain("closeNativeTerminal(sessionId)");
     expect(store).toContain("closeInteractiveTerminalTab");
     expect(store).toContain("threadId: input.threadId");
@@ -64,15 +77,15 @@ describe("native terminal integration", () => {
   });
 
   it("uses a dense terminal grid that still remains readable on Android", () => {
-    expect(terminal).toContain("const TERMINAL_FONT_SIZE = 10");
-    expect(terminal).toContain("fontSize={TERMINAL_FONT_SIZE}");
+    expect(ownerTerminalTabNative).toContain("const TERMINAL_FONT_SIZE = 10");
+    expect(ownerTerminalTabNative).toContain("fontSize={TERMINAL_FONT_SIZE}");
   });
 
   it("puts tabs in the terminal title row to recover vertical grid space", () => {
     expect(terminal).toContain("<View style={styles.header}>");
-    expect(terminal).toContain("contentContainerStyle={styles.tabList} style={styles.tabScroll}");
+    expect(terminal).toContain("contentContainerStyle={styles.tabList}\n          style={styles.tabScroll}");
     expect(terminal).not.toContain("styles.tabBar");
-    expect(terminal).toContain("header: { minHeight: layoutSize.header");
+    expect(terminalStyles).toContain("header: {\n    minHeight: layoutSize.header");
   });
 
   it("ships one full monospaced Nerd Font for terminal text and symbols", () => {
@@ -148,8 +161,8 @@ describe("native terminal integration", () => {
 
   it("reconciles terminal geometry after the fullscreen window reaches final bounds", () => {
     const patch = readFileSync(new URL("../../../patches/expo-libghostty@0.8.1.patch", import.meta.url), "utf8");
-    expect(terminal).toContain("useFullscreenWindowReady()");
-    expect(terminal).toContain("terminalRef.current?.reconcileLayout?.()");
+    expect(ownerTerminalTabNative).toContain("useFullscreenWindowReady()");
+    expect(ownerTerminalTabNative).toContain("terminalRef.current?.reconcileLayout?.()");
     expect(patch).toContain('AsyncFunction("reconcileLayout")');
     expect(patch).toContain("fun reconcileLayout()");
     expect(patch).toContain("terminal.prepareForReattach()");
@@ -198,8 +211,8 @@ describe("native terminal integration", () => {
   });
 
   it("keeps the companion wire binary and the resumable transcript in Android cache", () => {
-    expect(terminal).toContain("subscribeNativeTerminal");
-    expect(terminal).toContain("writeNativeTerminal(tab.id, data)");
+    expect(ownerTerminalTabNative).toContain("subscribeNativeTerminal");
+    expect(ownerTerminalTabNative).toContain("writeNativeTerminal(tab.id, data)");
     expect(transport).toContain('addListener("CodeWideTerminalEvent"');
     expect(transport).toContain("readTerminalOutput(sessionId, offset, maxBytes)");
     expect(nativeManager).toContain("InnerTlsTransport.client(socketClient, saved)");

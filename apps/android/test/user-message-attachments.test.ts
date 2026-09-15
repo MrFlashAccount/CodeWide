@@ -4,12 +4,20 @@ import { describe, expect, it } from "vitest";
 
 import { projectUserMessageAttachments } from "../src/rendering/user-message-attachments";
 
+const ownerOptimisticTurn = readFileSync(new URL("../src/features/conversation/turns/OptimisticTurn.tsx", import.meta.url), "utf8");
+
+const userTurnBody = readFileSync(new URL("../src/features/conversation/turns/UserTurnBody.tsx", import.meta.url), "utf8");
+
 describe("projectUserMessageAttachments", () => {
   it("uses the shared renderer for pending and authoritative user messages", () => {
-    const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
-    expect(screen).toContain("localAttachments={item.attachments}");
-    expect(screen).toContain("projectedAttachments={block.raw.codewideAttachments}");
-    expect(screen.match(/<UserMessageContent/g)).toHaveLength(3);
+    const authoritative = readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url), "utf8");
+    const protocol = readFileSync(new URL("../src/features/conversation/protocol/ProtocolBlock.tsx", import.meta.url), "utf8");
+    expect(ownerOptimisticTurn).toContain("localAttachments={item.attachments}");
+    expect(userTurnBody).toContain("projectedAttachments={block.raw.codewideAttachments}");
+    expect(protocol).toContain("projectedAttachments={block.raw.codewideAttachments}");
+    expect(userTurnBody).toContain("<UserMessageContent");
+    expect(protocol).toContain("<UserMessageContent");
+    expect(ownerOptimisticTurn).toContain("<UserMessageContent");
   });
 
   it("uses the companion projection derived from the persisted session", () => {

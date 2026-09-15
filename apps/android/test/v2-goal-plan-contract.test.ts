@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const legacyPlanPopover = readFileSync(
-  new URL("../src/ui/LiveTurnPlanPopover.tsx", import.meta.url),
+  new URL("../src/features/goal/LiveTurnPlanPopover.tsx", import.meta.url),
   "utf8",
 );
 const v2PlanPopover = readFileSync(
@@ -16,6 +16,16 @@ const v2Conversation = readFileSync(
 );
 const legacyConversation = readFileSync(
   new URL("../src/CodeWideScreen.tsx", import.meta.url),
+  "utf8",
+);
+
+const ownerGoalResource = readFileSync(new URL("../src/features/goal/goalResource.ts", import.meta.url), "utf8");
+const ownerConversationComposition = readFileSync(
+  new URL("../src/features/conversation/ConversationComposition.tsx", import.meta.url),
+  "utf8",
+);
+const ownerConversationTimelineSurface = readFileSync(
+  new URL("../src/features/conversation/timeline/ConversationTimelineSurface.tsx", import.meta.url),
   "utf8",
 );
 
@@ -33,10 +43,11 @@ describe("goal and plan presentation contract", () => {
   });
 
   it("loads and projects the legacy goal beside live plan status", () => {
-    expect(legacyConversation).toContain('"conversation-thread-goal"');
-    expect(legacyConversation).toContain(
-      "<ThreadGoalChip goal={currentGoal} onPress={openGoalDetails} />",
+    expect(ownerGoalResource).toContain('"conversation-thread-goal"');
+    expect(ownerConversationComposition).toContain(
+      "<ThreadGoalChip goal={currentGoal} onPress={composerDelivery.openGoalDetails} />",
     );
+    expect(ownerConversationTimelineSurface).toContain("{goalContent}");
     expect(legacyConversation).not.toContain('testID="thread-goal-details"');
     expect(legacyConversation).not.toContain("<ThreadGoalDetail");
   });

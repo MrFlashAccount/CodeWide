@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveNewThreadRoute } from "../src/data/new-thread-routing";
+import { resolveNewThreadRoute } from "../src/features/projects/newThreadRouting";
 
 const ALL_SERVERS_ID = "__all_servers__";
 

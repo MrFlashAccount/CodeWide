@@ -9,7 +9,7 @@ describe("legacy workspace Sync V2 canary removal", () => {
     expect(existsSync(new URL("../src/native/sync-v2-lifecycle.native.ts", import.meta.url))).toBe(false);
     expect(existsSync(new URL("../src/native/sync-v2-lifecycle.web.ts", import.meta.url))).toBe(false);
 
-    const workspace = source("../src/data/use-remote-workspace.ts");
+    const workspace = source("../src/data/workspace-runtime.ts");
     expect(workspace).not.toContain("sync-v2-lifecycle");
     expect(workspace).not.toContain("syncV2Lifecycle");
     expect(workspace).not.toContain("createNativeSyncV2Lifecycle");

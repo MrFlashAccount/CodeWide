@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserAddressKeepsOrigin, resolveBrowserAddress } from "../src/browser/browser-address";
+import { browserAddressKeepsOrigin, resolveBrowserAddress } from "../src/features/ports/browser/browser-address";
 
 describe("browser address navigation", () => {
   const current = "http://127.0.0.1:43210/app/page?old=1";

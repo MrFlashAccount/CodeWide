@@ -1,6 +1,6 @@
 import { ScrollView, StyleSheet, View } from "react-native";
 import { useContext } from "react";
-import { HighlightSearchText, SearchHighlightQuery } from "../search/SearchMessageFocus";
+import { HighlightSearchText, SearchHighlightQuery } from "./SearchMessageFocus";
 
 import { NativeCodeBlockHost } from "../presentation/nativeCodeBlockHost";
 import { colors, spacing, typeScale } from "../theme";

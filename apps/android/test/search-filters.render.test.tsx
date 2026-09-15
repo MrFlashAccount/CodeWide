@@ -1,6 +1,6 @@
 import { fireEvent, render } from "@testing-library/react-native";
 
-import { SearchFilters, type SearchFilterValue, type SearchProject } from "../src/search/SearchFilters";
+import { SearchFilters, type SearchFilterValue, type SearchProject } from "../src/features/search/SearchFilters";
 
 const empty: SearchFilterValue = { serverId: "", threadId: "", project: "", from: "", until: "" };
 const servers = [{ id: "one", name: "Buddy" }, { id: "two", name: "Work" }];

@@ -1,0 +1,33 @@
+import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadGoalInput } from "../../data/workspace-resource-database";
+import { useEvent } from "../../react/useEvent";
+export type GoalCommands = {
+  getThreadGoal(connectionId: string, threadId: string): Promise<ThreadGoal | null>;
+  setThreadGoal(
+    connectionId: string,
+    threadId: string,
+    input: ThreadGoalInput,
+  ): Promise<ThreadGoal>;
+  clearThreadGoal(connectionId: string, threadId: string): Promise<boolean>;
+};
+export function useGoalCommands(
+  remote: GoalCommands,
+  activeConnectionId: string,
+  activeRemoteThreadId: string | null,
+) {
+  const requireThreadId = useEvent(() => {
+    if (activeRemoteThreadId === null) throw new Error("No thread selected");
+    return activeRemoteThreadId;
+  });
+  const onGetGoal = useEvent(
+    async () => await remote.getThreadGoal(activeConnectionId, requireThreadId()),
+  );
+  const onSetGoal = useEvent(
+    async (input: ThreadGoalInput) =>
+      await remote.setThreadGoal(activeConnectionId, requireThreadId(), input),
+  );
+  const onClearGoal = useEvent(
+    async () => await remote.clearThreadGoal(activeConnectionId, requireThreadId()),
+  );
+  return { onGetGoal, onSetGoal, onClearGoal };
+}

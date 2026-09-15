@@ -1,3 +1,4 @@
+import { compactSource } from "./source-contract";
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
@@ -13,11 +14,16 @@ import {
   resolveRemoteDocumentPath,
 } from "../src/rendering/document-preview";
 
+const changes = readFileSync(new URL("../src/features/changes/ChangesFeature.tsx", import.meta.url), "utf8");
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
-const workspace = readFileSync(new URL("../src/rendering/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
+const workspace = readFileSync(new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
 const nativeEditor = readFileSync(new URL("../src/rendering/CodeReviewEditor.native.tsx", import.meta.url), "utf8");
 const editorRuntime = readFileSync(new URL("../code-review-editor/entry.ts", import.meta.url), "utf8");
 const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
+
+const migratedDocumentNavigation = readFileSync(new URL("../src/features/attachments/documentNavigation.ts", import.meta.url), "utf8");
+const migratedAttachmentPreview = readFileSync(new URL("../src/features/attachments/attachmentPreview.tsx", import.meta.url), "utf8");
+
 
 describe("document preview", () => {
   it("routes previewable documents, images and downloads by file type", () => {
@@ -101,12 +107,12 @@ describe("document preview", () => {
   });
 
   it("opens source references at a one-shot highlighted line without opening a comment", () => {
-    expect(screen).toContain('initialLine: request.line');
-    expect(screen).toContain('initialColumn: request.column');
+    expect(changes).toContain('initialLine: request.line');
+    expect(changes).toContain('initialColumn: request.column');
     expect(screen).not.toContain('target.kind === "text" || target.line !== undefined');
-    expect(screen).toContain('if (target.kind === "text") openCodeDocument(request);');
-    expect(screen).toContain('if (request.kind === "text") {');
-    expect(screen).toContain("fullscreenOverlay.present(({ close }) => (");
+    expect(migratedDocumentNavigation).toContain('if (target.kind === "text") openCodeDocument(request);');
+    expect(migratedAttachmentPreview).toContain('if (request.kind === "text") {');
+    expect(changes).toContain("fullscreenOverlay.present(({ close }) => (");
     expect(workspace).toContain('revealReference={selectedReference === null ? revealReference : null}');
     expect(nativeEditor).toContain('send({ command: "reveal", payload: revealReference })');
     expect(editorRuntime).toContain('revealedReference = parsed.payload');

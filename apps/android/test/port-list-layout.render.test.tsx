@@ -1,10 +1,9 @@
+import type {PortForwardingManagerProps,PortForwardingProfile} from "../src/features/ports/portForwardingContract";
 import { LegendList } from "@legendapp/list/react-native";
 import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
 import {
   PortForwardingManager,
-  type PortForwardingManagerProps,
-  type PortForwardingProfile,
-} from "../src/ui/PortForwardingManager";
+} from "../src/features/ports/PortForwardingManager";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 

@@ -1,12 +1,12 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
 import { PortalHost } from "heroui-native/portal";
-import { GlobalSearchScreen } from "../src/search/GlobalSearchScreen";
-import { SearchSession } from "../src/search/search-session";
+import { GlobalSearchScreen } from "../src/features/search/GlobalSearchScreen";
+import { SearchSession } from "../src/features/search/search-session";
 import type { MessageSearchPage } from "../src/data/message-search";
 import { useContext } from "react";
 import { Text } from "react-native";
-import { SearchHighlightQuery, SearchMessage, SearchMessageFocus } from "../src/search/SearchMessageFocus";
+import { SearchHighlightQuery, SearchMessage, SearchMessageFocus } from "../src/rendering/SearchMessageFocus";
 import { colors, controlSize, spacing } from "../src/theme";
 import { searchFieldLayout } from "../src/presentation/input/searchLayout";
 import { threadListLayout } from "../src/ui/thread-list-layout";

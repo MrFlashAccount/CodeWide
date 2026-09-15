@@ -6,14 +6,25 @@ import { compactSource } from "./source-contract";
 const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 const database = readFileSync(new URL("../src/data/thread-summary-sqlite.native.ts", import.meta.url), "utf8");
 
+const listWorkspace = compactSource(readFileSync(new URL("../src/features/threadList/threadListWorkspace.ts", import.meta.url), "utf8"));
+
+const navigationActions = compactSource(readFileSync(new URL("../src/features/navigation/conversationNavigationActions.ts", import.meta.url), "utf8"));
+
+const serverSelection = compactSource(readFileSync(new URL("../src/features/navigation/serverSelection.ts", import.meta.url), "utf8"));
+
+const ownerConversationWorkspace = compactSource(readFileSync(new URL("../src/features/conversation/ConversationWorkspace.tsx", import.meta.url), "utf8"));
+
+const ownerConversationDestinationSurface = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url), "utf8"));
+const ownerActiveConversationScope = compactSource(readFileSync(new URL("../src/features/conversation/activeConversationScope.ts", import.meta.url), "utf8"));
+
 describe("thread list query contract", () => {
   it("loads all pinned roots separately from the bounded recent page", () => {
-    expect(screen).toContain("const threadSummaryView = useThreadSummaryView(");
+    expect(listWorkspace).toContain("const threadSummaryView = useThreadSummaryView(");
     const pinnedQuery = database.slice(database.indexOf("const pinned ="), database.indexOf("const recent ="));
     expect(pinnedQuery).not.toContain("LIMIT");
     expect(database).toContain("archived = 0 AND pinned = 0${connectionClause} ORDER BY recency_at DESC NULLS LAST, __key ASC LIMIT ?");
     // The remote page includes pinned roots even though SQLite renders them separately.
-    expect(screen).toContain(": recentThreadSummaryRows.length + pinnedThreadSummaryRows.length;");
+    expect(listWorkspace).toContain(": recentThreadSummaryRows.length + pinnedThreadSummaryRows.length;");
   });
 
   it("indexes every persisted field used to select the bounded root windows", () => {
@@ -38,14 +49,14 @@ describe("thread list query contract", () => {
   });
 
   it("commits the initial desktop conversation by stable id before Recent can reorder", () => {
-    expect(screen).toContain("const defaultDesktopThreadId = desktop");
-    expect(screen).toContain("? threadSelectionKey(serverThreads[0])");
-    expect(screen).toContain("threadNavigation.select(defaultDesktopThreadId)");
-    expect(screen).toContain('scope="desktop-default-thread"');
-    expect(screen).toContain('revision={destination.kind === "empty" ? defaultDesktopThreadId : null}');
-    expect(screen).toContain('threadNavigation.destination$.peek().kind !== "empty"');
-    expect(screen).toContain("onCommit={commitDefaultDesktopThread}");
-    expect(screen).toContain("? selectedThread : null;");
+    expect(serverSelection).toContain("const defaultDesktopThreadId = desktop");
+    expect(serverSelection).toContain("? threadSelectionKey(serverThreads[0])");
+    expect(navigationActions).toContain("threadNavigation.select(defaultDesktopThreadId)");
+    expect(ownerConversationDestinationSurface).toContain("scope=\"desktop-default-thread\"");
+    expect(ownerConversationDestinationSurface).toContain("revision={props.destination.kind === \"empty\" ? props.defaultDesktopThreadId : null}");
+    expect(navigationActions).toContain('threadNavigation.destination$.peek().kind !== "empty"');
+    expect(ownerConversationDestinationSurface).toContain("onCommit={props.scope.commitDefaultDesktopThread}");
+    expect(ownerActiveConversationScope).toContain("? selectedThread : null;");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
   });
 });

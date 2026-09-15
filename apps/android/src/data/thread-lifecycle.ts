@@ -31,3 +31,14 @@ export function staleTurnLifecycleId(thread: Thread | null | undefined): string 
   }
   return null;
 }
+
+/** V1 thread-lifecycle owner, extracted without changing interaction or resource lifetime. */
+
+export function activeTurnId(thread: Thread | null | undefined): string | null {
+  if (thread === null || thread === undefined) return null;
+  for (let index = thread.turns.length - 1; index >= 0; index -= 1) {
+    const turn = thread.turns[index];
+    if (turn?.status === "inProgress") return turn.id;
+  }
+  return null;
+}

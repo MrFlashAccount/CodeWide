@@ -7,8 +7,8 @@ import type { AccountRateLimitsRow } from "../src/data/account-rate-limits";
 import type { VoiceInputRow } from "../src/data/workspace-resource-database";
 import { WorkspaceVoiceAura } from "../src/ui/WorkspaceVoiceAura";
 import { VoiceAura } from "../src/ui/VoiceAura.native";
-import { WorkspaceAccountUsagePopover } from "../src/ui/WorkspaceAccountUsagePopover";
-import { UsagePopover } from "../src/ui/UsagePopover";
+import { WorkspaceAccountUsagePopover } from "../src/features/accounts/WorkspaceAccountUsagePopover";
+import { UsagePopover } from "../src/features/accounts/UsagePopover";
 import { useScopedVoiceInputResource } from "../src/ui/VoiceInputRuntime";
 
 function voiceRow(scope: string, phase: VoiceInputRow["phase"]): VoiceInputRow {

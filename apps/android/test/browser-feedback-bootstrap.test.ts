@@ -1,6 +1,6 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { BROWSER_FEEDBACK_BOOTSTRAP } from "../src/browser/feedback";
+import { BROWSER_FEEDBACK_BOOTSTRAP } from "../src/features/ports/browser/feedback";
 
 describe("injected element picker", () => {
   it("preserves fetch results and sends only after explicitly arming and selecting", async () => {

@@ -1,0 +1,76 @@
+# V1 data and runtime ownership
+
+## Purpose, owner and language
+
+This folder owns existing V1 persistence/resource contracts and shared runtime/session/read/delivery mechanisms. TypeScript and platform `.native`/`.web`/unsuffixed contracts express those mechanics; documentation and comments use English. `connectionId`, thread/turn identities, source witnesses and persisted V1 records keep their current meanings and schemas.
+
+This is the lower ownership context for the [selected feature architecture](../../../../docs/android-v1-feature-architecture.md). **M7 source extraction is complete.** Shared UI-state initialization, voice transport, session authorization, account/control/resource loaders, connection migration/timing, private-transfer access, telemetry upload and receipt/commit helpers have their lower owners. `use-remote-workspace.ts`, RemoteWorkspace and WorkspaceActions are deleted; `workspace-runtime.ts` retains startup composition while feature command adapters live with their owners. `thread-resource-response.ts` owns response validation and bounded materialization; `workspace-resource-keys.ts` owns the same qualified keys without platform database construction.
+
+## What belongs and does not belong
+
+Belongs here: database construction/contracts, durable publication and reconciliation, source-qualified read authority, shared request deduplication, transport/session credentials, operational controller state, resource lifetime, and telemetry outside rendering hot paths. Existing ThreadDetail/Chat/History/Resources models, ThreadUiState persistence, supervisor, voice/file controllers and native/web adapters remain the sole physical authorities.
+
+Feature-specific selection, interaction, form validation, view pending/error handling and editor policy leave generic paths with their feature. Examples: project ordering and its preferences binding, project catalog demand binding, new-thread server choice, list row grouping and composer send-mode choice. The preference database and catalog resource model stay here. Move exact source families according to the [ledger](../../../../docs/android-v1-feature-migration.md#c-existing-source-module-dispositions-and-consumers); do not infer shared ownership merely from today's folder or import count.
+
+## Relationships and dependency rule
+
+Public lower contracts expose qualified model reads, command operations and retained resources. Existing native/web implementations adapt transport/storage variation. Feature `workspaceAdapter.ts` modules consume these contracts; composition binds stable capabilities without owning algorithms.
+
+This folder must not import `features/**`, `CodeWideScreen`, V2 source/runtime/storage, feature contracts or a view merely to get a type. Shared types leaking through the facade move to their actual lower contract owner with all consumers; no duplicated DTO/domain schema or unchecked assertion replaces a validated boundary. Type imports count in cycle/dependency rules. The versioned upstream protocol DTO path is not the forbidden `/v2` sync-client implementation.
+
+## Runtime facade disposition
+
+`data/use-remote-workspace.ts`, RemoteWorkspace and WorkspaceActions are deleted. The implementation retains JS module-evaluation startup/database/session lifecycle in `data/workspace-runtime.ts` and lower subsystem modules; composition lives in `features/workspace/createWorkspaceFeatures.ts`. The latter calls owner factories and returns stable references only; it contains no action algorithms or global reactive snapshot.
+
+| Existing facade concern | Final owning module / capability |
+| --- | --- |
+| `WorkspaceRuntimeSnapshot`, startup readiness, single start Promise, database construction, supervisor lifecycle, profile/native subscription registration | `data/workspace-runtime.ts`; same startup ordering and physical owners, with callbacks wired from lower subsystem owners |
+| Connection HTTP auth/session mint caches; `scopedHttpAuthorization`, `currentConnections`, `rpcAfterAttach` | `data/workspace-session.ts`; one source of session/authority and attach behavior |
+| Connection profile/credential migrations and usability timing | `data/connection-runtime.ts`; registration called by workspace runtime, not settings UI |
+| Catalog windows, archive invalidations, active catalog retention/timers and subagent refresh deduplication | `data/catalog-runtime.ts`; existing summary model publication preserved |
+| `threadSyncLane`, `historyReadAuthority`, desired observers, foreground repair, full-turn/item loading, history remote loader, receipt reconciliation | `data/thread-sync-runtime.ts` and existing thread model/database modules; this is shared canonical read/delivery reconciliation, not conversation UI |
+| Turn resource parsing/merge/read-kind errors and request deduplication | `data/thread-resource-loader.ts`; shared `ThreadResourcesModel` stays one owner for changes and attachments |
+| `runOptimisticPendingMutation`, send receipt/admission recovery | `data/command-delivery.ts`; all command consumers share the current write/receipt boundary |
+| Dictation batch acceptance, abort races, finish transport retries | `data/voice-transport.ts`; controller stays `data/voice-input-controller.ts`, feature binds input only |
+| Scoped private-transfer access / telemetry authorization | `data/private-transfer.ts` plus `data/workspace-session.ts`; telemetry upload remains data/native-owned |
+| Feature command methods | Corresponding `features/<owner>/workspaceAdapter.ts`, using the unchanged lower authority. Shared and runtime-retained caches have the explicit lower owners below; do not infer cache lifetime from a feature component |
+| `RemoteWorkspace`, `WorkspaceActions`, broad returned spread | Deleted after all runtime/type consumers migrated. No public alias remains. Contracts such as SendMode/QueuedPrompt move to their lower durable owner when lower modules also consume them, never into a UI-owned type |
+
+The retained startup file may wire several subsystems but cannot keep their algorithms hidden in nested functions. Lower subsystem closure is atomic: state/cache, mutation and cleanup move together. This is source ownership refactoring of existing mechanisms, not new service lifetimes or a replacement sync implementation.
+
+## Current startup and complete runtime-state closure
+
+There are **two distinct lifecycle entrypoints**. `app/legacy.tsx` statically imports CodeWideScreen; its composition chain imports `data/workspace-runtime.ts`, constructs one `workspaceRuntime` and invokes `ensureWorkspaceRuntimeStarted()` at module evaluation. Startup still creates the database/controller handles, reuses `startPromise`, and supports explicit `retryStartup` after failure. Separately, the legacy route effect registers native start/stop callbacks with `boot/runtimeSlot`; native-transport forwards them to the existing bridge. The boot handle does **not** own general JS-singleton shutdown. All source-line numbers in the frozen ledger refer to the pre-migration baseline.
+
+The extracted runtime preserves these entrypoints and their timing: the current import chain must still initiate JS startup once per module instance, and the route/boot handle must continue to start/stop only its current native resources. Feature construction consumes existing handles. No feature mount creates a runtime; no feature/native stop disposes JS databases, clears all caches, or installs a new general teardown routine. Startup currently replaces its subscriptions/timer with their existing cleanup, while its failure catch closes the newly created thread-details database; it is not a whole-runtime rollback. Consolidating JS startup/teardown into boot would be a separate behavior and ownership change requiring its own review and authorization.
+
+The following is a field-level inventory of **all 31 property declarations** in `WorkspaceRuntime`, independently of the 73-method facade audit. Each lower owner keeps one state instance per existing JS singleton. Moving state, its mutation, callbacks and cleanup is one unit; construction may remain wired by the existing runtime. A path denotes the owner of the invariant, not a new independently started service.
+
+| Current fields | Target sole owner | Preserved lifetime / cleanup |
+| --- | --- | --- |
+| `native`, `snapshot`, `listeners`, `subscribe`, `getSnapshot`, `startPromise` | `data/workspace-runtime.ts` | Existing platform branch, snapshot publication/listener identity and startup Promise reuse; unsubscribe removes only its listener; startup failure resets the Promise through the existing path |
+| `supervisor`, `profileSubscription`, `connectionStateSubscription` | `data/workspace-runtime.ts` | Existing supervisor and subscription registration/order; unsubscribe previous profile/state subscription before replacement; profile reconciliation and enabled-connection behavior stay unchanged |
+| `voiceController`, `fileTransferController` | Construction references: `data/workspace-runtime.ts`; operational state: existing voice/file controllers | Same startup construction and retained controller identity; UI binding/dismissal does not introduce controller disposal |
+| `threadUiStateSeedInFlight` | **`data/thread-ui-state-initialization.ts`**, with `getOrCreateThreadUiState` | One shared pending get-or-create per connection/thread key for `loadDraft`, `loadDraftAttachments`, `loadComposerPreferences` and `loadScrollOffset`; composer and timeline adapters call this lower owner. Same module lifetime, same database operation and key, delete in `finally` only when the map still holds that operation. No reset on render, activation, reconnect or native stop; no duplicated composer/timeline cache or feature back-edge |
+| `httpSessions`, `httpSessionMintInFlight` | `data/workspace-session.ts` | Existing credential-qualified session reuse/mint deduplication and connection invalidation; no per-feature session cache |
+| `threadSyncLane`, `historyReadAuthority`, `threadObserverDesired`, `foregroundRepairLane`, `turnItemsInFlight` | `data/thread-sync-runtime.ts` | Existing source authority, serialized lanes, desired observers and item-read deduplication. Preserve connection disable/delete invalidation and operation-identity cleanup at the current call sites |
+| `threadInvalidationArchived`, `threadCatalogRefreshInFlight`, `threadCatalogWindows`, `threadCatalogRefreshedAt`, `subagentRefreshInFlight`, `subagentRefreshedAt`, `catalogRepairTimer`, `catalogLifecycleSubscriptions` | `data/catalog-runtime.ts` | Existing catalog/subagent freshness and keyed work, periodic repair and AppState retention. Existing startup replacement removes old lifecycle handles and clears old timer before reinstalling; retain per-connection deletion and per-operation finally behavior, not a new global dispose |
+| `threadResourcesInFlight` | `data/thread-resource-loader.ts` | Same qualified resource read Promise and identity-checked finally cleanup shared by changes/attachments |
+| `turnControlsInFlight` | `data/turn-controls-loader.ts` | Same runtime-retained qualified control-read deduplication; composer settings adapter delegates without creating a mount-scoped cache |
+| `accountRateLimitsInFlight` | `data/account-rate-limits-loader.ts` | One deduplication owner for explicit account reads and automatic live-connection refresh; startup callbacks cannot import an accounts feature adapter |
+| `connectionAttemptStartedAt` | `data/connection-runtime.ts` | Existing per-connection timing registration/settlement; telemetry remains below UI |
+
+The `snapshot` field retains all ten slots: `ready`, `error`, `connectionProfiles`, `connectionState`, `threadSummaries`, `threadDetails`, `pendingRequests`, `threadUiState`, `resources`, `accountRateLimits`. They are readiness/error or references to existing physical database owners, not feature-local replicas. The accessor `resourceDatabase`, publication method `update`, and enabled-profile read `enabledConnectionIds` remain with `data/workspace-runtime.ts`; narrow readers replace facade consumers without changing storage authority. `getOrCreateThreadUiState` remains backed by the current ThreadUiState database, with no schema or seed-content change (source 797–837, 2621–2640).
+
+## Migration and checks
+
+The [migration ledger](../../../../docs/android-v1-feature-migration.md) defines action consumers, lifetimes, compatibility removal and M7 closure. Extract state, mutation and cleanup together; preserve module/controller identity and retained aliases rather than cloning graphs. The completed M7 extraction changes source ownership only; no disposal redesign or new runtime instance is introduced.
+
+Current checks: `pnpm validate:android:v1` covers native/web/compatibility typing, React rules and V1 dependency boundaries. M0 negative probes prove feature-path lint coverage and lower-to-feature rejection; M7/M8 cover runtime, command, history and platform contracts. Every source unit carries semantic failure/reconnect/stale-completion checks; no facade re-export survives after its last real/type/test consumer migrates.
+
+
+## Implemented lower decomposition
+
+`thread-sync-runtime` composes existing history, item and foreground owners; `thread-sync-projection`, `thread-sync-reconnect` and `thread-sync-remote-loader` own the original callback policies. Catalog lifecycle handles stay in `catalog-lifecycle` under the catalog owner. Resource parsing is isolated in `thread-resource-response`; account notifications retain the pre-migration method-qualified non-null pass-through contract to the existing account database, without new validation or normalization.
+
+The audit retains all 31 baseline property authorities, ten snapshot slots and the three runtime accessor/method authorities. Lower tests exercise seed deduplication, session/mint reuse, scoped voice cancellation/retry, serialized history reads, resource merging and command admission. Native JS startup/failure recovery on an actual Android device remains unverified; Expo exports, source lifecycle guards, lower semantic tests and boot-slot tests are available evidence, not device parity.

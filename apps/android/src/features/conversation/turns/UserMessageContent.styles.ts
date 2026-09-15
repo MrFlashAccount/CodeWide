@@ -1,0 +1,57 @@
+import { StyleSheet } from "react-native";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
+
+export const styles = StyleSheet.create({
+  userBubbleText: { color: colors.text, ...typeScale.body },
+  userMessageContent: { minWidth: 0, gap: spacing.compact },
+  userMessageMediaContent: { width: 320, maxWidth: "100%" },
+  userMessageTextBlock: { minWidth: 0 },
+  pendingUserMessageShimmer: { alignSelf: "stretch" },
+  userMessageExpandButton: {
+    minHeight: controlSize.compact,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: spacing.xxs,
+    paddingTop: spacing.xxs,
+  },
+  userMessageExpandText: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  userImageGallery: {
+    width: "100%",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xxs,
+    overflow: "hidden",
+    borderRadius: radii.medium,
+  },
+  userImageGalleryHero: { width: "100%", aspectRatio: 16 / 9 },
+  userImageGalleryTile: { width: "49%", flexGrow: 1, aspectRatio: 1 },
+  userImage: {
+    width: 220,
+    maxWidth: "100%",
+    aspectRatio: 4 / 3,
+    overflow: "hidden",
+    borderRadius: radii.medium,
+    backgroundColor: colors.surfaceRaised,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  attachmentChip: {
+    minHeight: controlSize.compact,
+    maxWidth: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radii.small,
+    backgroundColor: colors.surfaceRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  attachmentText: { flex: 1, color: colors.textMuted, ...typeScale.label },
+  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
+});

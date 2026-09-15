@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { SearchConversationPage } from "../src/data/message-search";
-import { SearchConversationWindow, mergeSearchWindows } from "../src/search/search-conversation-window";
-import { SearchSession } from "../src/search/search-session";
+import { SearchConversationWindow, mergeSearchWindows } from "../src/features/search/search-conversation-window";
+import { SearchSession } from "../src/features/search/search-session";
 
 function page(start: number, count: number): SearchConversationPage {
   const messages = Array.from({ length: count }, (_, index) => ({

@@ -1,0 +1,13 @@
+# V1 requests
+
+Pending request presentation, form validation and response admission.
+
+Public surfaces: RequestFeature (ApprovalPrompt/approvalTitle), requestResponse.
+
+The pending request remains owned by the lower model. Mounted prompt state owns answers, response pending and rejection; request response errors remain visible. No request entity or protocol is duplicated.
+
+Imports: lower data/platform/shared UI and declared peer public capabilities only. Private views, styles, policy helpers and React hooks remain local; no RemoteWorkspace or root import.
+
+M3 source extraction is implemented. Verification: V1 native/web/compatibility typing, ESLint/dependency graph; elicitation-form; v1-request-queue-actions.render. Actual Android interaction and same-device performance remain unverified because no device is attached.
+
+M7 capability closure: `workspaceCapabilities.ts` exposes only this owner's qualified operations. Private `workspaceAdapter.ts` binds existing lower model/session authority through exact workspace composition; it does not own shared in-flight maps, runtime construction or global cleanup. The broad RemoteWorkspace facade is deleted.

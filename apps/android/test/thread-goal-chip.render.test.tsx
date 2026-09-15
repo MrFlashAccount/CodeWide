@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react-native
 
 import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { V2ThreadGoal } from "@codewide/sync-client/v2";
-import { ThreadGoalChip as LegacyThreadGoalChip } from "../src/ui/ThreadGoalChip";
+import { ThreadGoalChip as LegacyThreadGoalChip } from "../src/features/goal/ThreadGoalChip";
 import { ThreadGoalChip as V2ThreadGoalChip } from "../src/v2/presentation/goal/threadGoalChip";
 
 describe("thread goal chip", () => {

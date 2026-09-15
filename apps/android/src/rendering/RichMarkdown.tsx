@@ -32,7 +32,7 @@ import { looksLikeAsciiDiagram } from "./ascii-diagram";
 import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayout";
 import { usePrivateImageUri } from "./use-private-image-uri";
 import { NativeMarkup } from "./NativeMarkup";
-import { HighlightSearchText } from "../search/SearchMessageFocus";
+import { HighlightSearchText } from "./SearchMessageFocus";
 
 const HorizontalScrollView = Platform.OS === "android" ? GestureScrollView : ScrollView;
 const RichMarkdownTextScaleContext = createContext(1);

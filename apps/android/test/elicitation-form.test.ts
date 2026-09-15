@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { isSafeHttpUrl, mcpElicitationFields, parseElicitationValue } from "../src/data/elicitation-form.js";
+import { mcpElicitationFields, parseElicitationValue } from "../src/features/requests/elicitationForm.js";
+import { isSafeHttpUrl } from "../src/rendering/http-link";
 
 describe("MCP elicitation forms", () => {
   it("maps typed fields, required values, defaults and enum labels", () => {

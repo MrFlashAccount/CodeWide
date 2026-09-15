@@ -5,7 +5,7 @@ import { Text, View } from "react-native";
 
 import { useConversationCleanup, useConversationRef, useConversationState } from "../src/ui/use-conversation-scope";
 import { useConversationOwner, type ConversationOwner } from "../src/ui/use-conversation-owner";
-import { useComposerLatestValues } from "../src/data/use-composer-latest-values";
+import { useComposerLatestValues } from "../src/features/composer/useComposerLatestValues";
 
 interface ProbeHandle {
   setSearch: Dispatch<SetStateAction<string>>;

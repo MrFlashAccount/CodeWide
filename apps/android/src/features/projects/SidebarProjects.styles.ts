@@ -1,0 +1,97 @@
+import { StyleSheet } from "react-native";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../theme";
+import { threadListLayout } from "../../ui/thread-list-layout";
+export const SECTION_HEIGHT = controlSize.touch + spacing.sm;
+
+export const styles = StyleSheet.create({
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    minHeight: controlSize.touch,
+    gap: spacing.sm,
+    paddingBottom: spacing.sm,
+  },
+  headerAction: {
+    width: controlSize.touch,
+    height: controlSize.touch,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetList: { flex: 1 },
+  sheetListContent: { paddingBottom: spacing.md },
+  section: { height: SECTION_HEIGHT, paddingTop: spacing.sm, justifyContent: "center" },
+  sectionHeading: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  sectionToggle: {
+    height: controlSize.touch,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sectionTitle: {
+    color: colors.textMuted,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+    paddingVertical: spacing.sm,
+  },
+  sectionCount: { color: colors.textDim, ...typeScale.caption },
+  menuSlot: { minWidth: controlSize.touch, alignItems: "center", justifyContent: "center" },
+  disabled: { opacity: 0.35 },
+  project: {
+    minHeight: controlSize.touch,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  shortcut: {
+    height: threadListLayout.projectRowHeight,
+    marginHorizontal: threadListLayout.edgeInset,
+    paddingHorizontal: spacing.xs,
+    gap: spacing.xs,
+  },
+  shortcutIdentity: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "baseline" },
+  shortcutPressed: { opacity: 0.68 },
+  serverLabel: { maxWidth: "45%", flexShrink: 1, color: colors.textMuted, ...typeScale.label },
+  identity: { flex: 1, minWidth: 0 },
+  name: { flexShrink: 1, color: colors.text, ...typeScale.body, fontWeight: typeWeight.semibold },
+  subtitle: { color: colors.textMuted, ...typeScale.caption },
+  unreadSlot: { width: spacing.sm, alignItems: "center" },
+  unread: {
+    width: spacing.xs,
+    height: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.text,
+  },
+  breadcrumbs: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xxs,
+  },
+  serverCrumb: {
+    maxWidth: "35%",
+    flexShrink: 1,
+    minHeight: controlSize.touch,
+    justifyContent: "center",
+  },
+  crumbText: { color: colors.text, ...typeScale.title },
+  crumbSeparator: { color: colors.textMuted, ...typeScale.body },
+  projectCrumb: { flex: 1, minWidth: 0 },
+  archiveCrumb: { color: colors.textMuted, ...typeScale.caption, flexShrink: 0 },
+  back: {
+    minWidth: controlSize.touch,
+    minHeight: controlSize.touch,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetTitle: {
+    flex: 1,
+    color: colors.text,
+    ...typeScale.title,
+    fontWeight: typeWeight.semibold,
+  },
+  empty: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.md },
+  error: { color: colors.red, ...typeScale.body, paddingVertical: spacing.sm },
+});

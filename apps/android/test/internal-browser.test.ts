@@ -2,10 +2,10 @@ import { readFileSync, statSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-const browser = readFileSync(new URL("../src/ui/InternalBrowser.native.tsx", import.meta.url), "utf8");
+const browser = readFileSync(new URL("../src/features/ports/browser/InternalBrowser.native.tsx", import.meta.url), "utf8");
 const devToolsBoundary = readFileSync(new URL("../src/ui/DevToolsErrorBoundary.tsx", import.meta.url), "utf8");
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
-const portForwarding = readFileSync(new URL("../src/ui/PortForwardingManager.tsx", import.meta.url), "utf8");
+const portForwarding = readFileSync(new URL("../src/features/ports/PortForwardingManager.tsx", import.meta.url), "utf8");
 const transport = readFileSync(new URL("../src/native/native-transport.native.ts", import.meta.url), "utf8");
 const nativeModule = readFileSync(
   new URL("../android/app/src/main/java/dev/codewide/app/remote/CodeWideModule.kt", import.meta.url),
@@ -16,17 +16,29 @@ const nativeBridge = readFileSync(
   "utf8",
 );
 
+const ownerBrowserDevTools = readFileSync(new URL("../src/features/ports/browser/browserDevTools.ts", import.meta.url), "utf8");
+const ownerBrowserBack = readFileSync(new URL("../src/features/ports/browser/browserBack.ts", import.meta.url), "utf8");
+const ownerLocalhostPreview = readFileSync(new URL("../src/features/ports/LocalhostPreview.tsx", import.meta.url), "utf8");
+const ownerForwardingRow = readFileSync(new URL("../src/features/ports/ForwardingRow.tsx", import.meta.url), "utf8");
+const ownerForwardedLoopbackBrowser = readFileSync(new URL("../src/features/ports/ForwardedLoopbackBrowser.tsx", import.meta.url), "utf8");
+const ownerBrowserNavigation = readFileSync(new URL("../src/features/ports/browserNavigation.ts", import.meta.url), "utf8");
+const ownerDevToolsTarget = readFileSync(new URL("../src/features/ports/browser/devToolsTarget.ts", import.meta.url), "utf8");
+const ownerDevToolsBootstrap = readFileSync(new URL("../src/features/ports/browser/devToolsBootstrap.ts", import.meta.url), "utf8");
+const ownerInternalBrowserStyles = readFileSync(new URL("../src/features/ports/browser/InternalBrowser.styles.ts", import.meta.url), "utf8");
+
+const ownerBrowserDevToolsPaneNative = readFileSync(new URL("../src/features/ports/browser/BrowserDevToolsPane.native.tsx", import.meta.url), "utf8");
+
 describe("internal browser", () => {
   it("owns navigation and Chromium developer tools independently of localhost tunnels", () => {
     expect(browser).toContain('originWhitelist = ["http://*", "https://*"]');
     expect(browser).toContain('accessibilityLabel={devToolsOpen ? "Close Chromium DevTools" : "Open Chromium DevTools"}');
-    expect(browser).toContain("startNativeBrowserDevToolsBridge()");
-    expect(browser).toContain('BackHandler.addEventListener("hardwareBackPress"');
-    expect(browser).toContain("if (devToolsUrl !== null) closeDevTools()");
-    expect(browser).toContain("else if (navigation.canGoBack) webView.current?.goBack()");
-    expect(browser).toContain("else header.onClose()");
-    expect(browser).toContain("if (bridgeStarted.current)");
-    expect(browser).toContain('testID="chromium-devtools-webview"');
+    expect(ownerBrowserDevTools).toContain("startNativeBrowserDevToolsBridge()");
+    expect(ownerBrowserBack).toContain('BackHandler.addEventListener("hardwareBackPress"');
+    expect(ownerBrowserBack).toContain("if (devToolsUrl !== null) closeDevTools()");
+    expect(ownerBrowserBack).toContain("else if (canGoBack) webView.current?.goBack()");
+    expect(ownerBrowserBack).toContain("else header.onClose()");
+    expect(ownerBrowserDevTools).toContain("if (bridgeStarted.current)");
+    expect(ownerBrowserDevToolsPaneNative).toContain("testID=\"chromium-devtools-webview\"");
     expect(browser).not.toContain("startNativeBrowserTracing()");
     expect(browser).not.toContain("webviewDebuggingEnabled");
     expect(browser).not.toContain("TunnelPreview");
@@ -34,21 +46,21 @@ describe("internal browser", () => {
   });
 
   it("uses the shared browser surface for the current localhost preview", () => {
-    expect(screen).toContain("<InternalBrowser");
-    expect(screen).toContain("url={tunnel.url}");
-    expect(screen).toContain("headers={{ Authorization: tunnel.authorization }}");
-    expect(screen).toContain("!embedded && tunnel === null");
-    expect(screen).toContain('title: "Localhost preview"');
+    expect(ownerLocalhostPreview).toContain("<InternalBrowser");
+    expect(ownerLocalhostPreview).toContain("url={tunnel.url}");
+    expect(ownerLocalhostPreview).toContain("headers={{ Authorization: tunnel.authorization }}");
+    expect(ownerLocalhostPreview).toContain("!embedded && tunnel === null");
+    expect(ownerLocalhostPreview).toContain('title: "Localhost preview"');
   });
 
   it("opens live phone-local forwards inside the app", () => {
     expect(portForwarding).not.toContain('<InternalBrowser');
-    expect(portForwarding).toContain("onPress={live ? props.onOpen : props.onEdit}");
+    expect(ownerForwardingRow).toContain("onPress={live ? props.onOpen : props.onEdit}");
     expect(portForwarding).toContain("props.onOpen(entry.profile)");
     expect(portForwarding).not.toContain("Linking.openURL");
-    expect(screen).toContain('testID="forwarded-loopback-browser"');
-    expect(screen).toContain("setLoopbackBrowser({");
-    expect(screen).toContain('header={{ title, closeLabel: "Close browser", onClose }}');
+    expect(ownerForwardedLoopbackBrowser).toContain('testID="forwarded-loopback-browser"');
+    expect(ownerBrowserNavigation).toContain("setLoopbackBrowser({");
+    expect(ownerForwardedLoopbackBrowser).toContain('header={{ title, closeLabel: "Close browser", onClose }}');
     expect(screen).not.toContain("Linking.openURL(forwardedLoopbackUrl");
   });
 
@@ -56,13 +68,12 @@ describe("internal browser", () => {
     expect(browser).toContain("header?: InternalBrowserHeader");
     expect(browser).toContain("accessibilityLabel={header.closeLabel}");
     expect(browser).toContain('<Ionicons name="close"');
-    expect(browser).toContain("<BrowserButton label=\"Back\"");
-    expect(browser).toContain("<BrowserButton label=\"Reload\"");
+    expect(browser).toContain("<BrowserButton\n            label=\"Back\"");
+    expect(browser).toContain("<BrowserButton\n              label=\"Reload\"");
     expect(browser).toContain("<BrowserAddressBar");
     expect(browser).toContain("onEditingChange={setAddressEditing}");
     expect(browser).not.toContain("locationTitle");
-    const forwardedBrowser = screen.slice(screen.indexOf("function ForwardedLoopbackBrowser"), screen.indexOf("type ConnectionActivity"));
-    expect(forwardedBrowser).not.toContain("styles.previewHeader");
+    expect(ownerForwardedLoopbackBrowser).not.toContain("styles.previewHeader");
   });
 
   it("bundles Chromium DevTools and connects it to authenticated native CDP", () => {
@@ -75,29 +86,29 @@ describe("internal browser", () => {
     expect(nativeBridge).toContain("BrowserDevToolsAssetRequest.resolve");
     expect(nativeBridge).toContain("setWebContentsDebuggingEnabledOnUiThread");
     expect(nativeBridge).toContain("context.runOnUiQueueThread");
-    expect(browser).toContain("/browser-devtools/${endpoint.token}/front_end/inspector.html");
-    expect(browser).toContain("DEVTOOLS_HEALTH_PROBE");
-    expect(browser).toContain("markInspectablePage(webView.current)");
-    expect(browser).toContain('method: "Runtime.evaluate"');
-    expect(browser).toContain('expression: "globalThis.__codewideDevToolsTargetMarker || null"');
-    expect(browser).toContain("targetContainsMarker(endpoint, candidate, marker.id)");
-    expect(browser).not.toContain("selectVisibleTarget");
-    expect(browser).not.toContain("targetVisibilityScore");
-    expect(browser).toContain("target.webSocketDebuggerUrl");
-    expect(browser).not.toContain("/devtools/page/${encodeURIComponent(targetId)}");
-    expect(browser).toContain('injectedJavaScriptBeforeContentLoaded={DEVTOOLS_BOOTSTRAP}');
-    expect(browser).toContain('window.localStorage.setItem("currentDockState", JSON.stringify("bottom"))');
-    expect(browser).toContain('source: "codewide-devtools-dock"');
-    expect(browser).toContain("collapseDuplicateInspectedPage(side)");
-    expect(browser).toContain("advancedApp?.rootSplitWidget");
-    expect(browser).toContain("split.hideMain()");
+    expect(ownerDevToolsTarget).toContain("/browser-devtools/${endpoint.token}/front_end/inspector.html");
+    expect(ownerBrowserDevToolsPaneNative).toContain("DEVTOOLS_HEALTH_PROBE");
+    expect(ownerBrowserDevTools).toContain("markInspectablePage(webView.current)");
+    expect(ownerDevToolsTarget).toContain('method: "Runtime.evaluate"');
+    expect(ownerDevToolsTarget).toContain('expression: "globalThis.__codewideDevToolsTargetMarker || null"');
+    expect(ownerDevToolsTarget).toContain("targetContainsMarker(endpoint, candidate, marker.id)");
+    expect(ownerDevToolsTarget).not.toContain("selectVisibleTarget");
+    expect(ownerDevToolsTarget).not.toContain("targetVisibilityScore");
+    expect(ownerDevToolsTarget).toContain("target.webSocketDebuggerUrl");
+    expect(ownerDevToolsTarget).not.toContain("/devtools/page/${encodeURIComponent(targetId)}");
+    expect(ownerBrowserDevToolsPaneNative).toContain("injectedJavaScriptBeforeContentLoaded={DEVTOOLS_BOOTSTRAP}");
+    expect(ownerDevToolsBootstrap).toContain('window.localStorage.setItem("currentDockState", JSON.stringify("bottom"))');
+    expect(ownerDevToolsBootstrap).toContain('source: "codewide-devtools-dock"');
+    expect(ownerDevToolsBootstrap).toContain("collapseDuplicateInspectedPage(side)");
+    expect(ownerDevToolsBootstrap).toContain("advancedApp?.rootSplitWidget");
+    expect(ownerDevToolsBootstrap).toContain("split.hideMain()");
     expect(browser).toContain("styles.contentRowReverse");
-    expect(browser).toContain("styles.dividerVertical");
-    expect(browser).toContain('targetPaneUndocked: { position: "absolute", width: 1, height: 1, opacity: 0 }');
-    expect(browser).toContain("<DevToolsErrorBoundary");
-    expect(browser).toContain("onRenderProcessGone=");
-    expect(browser).toContain("event.nativeEvent.didCrash");
-    expect(browser).toContain("<DevToolsFailurePanel");
+    expect(ownerBrowserDevToolsPaneNative).toContain("styles.dividerVertical");
+    expect(ownerInternalBrowserStyles).toContain('targetPaneUndocked: { position: "absolute", width: 1, height: 1, opacity: 0 }');
+    expect(ownerBrowserDevToolsPaneNative).toContain("<DevToolsErrorBoundary");
+    expect(ownerBrowserDevToolsPaneNative).toContain("onRenderProcessGone=");
+    expect(ownerBrowserDevToolsPaneNative).toContain("event.nativeEvent.didCrash");
+    expect(ownerBrowserDevToolsPaneNative).toContain("<DevToolsFailurePanel");
     expect(devToolsBoundary).toContain("componentDidCatch(error: Error, info: ErrorInfo)");
     expect(devToolsBoundary).toContain('testID="chromium-devtools-error-boundary"');
     expect(devToolsBoundary).toContain("Copy error");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { connectionDiagnosticReport } from "../src/data/connection-diagnostic-report";
+import { connectionDiagnosticReport } from "../src/features/connections/connectionDiagnosticReport";
 import { nativeEngineErrorDiagnostic } from "../src/native/native-engine-error-diagnostic";
 
 describe("native engine error diagnostics", () => {

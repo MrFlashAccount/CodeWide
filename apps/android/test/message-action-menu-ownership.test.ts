@@ -20,9 +20,15 @@ const webMenu = readFileSync(
   "utf8",
 );
 
+const ownerMessageActionRail = compactSource(readFileSync(new URL("../src/features/conversation/turns/MessageActionRail.tsx", import.meta.url), "utf8"));
+const ownerTurnTimelineItem = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url), "utf8"));
+const ownerTurnFooter = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnFooter.tsx", import.meta.url), "utf8"));
+
+const layout = compactSource(readFileSync(new URL("../src/features/conversation/ConversationLayout.tsx", import.meta.url), "utf8"));
+
 describe("conversation-owned message actions", () => {
   it("mounts one shared native menu host instead of one menu per bubble", () => {
-    expect(screen.match(/<MessageActionMenuProvider>/gu)).toHaveLength(1);
+    expect(layout.match(/<MessageActionMenuProvider>/gu)).toHaveLength(1);
     expect(screen).not.toContain("function MessageContextMenu");
     expect(screen).not.toContain("messageContextRoot");
     expect(nativeMenu.match(/<CodeWideMenu/gu)).toHaveLength(1);
@@ -60,9 +66,9 @@ describe("conversation-owned message actions", () => {
     expect(bubble).not.toContain("onLongPress");
     expect(bubble).not.toContain("Gesture.LongPress()");
     expect(bubble).not.toContain("<Pressable");
-    expect(screen).toContain('accessibilityLabel="Message actions"');
-    expect(screen).toContain("styles.messageActionButton");
-    expect(screen).toContain("<MessageActionRail request={{");
+    expect(ownerMessageActionRail).toContain('accessibilityLabel="Message actions"');
+    expect(ownerMessageActionRail).toContain("styles.messageActionButton");
+    expect(ownerTurnTimelineItem).toContain("<MessageActionRail request={{");
     expect(screen).not.toContain("onLongPress={(event) => openMessageActions");
   });
 
@@ -72,7 +78,7 @@ describe("conversation-owned message actions", () => {
     expect(nativeMenu).toContain('icon: "chatbubble-ellipses-outline"');
     expect(nativeMenu).not.toContain("assets/menu-icons");
     expect(webMenu).toContain("<Text style={styles.label}>Review response</Text>");
-    expect(screen).toContain(
+    expect(ownerTurnTimelineItem).toContain(
       'await beginContentReview({ kind: "response", target: agentReviewTarget, });',
     );
   });
@@ -80,17 +86,14 @@ describe("conversation-owned message actions", () => {
   it("keeps message actions tap-only so the rail cannot steal vertical scrolling", () => {
     expect(screen).not.toContain("const reviewGesture = Gesture.Pan()");
     expect(screen).not.toContain("translationX <= -28 || velocityX <= -500");
-    expect(screen).toContain("<View style={styles.messageActionRail}>");
-    const rail = screen.slice(
-      screen.indexOf("function MessageActionRail("),
-      screen.indexOf("interface OptimisticTurnProps"),
-    );
+    expect(ownerMessageActionRail).toContain("<View style={styles.messageActionRail}>");
+    const rail = ownerMessageActionRail;
     expect(rail).not.toContain("formatClockTime");
-    expect(screen).toContain(
+    expect(ownerTurnFooter).toContain(
       "<MessageFooterRow time={completedAt === null ? null : formatClockTime(completedAt)}",
     );
-    expect(screen).toContain('name="ellipsis-vertical"');
-    expect(screen).toContain("actionButtonRef.current?.measureInWindow");
+    expect(ownerMessageActionRail).toContain('name="ellipsis-vertical"');
+    expect(ownerMessageActionRail).toContain("actionButtonRef.current?.measureInWindow");
     expect(screen).not.toContain("event.nativeEvent.pageX");
     expect(nativeMenu).toContain("left: pageX - rootX, top: pageY - rootY, width, height");
   });

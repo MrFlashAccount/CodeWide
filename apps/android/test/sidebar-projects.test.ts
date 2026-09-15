@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ProjectUnreadModel, projectScopeKey } from "../src/data/project-unread-model";
-import { sidebarProjects } from "../src/data/sidebar-projects";
-import { sidebarRows } from "../src/data/sidebar-rows";
+import { sidebarProjects } from "../src/features/projects/sidebarProjects";
+import { sidebarRows } from "../src/features/threadList/sidebarRows";
 import {
   projectThreadSummaryView,
   createThreadSummaryModel,

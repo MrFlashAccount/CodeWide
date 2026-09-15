@@ -2,7 +2,7 @@ import type { ThreadResourcesRow } from "./thread-resource-types";
 export type { ThreadChangeResource, ThreadChangeScope, ThreadResourceKind, ThreadAttachmentResource, ThreadResourcesValue, ThreadResourcesRow } from "./thread-resource-types";
 import { localOnlyCollectionOptions } from "@tanstack/db";
 import { createCollection, type Collection } from "@tanstack/react-db";
-import type { ThreadGoal } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { ThreadGoal, ThreadGoalStatus } from "@codewide/codex-protocol/v0.147.0/v2";
 
 import { createTurnControlsCollection } from "./turn-controls-collection";
 import { createThreadHistoryModel, type ThreadHistoryModel, type ThreadHistoryRow } from "./thread-history-model";
@@ -162,22 +162,6 @@ export function createWorkspaceResourceDatabase(): WorkspaceResourceDatabase {
   };
 }
 
-export function threadHistoryResourceKey(connectionId: string, threadId: string): string {
-  return `${connectionId}\u0000${threadId}`;
-}
-
-export function turnControlsResourceKey(connectionId: string, cwd: string): string {
-  return `${connectionId}\u0000${cwd}`;
-}
-
-export function threadResourceKey(connectionId: string, threadId: string): string {
-  return `${connectionId}\u0000${threadId}`;
-}
-
-export function tunnelResourceKey(connectionId: string): string {
-  return connectionId;
-}
-
 type LocalCollection<T extends object> = Collection<T, string>;
 
 function put<T extends { id: string }>(collection: LocalCollection<T>, row: T): void {
@@ -192,3 +176,5 @@ function trimOldest<T extends { id: string; updatedAt: number }>(collection: Loc
     .slice(0, Math.max(0, rows.length - max));
   if (overflow.length > 0) collection.delete(overflow.map((row) => row.id));
 }
+
+export type ThreadGoalInput = { objective: string; status: ThreadGoalStatus; tokenBudget: number | null };

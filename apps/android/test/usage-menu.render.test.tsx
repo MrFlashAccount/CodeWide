@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, Text } from "react-native";
 
 import type { AccountPoolProfile } from "../src/data/account-pool";
 import type { AccountUsageSource } from "../src/data/account-usage-presentation";
-import { UsagePopover } from "../src/ui/UsagePopover";
+import { UsagePopover } from "../src/features/accounts/UsagePopover";
 import { AppPopover } from "../src/ui/AppPopover";
 
 function profile(id: string): AccountPoolProfile {

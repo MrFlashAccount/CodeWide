@@ -20,3 +20,6 @@ export type TurnControlsRow = {
   error: string | null;
   updatedAt: number;
 };
+
+import type { Personality } from "@codewide/codex-protocol/v0.147.0";
+export type ThreadSettings = { model?: string | null; effort?: string | null; personality?: Personality | null; permissions?: string | null };

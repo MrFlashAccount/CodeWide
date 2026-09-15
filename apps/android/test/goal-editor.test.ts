@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateGoalEditorDraft } from "../src/data/goal-editor";
+import { validateGoalEditorDraft } from "../src/features/goal/goalEditor";
 
 describe("goal editor", () => {
   it("creates an active goal without a budget by default", () => {

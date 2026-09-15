@@ -47,3 +47,12 @@ export type ThreadResourcesRow = {
   resourceErrors?: Partial<Record<ThreadResourceKind, string>>;
   updatedAt: number;
 };
+
+export type ThreadChangeDiffValue = {
+  threadId: string;
+  path: string;
+  changeScope: ThreadChangeScope;
+  patches: Array<{ turnId: string; itemId: string; kind: "add" | "delete" | "update"; diff: string }>;
+  source: string | null;
+  truncated: boolean;
+};

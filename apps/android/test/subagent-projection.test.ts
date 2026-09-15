@@ -1,3 +1,4 @@
+import {createV1TestThread as thread} from "./fixtures/v1Thread";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,7 +11,7 @@ import {
 } from "../src/data/subagent-projection";
 import { threadSummaryDescendantKeys, threadSummaryKey } from "../src/data/thread-summary-projection";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
-import type { Thread, Turn } from "@codewide/codex-protocol/v0.147.0/v2";
+import type { Turn } from "@codewide/codex-protocol/v0.147.0/v2";
 
 function summary(
   id: string,
@@ -319,13 +320,4 @@ function agentTurn(id: string, startedAt: number, text: string): Turn {
     ...turn(id, startedAt, ""),
     items: [{ type: "agentMessage", id: `${id}-message`, text, phase: "commentary", memoryCitation: null }],
   };
-}
-
-function thread(id: string, parentThreadId: string | null, createdAt: number, turns: Turn[]): Thread {
-  return {
-    id,
-    parentThreadId,
-    createdAt,
-    turns,
-  } as unknown as Thread;
 }

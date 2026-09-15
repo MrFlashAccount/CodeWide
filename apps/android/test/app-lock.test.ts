@@ -11,7 +11,7 @@ const appPackage = JSON.parse(readFileSync(new URL("../package.json", import.met
 const rootLayout = readFileSync(new URL("../app/_layout.tsx", import.meta.url), "utf8");
 const gate = readFileSync(new URL("../src/ui/AppLockGate.tsx", import.meta.url), "utf8");
 const nativeAuthentication = readFileSync(new URL("../src/native/local-authentication.native.ts", import.meta.url), "utf8");
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const settings = readFileSync(new URL("../src/features/settings/SettingsFeature.tsx", import.meta.url), "utf8");
 
 describe("biometric app lock", () => {
   it("ships the native Expo module and Face ID usage description", () => {
@@ -40,7 +40,7 @@ describe("biometric app lock", () => {
     expect(nativeAuthentication).toContain("LocalAuthentication.hasHardwareAsync()");
     expect(nativeAuthentication).toContain("LocalAuthentication.isEnrolledAsync()");
     expect(nativeAuthentication).toContain("LocalAuthentication.authenticateAsync");
-    expect(screen).toContain('testID="app-lock-setting"');
-    expect(screen).toContain('accessibilityLabel="Biometric app lock"');
+    expect(settings).toContain('testID="app-lock-setting"');
+    expect(settings).toContain('accessibilityLabel="Biometric app lock"');
   });
 });

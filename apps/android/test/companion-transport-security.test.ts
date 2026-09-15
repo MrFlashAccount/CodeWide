@@ -6,10 +6,15 @@ const read = (relative: string): string => readFileSync(new URL(relative, import
 
 describe("companion transport trust boundary", () => {
   it("routes every React Native companion HTTP surface through the native pinned origin", () => {
-    const workspace = read("../src/data/use-remote-workspace.ts");
+    const workspace = read("../src/features/ports/workspaceAdapter.ts");
     expect(workspace).toContain("nativeCompanionHttpOrigin");
     expect(workspace).not.toContain("companionHttpUrl(connection.endpoint");
-    expect(workspace.match(/nativeCompanionHttpOrigin\(connection\.id, connection\.endpoint\)/gu)).toHaveLength(4);
+    // Both tunnel operations, private transfers and telemetry keep the pinned native origin.
+    for (const [path, calls] of [["../src/features/ports/workspaceAdapter.ts", 2], ["../src/data/private-transfer.ts", 1], ["../src/data/workspace-telemetry.ts", 1]] as const) {
+      const owner = read(path);
+      expect(owner.match(/nativeCompanionHttpOrigin\(connection\.id, connection\.endpoint\)/gu)).toHaveLength(calls);
+      expect(owner).not.toContain("companionHttpUrl(connection.endpoint");
+    }
 
     const privateTransfer = read("../src/data/private-transfer.ts");
     expect(privateTransfer).toContain('from "./companion-http-url"');
@@ -64,9 +69,9 @@ describe("companion transport trust boundary", () => {
     expect(bridge).not.toContain("saveSecureConnectionCredentials");
     expect(bridge).not.toContain("CertificatePinningSetting");
 
-    const screen = read("../src/CodeWideScreen.tsx");
-    expect(screen).toContain("Companion identity pin (required)");
-    expect(screen).not.toContain("End-to-end encryption preview");
+    const pairing = read("../src/features/connections/PairingManual.tsx");
+    expect(pairing).toContain("Companion identity pin (required)");
+    expect(pairing).not.toContain("End-to-end encryption preview");
   });
 
   it("persists the authoritative paired device id and fails V2 closed when it is absent", () => {
@@ -80,7 +85,7 @@ describe("companion transport trust boundary", () => {
     expect(nativeModule).toContain('putString("deviceId", saved.deviceId)');
     expect(nativeModule).toContain('putString("savedServerId", saved.id)');
 
-    const workspace = read("../src/data/use-remote-workspace.ts");
+    const workspace = read("../src/features/connections/workspaceAdapter.ts");
     expect(workspace).toContain("deviceId: claimed.deviceId");
     expect(workspace).not.toContain("syncV2Lifecycle");
   });

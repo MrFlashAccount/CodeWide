@@ -40,6 +40,7 @@ Thumbs.db
 builds/
 test-results/
 playwright-report/
+/work/
 *.log
 
 # Vendored/generated reference trees are not part of this application repo.

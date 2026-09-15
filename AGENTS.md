@@ -17,6 +17,12 @@
   - Background refreshes and WebSocket/native events update the global model outside React effects and publish resolved changes to Legend State atomically. When React-owned navigation, range, or Promise-selection state changes, schedule that state change in a Transition; do not assume that merely wrapping an external-store mutation makes it deferred.
 - Effects remain valid only for synchronizing with external systems after commit: subscriptions, timers, native listeners, imperative handles, and cleanup/retention. They must not be used as a data-loading scheduler. If retention is required, prefer hiding it behind the store subscription lifecycle rather than coupling it to a component fetch effect.
 
+## Android V1 feature boundary
+
+- The selected V1 ownership contract and implemented source tree are in [docs/android-v1-feature-architecture.md](docs/android-v1-feature-architecture.md); exact owner moves, lifetimes and migration gates are in [docs/android-v1-feature-migration.md](docs/android-v1-feature-migration.md). Read [apps/android/src/CONTEXT.md](apps/android/src/CONTEXT.md) and the nearest local ownership contract before a V1 source move. M0–M8 source migration is implemented; the migration ledger records completed automated checks and unverified device scenarios.
+- V1 main-chat selection preserves immediate destination publication, cached content/local skeleton and progressive transcript hydration; header/composer must not wait for complete history, and composer restoration precedes editing. V1 subagent selection retains its existing Transition. This specific V1 contract qualifies the generic atomic-navigation guidance above; do not change navigation behavior during ownership extraction.
+- Preserve existing V1 JS module-evaluation startup separately from the boot-controlled native resource handle. Feature extraction must not add JS disposal to native stop or feature unmount. Existing source/schema/platform authorities and V1/V2 import isolation remain unchanged.
+
 ## Android V2 boundary
 
 ### Architecture and ownership

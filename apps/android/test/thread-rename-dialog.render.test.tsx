@@ -3,7 +3,7 @@ import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
 import { PortalHost } from "heroui-native/portal";
 import type { ReactNode } from "react";
 import { Uniwind } from "uniwind";
-import { ThreadRenameDialog } from "../src/ui/ThreadRenameDialog";
+import { ThreadRenameDialog } from "../src/features/turnActions/ThreadRenameDialog";
 
 beforeAll(() => {
   // WHY: Metro registers theme variables on device; Node needs them for the real dialog controls.

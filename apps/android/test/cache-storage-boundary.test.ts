@@ -10,7 +10,8 @@ describe("Android cache storage boundary", () => {
   const uiCache = source("../src/data/ui-cache-persistence.native.ts");
   const settings = source("../src/data/settings-persistence.native.ts");
   const profiles = source("../src/data/connection-profile-database.native.ts");
-  const workspace = source("../src/data/use-remote-workspace.ts");
+  const workspace = source("../src/features/composer/workspaceAdapter.ts");
+  const migration = source("../src/data/connection-runtime.ts");
   const legacyStore = source("../src/data/legacy-remote-store.native.ts");
   const nativeTransport = source("../src/native/native-transport.native.ts");
   const frameStore = source("../android/app/src/main/java/dev/codewide/app/remote/NativeFrameStore.kt");
@@ -51,8 +52,8 @@ describe("Android cache storage boundary", () => {
     expect(nativeModule).toContain("fun purgeLegacyDerivedStorage(promise: Promise)");
     expect(nativeTransport).toContain("bridge.purgeLegacyDerivedStorage()");
     expect(profiles).toContain("async importLegacyUiCache()");
-    expect(workspace).toContain("CONNECTION_PROFILE_STORAGE_MIGRATION_KEY");
-    const startup = workspace.slice(workspace.indexOf("async function startWorkspaceRuntime"));
+    expect(migration).toContain("CONNECTION_PROFILE_STORAGE_MIGRATION_KEY");
+    const startup = migration.slice(migration.indexOf("async function migrateConnectionProfiles"));
     expect(startup.indexOf("await profiles.importLegacyUiCache()")).toBeLessThan(
       startup.indexOf("await profiles.reconcileRuntimeConfigs(nativeConfigs)"),
     );
@@ -64,7 +65,7 @@ describe("Android cache storage boundary", () => {
   it("does not reopen the obsolete data database while opening threads", () => {
     expect(workspace).not.toContain("legacyStore.loadDraft");
     expect(workspace).not.toContain("legacyStore.loadDraftAttachments");
-    expect(workspace).not.toContain("legacyStore.loadScrollOffset");
+    expect(source("../src/features/conversation/workspaceAdapter.ts")).not.toContain("legacyStore.loadScrollOffset");
     expect(workspace).not.toContain("legacyStore.loadComposerPreferences");
     expect(legacyStore).toContain("await this.#database.closeAsync()");
   });

@@ -5,10 +5,10 @@ import type { NativeCommandDelivery } from "../native/native-transport";
 import { projectCodexVisibleTurn } from "./codex-contextual-user-message";
 import { compactTurnArtifactReferences } from "./turn-artifacts";
 import type { PendingDeliveryState } from "./thread-delivery-state";
-import type { ComposerAttachment } from "./use-remote-workspace";
+import type { StoredDraftAttachment } from "./thread-ui-state-types";
 
 export type ProjectedThreadChatDelivery = Omit<NativeCommandDelivery, "state"> & {
-  attachments: ComposerAttachment[];
+  attachments: StoredDraftAttachment[];
   state: PendingDeliveryState;
 };
 

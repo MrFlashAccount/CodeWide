@@ -1,13 +1,20 @@
+import { compactSource } from "./source-contract";
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
 import { codeReviewVoiceInputScope, type CodeReviewLineReference } from "../src/rendering/code-review";
 
-const codeReviewWorkspace = readFileSync(new URL("../src/rendering/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
+const codeReviewWorkspace = readFileSync(new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
 const imagePreviewHost = readFileSync(new URL("../src/rendering/ImagePreviewHost.tsx", import.meta.url), "utf8");
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
 const fullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url), "utf8");
+
+const ownerReviewVoice = readFileSync(new URL("../src/features/review/reviewVoice.ts", import.meta.url), "utf8");
+
+const reviewVoiceOwner = readFileSync(new URL("../src/features/review/reviewVoice.ts", import.meta.url), "utf8");
+
+const overlays = compactSource(readFileSync(new URL("../src/features/conversation/ConversationOverlayContent.tsx", import.meta.url), "utf8"));
 
 describe("review voice input", () => {
   it("keeps a line's voice identity stable and isolates other lines, files, windows and threads", () => {
@@ -27,11 +34,11 @@ describe("review voice input", () => {
   });
 
   it("keeps Changes subscribed to live voice state after the overlay opens", () => {
-    expect(codeReviewWorkspace).toContain("const voiceResource = useVoiceInputResource(voiceRuntime, voiceScope);");
-    expect(codeReviewWorkspace).toContain('voiceController.toggle(voiceScope)');
-    expect(codeReviewWorkspace).toContain('else if (voiceResource.phase !== "finishing") await voiceController.finish(voiceScope, false);');
-    expect(codeReviewWorkspace).toContain("updateDraft: updateCommentDraft");
-    expect(codeReviewWorkspace).toContain("voiceController?.unbind(voiceScope)");
+    expect(reviewVoiceOwner).toContain("const voiceResource = useVoiceInputResource(voiceRuntime, voiceScope);");
+    expect(ownerReviewVoice).toContain('voiceController.toggle(voiceScope)');
+    expect(ownerReviewVoice).toContain('else if (voiceResource.phase !== "finishing") await voiceController.finish(voiceScope, false);');
+    expect(reviewVoiceOwner).toContain("updateDraft: updateBoundDraft");
+    expect(ownerReviewVoice).toContain("voiceController?.unbind(voiceScope)");
   });
 
   it("does not retain the removed point-caption editor in image previews", () => {
@@ -42,7 +49,7 @@ describe("review voice input", () => {
   });
 
   it("connects review voice capture and fullscreen overlays to the shared native glow", () => {
-    expect(screen).toContain("voiceRuntime={appVoiceInputRuntime}");
+    expect(overlays).toContain("voiceRuntime={appVoiceInputRuntime}");
     expect(fullscreenModal).toContain("setNativeVoiceAuraTarget(reactTag)");
   });
 });

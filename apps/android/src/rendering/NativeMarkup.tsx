@@ -12,7 +12,7 @@ import { RichContentWidthProvider, useRichContentWidth } from "./RichContentLayo
 import { markupNodePath } from "./markup-node-path";
 import { markupImageDimensions, type MarkupImageDimensions } from "./markup-image-dimensions";
 import { highlightMessageMarkup } from "@codewide/rendering-core/markup";
-import { SearchHighlightQuery } from "../search/SearchMessageFocus";
+import { SearchHighlightQuery } from "./SearchMessageFocus";
 
 interface MarkupCapabilities {
   readonly code: (source: string, language: string, path: string) => ReactNode;

@@ -2,7 +2,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 import { colors, radii } from "../src/theme";
-import { SubagentWorkspace } from "../src/ui/SubagentWorkspace";
+import { SubagentWorkspace } from "../src/features/agents/SubagentWorkspace";
 
 const summary: StoredThreadSummary = {
   connectionId: "buddy",

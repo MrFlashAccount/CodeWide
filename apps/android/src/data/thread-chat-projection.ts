@@ -2,7 +2,7 @@ import type { Thread } from "@codewide/codex-protocol/v0.147.0/v2";
 import type { TurnUsageProjection } from "@codewide/sync-client";
 import type { ThreadCurrentOutcome } from "./thread-current-outcome";
 
-import type { QueuedPrompt } from "./use-remote-workspace";
+import type { QueuedPrompt } from "./thread-delivery-state";
 import { measureThreadNavigationWork } from "./thread-navigation-metrics";
 import { mergeThreadPartitions } from "./thread-partitions";
 import {

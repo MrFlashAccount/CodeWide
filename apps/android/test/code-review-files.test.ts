@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ThreadChangeResource } from "../src/data/workspace-resource-database";
-import { codeReviewFilesForDocument } from "../src/rendering/code-review-files";
+import { codeReviewFilesForDocument } from "../src/features/review/code-review-files";
 
 const change: ThreadChangeResource = {
   path: "/repo/src/existing.ts",

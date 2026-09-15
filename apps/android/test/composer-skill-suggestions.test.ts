@@ -5,7 +5,7 @@ import {
   composerSkillSuggestions,
   containsSkillInvocation,
   markdownForComposerSubmission,
-} from "../src/ui/composer-skill-suggestions";
+} from "../src/features/composer/skills/composer-skill-suggestions";
 
 const skills: CatalogSkill[] = [
   {

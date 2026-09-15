@@ -1,7 +1,7 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
 import { LegendList } from "@legendapp/list/react-native";
 import type { ReactNode } from "react";
-import { SkillsPicker } from "../src/ui/SkillsPicker";
+import { SkillsPicker } from "../src/features/composer/skills/SkillsPicker";
 import { parseCatalogSkills, assignSkillPlugins } from "../src/data/skill-catalog-adapter";
 import { SkillPluginIcon } from "../src/ui/SkillPluginIcon";
 import { listRowHeight } from "../src/ui/AppListRow.types";

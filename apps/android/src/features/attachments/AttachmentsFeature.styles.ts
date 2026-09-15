@@ -1,0 +1,77 @@
+import { StyleSheet } from "react-native";
+import {
+  colors,
+  controlSize,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+} from "../../theme";
+import { listRowHeight } from "../../ui/AppListRow.types";
+
+export const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  headerIcon: {
+    width: touchTarget,
+    height: touchTarget,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.large,
+  },
+  threadResourceRoute: { flex: 1, width: "100%", minHeight: 0 },
+  threadResourceRouteHidden: { display: "none" },
+  threadResourcesContent: { paddingBottom: spacing.md },
+  threadAttachmentCell: { height: listRowHeight.double },
+  threadResourceDocumentContent: {
+    width: "100%",
+    minWidth: 0,
+    alignSelf: "stretch",
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.lg,
+    gap: spacing.sm,
+  },
+  threadResourcePreviewCenter: {
+    flex: 1,
+    minHeight: 180,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  primaryAction: {
+    minHeight: controlSize.touch,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.large,
+    backgroundColor: colors.primary,
+  },
+  primaryActionText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  threadResourcesEmpty: {
+    minHeight: 180,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.xxs,
+  },
+  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  menuTitleRow: {
+    minHeight: touchTarget,
+    marginBottom: spacing.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+  },
+  sheetHeaderIconSlot: {
+    width: controlSize.compact,
+    height: controlSize.compact,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  menuNotice: { color: colors.textMuted, ...typeScale.body, paddingVertical: spacing.xs },
+  menuScroll: { flex: 1, minHeight: 0 },
+  errorText: { color: colors.red, ...typeScale.body },
+});

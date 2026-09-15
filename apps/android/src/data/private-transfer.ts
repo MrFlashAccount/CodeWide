@@ -1,5 +1,6 @@
-import { companionHttpUrl } from "./companion-http-url";
 import { cachedAttachmentFetch } from "../native/attachment-cache/cached-transfer";
+import { companionHttpUrl } from "./companion-http-url";
+import type { StoredConnection } from "./connection-profile-types";
 
 export type TransferAccess = { baseUrl: string; authorization: string; cacheScope?: string };
 export type GetTransferAccess = (forceRefresh?: boolean) => Promise<TransferAccess>;
@@ -233,4 +234,22 @@ function parseContentRange(value: string | null): { endExclusive: number; total:
   const total = match[3] === "*" ? null : Number(match[3]);
   if (!Number.isSafeInteger(end) || end < 0 || (total !== null && (!Number.isSafeInteger(total) || total < 0))) return null;
   return { endExclusive: end + 1, total };
+}
+
+/** Existing profile and native HTTP authorization owners used by private consumers. */
+export type PrivateTransferAuthority = {
+  currentConnections(): StoredConnection[];
+  nativeCompanionHttpOrigin(connectionId: string, endpoint: string): Promise<string>;
+  scopedHttpAuthorization(connection: StoredConnection, forceRefresh: boolean): Promise<string>;
+};
+
+/** Returns qualified access without retaining credentials in the feature. */
+export function createPrivateTransferAccess({ currentConnections, nativeCompanionHttpOrigin, scopedHttpAuthorization }: PrivateTransferAuthority) {
+    const transferAccess = async (connectionId: string, forceRefresh = false): Promise<TransferAccess> => {
+      const connection = currentConnections().find((candidate) => candidate.id === connectionId);
+      if (connection === undefined) throw new Error("Connection not found");
+      const origin = await nativeCompanionHttpOrigin(connection.id, connection.endpoint);
+      return { baseUrl: companionHttpUrl(origin, "/"), authorization: await scopedHttpAuthorization(connection, forceRefresh), cacheScope: connection.id };
+    };
+  return transferAccess;
 }

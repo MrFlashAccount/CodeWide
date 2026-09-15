@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { searchDayFromCalendar, searchDayToCalendar } from "../src/search/search-calendar-date";
+import { searchDayFromCalendar, searchDayToCalendar } from "../src/features/search/search-calendar-date";
 import { searchDateBoundary } from "../src/data/message-search";
 
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });

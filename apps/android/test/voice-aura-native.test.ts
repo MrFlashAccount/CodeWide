@@ -45,7 +45,7 @@ describe("native Android voice aura", () => {
   });
 
   it("accepts the pressed microphone origin in composer and reusable inputs", () => {
-    const composer = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+    const composer = compactSource(readFileSync(new URL("../src/features/composer/ComposerMicrophone.tsx", import.meta.url), "utf8"));
     const input = compactSource(readFileSync(new URL("../src/ui/Typography.tsx", import.meta.url), "utf8"));
     for (const surface of [composer, input]) {
       expect(surface).toContain("setNativeVoiceAuraOrigin(");

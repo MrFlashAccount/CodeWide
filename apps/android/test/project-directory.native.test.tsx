@@ -3,7 +3,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import type { ReactNode } from "react";
 import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
 import { Uniwind } from "uniwind";
-import { ProjectPickerSheet } from "../src/ui/ProjectPickerSheet";
+import { ProjectPickerSheet } from "../src/features/projects/ProjectPickerSheet";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
 

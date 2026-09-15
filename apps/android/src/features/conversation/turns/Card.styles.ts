@@ -1,0 +1,61 @@
+import { StyleSheet } from "react-native";
+import { colors, controlSize, radii, spacing, typeScale, typeWeight } from "../../../theme";
+
+export const styles = StyleSheet.create({
+  flex: { flex: 1 },
+  card: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    alignSelf: "stretch",
+    backgroundColor: colors.surfaceContainerLow,
+    borderRadius: radii.medium,
+    paddingVertical: spacing.xxs,
+    paddingHorizontal: 0,
+    gap: spacing.xxs,
+  },
+  bubbleNestedSurface: { backgroundColor: "transparent" },
+  cardContent: {
+    width: "100%",
+    minWidth: 0,
+    maxWidth: "100%",
+    alignSelf: "stretch",
+    gap: spacing.xxs,
+  },
+  cardHeader: {
+    width: "100%",
+    minWidth: 0,
+    minHeight: controlSize.compact,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    opacity: 1,
+  },
+  cardHeaderToggle: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: controlSize.compact,
+    alignSelf: "stretch",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.compact,
+    opacity: 1,
+  },
+  cardIconSlot: { flexShrink: 0, alignItems: "center", justifyContent: "center" },
+  cardTitle: {
+    minWidth: 0,
+    flexShrink: 1,
+    color: colors.text,
+    ...typeScale.label,
+    fontWeight: typeWeight.semibold,
+  },
+  cardTitleWave: { alignSelf: "center", justifyContent: "center" },
+  cardStatusIcon: {
+    minWidth: typeScale.label.lineHeight,
+    minHeight: typeScale.label.lineHeight,
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  cardStatusDot: { width: 7, height: 7, borderRadius: radii.pill, backgroundColor: colors.green },
+});

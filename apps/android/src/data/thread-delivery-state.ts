@@ -1,3 +1,4 @@
+import type { RemoteFileAttachment } from "@codewide/sync-client";
 import type { NativeCommandDelivery } from "../native/native-transport";
 
 /**
@@ -50,3 +51,13 @@ export function deliveryProgressRank(state: PendingDeliveryState): number {
     case "appServerAccepted": return 5;
   }
 }
+
+export type QueuedPrompt = { commandId: string; text: string; attachments: RemoteFileAttachment[]; createdAt: number; state: "queued" | "uncertain" | "failed"; lastError: string | null };
+
+import type { ThreadSettings } from "./turn-controls-types";
+export type SendMode = { type: "start" } | { type: "queue" } | { type: "steer"; expectedTurnId: string };
+export type TurnSendOptions = ThreadSettings & {
+  skills?: Array<{ name: string; path: string }>;
+  attachments?: RemoteFileAttachment[];
+  workspaceRequestId?: string;
+};

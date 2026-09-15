@@ -29,3 +29,14 @@ export function readDeviceTimePreferences(): DeviceTimePreferences {
     ...(uses24HourClock === undefined ? {} : { uses24HourClock }),
   };
 }
+
+/** V1 device-time owner, extracted without changing interaction or resource lifetime. */
+
+
+export function formatThreadTime(timestamp: number): string {
+  return formatDeviceTime(timestamp);
+}
+
+export function formatClockTime(timestamp: number): string {
+  return formatDeviceTime(timestamp);
+}

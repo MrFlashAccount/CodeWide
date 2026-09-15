@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ThreadListProjection } from "../src/data/thread-list-projection";
+import { ThreadListProjection } from "../src/features/threadList/summaryProjection";
 import type { PendingServerRequest } from "../src/data/pending-request-types";
 import type { StoredThreadSummary } from "../src/data/thread-summary-types";
 

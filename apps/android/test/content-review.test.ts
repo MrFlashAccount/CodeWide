@@ -20,6 +20,14 @@ const selectionModule = readFileSync(new URL("../android/app/src/main/java/dev/c
 const mermaidDiagram = readFileSync(new URL("../src/rendering/MermaidDiagram.native.tsx", import.meta.url), "utf8");
 const mermaidRenderer = readFileSync(new URL("../android/app/src/main/assets/mermaid-renderer.html", import.meta.url), "utf8");
 
+const attachmentDocument = readFileSync(new URL("../src/features/attachments/AttachmentDocumentPreview.tsx", import.meta.url), "utf8");
+const reviewAdmission = readFileSync(new URL("../src/features/composer/attachments/reviewAdmission.ts", import.meta.url), "utf8");
+const reviewFeature = readFileSync(new URL("../src/features/review/ReviewFeature.tsx", import.meta.url), "utf8");
+
+const ownerAgentResponseMarkdown = compactSource(readFileSync(new URL("../src/features/conversation/content/AgentResponseMarkdown.tsx", import.meta.url), "utf8"));
+
+const overlays = compactSource(readFileSync(new URL("../src/features/conversation/ConversationOverlayContent.tsx", import.meta.url), "utf8"));
+
 describe("content review", () => {
   it("attaches image pin coordinates and comments without treating the image as a Mermaid diagram", () => {
     const image = { id: "image-1", label: "Screenshot", reference: "scoped:attachments:shot.png" };
@@ -42,8 +50,8 @@ describe("content review", () => {
     expect(contentReviewHost).not.toContain("useAppFullscreenOverlay");
     expect(contentReviewHost).not.toContain("resumeTray");
     expect(documentPreview).toContain('<ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />');
-    expect(screen).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
-    expect(compactSource(screen)).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />');
+    expect(overlays).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
+    expect(compactSource(attachmentDocument)).toContain('<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />');
     expect(mermaidDiagram).toContain('<ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />');
   });
 
@@ -58,16 +66,16 @@ describe("content review", () => {
 
   it("exposes saved review comments on completed responses and Markdown documents", () => {
     expect(contentReviewHost).toContain("export function ContentReviewComments");
-    expect(screen).toContain("<ContentReviewComments targetId={reviewTarget.id} />");
-    expect(screen).toContain('<ContentReviewComments targetId={`markdown-document:${document.request.path}`} />');
+    expect(ownerAgentResponseMarkdown).toContain("<ContentReviewComments targetId={reviewTarget.id} />");
+    expect(attachmentDocument).toContain('<ContentReviewComments targetId={`markdown-document:${document.request.path}`} />');
     expect(documentPreview).toContain('<ContentReviewComments targetId={markdownReviewTarget.id} presentation="overlay" />');
   });
 
   it("updates one regular Markdown attachment as comments are saved", () => {
     expect(contentReviewHost).toContain("const attachmentId = await runtime.attach(markdown)");
     expect(contentReviewHost).toContain("attachmentByScopeRef.current.set(current.scope, attachmentId)");
-    expect(screen).toContain("candidate.id !== previousAttachmentId");
-    expect(screen).toContain("attachmentId: contentReviewAttachmentId");
+    expect(reviewAdmission).toContain("candidate.id !== previousAttachmentId");
+    expect(reviewFeature).toContain("attachmentId: contentReviewAttachmentId");
   });
 
   it("treats a missing native review module as an optional capability", () => {

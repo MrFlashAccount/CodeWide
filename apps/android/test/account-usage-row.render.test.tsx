@@ -2,7 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import { render } from "@testing-library/react-native";
 import { Text } from "react-native";
 
-import { AccountUsageRow } from "../src/ui/AccountUsageRow";
+import { AccountUsageRow } from "../src/features/accounts/AccountUsageRow";
 import { colors } from "../src/theme";
 
 describe("compact account usage row", () => {

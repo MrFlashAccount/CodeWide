@@ -12,7 +12,23 @@ const detailSqlite = readFileSync(new URL("../src/data/thread-detail-sqlite.nati
 const chatModel = readFileSync(new URL("../src/data/thread-chat-model.ts", import.meta.url), "utf8");
 const chatWindowHook = readFileSync(new URL("../src/data/use-thread-chat-window.ts", import.meta.url), "utf8");
 const historyController = readFileSync(new URL("../src/data/use-thread-history-controller.ts", import.meta.url), "utf8");
-const remoteWorkspace = readFileSync(new URL("../src/data/use-remote-workspace.ts", import.meta.url), "utf8");
+const remoteWorkspace = readFileSync(new URL("../src/data/thread-sync-history.ts", import.meta.url), "utf8");
+
+const ownerTimelineViewport = compactSource(readFileSync(new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url), "utf8"));
+const ownerConversationDetail = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDetail.tsx", import.meta.url), "utf8"));
+const ownerTimelineViewportState = compactSource(readFileSync(new URL("../src/features/conversation/timeline/timelineViewport.ts", import.meta.url), "utf8"));
+const ownerTimelineProjection = compactSource(readFileSync(new URL("../src/features/conversation/timeline/timelineProjection.ts", import.meta.url), "utf8"));
+const ownerConversationWorkspace = compactSource(readFileSync(new URL("../src/features/conversation/ConversationWorkspace.tsx", import.meta.url), "utf8"));
+
+const ownerThreadSyncHistory = readFileSync(new URL("../src/data/thread-sync-history.ts", import.meta.url), "utf8");
+const ownerThreadSyncRuntime = readFileSync(new URL("../src/data/thread-sync-runtime.ts", import.meta.url), "utf8");
+
+const ownerThreadSyncRemoteLoader = readFileSync(new URL("../src/data/thread-sync-remote-loader.ts", import.meta.url), "utf8");
+
+const ownerTimelineGestureBindings = compactSource(readFileSync(new URL("../src/features/conversation/timeline/timelineGestureBindings.ts", import.meta.url), "utf8"));
+const ownerMainConversationHistory = compactSource(readFileSync(new URL("../src/features/conversation/mainConversationHistory.ts", import.meta.url), "utf8"));
+const ownerMainConversationPublication = compactSource(readFileSync(new URL("../src/features/conversation/MainConversationPublication.tsx", import.meta.url), "utf8"));
+const ownerConversationDestinationSurface = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url), "utf8"));
 
 describe("thread history pagination contract", () => {
   it("keeps range fetching in the model and coalesces viewport intents", () => {
@@ -44,8 +60,8 @@ describe("thread history pagination contract", () => {
     expect(historyController).not.toContain("maintainAtEnd");
     expect(screen).not.toContain("maintainAtEnd=");
     expect(historyController).toContain("containsLatest: options.isLatestRange");
-    expect(screen).toContain("!fullscreenCovered && historyViewport.containsLatest && !awayFromLatest && !threadSearchActive");
-    expect(screen).toContain("const away = !historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;");
+    expect(ownerTimelineViewport).toContain("!props.fullscreenCovered && props.historyViewport.containsLatest && !props.awayFromLatest && !props.threadSearchActive");
+    expect(ownerTimelineGestureBindings).toContain("const away = !props.historyViewport.containsLatest || distance > LATEST_TIMELINE_THRESHOLD_PX;");
     expect(timelineListSource).toContain("maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}");
     expect(timelineListSource).toContain("dataChange: true");
     expect(timelineListSource).toContain("itemLayout: true");
@@ -53,28 +69,28 @@ describe("thread history pagination contract", () => {
   });
 
   it("does not advance a backend cursor before its page is durable", () => {
-    expect(remoteWorkspace).toContain("const persisted = await threadDetails.prependTurns(");
-    expect(remoteWorkspace).toContain('if (!persisted.accepted) throw new Error("Backend history page was not persisted")');
+    expect(ownerThreadSyncHistory).toContain("const persisted = await threadDetails.prependTurns(");
+    expect(ownerThreadSyncHistory).toContain('if (!persisted.accepted) throw new Error("Backend history page was not persisted")');
     expect(remoteWorkspace).not.toContain("threadDetails?.prependTurns(");
-    expect(remoteWorkspace).toContain('"companion/thread/history/after"');
-    expect(remoteWorkspace).toContain("await threadDetails.appendTurnsAfter(");
+    expect(ownerThreadSyncHistory).toContain('"companion/thread/history/after"');
+    expect(ownerThreadSyncHistory).toContain("await threadDetails.appendTurnsAfter(");
     // Reopened-SQLite regressions verify durable-before-visible ordering.
     // This source check protects the ownership boundary only.
-    expect(remoteWorkspace).toContain("await threadDetails.prependTurnsBefore(");
+    expect(ownerThreadSyncHistory).toContain("await threadDetails.prependTurnsBefore(");
     expect(historyController).not.toContain("acceptedHistory");
   });
 
   it("tops up a short cached head from the canonical fifteen-turn tail", () => {
-    expect(remoteWorkspace).toContain("residentTurnCount < THREAD_RESIDENT_TURN_LIMIT");
-    expect(remoteWorkspace).toContain("new ThreadSyncCatchUp(cached, details.historyCursor(connectionId, threadId)");
+    expect(ownerThreadSyncRuntime).toContain("residentTurnCount < THREAD_RESIDENT_TURN_LIMIT");
+    expect(ownerThreadSyncRuntime).toMatch(/new ThreadSyncCatchUp\(\s*cached,\s*details\.historyCursor\(connectionId, threadId\)/u);
     expect(remoteWorkspace).not.toContain("new ThreadSyncCatchUp(cached, details.historyCursor(connectionId, threadId) ?? null");
-    expect(remoteWorkspace).toContain('reason !== "activation"');
-    expect(remoteWorkspace).toContain("repairShortWindow || details.historyCursor(connectionId, threadId) !== null");
-    expect(remoteWorkspace).toContain("cursor: null");
-    expect(remoteWorkspace).toContain("limit: THREAD_RESIDENT_TURN_LIMIT");
-    expect(remoteWorkspace).toContain('sortDirection: "desc"');
-    expect(remoteWorkspace).toContain("parseThreadTurnsListPage(await rpcAfterAttach<unknown>");
-    expect(remoteWorkspace).toContain("await details.mergeTailTurns(connectionId, threadId, [...page.turns].reverse(), page.nextCursor, isCurrent)");
+    expect(ownerThreadSyncRemoteLoader).toContain('reason !== "activation"');
+    expect(ownerThreadSyncRuntime).toContain("repairShortWindow || details.historyCursor(connectionId, threadId) !== null");
+    expect(ownerThreadSyncHistory).toContain("cursor: null");
+    expect(ownerThreadSyncHistory).toContain("limit: THREAD_RESIDENT_TURN_LIMIT");
+    expect(ownerThreadSyncHistory).toContain('sortDirection: "desc"');
+    expect(ownerThreadSyncHistory).toMatch(/parseThreadTurnsListPage\(\s*await rpcAfterAttach<unknown>/u);
+    expect(ownerThreadSyncHistory).toMatch(/await details\.mergeTailTurns\(\s*connectionId,\s*threadId,\s*\[\.\.\.page\.turns\]\.reverse\(\),\s*page\.nextCursor,\s*isCurrent,?\s*\)/u);
     expect(detailDatabase).toContain('mode: "authoritative" | "reset" | "live" | "append" | "tail"');
     expect(detailDatabase).toContain('mode === "reset" || mode === "tail"');
     expect(detailDatabase).not.toContain('replaceExisting: mode === "reset" || mode === "tail"');
@@ -96,11 +112,11 @@ describe("thread history pagination contract", () => {
     expect(detailDatabase).toContain("createThreadChatModel({");
     expect(detailDatabase).not.toContain("createSqliteSyncRuntime<ThreadDetailRow, string>");
     expect(detailDatabase).not.toContain("createCollection({");
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
-    expect(screen).toContain("function MainConversationDetail(");
-    expect(screen).toContain("const projection = projectThreadChatWindow( chatDatabase, chatWindow,");
+    expect(ownerConversationDetail).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
+    expect(ownerConversationDetail).toContain("function MainConversationDetail(");
+    expect(ownerMainConversationHistory).toContain("const projection = projectThreadChatWindow( chatDatabase, chatWindow,");
     expect(chatModel).toContain("commitRange(");
-    expect(screen).toContain("!threadLoadBlocksPresentation(chatSnapshot.status)");
+    expect(ownerMainConversationHistory).toContain("!threadLoadBlocksPresentation(chatSnapshot.status)");
     expect(screen).not.toContain("activeConversationNavigationReady");
     expect(screen).not.toContain("AtomicConversationSurface");
     expect(screen).not.toContain("ReactiveConversationSurface");
@@ -115,9 +131,9 @@ describe("thread history pagination contract", () => {
     expect(windowHook).toContain("node.revision.get()");
     expect(windowHook).toContain("node.peek()");
     expect(windowHook).not.toContain("node.get()");
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
-    expect(screen.indexOf("function MainConversationDetail")).toBeLessThan(
-      screen.indexOf("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)"),
+    expect(ownerConversationDetail).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
+    expect(ownerConversationDetail.indexOf("function MainConversationDetail")).toBeLessThan(
+      ownerConversationDetail.indexOf("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)"),
     );
     expect(screen).not.toContain("useThreadChatWindowContent");
     expect(screen).not.toContain("useThreadChatWindowStructure");
@@ -168,24 +184,24 @@ describe("thread history pagination contract", () => {
     expect(detailDatabase).toContain("setRemoteLoader(loader)");
     expect(detailDatabase).toContain("await loader.hydrateWindow(");
     expect(detailDatabase).toContain("void hydrateAndInstall().catch(");
-    expect(remoteWorkspace).toContain("details.setRemoteLoader({");
+    expect(readFileSync(new URL("../src/data/workspace-runtime.ts", import.meta.url), "utf8")).toContain("details.setRemoteLoader(createThreadSyncRemoteLoader(details, workspaceThreadSync))");
   });
 
   it("keeps authoritative refresh out of cached navigation readiness", () => {
     expect(screen).not.toContain("threadSnapshotReady: remoteThread !== null");
     expect(screen).not.toContain("activeConversationNavigationReady");
-    expect(screen).toContain("const historyRestoreReady = !threadLoadBlocksPresentation(chatSnapshot.status)");
+    expect(ownerMainConversationHistory).toContain("const historyRestoreReady = !threadLoadBlocksPresentation(chatSnapshot.status)");
     expect(screen).not.toContain("const hydrationTaskKey");
   });
 
   it("binds pagination state and cancellation to the active history epoch", () => {
-    expect(screen).toContain("historyResourceRaw?.historyEpoch === historyEpoch");
+    expect(ownerMainConversationHistory).toContain("historyResourceRaw?.historyEpoch === historyEpoch");
     expect(screen).not.toContain("thread-hydration:");
     expect(historyController).toContain("state.historyEpoch !== context.historyEpoch");
     expect(historyController).toContain("const cursor = context.readHistoryCursor()");
     expect(historyController).toContain("const nextCursor = context.readHistoryCursor()");
     expect(detailDatabase).toContain("historyEpoch !== expectedHistoryEpoch");
-    expect(screen).toContain("nextCursor: chatDatabase.historyCursor(connectionId, threadId)");
+    expect(ownerMainConversationHistory).toContain("nextCursor: chatDatabase.historyCursor(connectionId, threadId)");
     expect(detailDatabase).toContain("historyCursor(connectionId, threadId)");
     expect(detailDatabase).toContain("meta.historyCursor !== input.historyCursor.value");
     expect(historyController).toContain("nextCursor === null");
@@ -228,13 +244,10 @@ describe("thread history pagination contract", () => {
   });
 
   it("keeps three pages resident and trims the far edge only after the gesture", () => {
-    const timelineList = screen.slice(
-      screen.indexOf("<ThreadTimelineList"),
-      screen.indexOf("</ThreadTimelineList>"),
-    );
+    const timelineList = ownerTimelineViewport;
 
-    expect(timelineList).toContain("onStartReached={loadOlderAtTimelineStart}");
-    expect(timelineList).toContain("onEndReached={loadNewerAtTimelineEnd}");
+    expect(timelineList).toContain("onStartReached={props.loadOlderAtTimelineStart}");
+    expect(timelineList).toContain("onEndReached={props.loadNewerAtTimelineEnd}");
     expect(timelineList).toContain("showsVerticalScrollIndicator={false}");
     expect(historyController).toContain("loadRange(context, direction)");
     expect(detailDatabase).toContain("turnLimit: THREAD_HISTORY_PAGE_SIZE");
@@ -250,17 +263,17 @@ describe("thread history pagination contract", () => {
     expect(historyController).not.toContain("freeze");
     expect(screen).not.toContain("timelineInteractionStartedRef");
     expect(screen).not.toContain("scrollDirectionRef");
-    expect(screen).toContain('const paginationEdgeLockRef = useConversationRef<"older" | "newer" | null>( composerScope, () => null, );');
-    expect(screen).toContain('paginationEdgeLockRef.current = null;');
-    expect(screen).toContain('paginationEdgeLockRef.current === "newer"');
-    expect(screen).toContain('paginationEdgeLockRef.current === "older"');
-    expect(screen).toContain('"ignored_opposite_edge"');
-    expect(screen).toContain("schedulePaginationWindowTrim();");
+    expect(ownerTimelineViewportState).toContain('const paginationEdgeLockRef = useConversationRef<"older" | "newer" | null>( composerScope, () => null, );');
+    expect(ownerTimelineViewportState).toContain('paginationEdgeLockRef.current = null;');
+    expect(ownerTimelineViewportState).toContain('paginationEdgeLockRef.current === "newer"');
+    expect(ownerTimelineViewportState).toContain('paginationEdgeLockRef.current === "older"');
+    expect(ownerTimelineViewportState).toContain('"ignored_opposite_edge"');
+    expect(ownerTimelineGestureBindings).toContain("schedulePaginationWindowTrim();");
     // Starting momentum cancels deferred trimming even when the handler also pauses decoration.
-    const momentumBegin = screen.match(/onMomentumScrollBegin=\{\(\) => \{([^}]+)\}\}/u)?.[1];
+    const momentumBegin = ownerTimelineGestureBindings.match(/const onMomentumScrollBegin = useEvent<[\s\S]*?>\(\(\) => \{([^}]+)\}\)/u)?.[1];
     expect(momentumBegin).toContain("cancelScheduledPaginationTrim()");
     expect(momentumBegin).not.toContain("trimPaginationWindow()");
-    expect(screen).toContain("trimPaginationWindow();");
+    expect(ownerTimelineGestureBindings).toContain("trimPaginationWindow();");
     expect(historyController).toContain("trimAfterGesture");
     expect(timelineListSource).toContain("maintainVisibleContentPosition={{ data: true, size: true }}");
     expect(timelineListSource).toContain("maintainScrollAtEnd={followTail ? TIMELINE_TAIL_FOLLOW_CONFIG : false}");
@@ -268,8 +281,8 @@ describe("thread history pagination contract", () => {
   });
 
   it("projects delivery state as ordinary chronological timeline rows", () => {
-    expect(screen).toContain("searchState === null ? projection.timeline");
-    expect(screen).toContain("if (modelTimeline !== null) return modelTimeline");
+    expect(ownerMainConversationPublication).toContain("searchState === null ? history.projection.timeline");
+    expect(ownerTimelineProjection).toContain("if (modelTimeline !== null) return modelTimeline");
     expect(screen).not.toContain("mergeChronologicalTimeline");
     expect(screen).not.toContain("pendingDeliveries={");
     expect(screen).not.toContain("MAX_OPTIMISTIC_MESSAGES");
@@ -282,22 +295,19 @@ describe("thread history pagination contract", () => {
       historyController.indexOf("export type ThreadHistoryViewport"),
       historyController.indexOf("type ThreadHistoryControllerOptions"),
     );
-    const conversationPane = screen.slice(
-      screen.indexOf("function ConversationPane"),
-      screen.indexOf("function ConversationPane") + 8_000,
-    );
+    const conversationPane = compactSource(readFileSync(new URL("../src/features/conversation/conversationCapabilities.ts", import.meta.url), "utf8"));
 
     expect(viewportInterface).not.toContain("nextCursor");
     expect(viewportInterface).not.toContain("loadingOlder");
     expect(viewportInterface).not.toContain("historyEpoch");
-    expect(conversationPane).toContain("historyViewport?: ThreadHistoryViewport");
+    expect(conversationPane).toContain("historyViewport: ThreadHistoryViewport");
     expect(conversationPane).not.toContain("loadState?: ThreadLoadState");
   });
 
   it("keeps a mounted timeline visible while a pagination subset reloads", () => {
-    expect(screen).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
-    expect(screen).toContain("<Suspense fallback={ <ConversationNavigationFallback");
-    expect(screen).toContain("<ConversationDestination");
+    expect(ownerConversationDetail).toContain("const chatWindow = useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
+    expect(ownerConversationDestinationSurface).toContain("<Suspense fallback={ <ConversationNavigationFallback");
+    expect(ownerConversationDestinationSurface).toContain("<ConversationDestination");
     expect(screen).not.toContain("pendingConversationRequest");
     expect(screen).not.toContain("advanceConversationPresentation(");
     expect(screen).not.toContain("navigationReady");
@@ -311,7 +321,7 @@ describe("thread history pagination contract", () => {
   });
 
   it("restores a semantic anchor declaratively without measuring the whole chat", () => {
-    expect(screen).toContain("initialPosition={timelineInitialPosition}");
+    expect(ownerTimelineViewport).toContain("initialPosition={props.timelineInitialPosition}");
     expect(screen).not.toContain("contentHeight - timelineViewportHeightRef.current - pendingOffset");
     expect(screen).not.toContain("scrollToIndex({ index: anchorIndex");
     expect(timelineListSource).toContain("legendInitialPositionProps(initialPosition)");

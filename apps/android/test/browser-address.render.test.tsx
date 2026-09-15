@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
-import { BrowserAddressBar } from "../src/browser/BrowserAddressBar";
+import { BrowserAddressBar } from "../src/features/ports/browser/BrowserAddressBar";
 
 it("keeps typed text during redirects and resolves it against the latest page on Go", () => {
   const navigate = jest.fn();

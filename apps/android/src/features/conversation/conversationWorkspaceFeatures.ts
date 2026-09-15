@@ -1,0 +1,31 @@
+import type { AccountsWorkspaceCapabilities } from "../accounts/workspaceCapabilities";
+import type { AgentsWorkspaceCapabilities } from "../agents/workspaceCapabilities";
+import type { AttachmentsWorkspaceCapabilities } from "../attachments/workspaceCapabilities";
+import type { ChangesWorkspaceCapabilities } from "../changes/workspaceCapabilities";
+import type { ComposerWorkspaceCapabilities } from "../composer/workspaceCapabilities";
+import type { GoalWorkspaceCapabilities } from "../goal/workspaceCapabilities";
+import type { PortsWorkspaceCapabilities } from "../ports/workspaceCapabilities";
+import type { ProjectsWorkspaceCapabilities } from "../projects/workspaceCapabilities";
+import type { QueueWorkspaceCapabilities } from "../queue/workspaceCapabilities";
+import type { RequestsWorkspaceCapabilities } from "../requests/workspaceCapabilities";
+import type { ReviewWorkspaceCapabilities } from "../review/workspaceCapabilities";
+import type { TerminalWorkspaceCapabilities } from "../terminal/workspaceCapabilities";
+import type { TurnActionsWorkspaceCapabilities } from "../turnActions/workspaceCapabilities";
+import type { ConversationWorkspaceCapabilities } from "./workspaceCapabilities";
+/** Qualified owner capabilities consumed only by full conversation composition. */
+export type ConversationWorkspaceFeatures = {
+  projects: ProjectsWorkspaceCapabilities;
+  turnActions: TurnActionsWorkspaceCapabilities;
+  composer: ComposerWorkspaceCapabilities;
+  conversation: ConversationWorkspaceCapabilities;
+  queue: QueueWorkspaceCapabilities;
+  terminal: TerminalWorkspaceCapabilities;
+  goal: GoalWorkspaceCapabilities;
+  review: ReviewWorkspaceCapabilities;
+  accounts: AccountsWorkspaceCapabilities;
+  ports: PortsWorkspaceCapabilities;
+  requests: RequestsWorkspaceCapabilities;
+  agents: AgentsWorkspaceCapabilities;
+  attachments: AttachmentsWorkspaceCapabilities;
+  changes: ChangesWorkspaceCapabilities;
+};

@@ -1,9 +1,17 @@
+import { compactSource } from "./source-contract";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { effectiveComposerSendPreference, resolveComposerSendMode } from "../src/data/composer-delivery-mode";
+import { effectiveComposerSendPreference, resolveComposerSendMode } from "../src/features/composer/deliveryMode";
 
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+
+const ownerSubmission = readFileSync(new URL("../src/features/composer/submission.ts", import.meta.url), "utf8");
+const ownerVoice = readFileSync(new URL("../src/features/composer/voice.ts", import.meta.url), "utf8");
+
+const ownerHistoryAnchor = readFileSync(new URL("../src/features/conversation/timeline/historyAnchor.ts", import.meta.url), "utf8");
+
+const anchor = compactSource(readFileSync(new URL("../src/features/conversation/timeline/historyAnchor.ts", import.meta.url), "utf8"));
 
 describe("composer delivery mode", () => {
   it("queues the normal send mode while a turn is active", () => {
@@ -33,13 +41,13 @@ describe("composer delivery mode", () => {
   });
 
   it("finishes active voice input before applying a long-press delivery choice", () => {
-    expect(screen).toContain('if (voicePhase !== "idle") void finishVoice(true, id);');
-    expect(screen).toContain("voiceController?.finish(composerScope, sendAfter, (text) => send(text, preference))");
+    expect(ownerSubmission).toContain('if (voicePhase !== "idle") void finishVoice(true, id);');
+    expect(ownerVoice).toContain("voiceController?.finish(composerScope, sendAfter, (text) => send(text, preference))");
   });
 
   it("loads the latest range before asking LegendList to reveal a new turn", () => {
-    expect(screen).toContain("void historyViewport.loadLatest().then(() => {");
-    expect(screen).toContain("void timelineRef.current?.scrollToEnd({ animated: false });");
+    expect(anchor).toMatch(/void historyViewport\s*\.loadLatest\(\)\s*\.then\(\(\) => \{/u);
+    expect(ownerHistoryAnchor).toContain("void timelineRef.current?.scrollToEnd({ animated: false });");
     expect(screen).not.toContain("historyViewport.revealLatest");
     expect(screen).not.toContain("markTimelineAtLatest");
   });

@@ -14,11 +14,7 @@ import { ContentReviewKeyboardDock } from "./ContentReviewKeyboardDock";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useEvent } from "../react/useEvent";
-import type {
-  VoiceTranscriptionEvent,
-  VoiceTranscriptionOptions,
-  VoiceTranscriptionSession,
-} from "../data/use-remote-workspace";
+import type { VoiceTranscriptionEvent, VoiceTranscriptionOptions, VoiceTranscriptionSession } from "../data/voice-input-controller";
 import type { WorkspaceResourceDatabase } from "../data/workspace-resource-database";
 import type { VoiceInputController } from "../data/voice-input-controller";
 import { colors, radii, spacing, typeScale, typeWeight, iconSize, controlSize } from "../theme";

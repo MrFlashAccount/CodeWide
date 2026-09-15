@@ -1,5 +1,5 @@
 import { act, render } from "@testing-library/react-native";
-import { SidebarListFeedback, sidebarListState } from "../src/ui/SidebarListFeedback";
+import { SidebarListFeedback, sidebarListState } from "../src/features/threadList/SidebarListFeedback";
 
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());

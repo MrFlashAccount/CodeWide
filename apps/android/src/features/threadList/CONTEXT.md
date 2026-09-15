@@ -1,0 +1,9 @@
+# V1 thread list
+
+This TypeScript/TSX owner coordinates catalog rows, independent global/project pages and filters, scroll offsets, row actions and desktop/mobile list presentation. `ThreadListFeature` owns the scoped recovery and Suspense boundaries. Mounted state, query coordination, projections and row equality remain separate modules; rows never subscribe the workspace shell to active-chat materialization.
+
+Public contracts are the feature surface, layout props, thread item/source types, filter/model contracts, list state/workspace/actions, project-page coordination and the summary-to-item projection. Navigation consumes only item identity; search consumes the public summary conversion. Header, row, menu, style and swipe implementations remain private. Existing account, project, connection, navigation, diagnostic-commit and turn-action public contracts are the only peer imports; the exact module allowlist is enforced in dependency-cruiser.v1.config.mjs.
+
+Summary and usage database references remain the existing model owners. Their cached ranges, pinned/recent separation, pending-request projection and stable item identities are preserved. The projection retains an unchanged readonly source instead of making a pass-through copy. List state survives conversation selection. Row press intent retains its zero-delay release/transfer order, and a command starts before swipe close. Pin/archive/read commands remain lower-authority operations; only list selection cleanup is local.
+
+M2 checks cover query limits, projection equality, navigation isolation, filter/account scope, row geometry and sidebar feedback. The V1 gate checks native/web/compatibility types, lint, acyclic imports and private/facade negative probes. Desktop/browser and native device interaction/performance smoke are disclosed separately; automated source/render evidence is not a device parity claim.

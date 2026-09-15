@@ -43,7 +43,7 @@ for (const lifecycle of ["sync-v2-lifecycle.native.ts", "sync-v2-lifecycle.web.t
     throw new Error(`Legacy Sync V2 canary remains: ${lifecycle}`);
   }
 }
-const workspace = readFileSync(resolve(repositoryRoot, "apps/android/src/data/use-remote-workspace.ts"), "utf8");
+const workspace = readFileSync(resolve(repositoryRoot, "apps/android/src/data/workspace-runtime.ts"), "utf8");
 if (/syncV2Lifecycle|sync-v2-lifecycle|createNativeSyncV2Lifecycle/u.test(workspace)) {
   throw new Error("Legacy workspace still starts the Sync V2 canary");
 }

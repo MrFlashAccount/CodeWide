@@ -54,3 +54,31 @@ Oxlint, Oxfmt, or Knip migration is complete.
   is a V1/V2 scenario comparison for navigation, documents, voice, and reconnect.
   Reversibility requires retaining the existing generation switch and V1 until
   that comparison passes. This migration does not switch generations.
+
+## V1 feature ownership migration
+
+The approved [feature architecture](android-v1-feature-architecture.md) and
+[migration ledger](android-v1-feature-migration.md) define source ownership;
+[local source context](../apps/android/src/CONTEXT.md) routes the implementation.
+D0 created documentation only. The later authorized M0–M8 migration implements feature-path gate coverage, all feature owners, lower runtime closure and facade deletion. The migration ledger records final verification and explicit device-only limits.
+
+M0 extends presentation-token coverage to `src/features/**`; existing React
+coverage already includes these paths. `v1-feature-boundaries.test.ts` exercises
+the production configurations against temporary sources and verifies lower
+data/native-to-feature, root-composition back-edges, V1-to-V2 and type-cycle
+rejections. Fixtures are removed after verification. The V1 gate and all 16
+focused boundary/presentation tests pass. No feature exemption or suppression
+was introduced.
+
+Every M1–M8 application unit runs `pnpm validate:android:v1` and its mapped semantic
+regressions. Move native/web/type siblings and source-test consumers atomically.
+Keep main-chat immediate/progressive behavior distinct from subagent Transition;
+verify separate JS module startup and boot-native resource handles. The ledger
+records stale-activation, draft/queue, upload/voice, history/scroll and tool-lifetime
+acceptance plus rollback. Existing history, rendering and platform docs remain
+the detailed mechanism owners.
+
+D0 checks document links, complete source/field/style inventory, approved-file
+scope and `git diff --check`, and runs the documented V1 gate before handoff. This
+documentation update does not claim feature-boundary enforcement, a completed
+application refactor, device parity, full V2-tool parity or release completion.

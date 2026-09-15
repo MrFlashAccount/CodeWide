@@ -7,17 +7,51 @@ import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
 
+const ownerProtocolBlock = compactSource(readFileSync(new URL("../src/features/conversation/protocol/ProtocolBlock.tsx", import.meta.url), "utf8"));
+
+const turnOwner = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnTimelineItem.tsx", import.meta.url), "utf8"));
+
+const pendingOwner = compactSource(readFileSync(new URL("../src/features/conversation/turns/OptimisticTurn.tsx", import.meta.url), "utf8"));
+
+const commandOwner = compactSource(readFileSync(new URL("../src/features/conversation/protocol/CommandOutput.tsx", import.meta.url), "utf8"));
+
+const cardOwner = compactSource(readFileSync(new URL("../src/features/conversation/turns/Card.tsx", import.meta.url), "utf8"));
+
+const unknownOwner = compactSource(readFileSync(new URL("../src/features/conversation/protocol/UnknownProtocolBlock.tsx", import.meta.url), "utf8"));
+
+const usageOwner = compactSource(readFileSync(new URL("../src/features/conversation/protocol/TokenUsageProtocolBlock.tsx", import.meta.url), "utf8"));
+
+const subagentOwner = compactSource(readFileSync(new URL("../src/features/conversation/protocol/AgentActivityProtocolBlock.tsx", import.meta.url), "utf8"));
+
+const footerOwner = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnFooter.tsx", import.meta.url), "utf8"));
+
+const cardStyles = compactSource(readFileSync(new URL("../src/features/conversation/turns/Card.styles.ts", import.meta.url), "utf8"));
+
+const bubbleNestedSurfaceStyles = compactSource(readFileSync(new URL("../src/features/conversation/turns/Card.styles.ts", import.meta.url), "utf8"));
+
+const thinkingStatusStyles = compactSource(readFileSync(new URL("../src/features/conversation/protocol/ProtocolBlock.styles.ts", import.meta.url), "utf8"));
+
+const codeBlockStyles = compactSource(readFileSync(new URL("../src/rendering/NativeCodeBlock.tsx", import.meta.url), "utf8"));
+
+const diffFileStyles = compactSource(readFileSync(new URL("../src/features/conversation/protocol/FileChangeProtocolBlock.styles.ts", import.meta.url), "utf8"));
+
+const attachmentChipStyles = compactSource(readFileSync(new URL("../src/features/conversation/turns/UserMessageContent.styles.ts", import.meta.url), "utf8"));
+
+const approvalCardStyles = compactSource(readFileSync(new URL("../src/features/requests/RequestFeature.styles.ts", import.meta.url), "utf8"));
+
+const agentTurnBody = readFileSync(new URL("../src/features/conversation/turns/AgentTurnBody.tsx", import.meta.url), "utf8");
+
 describe("command activity presentation", () => {
   it("gives an empty authoritative running turn a Thinking bubble, not a floating footer", () => {
-    const turn = screen.slice(screen.indexOf("function TurnTimelineItem"), screen.indexOf("type LiveContentMode"));
+    const turn = turnOwner;
     expect(turn).not.toContain("showAgentBubble");
-    expect(turn).toMatch(/!hasAgentContent && \(?rawTurn\.status === "inProgress"\)? &&/u);
-    expect(turn).toContain('testID="turn-thinking-placeholder"');
-    expect(turn).toContain('text="Thinking"');
+    expect(agentTurnBody).toMatch(/!presentation\.hasAgentContent && \(?presentation\.rawTurn\.status === "inProgress"\)? &&/u);
+    expect(agentTurnBody).toContain('testID="turn-thinking-placeholder"');
+    expect(agentTurnBody).toContain('text="Thinking"');
     const agentBubble = turn.slice(turn.indexOf('<Bubble variant="agent"'), turn.lastIndexOf("</Bubble>"));
     expect(agentBubble).toContain("footer={ <TurnFooter");
-    expect(agentBubble).toContain('testID="turn-thinking-placeholder"');
-    const pending = screen.slice(screen.indexOf("function OptimisticTurn"), screen.indexOf("type CachedTurnProjection"));
+    expect(agentBubble).toContain("renderAgentTurnBody(turn, presentation,");
+    const pending = pendingOwner;
     expect(pending).not.toContain("<TurnFooter");
     expect(pending).not.toContain("turn-thinking-placeholder");
     expect(pending).not.toContain('testID="optimistic-turn-footer-spacer"');
@@ -32,11 +66,9 @@ describe("command activity presentation", () => {
   });
 
   it("renders command input and output as separately copyable sections", () => {
-    const start = screen.indexOf("function CommandExecutionProtocolBlock");
-    const end = screen.indexOf("const CONTENT_VIEW_CHUNK_BYTES", start);
-    const commandBlock = screen.slice(start, end);
+    const commandBlock = commandOwner;
 
-    expect(screen).toContain('if (block.kind === "commandExecution") return ( <CommandExecutionProtocolBlock');
+    expect(ownerProtocolBlock).toContain('if (block.kind === "commandExecution") return ( <CommandExecutionProtocolBlock');
     expect(commandBlock).toContain(">Input</Text>");
     expect(commandBlock).toContain('<CopyButton text={command} compact />');
     expect(commandBlock).toContain('language="shellscript"');
@@ -51,12 +83,12 @@ describe("command activity presentation", () => {
   });
 
   it("keeps generic protocol surfaces transparent only when nested in a message bubble", () => {
-    const card = screen.slice(screen.indexOf("function Card("), screen.indexOf("function usePersistentExpansion"));
-    const unknown = screen.slice(screen.indexOf("function UnknownProtocolBlock"), screen.indexOf("function TokenUsageProtocolBlock"));
-    const usage = screen.slice(screen.indexOf("function TokenUsageProtocolBlock"), screen.indexOf("function OpenableImage"));
-    const subagent = screen.slice(screen.indexOf("function AgentActivityProtocolBlock"), screen.indexOf("function subagentActivityLabel"));
-    const cardStyle = styleDeclaration("card");
-    const nestedStyle = styleDeclaration("bubbleNestedSurface");
+    const card = cardOwner;
+    const unknown = unknownOwner;
+    const usage = usageOwner;
+    const subagent = subagentOwner;
+    const cardStyle = sourceObjectDeclaration(cardStyles, "card");
+    const nestedStyle = sourceObjectDeclaration(bubbleNestedSurfaceStyles, "bubbleNestedSurface");
     expect(card).toContain("useInsideBubbleSurface()");
     expect(card).toContain("insideBubbleSurface && styles.bubbleNestedSurface");
     for (const surface of [unknown, usage, subagent]) {
@@ -65,17 +97,15 @@ describe("command activity presentation", () => {
     }
     expect(cardStyle).toContain("backgroundColor: colors.surfaceContainerLow");
     expect(nestedStyle).toContain('backgroundColor: "transparent"');
-    expect(styleDeclaration("thinkingStatus")).not.toContain("backgroundColor");
-    expect(styleDeclaration("codeBlock")).toContain("backgroundColor: colors.code");
-    expect(styleDeclaration("diffFile")).toContain("backgroundColor: colors.code");
-    expect(styleDeclaration("attachmentChip")).toContain("backgroundColor: colors.surfaceRaised");
-    expect(styleDeclaration("approvalCard")).toContain("backgroundColor: colors.warningContainer");
+    expect(sourceObjectDeclaration(thinkingStatusStyles, "thinkingStatus")).not.toContain("backgroundColor");
+    expect(sourceObjectDeclaration(codeBlockStyles, "fallbackViewport")).toContain("backgroundColor: colors.code");
+    expect(sourceObjectDeclaration(diffFileStyles, "diffFile")).toContain("backgroundColor: colors.code");
+    expect(sourceObjectDeclaration(attachmentChipStyles, "attachmentChip")).toContain("backgroundColor: colors.surfaceRaised");
+    expect(sourceObjectDeclaration(approvalCardStyles, "approvalCard")).toContain("backgroundColor: colors.warningContainer");
   });
 
   it("keeps activity tokens and cost on one text baseline", () => {
-    const start = screen.indexOf("function OutputFootprintMetric");
-    const end = screen.indexOf("const CONTENT_VIEW_CHUNK_BYTES", start);
-    const metric = screen.slice(start, end);
+    const metric = commandOwner.slice(commandOwner.indexOf("function OutputFootprintMetric"));
 
     expect(metric).toContain("const value = `≈${TOKEN_SYMBOL}");
     expect(compactSource(metric)).toContain("<Text numberOfLines={1} style={styles.outputFootprintMetricText}> {value} </Text>");
@@ -83,9 +113,7 @@ describe("command activity presentation", () => {
   });
 
   it("shows one token symbol before input and output counts in the turn footer", () => {
-    const start = screen.indexOf("function TurnFooter");
-    const end = screen.indexOf("function CalmSpinner", start);
-    const footer = screen.slice(start, end);
+    const footer = footerOwner;
 
     expect(footer.match(/\{TOKEN_SYMBOL\}/g)).toHaveLength(1);
     expect(footer).toContain('prefix="↓"');
@@ -158,7 +186,3 @@ describe("command activity presentation", () => {
     })).toBe(0.000015);
   });
 });
-
-function styleDeclaration(name: string): string {
-  return sourceObjectDeclaration(screen, name);
-}

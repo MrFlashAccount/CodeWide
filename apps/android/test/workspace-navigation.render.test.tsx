@@ -3,11 +3,11 @@ import { act, render } from "@testing-library/react-native";
 import { Suspense, use } from "react";
 import { Text } from "react-native";
 
-import { createThreadNavigationModel } from "../src/data/thread-navigation-model";
+import { createThreadNavigationModel } from "../src/features/navigation/threadNavigation";
 import {
   WorkspaceConversationHost,
   WorkspaceThreadListVisibility,
-} from "../src/ui/WorkspaceConversationHost";
+} from "../src/features/navigation/ConversationHost";
 
 it("switches only the destination and affected row selectors, not the workspace or sidebar owner", async () => {
   const navigation = createThreadNavigationModel();

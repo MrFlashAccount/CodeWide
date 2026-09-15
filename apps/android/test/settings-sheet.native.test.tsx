@@ -2,7 +2,7 @@ import { fireEvent, render } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { Text } from "react-native";
 
-import { SettingsSheet } from "../src/ui/SettingsSheet";
+import { SettingsSheet } from "../src/features/settings/SettingsSheet";
 
 // WHY: Node cannot host the native bottom-sheet window. Exercise the real settings
 // navigation, AppSheet and list rows while replacing only the external platform surface.

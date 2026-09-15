@@ -13,7 +13,7 @@ const mermaid = readFileSync(new URL("../src/rendering/MermaidDiagram.native.tsx
 
 describe("native semantic reveal", () => {
   it("reveals tools and subagent actions only in a moving live tail with stable identities", () => {
-    const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+    const screen = compactSource(readFileSync(new URL("../src/features/conversation/turns/TurnActivity.tsx", import.meta.url), "utf8"));
     const activity = screen.slice(screen.indexOf("function TurnActivitySegment"), screen.indexOf("interface TurnActivityProps"));
     expect(activity.match(/<NativeRevealSurface revealKey=\{`\$\{turnKey\}:\$\{block.key\}`\} animate=\{animateNew && motionAllowed && turnStatus === "inProgress"\}/gu)).toHaveLength(2);
     expect(activity).toContain("useContext(TimelineMotionContext)");

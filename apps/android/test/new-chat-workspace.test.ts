@@ -1,3 +1,4 @@
+import { compactSource } from "./source-contract";
 import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
@@ -5,11 +6,15 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
 const detailDatabase = readFileSync(new URL("../src/data/thread-detail-database.native.ts", import.meta.url), "utf8");
 
+const emptyStateOwner = compactSource(readFileSync(new URL("../src/features/conversation/ConversationEmptyState.tsx", import.meta.url), "utf8"));
+
+const workspaceOwner = compactSource(readFileSync(new URL("../src/features/projects/newChatSubmission.ts", import.meta.url), "utf8"));
+
 describe("new chat workspace selector", () => {
   it("shows the second-row dropdown only after plugin capability inspection", () => {
-    const emptyStateStart = source.indexOf('testID="new-chat-empty-state"');
-    const emptyStateEnd = source.indexOf("</View>", emptyStateStart);
-    const emptyState = source.slice(emptyStateStart, emptyStateEnd);
+    const emptyStateStart = emptyStateOwner.indexOf('testID="new-chat-empty-state"');
+    const emptyStateEnd = emptyStateOwner.indexOf("</View>", emptyStateStart);
+    const emptyState = emptyStateOwner.slice(emptyStateStart, emptyStateEnd);
 
     expect(emptyState).toContain("workspaceSupport !== null");
     expect(emptyState).toContain('label: "In this folder"');
@@ -18,13 +23,15 @@ describe("new chat workspace selector", () => {
   });
 
   it("creates an isolated workspace before starting the thread", () => {
-    const sendStart = source.indexOf('if (draftChat.workspaceMode === "isolated")');
-    const sendEnd = source.indexOf("const commandId = await remote.sendText", sendStart);
-    const send = source.slice(sendStart, sendEnd);
+    const sendStart = workspaceOwner.indexOf('if (draftChat.workspaceMode === "isolated")');
+    const sendEnd = workspaceOwner.indexOf("const commandId = await commands.sendText", sendStart);
+    expect(sendStart).toBeGreaterThanOrEqual(0);
+    expect(sendEnd).toBeGreaterThan(sendStart);
+    const send = workspaceOwner.slice(sendStart, sendEnd);
 
-    expect(send).toContain("await remote.startThreadInWorkspace");
+    expect(send).toContain("await commands.startThreadInWorkspace");
     expect(send).toContain("draftChat.id");
-    expect(source.slice(sendStart, sendStart + 1_600)).toContain("workspaceRequestId: draftChat.id");
+    expect(workspaceOwner.slice(sendStart, sendStart + 1_600)).toContain("workspaceRequestId: draftChat.id");
   });
 
   it("keeps the newly started shell resident until its first turn completes", () => {

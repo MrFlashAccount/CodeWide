@@ -4,7 +4,7 @@ import {
   mergeFailedComposerAttachments,
   mergeFailedComposerText,
   rollbackOwnedModelSelection,
-} from "../src/data/composer-mutation-recovery";
+} from "../src/features/composer/submissionRecovery";
 
 describe("composer async mutation recovery", () => {
   it("preserves every failed concurrent send without overwriting newer input", () => {

@@ -1,0 +1,119 @@
+import { readFileSync } from "node:fs";
+import { expect, it } from "vitest";
+import {
+  ownerOptimisticTurn,
+  ownerPreTurnLifecycleRows,
+  ownerTurnProjection,
+  ownerTurnActivity,
+  ownerTurnActivityStyles,
+  ownerUserMessageContent,
+  ownerCompletedTurnHistory,
+  ownerTurnTimelineItem,
+  ownerMessageActionRail,
+  ownerLiveAgentResponse,
+  ownerDisclosureState,
+  ownerCard,
+  ownerTurnContexts,
+  ownerLiveAgentResponseStyles,
+  ownerUserMessageContentStyles,
+  ownerTurnTimelineItemStyles,
+} from "./conversation-turns-sources";
+
+const ownerAgentTurnBody = readFileSync(new URL("../../src/features/conversation/turns/AgentTurnBody.tsx", import.meta.url), "utf8");
+const ownerUserTurnBody = readFileSync(new URL("../../src/features/conversation/turns/UserTurnBody.tsx", import.meta.url), "utf8");
+
+it("preserves conversation turns integration contracts", () => {
+  expect(ownerOptimisticTurn).toContain('? "Running"');
+  expect(ownerPreTurnLifecycleRows).toContain('testID="pre-turn-lifecycle"');
+  expect(ownerTurnProjection).toContain("preTurnActivityIndexes");
+  expect(ownerOptimisticTurn).toContain(': "Accepted by Companion"');
+  expect(ownerOptimisticTurn).toContain(
+    "accessibilityLabel={`Message ${deliveryLabel.toLowerCase()}`}",
+  );
+  expect(ownerTurnActivity).toMatch(
+    /<View\s+testID="turn-activity"\s+style=\{\[\s*styles\.turnActivity,\s*compactHeader && styles\.turnActivityCompact,\s*expanded && styles\.turnActivityExpanded,?\s*\]\}\s*>/u,
+  );
+  expect(ownerTurnActivity).toContain("showToggle={!shouldAutoExpand}");
+  expect(ownerTurnActivity).toContain("{showToggle && (");
+  expect(ownerTurnActivity).toMatch(
+    /style=\{\[\s*styles\.turnActivityList,\s*!showToggle && styles\.turnActivityListWithoutToggle,?\s*\]\}/u,
+  );
+  expect(ownerTurnActivityStyles).toMatch(
+    /turnActivityListWithoutToggle: \{\s*paddingLeft: 0,?\s*\}/u,
+  );
+  expect(ownerTurnActivity).toContain('testID="turn-activity-loading-shimmer"');
+  expect(ownerTurnActivity).toContain("{expanded && (");
+  expect(ownerTurnActivityStyles).toMatch(/turnActivityExpanded: \{[^}]*width: "100%"/u);
+  expect(ownerTurnProjection).toContain("normalizeThreadItem(connectionId(row.connectionId)");
+  expect(ownerUserMessageContent).toContain('testID="user-image-gallery"');
+  expect(ownerUserMessageContent).toContain("text={normalized.text}");
+  expect(ownerUserMessageContent).toContain("normalizeUserMessage(part.text)");
+  expect(ownerUserMessageContent).toContain("<RichMarkdown\n          source={text}");
+  expect(ownerOptimisticTurn).toContain('testID="optimistic-turn-footer"');
+  expect(ownerOptimisticTurn).toContain("const deliveryLabel = failed");
+  expect(ownerOptimisticTurn).toContain('? "Checking delivery"');
+  expect(ownerOptimisticTurn).toContain('? "Sending to Companion"');
+  expect(ownerOptimisticTurn).toContain(': "Queued";');
+  expect(ownerOptimisticTurn).toContain("`Message was rejected: ${item.lastError}`");
+  expect(ownerCompletedTurnHistory).toContain("function CompletedTurnHistory");
+  expect(ownerCompletedTurnHistory).toContain("function CollapsedTurnActivity");
+  expect(ownerTurnProjection).toContain("selectTurnRenderWindow(rawTurn)");
+  expect(ownerTurnProjection).toContain("renderWindow.liveActivityIndexes.flatMap");
+  expect(ownerTurnProjection).toContain(
+    "activeTurnSequence(liveActivityEntries, renderWindow.collapsedActivityIndexes)",
+  );
+  expect(ownerTurnTimelineItem).toContain('rawTurn.status === "inProgress"');
+  expect(ownerMessageActionRail).toContain('accessibilityLabel="Message actions"');
+  expect(ownerTurnTimelineItem).toMatch(/<MessageActionRail\s+request=\{\{/);
+  expect(ownerLiveAgentResponse).toMatch(
+    /<AppendOnlyLiveContent\s+cacheKey=\{cacheKey\}\s+source=\{projection\.source\}\s+mode="markdown"\s+streamMetricKey=\{streamMetricKey\}\s+markdownProjection=\{projection\}\s+fill=\{fill\}\s+animateNew=\{animateNew\}\s*\/>/,
+  );
+  expect(ownerLiveAgentResponse).toContain(
+    'mode === "markdown" ? "live-agent-response" : "live-tool-output"',
+  );
+  expect(ownerLiveAgentResponse).toContain('const singleMarkdownTree = mode === "markdown";');
+  expect(ownerTurnProjection).toMatch(
+    /const visibleLiveActivitySequence =\s*liveActivitySequence\.map\(\(part\) => \{/,
+  );
+  expect(ownerAgentTurnBody).toContain(
+    "projection={presentation.liveMarkdownProjections.get(part.block.key)!}",
+  );
+  expect(ownerDisclosureState).toContain(
+    "const persistentExpansionStates = new Map<string, boolean>()",
+  );
+  expect(ownerDisclosureState).toContain("const PERSISTENT_EXPANSION_STATE_LIMIT = 4_096");
+  expect(ownerCard).toContain("writePersistentExpansionState(localKey, resolved)");
+  expect(ownerTurnTimelineItem).toContain("function TurnTimelineItem({");
+  expect(ownerTurnActivity).toMatch(/const thinkingOnly =\s*part\.blocks\.length > 0/);
+  expect(ownerTurnActivity).toContain('testID="thinking-status-section"');
+  expect(ownerTurnContexts).toContain("const TurnActivityContentContext = createContext(false);");
+  expect(ownerTurnActivity).toContain("<TurnActivityContentContext.Provider value>");
+  expect(ownerTurnActivityStyles).toMatch(
+    /thinkingStatusSection: \{\s*minWidth: 0,\s*maxWidth: "100%",\s*alignSelf: "flex-start",\s*alignItems: "flex-start",?\s*\}/,
+  );
+  expect(ownerTurnTimelineItem).toMatch(/variant="agent"\s+fill=\{presentation\.agentBubbleFill\}/);
+  expect(ownerTurnTimelineItem).toMatch(
+    /testID="codex-bubble"\s+errorContext=\{`Thread: \$\{turn\.threadId\}\\nTurn: \$\{turn\.id\}`\}/,
+  );
+  expect(ownerUserTurnBody).toMatch(/variant="user"\s+testID="user-bubble"/);
+  expect(ownerUserTurnBody).toContain("errorResetKey={`${turn.key}:user`}");
+  expect(ownerUserTurnBody).toMatch(
+    /<SearchMessage\s+key=\{`\$\{block\.key\}:\$\{index\}`\}\s+itemId=\{block\.raw\.id\}\s*>\s*<View style=\{styles\.userMessageBlock\}>/,
+  );
+  expect(ownerTurnProjection).toMatch(
+    /richMarkdownLayout\(latestAgentBlock\??\.body \?\? ""\) === "fill"/u,
+  );
+  expect(ownerLiveAgentResponseStyles).toContain(
+    'liveAgentResponse: { minWidth: 0, maxWidth: "100%", alignSelf: "flex-start" }',
+  );
+  expect(ownerLiveAgentResponseStyles).toContain(
+    'liveAgentResponseFill: { width: "100%", alignSelf: "stretch" }',
+  );
+  expect(ownerUserMessageContentStyles).toContain(
+    "userMessageContent: { minWidth: 0, gap: spacing.compact }",
+  );
+  expect(ownerTurnTimelineItemStyles).toContain("userMessageBlock: { minWidth: 0 }");
+  expect(ownerUserMessageContentStyles).toContain("userMessageTextBlock: { minWidth: 0 }");
+  expect(ownerTurnTimelineItem).toContain("style={styles.agentMessageRow}");
+  expect(ownerTurnActivity).toContain("expanded={visiblyExpanded}");
+});

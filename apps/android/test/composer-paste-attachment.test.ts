@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AUTO_ATTACH_PASTE_MIN_CHARS,
   captureClipboardLargePaste,
-} from "../src/data/composer-paste-attachment";
+} from "../src/features/composer/attachments/largePasteCapture";
 
 describe("composer large-paste attachments", () => {
   it("preserves the replacement deletion when selected text is replaced", () => {

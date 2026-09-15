@@ -1,0 +1,66 @@
+import { StyleSheet } from "react-native";
+import {
+  colors,
+  layoutSize,
+  radii,
+  spacing,
+  touchTarget,
+  typeScale,
+  typeWeight,
+} from "../../theme";
+
+export const styles = StyleSheet.create({
+  headerIcon: {
+    width: touchTarget,
+    height: touchTarget,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.large,
+  },
+  emptyConversation: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.conversationSurface,
+  },
+  emptyText: { color: colors.textMuted, ...typeScale.title },
+  sheetTitle: { minWidth: 0, flexShrink: 1, color: colors.text, ...typeScale.heading },
+  errorText: { color: colors.red, ...typeScale.body },
+  primaryButton: {
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.medium,
+    backgroundColor: colors.primary,
+  },
+  primaryButtonText: { color: colors.onPrimary, fontWeight: typeWeight.semibold },
+  scannerRoot: { flex: 1, backgroundColor: colors.background },
+  scannerHeader: {
+    minHeight: layoutSize.header,
+    paddingHorizontal: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  scannerCamera: { flex: 1, alignItems: "center", justifyContent: "center" },
+  scannerFrame: {
+    width: 260,
+    height: 260,
+    borderWidth: 3,
+    borderColor: colors.accent,
+    borderRadius: radii.large,
+    backgroundColor: "transparent",
+  },
+  scannerError: {
+    position: "absolute",
+    left: spacing.md,
+    right: spacing.md,
+    bottom: spacing.xl,
+    padding: spacing.sm,
+    borderRadius: radii.medium,
+    backgroundColor: colors.surfaceContainerHigh,
+  },
+});

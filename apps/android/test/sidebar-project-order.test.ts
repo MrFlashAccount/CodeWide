@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeProjectOrder, moveSidebarProject, orderSidebarProjects } from "../src/data/sidebar-project-order";
+import { decodeProjectOrder, moveSidebarProject, orderSidebarProjects } from "../src/features/projects/sidebarProjectOrder";
 
 describe("sidebar project order", () => {
   it("replays saved order across catalog refreshes without mixing identical paths on different servers", () => {

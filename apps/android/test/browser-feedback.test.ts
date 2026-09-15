@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { browserFeedbackMarkdown, feedbackUrl, parseBrowserElementReport, redactFeedbackText } from "../src/browser/feedback";
+import { browserFeedbackMarkdown, feedbackUrl, parseBrowserElementReport, redactFeedbackText } from "../src/features/ports/browser/feedback";
 
 describe("browser feedback boundary", () => {
   it("removes URL credentials, query secrets and common credential patterns", () => {

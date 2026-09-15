@@ -10,6 +10,10 @@ const generationHost = readFileSync(
 const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
 const performanceModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt", import.meta.url), "utf8");
 
+const ownerThreadNavigationCommit = readFileSync(new URL("../src/features/diagnostics/ThreadNavigationCommit.tsx", import.meta.url), "utf8");
+const ownerNavigationActions = readFileSync(new URL("../src/features/navigation/navigationActions.ts", import.meta.url), "utf8");
+const ownerThreadTimelineNavigationCommit = readFileSync(new URL("../src/features/conversation/timeline/ThreadTimelineNavigationCommit.tsx", import.meta.url), "utf8");
+
 describe("navigation performance HUD", () => {
   it("profiles virtualized chat navigation without rendering message content", () => {
     expect(nativeRoot).not.toContain("<NavigationPerformanceHud />");
@@ -28,9 +32,9 @@ describe("navigation performance HUD", () => {
     expect(hud).toContain("serializeNavigationSpeedscopeProfile(profile)");
     expect(hud).toContain("<SpeedscopeProfileViewer");
     expect(hud).toContain('kind: "codewide-navigation-profile"');
-    expect(screen).toContain("recordThreadNavigationRowCommit(connectionId, threadId, rowKey)");
-    expect(screen).toContain("beginNavigationFrameTrace(navigationId)");
-    expect(screen).toContain("endNavigationFrameTrace(completed.id)");
+    expect(ownerThreadNavigationCommit).toContain("recordThreadNavigationRowCommit(connectionId, threadId, rowKey)");
+    expect(ownerNavigationActions).toContain("beginNavigationFrameTrace(navigationId)");
+    expect(ownerThreadTimelineNavigationCommit).toContain("endNavigationFrameTrace(completed.id)");
     expect(performanceModule).toContain("fun beginNavigationTrace(traceId: String, promise: Promise)");
     expect(performanceModule).toContain("fun endNavigationTrace(traceId: String, promise: Promise)");
     expect(performanceModule).toContain("activeNavigationTrace?.frames?.record");

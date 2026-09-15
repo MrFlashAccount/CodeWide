@@ -1,0 +1,15 @@
+# V1 conversation ownership
+
+M6–M8 source extraction is implemented. The temporary command aggregation and lower facade are deleted. ConversationWorkspace receives owner-qualified capabilities and explicit model reads; private scope binding and render factories preserve the original mounted hierarchy.
+
+ConversationWorkspace composes public feature capabilities. ConversationDetail owns model reads and progressive restoration; it publishes its snapshot through a render slot. ConversationReadSurface composes only read capabilities, timeline and read-only slots for subagents. ConversationComposition assembles the main editor and tools through their public owner entrypoints. Private frame, chrome, timeline and overlay factories preserve the original view hierarchy without adding component mount boundaries.
+
+Timeline owners preserve initial-position identity, history anchors, search paging, unread receipts, gesture trimming and activation cleanup. Turn/protocol/content modules retain projection caches, bounded rendering and native reveal. Dependency rules forbid full workspace/composer/tool composition imports from detail, read surface, timeline, turns, protocol and content. Native keyboard geometry remains active while fullscreen coverage pauses tail following and paging.
+
+Main selection still publishes cached content/local skeleton immediately and hydrates history progressively. Composer restoration precedes editing; header/editor stay mounted. Subagent selection retains its Transition and does not construct main editor/upload/queue-edit/voice bindings. JS runtime startup is separate from native boot and feature lifetime.
+
+Validation: V1 gate (2422 modules, 9100 dependencies), history/projection/output/streaming and repaired source contracts, 21 render cases across five suites, Android/web Expo export. Actual device gestures, native retained view behavior and relative performance remain unverified. The final full Vitest run passes 2213 tests; completed final platform validation and device limits are recorded in the migration ledger.
+
+`workspaceCapabilities.ts` is the public qualified scroll/history contract. The private `workspaceAdapter.ts` binds the shared ThreadUiState seed and existing thread-sync reads only from exact workspace composition; it creates no timeline cache.
+
+Private composition seams: `activeConversationScope` resolves the destination; `ConversationDestinationSurface` renders its existing boundary; `mainConversationHistory` binds history resources and `MainConversationPublication` publishes cached snapshots. `conversationScopeFeatures` and `conversationSurfaceAssembly` compose the main editor/tools. `readConversationTimelineBindings` and `ReadConversationLayout` compose the subagent read surface. Timeline gesture/measurement callbacks retain `useEvent` and original ref handles. Turn user/agent body and protocol presentation factories preserve element order and reuse the coupled public ToolContent declarations. No factory adds mounted state or a fetch effect.

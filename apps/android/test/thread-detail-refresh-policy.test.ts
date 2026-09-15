@@ -7,7 +7,7 @@ import {
 } from "../src/data/thread-detail-refresh-policy";
 
 const remoteWorkspace = readFileSync(
-  new URL("../src/data/use-remote-workspace.ts", import.meta.url),
+  new URL("../src/data/thread-sync-runtime.ts", import.meta.url),
   "utf8",
 );
 
@@ -29,7 +29,7 @@ describe("thread detail refresh policy", () => {
   it("keeps observation separate from authoritative window hydration", () => {
     const observer = remoteWorkspace.slice(
       remoteWorkspace.indexOf("const observeThread ="),
-      remoteWorkspace.indexOf("const loadCanonicalThreadTail ="),
+      remoteWorkspace.indexOf("const readThread ="),
     );
 
     expect(observer).toContain("threadObserverDesired.set(connectionId, threadId)");

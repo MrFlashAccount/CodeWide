@@ -12,6 +12,10 @@ const image = {
   kind: "image" as const,
 };
 
+const ownerComposerFeature = readFileSync(new URL("../src/features/composer/ComposerFeature.tsx", import.meta.url), "utf8");
+const ownerDraft = readFileSync(new URL("../src/features/composer/draft.ts", import.meta.url), "utf8");
+const ownerQueueEdit = readFileSync(new URL("../src/features/composer/queueEdit.ts", import.meta.url), "utf8");
+
 describe("composer attachment preview", () => {
   it("preserves the scoped companion reference", () => {
     expect(composerAttachmentSource(image)).toEqual({
@@ -27,16 +31,16 @@ describe("composer attachment preview", () => {
   });
 
   it("reuses the composer attachment tray while editing a queued prompt", () => {
-    const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+    const screen = readFileSync(new URL("../src/features/composer/ComposerFeature.tsx", import.meta.url), "utf8");
     const tray = readFileSync(new URL("../src/rendering/ComposerAttachmentTray.tsx", import.meta.url), "utf8");
     expect(screen.match(/<ComposerAttachmentTray/g)).toHaveLength(1);
     expect(tray).toContain('testID="composer-attachment-strip"');
-    expect(screen).toContain('scope={composerUploadScope}');
-    expect(screen).toContain('const attachments = queuedComposerEdit?.attachments ?? storedAttachments');
-    expect(screen).toContain('`${composerScope}\\u0000queue-edit:${queuedComposerEdit.commandId}`');
-    expect(screen).toContain("onEditQueued(edit.commandId, text, editedAttachments).then");
-    expect(screen).toContain("const draft = queuedComposerEdit?.text ?? storedDraft");
-    expect(screen).toContain('testID="queued-composer-edit-bar"');
+    expect(ownerComposerFeature).toContain("scope={props.composerUploadScope}");
+    expect(ownerDraft).toContain('const attachments = queuedComposerEdit?.attachments ?? storedAttachments');
+    expect(ownerDraft).toContain('`${composerScope}\\u0000queue-edit:${queuedComposerEdit.commandId}`');
+    expect(ownerQueueEdit).toContain("onEditQueued(edit.commandId, text, editedAttachments).then");
+    expect(ownerDraft).toContain("const draft = queuedComposerEdit?.text ?? storedDraft");
+    expect(ownerComposerFeature).toContain('testID="queued-composer-edit-bar"');
     expect(screen).not.toContain('testID="queue-attachment-strip"');
     expect(tray).toContain("composerAttachmentSource(attachment)");
     expect(tray).toContain("useRegisterImagePreviewItem");

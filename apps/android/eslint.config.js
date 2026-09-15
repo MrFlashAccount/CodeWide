@@ -4,7 +4,7 @@ const presentationTokens = require("./eslint-presentation-tokens.cjs");
 
 module.exports = [
   {
-    files: ["src/CodeWideScreen.tsx", "src/ui/**/*.{ts,tsx}", "src/rendering/**/*.{ts,tsx}", "src/presentation/**/*.{ts,tsx}"],
+    files: ["src/CodeWideScreen.tsx", "src/features/**/*.{ts,tsx}", "src/ui/**/*.{ts,tsx}", "src/rendering/**/*.{ts,tsx}", "src/presentation/**/*.{ts,tsx}"],
     plugins: { codewide: { rules: { "presentation-tokens": presentationTokens } } },
     rules: { "codewide/presentation-tokens": "error" },
   },

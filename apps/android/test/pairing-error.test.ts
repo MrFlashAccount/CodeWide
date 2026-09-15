@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { humanPairingError } from "../src/data/pairing-error";
+import { humanPairingError } from "../src/features/connections/pairingError";
 
 describe("humanPairingError", () => {
   it("does not misclassify native pairing network failures as consumed codes", () => {

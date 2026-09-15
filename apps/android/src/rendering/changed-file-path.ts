@@ -10,7 +10,7 @@ export function changedFileDisplayPath(
   const relative = normalizedCwd === "" || normalizedCwd === "/"
     ? normalizedPath
     : normalizedPath === normalizedCwd
-      ? basename(normalizedPath)
+      ? changedPathBasename(normalizedPath)
       : pathStartsWith(normalizedPath, `${normalizedCwd}/`)
         ? normalizedPath.slice(normalizedCwd.length + 1)
         : normalizedPath;
@@ -22,7 +22,7 @@ function normalizePath(value: string): string {
   return normalized.length > 1 ? normalized.replace(/\/$/u, "") : normalized;
 }
 
-function basename(value: string): string {
+function changedPathBasename(value: string): string {
   const segments = value.split("/").filter(Boolean);
   return segments.at(-1) ?? value;
 }
@@ -48,4 +48,12 @@ function collapsePathMiddle(value: string, maxChars: number): string {
     suffix = candidate;
   }
   return `${first}${separator}${suffix}`;
+}
+
+/** V1 changed-file-path owner, extracted without changing interaction or resource lifetime. */
+
+
+export function basename(value: string): string {
+  const normalized = value.replaceAll("\\", "/").replace(/\/+$/u, "");
+  return normalized.split("/").filter(Boolean).at(-1) ?? "attachment";
 }

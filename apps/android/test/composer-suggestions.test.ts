@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ComposerSuggestions } from "../src/ui/composer-suggestions";
-import type { ComposerMention } from "../src/ui/composer-mentions";
+import { ComposerSuggestions } from "../src/features/composer/input/composer-suggestions";
+import type { ComposerMention } from "../src/features/composer/input/composer-mentions";
 
 const item: ComposerMention = { kind: "skill", id: "skill", label: "Skill", insertText: "$skill", name: "skill", path: "/skills/skill", url: "codewide-skill://%2Fskills%2Fskill", description: "", group: "", plugin: null };
 

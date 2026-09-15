@@ -1,14 +1,15 @@
+import { ComposerEditor } from "../src/features/composer/ComposerEditor";
 import { act, fireEvent, render as renderNative, waitFor } from "@testing-library/react-native";
 import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
 import { PortalHost } from "heroui-native/portal";
 import { Popover } from "heroui-native/popover";
 import { StyleSheet } from "react-native";
 import type { EnrichedMarkdownTextInputProps } from "react-native-enriched-markdown";
-import { ComposerMentionInput } from "../src/ui/ComposerMentionInput.native";
-import { ComposerMarkdownInput } from "../src/ui/ComposerMarkdownInput.native";
-import { searchComposerTrialMentions } from "../src/ui/composer-editor-trial";
+import { ComposerMentionInput } from "../src/features/composer/input/ComposerMentionInput.native";
+import { ComposerMarkdownInput } from "../src/features/composer/input/ComposerMarkdownInput.native";
+import { searchComposerTrialMentions } from "../src/features/composer/input/composer-editor-trial";
 import { colors, radii, spacing, touchTarget, typeScale } from "../src/theme";
-import ComposerEditorTrial from "../src/ui/ComposerEditorTrial.native";
+import ComposerEditorTrial from "../src/features/composer/input/ComposerEditorTrial.native";
 import { Children, isValidElement, type ReactNode } from "react";
 
 const mockEditor = {
@@ -322,4 +323,30 @@ it("returns a large paste to the attachment owner without committing it to the d
   expect(onLargePaste).toHaveBeenCalledWith({ text: "01234567890", start: 7, end: 7 });
   expect(mockEditor.setValue).toHaveBeenCalledWith("before after");
   expect(mockEditor.setSelection).toHaveBeenCalledWith(7, 7);
+});
+
+it("keeps the resident composer editor mounted while a new chat restores its draft", () => {
+  const editorProps: Parameters<typeof ComposerEditor>[0] = {
+    voicePhase: "idle", composerScope: "server:first", getTransferAccess: undefined,
+    getStableTransferAccess: async () => { throw new Error("No attachment read expected"); },
+    composerInputRef: {current: null}, fileAttachmentEnabled: false,
+    pastedAttachmentPending: false, attachments: [], handleComposerLargePaste: () => undefined,
+    draft: "First draft", handleComposerTextChange: () => undefined,
+    handleComposerMarkdownChange: () => undefined, draftSelectionRef: {current: {start:0,end:0}},
+    pendingVoiceSelection: null, voiceController: null, searchComposerSuggestions: async () => [],
+    selectComposerMention: () => undefined, editingQueuedMessage: false,
+    voiceBackend: "remote", voiceResource: null,
+  };
+  const wrapper = (props: Parameters<typeof ComposerEditor>[0]) => (
+    <HeroUINativeProviderRaw config={{animation: "disable-all", devInfo: {stylingPrinciples:false}}}>
+      <ComposerEditor {...props} />
+      <PortalHost />
+    </HeroUINativeProviderRaw>
+  );
+  const view = renderNative(wrapper(editorProps));
+  const residentEditor = view.getByTestId("native-editor");
+  const nextProps = {...editorProps, composerScope:"server:second", draft:"Restored second draft", composerInputRef:{current:null}};
+  view.rerender(wrapper(nextProps));
+  expect(view.getByTestId("native-editor")).toBe(residentEditor);
+  expect(mockEditor.setValue).toHaveBeenLastCalledWith("Restored second draft");
 });

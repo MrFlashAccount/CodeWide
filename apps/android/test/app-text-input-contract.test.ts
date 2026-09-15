@@ -17,8 +17,8 @@ const largePastePolicy = readFileSync(
   "utf8",
 );
 const codeReviewEditor = readFileSync(new URL("../src/rendering/CodeReviewEditor.web.tsx", import.meta.url), "utf8");
-const composerMarkdownInputWeb = readFileSync(new URL("../src/ui/ComposerMarkdownInput.web.tsx", import.meta.url), "utf8");
-const composerMarkdownInputNative = readFileSync(new URL("../src/ui/ComposerMarkdownInput.native.tsx", import.meta.url), "utf8");
+const composerMarkdownInputWeb = readFileSync(new URL("../src/features/composer/input/ComposerMarkdownInput.web.tsx", import.meta.url), "utf8");
+const composerMarkdownInputNative = readFileSync(new URL("../src/features/composer/input/ComposerMarkdownInput.native.tsx", import.meta.url), "utf8");
 const heroBottomSheetPrimitive = readFileSync(
   new URL("../node_modules/heroui-native/src/primitives/bottom-sheet/bottom-sheet.tsx", import.meta.url),
   "utf8",
@@ -31,6 +31,17 @@ const heroBottomSheetContent = readFileSync(
   "utf8",
 );
 
+const ownerComposerEditor = compactSource(readFileSync(new URL("../src/features/composer/ComposerEditor.tsx", import.meta.url), "utf8"));
+
+const layout = compactSource(readFileSync(new URL("../src/features/conversation/ConversationLayout.tsx", import.meta.url), "utf8"));
+
+const ownerWorkspaceConversationProviders = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceConversationProviders.tsx", import.meta.url), "utf8"));
+
+const workspaceShell = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceScreen.tsx", import.meta.url), "utf8"));
+const listBinding = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceThreadList.tsx", import.meta.url), "utf8"));
+
+const workspaceView = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceScreenContent.tsx", import.meta.url), "utf8"));
+
 describe("application text input contract", () => {
   it("routes every application field through AppTextInput", () => {
     const nativeInputOwners = globSync("**/*.tsx", { cwd: sourceRoot })
@@ -41,28 +52,28 @@ describe("application text input contract", () => {
   });
 
   it("provides voice runtime around adaptive roots and the standalone browser; sidebar search inherits its root", () => {
-    expect(screen).toContain("const voiceInputRuntime: AppVoiceInputRuntime");
-    const providers = screen.slice(screen.indexOf("function WorkspaceConversationProviders("), screen.indexOf("type SelectWorkspaceThread"));
+    expect(ownerWorkspaceConversationProviders).toContain("const voiceInputRuntime: AppVoiceInputRuntime");
+    const providers = ownerWorkspaceConversationProviders;
     expect(providers).toContain("<AppVoiceInputProvider runtime={voiceInputRuntime}>");
-    const shell = screen.slice(screen.indexOf("function CodeWideWorkspaceContent("), screen.indexOf("function workspaceConversationScope("));
+    const shell = workspaceView;
     expect(shell.indexOf("<WorkspaceConversationProviders")).toBeLessThan(shell.indexOf("<ForwardedLoopbackBrowser"));
     expect(shell.lastIndexOf("</WorkspaceConversationProviders>")).toBeGreaterThan(shell.indexOf("<WorkspaceVoiceAura"));
-    expect(screen.match(/searchContent=\{sidebarSearch\}/gu)).toHaveLength(2);
+    expect(listBinding.match(/searchContent: sidebarSearch/gu)).toHaveLength(2);
   });
 
   it("keeps fields with specialized voice controls opted out", () => {
-    expect(screen).toMatch(/<ComposerMarkdownInput\s+ref=\{composerInputRef\}\s+accessibilityLabel="Message Codex"/u);
+    expect(ownerComposerEditor).toMatch(/<ComposerMarkdownInput\s+ref=\{composerInputRef\}\s+accessibilityLabel="Message Codex"/u);
     expect(composerMarkdownInputWeb).toContain("voiceInput={false}");
     expect(codeReviewEditor).toMatch(/<TextInput\s+voiceInput=\{false\}\s+autoFocus/u);
   });
 
   it("lets the composer inspect a complete paste before applying the message limit", () => {
-    const composerStart = screen.indexOf('accessibilityLabel="Message Codex"');
-    const composerEnd = screen.indexOf("/>", composerStart);
+    const composerStart = ownerComposerEditor.indexOf('accessibilityLabel="Message Codex"');
+    const composerEnd = ownerComposerEditor.indexOf("/>", composerStart);
     expect(composerStart).toBeGreaterThan(-1);
-    expect(screen.slice(composerStart, composerEnd)).not.toContain("maxLength=");
-    expect(screen.slice(composerStart, composerEnd)).toContain("largePasteThreshold: AUTO_ATTACH_PASTE_MIN_CHARS");
-    expect(screen.slice(composerStart, composerEnd)).toContain("onLargePaste: handleComposerLargePaste");
+    expect(ownerComposerEditor.slice(composerStart, composerEnd)).not.toContain("maxLength=");
+    expect(ownerComposerEditor.slice(composerStart, composerEnd)).toContain("largePasteThreshold: AUTO_ATTACH_PASTE_MIN_CHARS");
+    expect(ownerComposerEditor.slice(composerStart, composerEnd)).toContain("onLargePaste: handleComposerLargePaste");
     expect(screen).not.toContain("LARGE_PASTE_SETTLE_MS");
     expect(screen).not.toContain("beginLargePasteCapture");
   });
@@ -86,7 +97,7 @@ describe("application text input contract", () => {
   });
 
   it("keeps the conversation composer attached to every IME session", () => {
-    expect(compactSource(screen)).toContain("<KeyboardStickyView enabled");
+    expect(layout).toContain("<KeyboardStickyView enabled");
     expect(screen).not.toContain("composerTracksKeyboard");
     expect(screen).not.toContain("setComposerTracksKeyboard");
   });

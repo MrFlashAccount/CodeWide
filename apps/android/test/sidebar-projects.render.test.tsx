@@ -1,7 +1,6 @@
-import { act, fireEvent, render as renderNative, within } from "@testing-library/react-native";
 import { LegendList } from "@legendapp/list/react-native";
-import { HeroUINativeProviderRaw } from "heroui-native/provider-raw";
-import type { ReactElement, ReactNode } from "react";
+import { act, fireEvent, within } from "@testing-library/react-native";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { Text, View } from "react-native";
 import { Uniwind } from "uniwind";
@@ -9,11 +8,11 @@ import {
   SidebarProjectHeader,
   SidebarProjectRow,
   SidebarProjectsSheet,
-} from "../src/ui/SidebarProjects";
-import type { SidebarProject } from "../src/data/sidebar-projects";
+} from "../src/features/projects/SidebarProjects";
 import { colors } from "../src/theme";
 import { AppListRow } from "../src/ui/AppListRow";
 import { listRowHeight } from "../src/ui/AppListRow.types";
+import { management, project, render } from "./sidebar-projects.fixture";
 
 // WHY: Node cannot mount the native bottom-sheet window. Keep the product
 // navigation and selection controls real; substitute only Expo's native host.
@@ -32,38 +31,6 @@ beforeAll(() => {
   for (const theme of Uniwind.themes)
     Uniwind.updateCSSVariables(theme, { "--theme": "default", "--color-muted": colors.textMuted });
 });
-
-const project: SidebarProject = {
-  key: "server:/repo",
-  connectionId: "server",
-  path: "/repo",
-  name: "Repo",
-  serverLabel: null,
-  subtitle: "/repo",
-  pinned: true,
-  lastUsedAt: 1,
-  unread: true,
-};
-
-const management = {
-  servers: [{ id: "server", name: "Buddy" }],
-  onMove: jest.fn(async () => undefined),
-  onBrowse: jest.fn(),
-};
-
-function TestProvider({ children }: { children: ReactNode }) {
-  return (
-    <HeroUINativeProviderRaw
-      config={{ animation: "disable-all", devInfo: { stylingPrinciples: false } }}
-    >
-      {children}
-    </HeroUINativeProviderRaw>
-  );
-}
-
-function render(element: ReactElement) {
-  return renderNative(element, { wrapper: TestProvider });
-}
 
 function ProjectNavigation() {
   const [open, setOpen] = useState(false);

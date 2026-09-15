@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createThreadNavigationModel } from "../src/data/thread-navigation-model";
-import { SearchConversationWindow } from "../src/search/search-conversation-window";
+import { createThreadNavigationModel } from "../src/features/navigation/threadNavigation";
+import { SearchConversationWindow } from "../src/features/search/search-conversation-window";
 
 function searchWindow() {
   return new SearchConversationWindow(
