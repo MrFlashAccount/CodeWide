@@ -124,21 +124,18 @@ it("keeps code review readonly, offline and attached as one structured artifact"
   expect(migratedChangesFeature).toContain("<CodeReviewWorkspace");
   expect(ownerReviewSubmission).toContain("serializeCodeReviewAttachment(comments)");
   expect(ownerReviewSubmission).toContain("`codex-review-${new Date().toISOString()");
-  expect(migratedChangesFeature).toContain(
-    "const presentThreadChanges = useEvent(\n    (resource: ThreadResourcesValue | null, refreshOnOpen = false)",
-  );
-  expect(migratedChangesFeature).toContain("presentThreadChanges(resource, true)");
+  expect(migratedChangesFeature).toContain("function CurrentChangesRoute(");
   expect(screen).not.toContain(
     'void onLoadThreadResources(changesPreferences.scope ?? undefined, "changes").then(',
   );
   expect(migratedChangesFeature).toMatch(
-    /onInitialLoad:\s*\(\)\s*=>\s*onLoadThreadResources\(\s*changesPreferences\.scope \?\? undefined,\s*"changes",?\s*\)/u,
+    /onInitialLoad:\s*async\s*\(\)\s*=>\s*loadResources\(scope,\s*"changes",?\s*\)/u,
   );
   expect(ownerCodeReviewResources).toContain("useAsyncResource<ThreadResourcesValue>(");
   expect(ownerCodeReviewResources).toContain("async () =>\n      shouldLoadInitialScope");
   expect(ownerCodeReviewResources).toContain("? await onInitialLoad!()");
   expect(codeReviewWorkspace).not.toContain("void onInitialLoad().then(");
-  expect(migratedChangesFeature).toContain("fullscreenOverlay.present(({ close }) => (");
+  expect(migratedChangesFeature).toContain("onClose={onClose}");
   expect(codeReviewWorkspace).toContain("files={reviewFiles}");
   expect(codeReviewWorkspace).toContain("document={document}");
   expect(codeReviewWorkspace).toContain("loading={loading}");
@@ -153,8 +150,8 @@ it("keeps code review readonly, offline and attached as one structured artifact"
   expect(codeReviewRuntime).toContain(
     "setEmptyState(previewEmptyHost, LOADING_CHANGE_STATE, true)",
   );
-  expect(migratedChangesFeature).toContain("initialLine: request.line");
-  expect(migratedChangesFeature).toContain("initialColumn: request.column");
+  expect(migratedChangesFeature).toContain("initialLine: document.line");
+  expect(migratedChangesFeature).toContain("initialColumn: document.column");
   expect(codeReviewWorkspace).toContain(
     "revealReference={selectedReference === null ? revealReference : null}",
   );
@@ -224,9 +221,11 @@ it("keeps async data ownership in resources and event-driven preview controllers
     "details.setRemoteLoader(createThreadSyncRemoteLoader(details, workspaceThreadSync))",
   );
   expect(threadDetailDatabase).toContain("await loader.hydrateWindow({");
-  expect(navigationActions).toContain("const selectThread = useEvent((value: string) => {");
+  expect(navigationActions).toContain(
+    "const selectThread = useEvent((selectionKey: string | null): void => {",
+  );
   expect(navigationActions).toMatch(
-    /void remote\s*\.observeThread\(\s*selectedTarget\.connectionId,\s*selectedTarget\.threadId,?\s*\)/u,
+    /\.observeThread\(params\.connectionId\.value, params\.threadId\.value\)/u,
   );
   expect(ownerConversationPresentation).toContain(
     'item.kind === "optimistic" && pendingDeliveryMayOwnTurn(item.status)',
@@ -246,14 +245,15 @@ it("keeps async data ownership in resources and event-driven preview controllers
     'AppState.addEventListener("change", repairForegroundRuntime)',
   );
   expect(screen).not.toContain("refreshIfSelected");
-  expect(navigationActions).toContain("reloadSelected = false");
-  expect(navigationActions).toContain("setActiveThreadId(value, navigationId, undefined, true);");
-  expect(navigationActions).toContain("threadNavigation.select(value, reloadSelected)");
+  expect(navigationActions).toContain("open({");
   expect(navigationActions).toContain(
-    "if (nextServerId !== undefined) setActiveServerId(nextServerId);",
+    'mode: same ? "replace" : router.selectionMode',
   );
+  expect(navigationActions).toContain("navigationId,");
+  expect(navigationActions).toContain("params,");
+  expect(navigationActions).toContain("setActiveConnection(params.connectionId.value)");
   expect(screen).not.toContain("setActiveServerId(parsed.connectionId);\n      setActiveThreadId(");
-  expect(newChat).toContain("threadNavigation.openDraft({");
+  expect(newChat).toContain("newThreadService.open(connectionId, cwd)");
   expect(screen).not.toContain("setNewChatDraft(");
   expect(screen).not.toContain("active-thread-lifecycle-repair");
   expect(ownerDraft).toContain("`composer-seed:${composerScope}`");

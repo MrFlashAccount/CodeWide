@@ -19,7 +19,7 @@ import {
 } from "./native-sources";
 import { secureCryptoPolyfill, screen } from "./platform-sources";
 import { voiceWorkspace, ownerWorkspaceRuntime, otaPrefetch } from "./runtime-sources";
-import { ownerWorkspaceOverlays } from "./workspace-sources";
+import { ownerNewServerRoute } from "./workspace-sources";
 import { appErrorBoundary, globalErrorStore } from "./presentation-sources";
 
 it("keeps identity, scheme, orientation and predictive back in sync", () => {
@@ -71,7 +71,7 @@ it("installs secure UUID primitives before Expo Router loads TanStack DB", () =>
   expect(ownerWorkspaceRuntime).toContain("Local runtime startup failed (${startupStage})");
   expect(screen).not.toContain("StartupPreflightView");
   expect(screen).not.toContain("Checking local runtime");
-  expect(ownerWorkspaceOverlays).toContain("onRetryStartup={retryStartup}");
+  expect(ownerNewServerRoute).toContain("onRetryStartup={retryStartup}");
   expect(ownerWorkspaceRuntime).toContain("const retryStartup = async");
   expect(ownerWorkspaceRuntime).toContain("workspaceRuntime.startPromise = null");
 });

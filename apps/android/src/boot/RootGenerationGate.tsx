@@ -22,7 +22,7 @@ export function RootGenerationGate(): React.JSX.Element {
     uiGenerationSnapshot,
   );
   if (snapshot.status === "ready") {
-    const destination = snapshot.generation === "v2" ? "/servers" : "/legacy";
+    const destination = snapshot.generation === "v2" ? "/servers" : "/v1";
     return <Redirect href={destination} />;
   }
   return <RootGenerationStatusView onRetry={retryUiGeneration} snapshot={snapshot} />;

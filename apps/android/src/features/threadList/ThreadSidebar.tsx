@@ -4,8 +4,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import { useState } from "react";
 import { View } from "react-native";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
-import { threadSelectionKey } from "../navigation/threadSelection";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { SidebarProjectRow } from "../projects/SidebarProjects";
 import { SelectableThreadRow } from "./SelectableThreadRow";
@@ -35,12 +34,12 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
     onOffsetChange,
     width,
     servers,
-    activeServerId,
+    serverScope,
     threads,
     archivedThreads,
     mode,
     filter,
-    navigation,
+    selectedThreadKey,
     searchContent,
     onLoadMore,
     onSelect,
@@ -89,8 +88,8 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
           ) : (
             <LegendList
               data={rows}
-              key={`${activeServerId}:${mode}:${project?.key ?? "global"}`}
-              dataKey={`desktop-threads:${activeServerId}:${mode}:${project?.key ?? "global"}`}
+              key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
+              dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
               initialScrollOffset={initialOffset}
               onScroll={({ nativeEvent }) => onOffsetChange(nativeEvent.contentOffset.y)}
               scrollEventThrottle={100}
@@ -105,7 +104,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
               onEndReachedThreshold={0.4}
               ListEmptyComponent={
                 <SidebarListFeedback
-                  key={`${activeServerId}:${mode}:${query}:${project?.key ?? "global"}`}
+                  key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                   state={project === null ? catalogState : projectSource.state}
                   archived={mode === "archived"}
                 />
@@ -113,7 +112,7 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
               ListFooterComponent={
                 rows.length > 0 && mode === "active" && filtered.length === 0 ? (
                   <SidebarListFeedback
-                    key={`${activeServerId}:${mode}:${query}:${project?.key ?? "global"}`}
+                    key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                     state={project === null ? catalogState : projectSource.state}
                     archived={false}
                   />
@@ -132,10 +131,10 @@ export function ThreadSidebar(props: ThreadSidebarProps) {
                   />
                 ) : (
                   <SelectableThreadRow
-                    navigation={navigation}
+                    selectedThreadKey={selectedThreadKey}
                     thread={item.thread}
                     server={
-                      activeServerId === ALL_SERVERS_ID && servers.length > 1
+                      serverScope.kind === "all" && servers.length > 1
                         ? servers.find((entry) => entry.id === item.thread.serverId)
                         : undefined
                     }

@@ -9,7 +9,7 @@ export async function copySessionId(sessionId: string): Promise<void> {
 }
 
 import type { ThreadForkOptions } from "../../data/thread-fork";
-import { threadSelectionKey } from "../navigation/threadSelection";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import type { ActiveThreadMutations } from "./turnActionCapabilities";
 export function useActiveThreadActions(
   remote: ActiveThreadMutations,
@@ -32,7 +32,7 @@ export function useActiveThreadActions(
   return { forkCurrentThread, markActiveThreadRead };
 }
 
-import type { SelectWorkspaceThread } from "../navigation/threadNavigation";
+import type { SelectWorkspaceThread } from "../../services/threads/threadRouteParams";
 import type { ThreadMutations } from "./turnActionCapabilities";
 export function useThreadMutationActions(
   remote: ThreadMutations,

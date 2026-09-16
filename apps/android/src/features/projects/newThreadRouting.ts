@@ -1,25 +1,25 @@
+import type { ServerScope } from "../../services/servers/serverScope";
+
 export type NewThreadRoute =
   | { type: "connect-server" }
   | { type: "choose-server" }
-  | { type: "create"; serverId: string };
+  | { serverId: string; type: "create" };
 
 export function resolveNewThreadRoute({
-  activeServerId,
-  allServersId,
   serverIds,
+  serverScope,
 }: {
-  activeServerId: string;
-  allServersId: string;
   serverIds: readonly string[];
+  serverScope: ServerScope;
 }): NewThreadRoute {
-  if (serverIds.length === 0) return { type: "connect-server" };
-  if (
-    activeServerId !== "" &&
-    activeServerId !== allServersId &&
-    serverIds.includes(activeServerId)
-  ) {
-    return { type: "create", serverId: activeServerId };
+  if (serverIds.length === 0) {
+    return { type: "connect-server" };
   }
-  if (serverIds.length === 1) return { type: "create", serverId: serverIds[0]! };
+  if (serverScope.kind === "connection" && serverIds.includes(serverScope.connectionId)) {
+    return { serverId: serverScope.connectionId, type: "create" };
+  }
+  if (serverIds.length === 1) {
+    return { type: "create", serverId: serverIds[0]! };
+  }
   return { type: "choose-server" };
 }

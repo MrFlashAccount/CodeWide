@@ -18,7 +18,8 @@ import {
 } from "./composer-sources";
 
 it("preserves composer integration contracts", () => {
-  expect(ownerSettings).toContain("setMenuVisible(false);");
+  expect(ownerSettings).not.toContain("setMenuVisible");
+  expect(ownerSettings).toContain("requestControls()");
   expect(ownerComposerMicrophone).toContain('"Stop voice input and insert transcript"');
   expect(ownerComposerSubmitAction).toContain('"Finish voice input and send transcript"');
   expect(ownerComposerMenu).toMatch(
@@ -39,7 +40,9 @@ it("preserves composer integration contracts", () => {
   expect(ownerComposerControlOptions).toMatch(
     /<Text style=\{styles\.controlSectionLabel\}>\s*Thinking\s*<\/Text>/u,
   );
-  expect(ownerSettings).toContain("onUpdateSettings({ model, effort })");
+  expect(ownerSettings).toMatch(
+    /onUpdateSettings\(\{(?=[^}]*effort)(?=[^}]*model)[^}]*\}\)/u,
+  );
   expect(ownerComposerControlChips).toContain(
     "executionPermissionsLabel(serverExecution, pending)",
   );
@@ -79,6 +82,7 @@ it("preserves composer integration contracts", () => {
   );
   expect(ownerSettings).toContain("an already loaded sheet\n    // never refetches its model");
   expect(ownerSettings).toContain(
-    'if (current === null || current.status === "error") requestControls();',
+    'if (initialPage !== "ports" && (current === null || current.status === "error"))',
   );
+  expect(ownerSettings).toContain("requestControls();");
 });

@@ -2,17 +2,17 @@
 
 ## Purpose, owner and language
 
-This context owns V1 source placement and composition boundaries under `apps/android/src`. TypeScript/TSX implements the application; comments and ownership documentation use English. V1 calls a saved runtime identity `connectionId`; do not replace it with V2 `savedServerId` terminology. Navigation destinations are local discriminated state, and conversation activation is a mounted-owner token, not just a connection/thread key.
+This context owns V1 source placement and composition boundaries under `apps/android/src`. TypeScript/TSX implements the application; comments and ownership documentation use English. V1 calls a saved runtime identity `connectionId`; do not replace it with V2 `savedServerId` terminology. Expo Router owns application destinations; conversation activation remains a mounted-owner token, not just a connection/thread key.
 
-The [approved feature architecture](../../../docs/android-v1-feature-architecture.md) is the selected target; the [migration ledger](../../../docs/android-v1-feature-migration.md) is the full planned source/test map. **M0–M8 source ownership and available automated/platform validation are complete. Device-only scenarios remain explicitly unverified in the ledger.** The actual closed feature units contain connections, accounts, settings, navigation, threadList, projects, search, requests, goal, queue, turnActions, attachments, changes, review, drawing, ports, terminal, agents, composer and conversation. Workspace composition and diagnostics are also implemented. Their local CONTEXT files describe their public surfaces and verification limits.
+The [approved feature architecture](../../../docs/android-v1-feature-architecture.md) and [feature migration ledger](../../../docs/android-v1-feature-migration.md) record the M0–M8 capability extraction. The current application-navigation contract and source closure are in [route architecture](../../../docs/android-v1-route-architecture.md) and the [route migration ledger](../../../docs/android-v1-route-migration.md). Feature owners remain for connections, accounts, settings, threadList, projects, search, requests, goal, queue, turnActions, attachments, changes, review, drawing, ports, terminal, agents, composer and conversation. `features/navigation/**` was removed after Router assumed destination ownership. Device-only scenarios remain explicitly unverified in the ledgers.
 
 ## Current and target placement
 
-Interaction policy now lives in cohesive owners under `features/`: workspace, navigation, threadList, projects, connections, settings, accounts, search, conversation, composer, queue, requests, goal, turnActions, attachments, changes, review, drawing, agents, terminal, ports and diagnostics.
+Interaction policy lives in cohesive owners under `features/`: workspace, threadList, projects, connections, settings, accounts, search, conversation, composer, queue, requests, goal, turnActions, attachments, changes, review, drawing, agents, terminal, ports and diagnostics. Route composition and application navigation live under `app/v1/**`; cross-route identity and private resource sessions live under `services/**`.
 
 A feature owns its policy, narrow public contracts, read/action binding, local state, pending/errors, retained callbacks, cleanup and styles. Conversation has separate detail, timeline, turns, protocol and content owners; composer separates draft, submission, settings, attachments, queue editing, voice binding, input and skills. No generic `useConversation` or `WorkspaceController` may replace the current monolith.
 
-CodeWideScreen is the stable route-facing composition export; it renders WorkspaceScreen. `features/workspace` wires stable feature surfaces and runtime capabilities without implementing their algorithms. Existing deep [data/runtime owners](data/CONTEXT.md), native/platform mechanisms and shared render primitives retain their authority.
+`app/v1/_layout.tsx` is the stable V1 route entry. Its route-local composition, model, thread-list adapter and shell are split by responsibility. `features/workspace` retains stable feature/runtime bindings without owning destinations. `CodeWideScreen`, `WorkspaceScreen`, `WorkspaceOverlays` and the navigation feature are deleted. Existing deep [data/runtime owners](data/CONTEXT.md), native/platform mechanisms and shared render primitives retain their authority.
 
 ## What belongs and does not belong
 
@@ -28,7 +28,7 @@ Composition imports feature public surfaces; features expose narrow scoped inten
 Binding target rules, including type imports:
 
 - V1 must not import `v2/**`, `@codewide/sync-client/v2` or V2 storage. The versioned upstream `@codewide/codex-protocol/v0.147.0/v2` DTO path is not the V2 sync runtime.
-- Data/native must not import features or CodeWideScreen. Generic UI/rendering must not depend on feature internals; move actual feature policy or inject a narrow capability instead.
+- Data/native must not import features or `app/**`. Generic UI/rendering must not depend on feature internals; move actual feature policy or inject a narrow capability instead.
 - Feature internals must not import root composition, another feature's private model/adapter/style, or the legacy facade after their unit closes. Public entry modules must be explicit; broad barrels and type cycles are forbidden.
 - Conversation detail/timeline/turns/protocol/content cannot import full ConversationWorkspace, composer, agents or tool implementations. Agents may consume only public detail/read/navigation capabilities. Composer emits intents rather than navigating or importing queue/review/drawing/tool internals.
 - `presentation/**` accepts display props and typed capabilities only; no V1/V2 model, store, route, transport, persistence or native imports.
@@ -43,6 +43,6 @@ Stable Legend resources own render data and Promise identity; no effect-triggere
 
 ## Migration and validation
 
-Use the exact M0–M8 owner units, platform siblings, consumer map, lifetime checks and rollback in the [ledger](../../../docs/android-v1-feature-migration.md). Create each feature-local CONTEXT with its real module, stating purpose, language, public capabilities, lifetime, allowed/forbidden dependencies, tests and migration status. Do not scaffold empty owner folders in D0.
+Use the M0–M8 owner units, platform siblings and lifetime checks in the [feature ledger](../../../docs/android-v1-feature-migration.md), followed by the implemented route disposition in the [route ledger](../../../docs/android-v1-route-migration.md). Feature-local CONTEXT files describe their current public capabilities and dependency boundaries.
 
-Every application unit runs `pnpm validate:android:v1`; M0 must first extend existing lint/dependency coverage to new feature paths without exemptions. Check actual native/web/type/dynamic/test consumers atomically with each move. Run the V2 gate if a V2-owned or generation-neutral gate surface changes; avoid that scope expansion. Docs must distinguish planned paths from implemented code until each unit closes.
+Every application unit runs `pnpm validate:android:v1`. Check actual native/web/type/dynamic/test consumers atomically with each move. `app/v1/**` belongs exclusively to the V1 formatter, TypeScript, render, lint, Knip and dependency gates; V2 tooling scopes only V2 route groups and shared boot/presentation owners. Run the V2 gate if a V2-owned or generation-neutral gate surface changes. Docs must distinguish planned paths from implemented code until each unit closes.

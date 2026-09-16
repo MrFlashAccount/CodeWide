@@ -4,7 +4,7 @@ import { ThreadCodeDocumentContext } from "./ThreadCodeDocumentContext";
 import { ScrollView, StyleSheet } from "react-native";
 
 import { composerUploads, type ComposerUpload } from "../data/composer-uploads";
-import type { GetTransferAccess } from "../data/private-transfer";
+import type { GetTransferAccess, PrivateAssetSource } from "../data/private-transfer";
 import type { StoredDraftAttachment } from "../data/thread-ui-state-types";
 import { spacing } from "../theme";
 import { AttachmentCard } from "./AttachmentCard";
@@ -13,8 +13,13 @@ import {
   composerAttachmentPreviewKind,
   composerAttachmentSource,
 } from "./composer-attachment-preview";
-import { useDocumentPreview } from "./DocumentPreviewHost";
-import { useImagePreview, useRegisterImagePreviewItem } from "./ImagePreviewHost";
+import { type DocumentPreviewRequest, useDocumentPreview } from "./DocumentPreviewHost";
+import {
+  type ImagePreviewItem,
+  type ImagePreviewRequest,
+  useImagePreview,
+  useRegisterImagePreviewItem,
+} from "./ImagePreviewHost";
 import { PrivateImageAccessProvider, usePrivateAssetUri } from "./use-private-image-uri";
 
 interface ComposerAttachmentTrayProps {
@@ -61,15 +66,72 @@ interface ComposerCardProps {
   readonly owner: ComposerAttachmentTrayProps;
 }
 
+type ComposerAttachmentOpenOptions = {
+  readonly attachment: StoredDraftAttachment;
+  readonly canOpenImage: boolean;
+  readonly canOpenVideo: boolean;
+  readonly canRouteDocument: boolean;
+  readonly documentRequest: DocumentPreviewRequest;
+  readonly groupId: string;
+  readonly item: ImagePreviewItem;
+  readonly localUri: string | null;
+  readonly openDocument: (request: DocumentPreviewRequest) => void;
+  readonly openImage: (request: ImagePreviewRequest) => void;
+  readonly openRouteDocument: ((request: DocumentPreviewRequest) => void) | null;
+  readonly openVideo: ReturnType<typeof useAttachmentVideoPreview>;
+  readonly ready: boolean;
+  readonly source: PrivateAssetSource;
+};
+
+function openComposerAttachment(options: ComposerAttachmentOpenOptions): void {
+  const {
+    attachment,
+    canOpenImage,
+    canOpenVideo,
+    canRouteDocument,
+    documentRequest,
+    groupId,
+    item,
+    localUri,
+    openDocument,
+    openImage,
+    openRouteDocument,
+    openVideo,
+    ready,
+    source,
+  } = options;
+  if (canOpenImage) {
+    openImage({ ...item, groupId });
+    return;
+  }
+  if (canOpenVideo) {
+    const videoSource = localUri === null ? source : { kind: "direct" as const, uri: localUri };
+    if (openRouteDocument !== null) {
+      openRouteDocument({ ...documentRequest, source: videoSource });
+    } else {
+      openVideo({
+        getAccess: documentRequest.getTransferAccess,
+        name: attachment.name,
+        source: videoSource,
+      });
+    }
+    return;
+  }
+  if (!ready) return;
+  if (canRouteDocument && openRouteDocument !== null) {
+    openRouteDocument(documentRequest);
+  } else {
+    openDocument(documentRequest);
+  }
+}
+
 function ComposerCard(props: ComposerCardProps) {
   const { attachment, upload, owner } = props;
   const [failedUri, setFailedUri] = useState<string | null>(null);
   const openImage = useImagePreview();
   const openDocument = useDocumentPreview();
-  const openCodeDocument = useContext(ThreadCodeDocumentContext);
+  const openRouteDocument = useContext(ThreadCodeDocumentContext);
   const documentKind = composerAttachmentPreviewKind(attachment);
-  const openFile =
-    documentKind === "text" && openCodeDocument !== null ? openCodeDocument : openDocument;
   const openVideo = useAttachmentVideoPreview();
   const video = isAttachmentVideo(attachment.name);
   const baseSource = composerAttachmentSource(attachment);
@@ -96,22 +158,33 @@ function ComposerCard(props: ComposerCardProps) {
     draft: { scope: owner.scope, attachmentId: attachment.id },
   };
   useRegisterImagePreviewItem(attachment.kind === "image" && uri !== null ? groupId : null, item);
+  const documentRequest = {
+    getTransferAccess: owner.getAccess,
+    kind: documentKind,
+    name: attachment.name,
+    path: attachment.path,
+    source,
+  };
+  const canOpenImage = attachment.kind === "image" && uri !== null;
+  const canOpenVideo = video && (localUri !== null || ready);
+  const canRouteDocument = openRouteDocument !== null && documentKind !== "download";
   const open = () => {
-    if (attachment.kind === "image" && uri !== null) openImage({ ...item, groupId });
-    else if (video && (localUri !== null || ready))
-      openVideo({
-        name: attachment.name,
-        source: localUri === null ? source : { kind: "direct", uri: localUri },
-        getAccess: owner.getAccess,
-      });
-    else if (ready)
-      openFile({
-        kind: documentKind,
-        name: attachment.name,
-        path: attachment.path,
-        source,
-        getTransferAccess: owner.getAccess,
-      });
+    openComposerAttachment({
+      attachment,
+      canOpenImage,
+      canOpenVideo,
+      canRouteDocument,
+      documentRequest,
+      groupId,
+      item,
+      localUri,
+      openDocument,
+      openImage,
+      openRouteDocument,
+      openVideo,
+      ready,
+      source,
+    });
   };
   return (
     <AttachmentCard

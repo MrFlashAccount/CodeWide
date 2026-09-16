@@ -3,7 +3,7 @@ import { Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
+import { serverScopeIncludes } from "../../services/servers/serverScope";
 import { SidebarProjectHeader } from "../projects/SidebarProjects";
 import { styles } from "./MobileThreads.styles";
 import type { MobileThreadsProps } from "./MobileThreadsContract";
@@ -22,7 +22,7 @@ export function MobileThreadsHeader({
     onBackToProjects,
     onManageProjects,
     servers,
-    activeServerId,
+    serverScope,
     mode,
     filter,
     onQueryChange,
@@ -34,7 +34,10 @@ export function MobileThreadsHeader({
     onSettings,
     onRefreshAccountRateLimits,
   } = props;
-  const activeServer = props.servers.find((server) => server.id === props.activeServerId);
+  const activeServer =
+    serverScope.kind === "connection"
+      ? servers.find((server) => server.id === serverScope.connectionId)
+      : undefined;
   return (
     <View style={searchContent === null ? styles.threadListHeaderChrome : undefined}>
       <View style={styles.mobileTitleRow}>
@@ -81,7 +84,9 @@ export function MobileThreadsHeader({
           onManageProjects={onManageProjects}
           onSettings={onSettings}
           catalogConnectionIds={
-            activeServerId === ALL_SERVERS_ID ? servers.map((entry) => entry.id) : [activeServerId]
+            serverScope.kind === "all"
+              ? servers.map((entry) => entry.id)
+              : [serverScope.connectionId]
           }
           onToggleArchive={() => {
             onQueryChange("");
@@ -90,9 +95,7 @@ export function MobileThreadsHeader({
           archived={mode === "archived"}
           includeArchiveCount={project === null}
           accountDatabase={remote.accountRateLimitsDatabase}
-          accountServers={servers.filter(
-            (server) => activeServerId === ALL_SERVERS_ID || server.id === activeServerId,
-          )}
+          accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
           {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
         />
       </View>
@@ -112,7 +115,7 @@ export function MobileThreadsHeader({
               mode={mode}
               projectScoped={project !== null}
               servers={servers}
-              activeServerId={activeServerId}
+              serverScope={serverScope}
               selected={filter}
               onSelect={onFilterChange}
               onSelectServer={onSelectServer}

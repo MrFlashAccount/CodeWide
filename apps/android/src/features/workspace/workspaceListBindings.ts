@@ -1,94 +1,106 @@
+import { useMemo } from "react";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import { workspaceRuntime } from "../../data/workspace-runtime";
-import { useThreadNavigationActions } from "../navigation/navigationActions";
-import { defaultDesktopThreadSelection, useServerSelection } from "../navigation/serverSelection";
+import { useServerScope } from "../../services/servers/serverScope";
+import {
+  useThreadNavigationService,
+  type V1ThreadRouter,
+} from "../../services/threads/threadNavigationService";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
+import { ThreadServerProjection } from "../connections/connectionPresentation";
 import { useProjectSelection } from "../projects/projectSelection";
-import { useSearchWorkspace } from "../search/searchWorkspace";
 import { THREAD_LIST_PAGE_SIZE } from "../threadList/threadListModel";
 import type { ThreadListSources } from "../threadList/threadListSources";
 import { useProjectListState, useThreadListState } from "../threadList/threadListState";
-import { useThreadListWorkspace } from "../threadList/threadListWorkspace";
+import {
+  defaultDesktopThreadSelection,
+  useThreadListWorkspace,
+} from "../threadList/threadListWorkspace";
 import { workspaceFeatures as features } from "./createWorkspaceFeatures";
-import type { WorkspaceContentProps } from "./WorkspaceScreen.types";
+import type { WorkspaceBindingContext } from "./workspaceBindingContract";
 
-/** Binds existing scoped owners in their original hook order; owns no replacement state. */
+/** Binds V1 list owners to Router intents while keeping server scope separate from destinations. */
+// WHY: Downstream bindings derive this cohesive hook contract with ReturnType so it keeps one source of truth.
+// oxlint-disable-next-line typescript/explicit-module-boundary-types
 export function useWorkspaceListBindings({
   connections,
-  threadListSources,
   desktop,
   runtime,
-  threadNavigation,
+  threadListSources,
+  threadRouter,
 }: {
-  connections: WorkspaceContentProps["connections"];
+  connections: WorkspaceBindingContext["connections"];
+  desktop: WorkspaceBindingContext["desktop"];
+  runtime: WorkspaceBindingContext["runtime"];
   threadListSources: ThreadListSources;
-  desktop: WorkspaceContentProps["desktop"];
-  runtime: WorkspaceContentProps["runtime"];
-  threadNavigation: WorkspaceContentProps["threadNavigation"];
+  threadRouter: V1ThreadRouter;
 }) {
   const listState = useThreadListState();
   const projectListState = useProjectListState();
-  const projectSelection = useProjectSelection(listState.setMobileThreadQuery, () =>
-    projectListState.setProjectListMode("active"),
-  );
-  const { servers, activeServerId, setActiveServerId, desktopDefaultThreadEnabled, selectServer } =
-    useServerSelection(connections, () => listState.setThreadListLimit(THREAD_LIST_PAGE_SIZE));
+  const projectSelection = useProjectSelection(listState.setMobileThreadQuery, () => {
+    projectListState.setProjectListMode("active");
+  });
+  // WHY: The projection cache must retain source identity across renders.
+  // oxlint-disable-next-line react-doctor/react-compiler-no-manual-memoization
+  const serverProjection = useMemo(() => new ThreadServerProjection(), []);
+  const servers = serverProjection.project(connections);
+  const server = useServerScope(connections, () => {
+    listState.setThreadListLimit(THREAD_LIST_PAGE_SIZE);
+  });
   const settingsConnections: StoredConnection[] = connections;
-  const { searchSession, searchVisible, openGlobalSearch, closeGlobalSearch } =
-    useSearchWorkspace();
   const {
-    threadSummaryView,
+    archivedThreads,
     loadedThreadSummaries,
+    loadMoreThreads,
     scopedThreads,
     serverThreads,
-    archivedThreads,
-    loadMoreThreads,
+    threadSummaryView,
   } = useThreadListWorkspace(
     threadListSources,
-    activeServerId,
+    server.scope,
     listState.threadListMode,
     listState.threadListLimit,
     listState.setThreadListLimit,
   );
   const defaultDesktopThreadId = defaultDesktopThreadSelection(
     desktop,
-    desktopDefaultThreadEnabled,
+    server.desktopDefaultThreadEnabled,
     serverThreads,
   );
-  const { setActiveThreadId, selectThread, preloadThread, openSearchThread } =
-    useThreadNavigationActions(
-      {
-        native: workspaceRuntime.native,
-        threadDetails: runtime.threadDetails,
-        threadUiStateDatabase: runtime.threadUiState,
-        observeThread: features.conversation.observeThread,
-        searchConversation: features.search.searchConversation,
-      },
-      threadNavigation,
-      setActiveServerId,
-    );
+  const navigation = useThreadNavigationService(
+    {
+      native: workspaceRuntime.native,
+      observeThread: features.conversation.observeThread,
+      searchConversation: features.search.searchConversation,
+      threadDetails: runtime.threadDetails,
+      threadUiStateDatabase: runtime.threadUiState,
+    },
+    threadRouter,
+    server.selectConnection,
+  );
+  const selectedThreadKey =
+    threadRouter.currentThread === null
+      ? null
+      : threadSelectionKey({
+          id: threadRouter.currentThread.threadId.value,
+          serverId: threadRouter.currentThread.connectionId.value,
+        });
   return {
+    archivedThreads,
+    defaultDesktopThreadId,
     listState,
+    loadedThreadSummaries,
+    loadMoreThreads,
     projectListState,
     projectSelection,
-    servers,
-    activeServerId,
-    setActiveServerId,
-    selectServer,
-    settingsConnections,
-    searchSession,
-    searchVisible,
-    openGlobalSearch,
-    closeGlobalSearch,
-    threadSummaryView,
-    loadedThreadSummaries,
     scopedThreads,
+    selectedThreadKey,
+    selectServer: server.select,
+    servers,
+    serverScope: server.scope,
     serverThreads,
-    archivedThreads,
-    loadMoreThreads,
-    defaultDesktopThreadId,
-    setActiveThreadId,
-    selectThread,
-    preloadThread,
-    openSearchThread,
+    settingsConnections,
+    threadSummaryView,
+    ...navigation,
   };
 }

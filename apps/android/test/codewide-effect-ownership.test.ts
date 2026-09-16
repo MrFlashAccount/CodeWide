@@ -4,12 +4,29 @@ import { describe, expect, it } from "vitest";
 
 import { compactSource } from "./source-contract";
 
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+const runtimeShell = compactSource(
+  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
+);
+const workspaceComposition = compactSource(
+  readFileSync(new URL("../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url), "utf8"),
+);
+const workspaceRouteModel = compactSource(
+  readFileSync(new URL("../app/v1/V1WorkspaceRouteModel.ts", import.meta.url), "utf8"),
+);
+const workspaceVisualShell = compactSource(
+  readFileSync(new URL("../app/v1/V1WorkspaceShell.tsx", import.meta.url), "utf8"),
+);
+const allRoute = compactSource(
+  readFileSync(new URL("../app/v1/index.tsx", import.meta.url), "utf8"),
+);
+const screen = [runtimeShell, workspaceComposition, workspaceRouteModel, workspaceVisualShell].join(
+  " ",
+);
 const timelineList = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
 const commitProbe = readFileSync(new URL("../src/ui/CommitProbe.tsx", import.meta.url), "utf8");
 const projectCatalog = readFileSync(new URL("../src/features/projects/useRemoteProjectCatalog.ts", import.meta.url), "utf8");
 const historyController = readFileSync(new URL("../src/data/use-thread-history-controller.ts", import.meta.url), "utf8");
-const subagentSheet = readFileSync(new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url), "utf8");
+const subagentSheet = readFileSync(new URL("../src/features/agents/RouteSubagentWorkspace.tsx", import.meta.url), "utf8");
 const documentPreview = readFileSync(new URL("../src/rendering/DocumentPreviewHost.tsx", import.meta.url), "utf8");
 const codeReview = readFileSync(new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
 
@@ -17,7 +34,24 @@ const projectWorkspace = compactSource(readFileSync(new URL("../src/features/pro
 const threadSidebar = compactSource(readFileSync(new URL("../src/features/threadList/ThreadSidebar.tsx", import.meta.url), "utf8"));
 const selectableThread = compactSource(readFileSync(new URL("../src/features/threadList/SelectableThreadRow.tsx", import.meta.url), "utf8"));
 
-const workspaceDeepLinks = compactSource(readFileSync(new URL("../src/features/navigation/workspaceDeepLinks.ts", import.meta.url), "utf8"));
+const workspaceDeepLinks = compactSource(
+  readFileSync(
+    new URL("../src/features/workspace/useV1WorkspaceDeepLinks.ts", import.meta.url),
+    "utf8",
+  ),
+);
+const pairingRouteSessions = compactSource(
+  readFileSync(
+    new URL("../src/services/connections/pairingRouteSession.ts", import.meta.url),
+    "utf8",
+  ),
+);
+const newServerRoute = compactSource(
+  readFileSync(
+    new URL("../app/v1/settings/servers/new/index.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 const reviewVoiceOwner = readFileSync(new URL("../src/features/review/reviewVoice.ts", import.meta.url), "utf8");
 
@@ -36,7 +70,7 @@ const ownerUnreadReceipt = compactSource(readFileSync(new URL("../src/features/c
 const ownerThreadTimelineNavigationCommit = compactSource(readFileSync(new URL("../src/features/conversation/timeline/ThreadTimelineNavigationCommit.tsx", import.meta.url), "utf8"));
 const ownerTimelineViewport = compactSource(readFileSync(new URL("../src/features/conversation/timeline/TimelineViewport.tsx", import.meta.url), "utf8"));
 const ownerComposerControlChips = compactSource(readFileSync(new URL("../src/features/composer/settings/ComposerControlChips.tsx", import.meta.url), "utf8"));
-const ownerComposerMenuComposition = compactSource(readFileSync(new URL("../src/features/workspace/ComposerMenuComposition.tsx", import.meta.url), "utf8"));
+const ownerComposerMenuComposition = compactSource(readFileSync(new URL("../src/features/composer/ComposerRuntimeRoutes.tsx", import.meta.url), "utf8"));
 const ownerConversationWorkspace = compactSource(readFileSync(new URL("../src/features/conversation/ConversationWorkspace.tsx", import.meta.url), "utf8"));
 
 const anchor = compactSource(readFileSync(new URL("../src/features/conversation/timeline/historyAnchor.ts", import.meta.url), "utf8"));
@@ -47,25 +81,44 @@ const activation = compactSource(readFileSync(new URL("../src/features/conversat
 
 const composition = compactSource(readFileSync(new URL("../src/features/conversation/ConversationComposition.tsx", import.meta.url), "utf8"));
 
-const workspaceShell = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceScreen.tsx", import.meta.url), "utf8"));
+const workspaceShell = screen;
 const activeProjectSelection = compactSource(readFileSync(new URL("../src/features/projects/activeProjectSelection.ts", import.meta.url), "utf8"));
 
 const ownerMainConversationPublication = compactSource(readFileSync(new URL("../src/features/conversation/MainConversationPublication.tsx", import.meta.url), "utf8"));
 const ownerConversationDestinationSurface = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url), "utf8"));
 
-const workspaceView = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceScreenContent.tsx", import.meta.url), "utf8"));
+const workspaceView = workspaceVisualShell;
+const threadNavigation = compactSource(
+  readFileSync(
+    new URL("../src/services/threads/threadNavigationService.ts", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("CodeWide effect ownership", () => {
-  it("keeps the workspace screen free of post-commit state orchestration", () => {
-    expect(screen).not.toMatch(/\buseEffect\s*\(/u);
-    expect(screen).not.toMatch(/\buseLayoutEffect\s*\(/u);
+  it("keeps the workspace route effect limited to native runtime synchronization", () => {
+    expect(runtimeShell.match(/\buseEffect\s*\(/gu)).toHaveLength(1);
+    expect(runtimeShell).not.toMatch(/\buseLayoutEffect\s*\(/u);
+    expect(runtimeShell).toContain('activateRuntime("legacy"');
+    expect(runtimeShell).toContain('stopRuntime("legacy")');
     expect(screen).not.toContain("transitionConversationScope");
     expect(projectWorkspace).toContain("useRemoteProjectCatalog(");
-    expect(workspaceDeepLinks).toContain("useDeepLinkListener(");
+    expect(workspaceDeepLinks).not.toMatch(/\b(?:fetch|load|hydrate)[A-Z_a-z]*\s*\(/u);
+    expect(workspaceDeepLinks).toContain("parseThreadDeepLink(raw)");
+    expect(workspaceDeepLinks).toContain("selectThread(threadSelectionKey({");
+    expect(workspaceDeepLinks).toContain("id: parsed.threadId");
+    expect(workspaceDeepLinks).toContain("serverId: parsed.connectionId");
+    expect(workspaceComposition).toContain("const session = pairingRouteSessions.open(initialCode)");
+    expect(workspaceComposition).toContain("params: { sessionId: session.id }");
+    expect(workspaceComposition).not.toContain("params: { initialCode }");
+    expect(pairingRouteSessions).toContain(
+      "new RouteSessionRegistry<PairingRouteSession>({ limit: MAX_PAIRING_SESSIONS",
+    );
+    expect(newServerRoute).toContain("initialCode={routeSession?.initialCode ?? null}");
     expect(ownerDraft).toContain("useComposerLatestValues(");
     expect(ownerOverlayScrollOwnership).toContain("useAndroidBackHandler(");
     expect(ownerVoiceCaptureStatus).toContain("useSecondClock(");
-    expect(ownerConversationDestinationSurface).toContain("<CommitOnChangeProbe");
+    expect(ownerMainConversationPublication).toContain("<CommitOnChangeProbe");
     expect(ownerConversationTimelineSurface).toContain("<EveryCommitProbe");
     expect(screen).not.toContain('<Profiler id="thread-timeline-navigation"');
     expect(screen).not.toContain('<Profiler id="thread-row"');
@@ -120,7 +173,9 @@ describe("CodeWide effect ownership", () => {
   });
 
   it("does not fetch every server project catalog while painting the all-servers thread list", () => {
-    expect(projectWorkspace).toContain("const projectCatalogConnections = newThreadVisible || searchVisible || activeServerId === ALL_SERVERS_ID");
+    expect(projectWorkspace).toContain(
+      'const projectCatalogConnections = newThreadVisible || searchVisible || serverScope.kind === "all"',
+    );
     expect(activeProjectSelection).toContain('activeConnectionId === ""');
     expect(projectWorkspace).toContain("useRemoteProjectCatalog( remote.native, projectCatalogConnections, remote.listProjects,");
   });
@@ -142,31 +197,27 @@ describe("CodeWide effect ownership", () => {
     expect(ownerComposerPortContextChip).toContain("const snapshot = useNativePortForwarding(connectionId);");
     expect(ownerComposerTerminalContextChip).toContain("const workspace = useInteractiveTerminalWorkspace(connectionId, threadId);");
     expect(ownerComposerSubagentContextChip).toContain("function ComposerSubagentContextChipLoaded(");
-    expect(ownerComposerMenuComposition).toContain("const terminalsResource = useBackgroundTerminalsRow(resources, backgroundTerminalsResourceId);");
-    expect(ownerComposerMenuComposition).toContain("const goalResource = useThreadGoalRow(resources, goalResourceId);");
-    expect(ownerComposerMenuComposition).toContain("const tunnelResource = useTunnelRow(resources, tunnelResourceId);");
+    expect(ownerComposerMenuComposition).toContain(
+      "const terminals = useBackgroundTerminalsRow( request.resources, request.backgroundTerminalsResourceId, );",
+    );
+    expect(ownerComposerMenuComposition).toContain(
+      "const tunnel = useTunnelRow(request.resources, request.tunnelResourceId);",
+    );
   });
 
   it("keeps active-thread selection below the workspace shell and out of the sidebar list", () => {
-    const shell = workspaceShell.slice(
-      workspaceShell.indexOf("function CodeWideWorkspaceScreen"),
-      workspaceShell.indexOf("function CodeWideWorkspaceContent"),
-    );
-    expect(shell).toContain("createThreadNavigationModel");
-    expect(shell).not.toContain("useSelector(");
-    const workspace = workspaceShell.slice(workspaceShell.indexOf("function CodeWideWorkspaceContent("));
-    expect(workspace).not.toContain("setThreadSelection(");
-    expect(workspace).not.toContain("setNewChatDraft(");
-    expect(workspace).not.toContain("threadNavigation.destination$.get()");
-    expect(workspace).not.toContain("threadNavigation.selection$.get()");
-    expect(workspaceView).toContain("<WorkspaceConversationHost");
-    expect(workspace).not.toContain("const activeConversationRoute");
-    expect(workspace).not.toContain("const conversationActions");
+    expect(workspaceShell).toContain("v1ThreadRouteParams(routeParams)");
+    expect(workspaceShell).not.toContain("createThreadNavigationModel");
+    expect(workspaceShell).not.toContain("threadNavigation.destination$");
+    expect(threadNavigation).toContain("router[mode](v1ThreadDestination(params), searchWindowId)");
+    expect(threadNavigation).toContain("const selectThread = useEvent");
     expect(threadSidebar).toContain("function ThreadSidebar(");
     expect(selectableThread).toContain("function SelectableThreadRow(");
-    expect(selectableThread).toContain("navigation.selection$.id.get() === selectionKey");
-    expect(ownerConversationDestinationSurface).toContain("scope=\"desktop-default-thread\"");
-    expect(ownerConversationDestinationSurface).toContain("onCommit={props.scope.commitDefaultDesktopThread}");
+    expect(selectableThread).toContain("selectedThreadKey === selectionKey");
+    expect(allRoute).toContain('scope="v1-desktop-default-thread"');
+    expect(allRoute).toMatch(
+      /onCommit=\{\(\) => \{\s*list\.selectThread\(defaultThread\);\s*\}\}/u,
+    );
     expect(screen).not.toContain("setThreadSelection(threadNavigation.select(defaultThreadId))");
     expect(screen).not.toContain("extraData={`${activeThreadId");
   });

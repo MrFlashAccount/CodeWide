@@ -3,8 +3,7 @@ import { MobileThreadsHeader } from "./MobileThreadsHeader";
 import { LegendList } from "@legendapp/list/react-native";
 import { View } from "react-native";
 import { usePerformanceExperiment } from "../../data/performance-experiments";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
-import { threadSelectionKey } from "../navigation/threadSelection";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { NewThreadFloatingButton } from "../projects/NewThreadFloatingButton";
 import { SidebarProjectRow } from "../projects/SidebarProjects";
 import { styles } from "./MobileThreads.styles";
@@ -31,7 +30,7 @@ export function MobileThreads(props: MobileThreadsProps) {
     projectLimit,
     onLoadMoreProject,
     servers,
-    activeServerId,
+    serverScope,
     threads,
     archivedThreads,
     mode,
@@ -86,8 +85,8 @@ export function MobileThreads(props: MobileThreadsProps) {
           ) : (
             <LegendList
               data={mobileRows}
-              key={`${activeServerId}:${mode}:${project?.key ?? "global"}`}
-              dataKey={`mobile-threads:${activeServerId}:${mode}:${project?.key ?? "global"}`}
+              key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
+              dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}
               initialScrollOffset={initialOffset}
               getFixedItemSize={threadListRowHeight}
               drawDistance={320}
@@ -101,7 +100,7 @@ export function MobileThreads(props: MobileThreadsProps) {
               keyExtractor={sidebarRowKey}
               ListEmptyComponent={
                 <SidebarListFeedback
-                  key={`${activeServerId}:${mode}:${query}:${project?.key ?? "global"}`}
+                  key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                   state={project === null ? catalogState : projectSource.state}
                   archived={mode === "archived"}
                 />
@@ -109,7 +108,7 @@ export function MobileThreads(props: MobileThreadsProps) {
               ListFooterComponent={
                 mobileRows.length > 0 && mode === "active" && filteredThreads.length === 0 ? (
                   <SidebarListFeedback
-                    key={`${activeServerId}:${mode}:${query}:${project?.key ?? "global"}`}
+                    key={`${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${query}:${project?.key ?? "global"}`}
                     state={project === null ? catalogState : projectSource.state}
                     archived={false}
                   />
@@ -127,7 +126,7 @@ export function MobileThreads(props: MobileThreadsProps) {
                   <ThreadRow
                     thread={item.thread}
                     server={
-                      activeServerId === ALL_SERVERS_ID && servers.length > 1
+                      serverScope.kind === "all" && servers.length > 1
                         ? servers.find((entry) => entry.id === item.thread.serverId)
                         : undefined
                     }

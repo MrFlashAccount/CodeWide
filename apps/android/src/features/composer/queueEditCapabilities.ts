@@ -22,7 +22,6 @@ export type QueueEditCapabilities = Pick<
   setQueuedComposerEditError: Dispatch<SetStateAction<string | null>>;
   voicePhase: VoiceInputRow["phase"];
   closeInlineQueueOverlay(): void;
-  setMenuVisible: Dispatch<SetStateAction<boolean>>;
   onEditQueued:
     | ((commandId: string, text: string, attachments: StoredDraftAttachment[]) => Promise<void>)
     | undefined;

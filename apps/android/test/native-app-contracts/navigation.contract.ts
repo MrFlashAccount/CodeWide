@@ -6,9 +6,13 @@ import {
 } from "./navigation-sources";
 
 it("preserves navigation integration contracts", () => {
-  expect(threadServerSelection).toMatch(/const defaultDesktopThreadId =\s*desktop/);
-  expect(threadServerSelection).toMatch(/\?\s*threadSelectionKey\(serverThreads\[0\]\)/);
-  expect(conversationNavigation).toContain("threadNavigation.select(defaultDesktopThreadId)");
+  expect(threadServerSelection).toContain(
+    "const defaultDesktopThreadId = defaultDesktopThreadSelection(",
+  );
+  expect(conversationNavigation).toContain("revision={defaultThread}");
+  expect(conversationNavigation).toMatch(
+    /onCommit=\{\(\) => \{\s*list\.selectThread\(defaultThread\);\s*\}\}/u,
+  );
   expect(navigationActions).toContain("remote.threadDetails.preloadWindow({");
   expect(navigationActions).toContain(
     "KeyboardController.dismiss({ animated: false, keepFocus: false })",

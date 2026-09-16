@@ -3,18 +3,21 @@ import { describe, expect, it } from "vitest";
 
 import { compactSource } from "./source-contract";
 
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
 const database = readFileSync(new URL("../src/data/thread-summary-sqlite.native.ts", import.meta.url), "utf8");
 
 const listWorkspace = compactSource(readFileSync(new URL("../src/features/threadList/threadListWorkspace.ts", import.meta.url), "utf8"));
 
-const navigationActions = compactSource(readFileSync(new URL("../src/features/navigation/conversationNavigationActions.ts", import.meta.url), "utf8"));
-
-const serverSelection = compactSource(readFileSync(new URL("../src/features/navigation/serverSelection.ts", import.meta.url), "utf8"));
+const workspaceListBindings = compactSource(
+  readFileSync(
+    new URL("../src/features/workspace/workspaceListBindings.ts", import.meta.url),
+    "utf8",
+  ),
+);
+const allRoute = compactSource(readFileSync(new URL("../app/v1/index.tsx", import.meta.url), "utf8"));
 
 const ownerConversationWorkspace = compactSource(readFileSync(new URL("../src/features/conversation/ConversationWorkspace.tsx", import.meta.url), "utf8"));
 
-const ownerConversationDestinationSurface = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url), "utf8"));
 const ownerActiveConversationScope = compactSource(readFileSync(new URL("../src/features/conversation/activeConversationScope.ts", import.meta.url), "utf8"));
 
 describe("thread list query contract", () => {
@@ -49,13 +52,15 @@ describe("thread list query contract", () => {
   });
 
   it("commits the initial desktop conversation by stable id before Recent can reorder", () => {
-    expect(serverSelection).toContain("const defaultDesktopThreadId = desktop");
-    expect(serverSelection).toContain("? threadSelectionKey(serverThreads[0])");
-    expect(navigationActions).toContain("threadNavigation.select(defaultDesktopThreadId)");
-    expect(ownerConversationDestinationSurface).toContain("scope=\"desktop-default-thread\"");
-    expect(ownerConversationDestinationSurface).toContain("revision={props.destination.kind === \"empty\" ? props.defaultDesktopThreadId : null}");
-    expect(navigationActions).toContain('threadNavigation.destination$.peek().kind !== "empty"');
-    expect(ownerConversationDestinationSurface).toContain("onCommit={props.scope.commitDefaultDesktopThread}");
+    expect(workspaceListBindings).toContain(
+      "const defaultDesktopThreadId = defaultDesktopThreadSelection(",
+    );
+    expect(allRoute).toContain("revision={defaultThread}");
+    expect(allRoute).toContain("list.selectedThreadKey === null");
+    expect(allRoute).toMatch(
+      /onCommit=\{\(\) => \{\s*list\.selectThread\(defaultThread\);\s*\}\}/u,
+    );
+    expect(allRoute).toContain('scope="v1-desktop-default-thread"');
     expect(ownerActiveConversationScope).toContain("? selectedThread : null;");
     expect(screen).not.toContain("selectedThread ?? (desktop && !pendingThreadSelection");
   });

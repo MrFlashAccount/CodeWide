@@ -1,6 +1,8 @@
 import type { PropsWithChildren } from "react";
 import { View, type ViewProps } from "react-native";
 
+export const KeyboardController = { dismiss: jest.fn(async () => undefined) };
+
 interface KeyboardStickyViewProps extends ViewProps {
   enabled?: boolean;
   offset?: { closed?: number; opened?: number };
@@ -13,6 +15,6 @@ export function KeyboardStickyView(props: PropsWithChildren<KeyboardStickyViewPr
     enabled,
     offset,
     testID: viewProps.testID ?? "keyboard-sticky-view",
-  } as ViewProps;
+  };
   return <View {...renderedProps}>{children}</View>;
 }

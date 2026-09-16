@@ -60,7 +60,6 @@ export function useComposerState({
     saveDraft: composerInputs.saveDraft,
     saveDraftAttachments: composerInputs.saveDraftAttachments,
     voiceController,
-    setMenuVisible: composerMenuStateBinding.setMenuVisible,
   });
   const reviewAttachmentIdsBinding = useReviewAttachmentIds(composerScope);
   return {

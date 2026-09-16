@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-const inputs = ["app", "src/boot", "src/presentation"];
+const v2RouteInputs = ["app/(modal)", "app/(workspace)"];
+const inputs = [...v2RouteInputs, "src/boot", "src/presentation"];
 
 if (existsSync("src/v2")) {
   inputs.push("src/v2");
@@ -64,7 +65,7 @@ for (const forbiddenRawAccess of [
   }
 }
 
-const routeFiles = spawnSync("rg", ["--files", "app"], { encoding: "utf8" });
+const routeFiles = spawnSync("rg", ["--files", ...v2RouteInputs], { encoding: "utf8" });
 if (routeFiles.status !== 0) throw new Error("Could not enumerate Android routes");
 for (const routeFile of routeFiles.stdout.trim().split("\n")) {
   if (routeFile.includes("[connectionId]"))

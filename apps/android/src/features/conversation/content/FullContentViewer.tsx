@@ -8,12 +8,12 @@ import { readPrivateAssetText, type PrivateAssetTextResult } from "../../../data
 import { useEvent } from "../../../react/useEvent";
 import { useEphemeralAsyncResource } from "../../../rendering/async-resource-store";
 import { colors } from "../../../theme";
-import { useAppFullscreenOverlay } from "../../../ui/AppFullscreenOverlay";
 import { InlineIcon } from "../../../ui/InlineIcon";
 import { AppText as Text } from "../../../ui/Typography";
 import { CONTENT_VIEW_CHUNK_BYTES } from "./contentLimits";
 import { LargeContentViewerContext, type LargeContentViewerRequest } from "./contentViewerContext";
 import { styles } from "./FullContentViewer.styles";
+import { useConversationRouteNavigation } from "../conversationRouteNavigation";
 
 export function nextRenderFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
@@ -28,11 +28,9 @@ export type LargeContentViewerSelection = LargeContentViewerRequest & {
 };
 
 export function LargeContentViewerHost({ children }: { children: ReactNode }) {
-  const fullscreenOverlay = useAppFullscreenOverlay();
+  const navigation = useConversationRouteNavigation();
   const open = useEvent((request: LargeContentViewerRequest) => {
-    fullscreenOverlay.present(({ close }) => (
-      <LargeContentViewerSession initialRequest={request} onClose={close} />
-    ));
+    navigation.openContent(request);
   });
   return (
     <LargeContentViewerContext.Provider value={open}>{children}</LargeContentViewerContext.Provider>

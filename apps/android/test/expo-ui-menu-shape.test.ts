@@ -35,7 +35,7 @@ describe("Expo UI menu shape", () => {
   });
 
   it("places the message action beside the bubble without shrinking its touch area", () => {
-    const screen = readSource("../src/CodeWideScreen.tsx");
+    const screen = readSource("../app/v1/_layout.tsx");
 
     expect(screen).not.toContain('style={styles.messageActionIcon}');
     const actionStyle = railStyles.match(/messageActionButton: \{[^}]+\}/u)?.[0];

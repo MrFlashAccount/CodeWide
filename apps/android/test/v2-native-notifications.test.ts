@@ -51,7 +51,7 @@ const pendingRequestsPanel = readFileSync(
   new URL("../src/v2/features/requests/PendingRequestsPanel.tsx", import.meta.url),
   "utf8",
 );
-const legacyRoute = readFileSync(new URL("../app/legacy.tsx", import.meta.url), "utf8");
+const legacyRuntimeRoute = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
 const nativeTransport = readFileSync(
   new URL("../src/native/native-transport.native.ts", import.meta.url),
   "utf8",
@@ -113,8 +113,8 @@ describe("V2 native notification authority", () => {
       connectionService.indexOf("internal fun stopLegacyRuntimeResources()"),
       connectionService.indexOf("internal fun listPortForwards("),
     );
-    expect(legacyRoute).toContain("start: startLegacyNativeRuntimeResources");
-    expect(legacyRoute).toContain("stop: stopLegacyNativeRuntimeResources");
+    expect(legacyRuntimeRoute).toContain("start: startLegacyNativeRuntimeResources");
+    expect(legacyRuntimeRoute).toContain("stop: stopLegacyNativeRuntimeResources");
     expect(nativeTransport).toContain("startLegacyRuntimeResources?: () => Promise<void>");
     expect(nativeTransport).toContain("stopLegacyRuntimeResources?: () => Promise<void>");
     expect(connectionService).toContain("internal fun activateLegacySync()");

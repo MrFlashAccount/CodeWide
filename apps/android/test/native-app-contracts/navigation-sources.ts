@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 
 export const navigationActions = readFileSync(
-  new URL("../../src/features/navigation/navigationActions.ts", import.meta.url),
+  new URL("../../src/services/threads/threadNavigationService.ts", import.meta.url),
   "utf8",
 );
 export const conversationNavigation = readFileSync(
-  new URL("../../src/features/navigation/conversationNavigationActions.ts", import.meta.url),
+  new URL("../../app/v1/index.tsx", import.meta.url),
   "utf8",
 );
 export const threadServerSelection = readFileSync(
-  new URL("../../src/features/navigation/serverSelection.ts", import.meta.url),
+  new URL("../../src/features/workspace/workspaceListBindings.ts", import.meta.url),
   "utf8",
 );

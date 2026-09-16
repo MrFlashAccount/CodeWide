@@ -2,15 +2,16 @@ import type { RenderBlock } from "@codewide/renderers";
 import type { GetTransferAccess } from "../../data/private-transfer";
 import type { ThreadDetailDatabase } from "../../data/thread-detail-database-contract";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
+import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { COMPLETE_STATIC_THREAD_HISTORY } from "../../data/use-thread-history-controller";
 import { ContentReviewComposer } from "../../rendering/ContentReviewHost";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
+import { useEvent } from "../../react/useEvent";
 import { useAppVoiceInputRuntime, type AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 import { subagentThreadListItem } from "../agents/agentSelection";
-import { useAgentsFeature } from "../agents/AgentsFeature";
 import { ComposerSubagentContextChip } from "../agents/ComposerSubagentContextChip";
-import type { SubagentThreadView } from "../agents/SubagentSheet";
+import type { SubagentThreadView } from "../agents/subagentConversationContract";
 import {
   useDocumentNavigation,
   useDocumentTransferAccess,
@@ -25,8 +26,8 @@ import type { ThreadListServer } from "../connections/connectionPresentation";
 import { useReviewFeature } from "../review/ReviewFeature";
 import { ComposerTerminalContextChip } from "../terminal/ComposerTerminalContextChip";
 import { useTerminalActions } from "../terminal/terminalActions";
-import { useTerminalFeature } from "../terminal/TerminalFeature";
 import { ConversationReadSurface } from "./ConversationReadSurface";
+import { useConversationRouteNavigation } from "./conversationRouteNavigation";
 import {
   useOverlayScrollOwnership,
   useOverlayScrollState,
@@ -35,35 +36,36 @@ import { usePaginationTrim, useTimelineViewportState } from "./timeline/timeline
 
 /** Binds only the navigation, preview and terminal capabilities exposed by a read-only child. */
 export type SubagentConversationProps = {
-  view: SubagentThreadView;
+  details: ThreadDetailDatabase | null;
+  fixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
+  getTransferAccess: GetTransferAccess | undefined;
+  loadTurnChanges: ((target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>) | undefined;
+  refresh: ((rootThreadId: string) => Promise<void>) | undefined;
   server: ThreadListServer | undefined;
   summaries: ThreadSummaryDatabase | null;
-  details: ThreadDetailDatabase | null;
-  refresh: ((rootThreadId: string) => Promise<void>) | undefined;
-  loadTurnChanges: ((target: TurnChangesTarget) => Promise<readonly TurnChangedFile[]>) | undefined;
-  getTransferAccess: GetTransferAccess | undefined;
-  fixUnsupportedBlock: ((block: RenderBlock) => Promise<void>) | undefined;
+  view: SubagentThreadView;
 };
 
 export function SubagentConversation({
-  view,
+  details,
+  fixUnsupportedBlock,
+  getTransferAccess,
+  loadTurnChanges,
+  refresh,
   server,
   summaries,
-  details,
-  refresh,
-  loadTurnChanges,
-  getTransferAccess,
-  fixUnsupportedBlock,
+  view,
 }: SubagentConversationProps) {
-  const { connectionId, thread, compact, onBack, onOpenSubagent } = view;
+  const { compact, connectionId, onBack, onOpenSubagent, thread } = view;
+  const routeNavigation = useConversationRouteNavigation();
   const scope = `${connectionId}\u0000${thread.id}`;
   const viewport = useTimelineViewportState(scope);
   const overlayState = useOverlayScrollState();
   const pagination = usePaginationTrim({
-    paginationTrimTimerRef: viewport.paginationTrimTimerRef,
-    paginationEdgeLockRef: viewport.paginationEdgeLockRef,
     fullscreenScrollOwnership: overlayState.fullscreenScrollOwnership,
     historyViewport: COMPLETE_STATIC_THREAD_HISTORY,
+    paginationEdgeLockRef: viewport.paginationEdgeLockRef,
+    paginationTrimTimerRef: viewport.paginationTrimTimerRef,
   });
   const overlay = useOverlayScrollOwnership(
     scope,
@@ -78,86 +80,58 @@ export function SubagentConversation({
     thread,
   };
   const { changesPreferences, setChangesPreferences } = useChangesPreferences(scope);
-  const { currentThreadResources, currentChangePresentation } = useChangeResourcePresentation(
+  const { currentChangePresentation, currentThreadResources } = useChangeResourcePresentation(
     null,
     null,
     changesPreferences,
   );
   const getStableTransferAccess = useDocumentTransferAccess(getTransferAccess);
   // Read-only children have never admitted review uploads into a draft.
-  const { presentTurnChanges, openCodeDocument } = useChangesFeature({
-    cwd: thread.cwd,
-    remoteThread: thread,
-    changesPreferences,
-    setChangesPreferences,
-    dismissComposerKeyboardForOverlay: overlay.dismissComposerKeyboardForOverlay,
-    fullscreenOverlay: overlay.fullscreenOverlay,
+  const { openCodeDocument, presentTurnChanges } = useChangesFeature({
     appVoiceInputRuntime,
-    getStableTransferAccess,
     attachCodeReview: async () => false,
-    onLoadTurnChanges: loadTurnChanges,
-    onLoadThreadResources: undefined,
-    onLoadThreadChangeDiff: undefined,
-    currentThreadResources,
+    changesPreferences,
     currentChangePresentation,
+    currentThreadResources,
+    cwd: thread.cwd,
+    getStableTransferAccess,
+    onLoadThreadChangeDiff: undefined,
+    onLoadThreadResources: undefined,
+    onLoadTurnChanges: loadTurnChanges,
+    remoteThread: thread,
+    setChangesPreferences,
   });
   useReviewFeature(scope, null, thread, appVoiceInputRuntime, null, undefined, async () => null);
+  const openTimelineDocument = useEvent(
+    (request: Parameters<typeof routeNavigation.openDocument>[0]) => {
+      if (request.kind === "text") {
+        openCodeDocument(request);
+        return;
+      }
+      routeNavigation.openDocument(request);
+    },
+  );
   const { openThreadDocumentLink } = useDocumentNavigation(
     thread.cwd,
     getTransferAccess,
     getStableTransferAccess,
     undefined,
-    (request) => openCodeDocument(request),
+    openTimelineDocument,
   );
-  const renderChild = (child: SubagentThreadView) => (
-    <SubagentConversation
-      key={`${child.connectionId}:${child.thread.id}`}
-      view={child}
-      server={server}
-      summaries={summaries}
-      details={details}
-      refresh={refresh}
-      loadTurnChanges={loadTurnChanges}
-      getTransferAccess={getTransferAccess}
-      fixUnsupportedBlock={fixUnsupportedBlock}
-    />
+  const openChildren = useEvent(
+    (_children: readonly StoredThreadSummary[], initialThreadId: string | null = null) => {
+      void refresh?.(thread.id).catch(() => undefined);
+      routeNavigation.openAgents(initialThreadId, thread.id);
+    },
   );
-  const openChildren = useAgentsFeature(
-    connectionId,
-    thread.id,
-    thread,
-    details,
-    refresh,
-    overlay.fullscreenOverlay,
-    renderChild,
-  );
-  const presentTerminal = useTerminalFeature(
-    connectionId,
-    thread.id,
-    thread.cwd,
-    overlay.fullscreenOverlay,
-  );
+  const presentTerminal = useEvent(() => {
+    routeNavigation.openTerminal({ connectionId, cwd: thread.cwd, threadId: thread.id });
+  });
   const { openTerminal } = useTerminalActions(connectionId, thread.id, thread.cwd, presentTerminal);
   return (
     <ConversationReadSurface
-      thread={subagentThreadListItem(view.summary, thread, connectionId)}
-      server={server}
-      remoteThread={thread}
-      compact={compact}
-      onBack={onBack}
-      onOpenSubagentThread={onOpenSubagent}
-      getTransferAccess={getTransferAccess}
-      getStableTransferAccess={getStableTransferAccess}
-      onFixUnsupportedBlock={fixUnsupportedBlock}
-      openThreadDocumentLink={openThreadDocumentLink}
-      openCodeDocument={openCodeDocument}
-      presentTurnChanges={presentTurnChanges}
       appVoiceInputRuntime={appVoiceInputRuntime}
-      viewport={viewport}
-      overlayState={overlayState}
-      overlay={overlay}
-      pagination={pagination}
-      reviewContent={<ContentReviewComposer targetPrefix="agent-response:" />}
+      compact={compact}
       footerContent={
         <ReadOnlyComposerContext thread={thread}>
           <ComposerTerminalContextChip
@@ -170,11 +144,29 @@ export function SubagentConversation({
               database={summaries}
               connectionId={connectionId}
               parentThreadId={thread.id}
-              onOpen={(children) => openChildren(children)}
+              onOpen={(children) => {
+                openChildren(children);
+              }}
             />
           )}
         </ReadOnlyComposerContext>
       }
+      getStableTransferAccess={getStableTransferAccess}
+      getTransferAccess={getTransferAccess}
+      onBack={onBack}
+      onFixUnsupportedBlock={fixUnsupportedBlock}
+      onOpenSubagentThread={onOpenSubagent}
+      openCodeDocument={openTimelineDocument}
+      openThreadDocumentLink={openThreadDocumentLink}
+      overlay={overlay}
+      overlayState={overlayState}
+      pagination={pagination}
+      presentTurnChanges={presentTurnChanges}
+      remoteThread={thread}
+      reviewContent={<ContentReviewComposer targetPrefix="agent-response:" />}
+      server={server}
+      thread={subagentThreadListItem(view.summary, thread, connectionId)}
+      viewport={viewport}
     />
   );
 }

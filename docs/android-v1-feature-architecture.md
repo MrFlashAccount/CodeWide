@@ -1,14 +1,14 @@
 # Android V1 feature architecture
 
-Status: **M0–M8 source ownership implemented; final validation recorded in the migration ledger**. Baseline: `3630ca4ed87a90916bd0a7cb4beaaba230fa28ce`. All 22 feature owners, lower runtime closure and facade deletion are implemented. Device-only interaction and relative performance remain explicitly unverified. Source paths abbreviated as `data/`, `ui/`, `rendering/` or `features/` are relative to `apps/android/src/`; historical screen line references identify the baseline.
+Status: **M0–M8 capability ownership implemented; application-navigation ownership subsequently migrated to Expo Router**. Baseline: `3630ca4ed87a90916bd0a7cb4beaaba230fa28ce`. The source tree below records the M8 feature-extraction checkpoint. Its workspace/navigation entries are historical and are superseded by [V1 route architecture](android-v1-route-architecture.md). Device-only interaction and relative performance remain explicitly unverified. Source paths abbreviated as `data/`, `ui/`, `rendering/` or `features/` are relative to `apps/android/src/`; historical screen line references identify the baseline.
 
-This is the selected V1 architecture entrypoint. Use the [migration ledger](android-v1-feature-migration.md) for complete source ownership, lifetimes, compatibility, tests and bounded migration units; use [V1 source context](../apps/android/src/CONTEXT.md) and [runtime/data context](../apps/android/src/data/CONTEXT.md) for local placement rules. Existing [V2 architecture](android-v2-client-architecture.md) remains a separate contract.
+This is the selected V1 capability-ownership entrypoint. Use the [feature migration ledger](android-v1-feature-migration.md) for the historical extraction map and [route architecture](android-v1-route-architecture.md) with its [route ledger](android-v1-route-migration.md) for current application navigation. Use [V1 source context](../apps/android/src/CONTEXT.md) and [runtime/data context](../apps/android/src/data/CONTEXT.md) for local placement rules. Existing [V2 architecture](android-v2-client-architecture.md) remains a separate contract.
 
-## Target subtree: additions and extractions only
+## M8 checkpoint subtree: additions and extractions only
 
-The change creates **V1 feature owners** from `CodeWideScreen.tsx` and its scattered feature modules, plus explicit lower owners extracted from `data/use-remote-workspace.ts`. Existing models, databases, native adapters and boot paths stay at their current owners. Existing destinations such as `data/turn-controls-loader.ts` remain in the detailed owner map and are omitted from this additions-only tree.
+The M0-M8 checkpoint created **V1 feature owners** from the former root screen and its scattered feature modules, plus explicit lower owners extracted from `data/use-remote-workspace.ts`. Existing models, databases, native adapters and boot paths stayed at their owners. Existing destinations such as `data/turn-controls-loader.ts` remain in the detailed owner map and are omitted from this historical additions-only tree.
 
-This tree records the implemented additions, extractions and moves. Existing directories appear only as location anchors. **[N]** = new composition/documentation file; **[E]** = extracted behavior at a new path; **[M]** = existing file/family moved with its behavior. Source targets are implemented. The four documentation files marked [N] originated in D0. On a directory, the source note applies to its children unless a child names another source. Key files are shown here; the migration ledger appendices A–D retain the complete symbol, file-family and style mapping. No unlisted generic layer or scaffold is implied.
+This tree records the implemented M8 additions, extractions and moves before route ownership was migrated. Existing directories appear only as location anchors. **[N]** = new composition/documentation file; **[E]** = extracted behavior at a new path; **[M]** = existing file/family moved with its behavior. The later deletion of `CodeWideScreen`, `WorkspaceScreen`, `WorkspaceOverlays`, `features/navigation/**` and duplicate route wrappers is recorded in the route ledger. On a directory, the source note applies to its children unless a child names another source. Key files are shown here; the migration ledger appendices A–D retain the complete historical symbol, file-family and style mapping.
 
 ```text
 docs/                                              existing anchor
@@ -181,9 +181,9 @@ Direct Expo/native operations already present in the screen move with their actu
 
 ```mermaid
 flowchart TB
-  Route[app/legacy.tsx render] --> Root[CodeWideScreen: stable composition]
-  Import[Static legacy screen import / JS module evaluation] --> Runtime[Retained JS workspace singleton startup and handles]
-  Effect[app/legacy.tsx activation effect] --> Slot[Boot slot: native resource handle]
+  Route[app/v1/_layout.tsx] --> Root[V1WorkspaceRouteComposition]
+  Import[V1 route composition module evaluation] --> Runtime[Retained JS workspace singleton startup and handles]
+  Effect[app/v1/_layout.tsx activation effect] --> Slot[Boot slot: native resource handle]
   Slot --> Native[Native transport and platform contracts]
   Root --> Runtime
   Root --> WS[Workspace composition]
@@ -212,8 +212,8 @@ The diagram shows runtime calls, not a license to import a downstream implementa
 Binding imports:
 
 - All V1, including type imports: must not import `src/v2/**`, `@codewide/sync-client/v2` or V2 storage.
-- `src/data/**`, `src/native/**`, package protocol/sync owners: must not import `src/features/**` or `CodeWideScreen`.
-- Feature internals: must not import `CodeWideScreen`, root composition, another feature's private model/adapter/style, or the temporary `use-remote-workspace` facade after that feature's migration closes.
+- `src/data/**`, `src/native/**`, package protocol/sync owners: must not import `src/features/**` or route composition.
+- Feature internals: must not import root route composition, another feature's private model/adapter/style, or the temporary `use-remote-workspace` facade after that feature's migration closes.
 - `features/conversation/{timeline,turns,protocol,content}` and `ConversationDetail`: must not import `ConversationWorkspace`, `features/agents`, `features/composer` or sibling tool implementations. Compose injected callbacks at the outer surface.
 - `features/composer`: must not import queue's private model, review/drawing/ports/terminal internals, or navigate directly. It exposes typed intents and attachment/editor capabilities to its outer composition.
 - `features/agents`: may import only the public conversation detail/read surface and navigation capabilities, never full `ConversationWorkspace`.
@@ -242,4 +242,4 @@ The JS module singleton starts during module evaluation. The legacy route/boot h
 - [TypeScript environments](android-typescript-environments.md): native/web/compatibility contracts.
 - [History pagination](history-pagination.md), [scroll performance](scroll-performance.md), [native markup](native-message-markup.md) and [native row rendering](native-row-rendering.md): detailed mechanisms retained rather than duplicated here.
 
-The existing CodeWideScreen export remains the stable route composition entry. Feature-local CONTEXT files appear with real implementation modules. Closure requires deleting moved private declarations/styles, migrating all consumers and the broad facade, preserving platform families, and passing the ownership and parity gates. Documentation approval is not application migration, commit, push or release authorization.
+`app/v1/V1WorkspaceRouteComposition.tsx` is the current route composition entry. Feature-local CONTEXT files appear with real implementation modules. Closure requires deleting moved private declarations/styles, migrating all consumers and the broad facade, preserving platform families, and passing the ownership and parity gates. Documentation approval is not application migration, commit, push or release authorization.

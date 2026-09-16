@@ -124,28 +124,11 @@ export function createConversationSurfaceAssembly(props: {
   });
   const conversationOverlayContentBinding = createConversationOverlayContent({
     surfaceInputs: props.surfaceInputs,
-    composerStateBinding: props.scoped.composerStateBinding,
-    readInputs: props.readInputs,
-    composerCommands: props.composerCommands,
-    composerInputs: props.composerInputs,
-    terminalInputs: props.terminalInputs,
-    goalInputs: props.goalInputs,
-    portsInputs: props.portsInputs,
-    visibleQueuedPrompts: props.visibleQueuedPrompts,
-    timelineRead: props.timelineRead,
-    composerScope: props.scoped.activation.composerScope,
-    queueInputs: props.queueInputs,
-    attachmentsInputs: props.attachmentsInputs,
-    getStableTransferAccess: props.getStableTransferAccess,
-    reviewInputs: props.reviewInputs,
     composerProjectSelectionBinding: props.scoped.composerProjectSelectionBinding,
     projectsInputs: props.projectsInputs,
     threadRenameBinding: props.scoped.threadRenameBinding,
     thread: props.thread,
     actionsInputs: props.actionsInputs,
-    toolsBinding: props.toolsBinding,
-    changesInputs: props.changesInputs,
-    appVoiceInputRuntime: props.scoped.activation.appVoiceInputRuntime,
   });
   const frameBinding = createConversationFrame({
     appVoiceInputRuntime: props.scoped.activation.appVoiceInputRuntime,

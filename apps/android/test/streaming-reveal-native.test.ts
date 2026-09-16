@@ -30,7 +30,7 @@ it("invalidates native text display lists, not only the enclosing View", () => {
 });
 
 it("marks completed text as static rather than replaying its streaming animation", () => {
-  const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+  const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
   const surface = readFileSync(new URL("../src/rendering/StreamingRevealSurface.tsx", import.meta.url), "utf8");
   expect(ownerProtocolBlock).toContain('reviewTarget={reviewTarget} streamKey={block.key}');
   expect(completeMarkdown).toContain('animateNew={false}');
@@ -40,7 +40,7 @@ it("marks completed text as static rather than replaying its streaming animation
 });
 
 it("settles recovered live text before enabling animation for new deltas", () => {
-  const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+  const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
   const markdown = readFileSync(new URL("../src/rendering/RichMarkdown.tsx", import.meta.url), "utf8");
   expect(ownerMainConversationPublication).toContain("liveTextRecovery: chatSnapshot.backendRefreshing");
   expect(activation).toContain('surfaceInputs.server?.status === "live" && !readInputs.liveTextRecovery');

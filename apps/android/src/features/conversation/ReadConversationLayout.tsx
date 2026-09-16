@@ -47,14 +47,10 @@ export function renderReadConversationLayout({
               conversationBackdropVisible={timelinePositioned && read.timeline.length > 0}
               awayFromLatest={read.anchor.awayFromLatest}
               reviewContent={props.reviewContent}
-              menuVisible={false}
               projectPickerVisible={false}
               threadRenameVisible={false}
-              resourcesVisible={false}
-              menuContent={<></>}
               projectPickerContent={<></>}
               renameContent={<></>}
-              resourcesContent={<></>}
               searchContent={
                 <TimelineSearchBar
                   {...read.search}

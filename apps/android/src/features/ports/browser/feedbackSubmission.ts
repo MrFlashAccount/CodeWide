@@ -1,5 +1,8 @@
 import { useEvent } from "../../../react/useEvent";
-import { parseThreadSelectionKey, threadSelectionKey } from "../../navigation/threadSelection";
+import {
+  parseThreadSelectionKey,
+  threadSelectionKey,
+} from "../../../services/threads/threadRouteParams";
 import type { BrowserFeedbackCapability, BrowserFeedbackSubmission } from "./feedback";
 import type { FeedbackDelivery } from "./feedbackDelivery";
 import { sendBrowserFeedback } from "./send-feedback";
@@ -16,10 +19,18 @@ export function useBrowserFeedbackSubmission(
       const target = parseThreadSelectionKey(submission.destination);
       if (
         target === null ||
-        !connections.some((connection) => connection.id === target.connectionId)
+        !connections.some((connection) => connection.id === target.connectionId.value)
       )
         throw new Error("Choose an available destination chat");
-      await sendBrowserFeedback(delivery, target, submission, signal);
+      await sendBrowserFeedback(
+        delivery,
+        {
+          connectionId: target.connectionId.value,
+          threadId: target.threadId.value,
+        },
+        submission,
+        signal,
+      );
     },
   );
   const browserFeedback: Omit<BrowserFeedbackCapability, "initialDestination"> = {

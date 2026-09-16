@@ -1,16 +1,14 @@
-import { useSelector } from "@legendapp/state/react";
-import { type ThreadNavigationModel } from "../navigation/threadNavigation";
-import { threadSelectionKey } from "../navigation/threadSelection";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { ThreadRow } from "./ThreadRow";
 
 export function SelectableThreadRow({
-  navigation,
+  selectedThreadKey,
   thread,
   ...row
 }: Omit<Parameters<typeof ThreadRow>[0], "selected"> & {
-  navigation: ThreadNavigationModel;
+  selectedThreadKey: string | null;
 }) {
   const selectionKey = threadSelectionKey(thread);
-  const selected = useSelector(() => navigation.selection$.id.get() === selectionKey);
+  const selected = selectedThreadKey === selectionKey;
   return <ThreadRow {...row} thread={thread} selected={selected} />;
 }

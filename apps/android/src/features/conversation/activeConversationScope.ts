@@ -1,36 +1,32 @@
-import { useConversationNavigationActions } from "../navigation/conversationNavigationActions";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
-import { parseThreadSelectionKey, threadSelectionKey } from "../navigation/threadSelection";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { type ThreadListItem } from "../threadList/threadListTypes";
 import type { ActiveWorkspaceConversationProps } from "./ConversationWorkspace.types";
 
 /** Binds existing scoped owners in their original hook order; owns no replacement state. */
 export function useActiveConversationScope({
   destination,
-  threadNavigation,
-  defaultDesktopThreadId,
-  setActiveThreadId,
+  onClose,
+  onExitSearchHistory,
   scopedThreads,
-  activeServerId,
   connections,
   loadedThreadSummaries,
 }: {
   destination: ActiveWorkspaceConversationProps["destination"];
-  threadNavigation: ActiveWorkspaceConversationProps["threadNavigation"];
-  defaultDesktopThreadId: ActiveWorkspaceConversationProps["defaultDesktopThreadId"];
-  setActiveThreadId: ActiveWorkspaceConversationProps["onSelectThread"];
+  onClose: ActiveWorkspaceConversationProps["onClose"];
+  onExitSearchHistory: ActiveWorkspaceConversationProps["onExitSearchHistory"];
   scopedThreads: ActiveWorkspaceConversationProps["scopedThreads"];
-  activeServerId: ActiveWorkspaceConversationProps["activeServerId"];
   connections: ActiveWorkspaceConversationProps["connections"];
   loadedThreadSummaries: ActiveWorkspaceConversationProps["loadedThreadSummaries"];
 }) {
   const newChatDraft = destination.kind === "draft" ? destination.draft : null;
   const searchWindow = destination.kind === "thread" ? destination.searchWindow : null;
-  const requestedThreadId = destination.kind === "thread" ? destination.key : null;
-  const requestedThreadTarget = parseThreadSelectionKey(requestedThreadId);
+  const requestedThreadId =
+    destination.kind === "thread"
+      ? threadSelectionKey({ serverId: destination.connectionId, id: destination.threadId })
+      : null;
   const threadOpenGeneration = destination.generation;
-  const { exitSearchHistory, commitDefaultDesktopThread, closeActiveConversation } =
-    useConversationNavigationActions(threadNavigation, defaultDesktopThreadId, setActiveThreadId);
+  const closeActiveConversation = onClose;
+  const exitSearchHistory = onExitSearchHistory;
   const selectedThread =
     requestedThreadId === null
       ? null
@@ -46,22 +42,22 @@ export function useActiveConversationScope({
   const activeThreadKey =
     activeThread === null ? requestedThreadId : threadSelectionKey(activeThread);
   const activeConnectionId =
-    newChatDraft?.serverId ??
+    newChatDraft?.connectionId ??
     activeThread?.serverId ??
-    requestedThreadTarget?.connectionId ??
-    (activeServerId === ALL_SERVERS_ID ? "" : activeServerId);
+    (destination.kind === "thread" ? destination.connectionId : "");
   const activeConnectionState =
     connections.find((connection) => connection.id === activeConnectionId)?.state ?? "offline";
-  const activeRemoteThreadId = activeThread?.id ?? requestedThreadTarget?.threadId ?? null;
+  const activeRemoteThreadId =
+    activeThread?.id ?? (destination.kind === "thread" ? destination.threadId : null);
   const composerThreadId = newChatDraft?.id ?? activeRemoteThreadId;
   const visibleConversationThread: ThreadListItem | null =
     newChatDraft === null
       ? (activeThread ??
-        (requestedThreadTarget === null
+        (destination.kind !== "thread"
           ? null
           : {
-              id: requestedThreadTarget.threadId,
-              serverId: requestedThreadTarget.connectionId,
+              id: destination.threadId,
+              serverId: destination.connectionId,
               title: "Loading thread…",
               preview: "",
               pinned: false,
@@ -69,7 +65,7 @@ export function useActiveConversationScope({
             }))
       : {
           id: newChatDraft.id,
-          serverId: newChatDraft.serverId,
+          serverId: newChatDraft.connectionId,
           title: "New Chat",
           preview: "",
           time: "now",
@@ -89,7 +85,6 @@ export function useActiveConversationScope({
     requestedThreadId,
     threadOpenGeneration,
     exitSearchHistory,
-    commitDefaultDesktopThread,
     closeActiveConversation,
     activeThread,
     activeThreadId,

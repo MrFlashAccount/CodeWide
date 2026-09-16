@@ -53,7 +53,6 @@ export function useConversationScopeFeatures(props: {
   const queueVisibilityBinding = useQueueVisibility(
     activation.composerScope,
     props.queueInputs.queuedPrompts,
-    composerStateBinding.composerMenuStateBinding.setMenuVisible,
   );
   const changeResourcePresentationBinding = useChangeResourcePresentation(
     props.changesInputs.threadResourcesModel,

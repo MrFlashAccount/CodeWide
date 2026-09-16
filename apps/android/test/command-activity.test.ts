@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { activityOutputFootprint, commandActivityInput, commandActivityTitle, commandOutputFootprint, estimatedOutputInputCostUsd } from "../src/rendering/command-activity";
 import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
 
 const ownerProtocolBlock = compactSource(readFileSync(new URL("../src/features/conversation/protocol/ProtocolBlock.tsx", import.meta.url), "utf8"));
 

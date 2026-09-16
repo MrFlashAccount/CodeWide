@@ -20,10 +20,15 @@ interface VideoRequest {
   readonly source: PrivateAssetSource;
   readonly getAccess: GetTransferAccess;
 }
-interface VideoPreviewProps extends VideoRequest {
-  readonly scope: string;
+type VideoPreviewSource =
+  | { readonly fallbackPath: string; readonly source?: undefined }
+  | { readonly fallbackPath?: undefined; readonly source: PrivateAssetSource };
+type VideoPreviewProps = VideoPreviewSource & {
+  readonly getAccess: GetTransferAccess;
+  readonly name: string;
   onClose(): void;
-}
+  readonly scope: string;
+};
 
 export function isAttachmentVideo(name: string): boolean {
   return /\.(?:mp4|m4v|mov|webm|mkv)$/iu.test(name);
@@ -39,11 +44,47 @@ export function useAttachmentVideoPreview(): (request: VideoRequest) => void {
   });
 }
 
+/** Renders one Router-owned private video without creating a second navigation layer. */
+export function RouteAttachmentVideoPreview({
+  getAccess,
+  name,
+  onClose,
+  path,
+  source,
+}: Omit<VideoRequest, "source"> & {
+  readonly onClose: () => void;
+  readonly path: string;
+  readonly source?: PrivateAssetSource;
+}): React.JSX.Element {
+  const scope = usePrivateFileAccessScope();
+  if (source === undefined) {
+    return (
+      <AttachmentVideoPreview
+        fallbackPath={path}
+        getAccess={getAccess}
+        name={name}
+        onClose={onClose}
+        scope={scope}
+      />
+    );
+  }
+  return (
+    <AttachmentVideoPreview
+      getAccess={getAccess}
+      name={name}
+      onClose={onClose}
+      scope={scope}
+      source={source}
+    />
+  );
+}
+
 function AttachmentVideoPreview(props: VideoPreviewProps) {
   const [revision, setRevision] = useState(0);
-  const key = `attachment-video:${props.scope}:${privateAssetCacheKey(props.source)}`;
+  const source = props.source ?? { kind: "path" as const, path: props.fallbackPath };
+  const key = `attachment-video:${props.scope}:${privateAssetCacheKey(source)}`;
   const resource = useEphemeralAsyncResource<VideoSource>(key, revision, async (_publish, signal) =>
-    materializePrivateAsset(props.source, props.getAccess, undefined, signal),
+    materializePrivateAsset(source, props.getAccess, undefined, signal),
   );
   const retry = () => setRevision((value) => value + 1);
   return (

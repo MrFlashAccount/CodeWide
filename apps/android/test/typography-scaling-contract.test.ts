@@ -11,7 +11,7 @@ const heroNative = readFileSync(
   "utf8",
 );
 const screen = compactSource(
-  readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
 );
 const timelineList = readFileSync(
   new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url),
@@ -127,10 +127,10 @@ describe("windowed typography scaling contract", () => {
     expect(screen).not.toContain("key={`timeline-layout:${windowLayout.measurementRevision}`}");
     expect(timelineList).toContain('clearCaches({ mode: "sizes" })');
     expect(ownerThreadSidebar).toContain(
-      'dataKey={`desktop-threads:${activeServerId}:${mode}:${project?.key ?? "global"}`}',
+      'dataKey={`desktop-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}',
     );
     expect(ownerMobileThreads).toContain(
-      'dataKey={`mobile-threads:${activeServerId}:${mode}:${project?.key ?? "global"}`}',
+      'dataKey={`mobile-threads:${serverScope.kind === "all" ? "all" : serverScope.connectionId}:${mode}:${project?.key ?? "global"}`}',
     );
     expect(screen).not.toContain("extraData={windowLayout.measurementRevision}");
   });

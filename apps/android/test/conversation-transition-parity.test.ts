@@ -4,12 +4,12 @@ import { describe, expect, it } from "vitest";
 
 import { compactSource } from "./source-contract";
 
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
-const subagentSheet = readFileSync(new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url), "utf8");
+const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
+const subagentSheet = readFileSync(new URL("../src/features/agents/RouteSubagentWorkspace.tsx", import.meta.url), "utf8");
 const resources = readFileSync(new URL("../src/data/workspace-resource-keys.ts", import.meta.url), "utf8");
 const summaryHook = readFileSync(new URL("../src/data/use-thread-summary-view.ts", import.meta.url), "utf8");
 
-const navigationActions = compactSource(readFileSync(new URL("../src/features/navigation/navigationActions.ts", import.meta.url), "utf8"));
+const navigationActions = compactSource(readFileSync(new URL("../src/services/threads/threadNavigationService.ts", import.meta.url), "utf8"));
 
 const ownerThreadResourceContextChips = compactSource(readFileSync(new URL("../src/features/changes/ThreadResourceContextChips.tsx", import.meta.url), "utf8"));
 
@@ -35,39 +35,53 @@ const workspaceView = compactSource(readFileSync(new URL("../src/features/conver
 const destinationView = compactSource(readFileSync(new URL("../src/features/conversation/ConversationDestinationSurface.tsx", import.meta.url), "utf8"));
 
 const publication = compactSource(readFileSync(new URL("../src/features/conversation/MainConversationPublication.tsx", import.meta.url), "utf8"));
+const agentsRoute = compactSource(
+  readFileSync(
+    new URL(
+      "../app/v1/threads/[connectionId]/[threadId]/agents/index.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
 
 describe("conversation transition parity", () => {
   it("reveals main-chat navigation immediately while retaining local Suspense and shared window loading", () => {
     const mainSelection = navigationActions.slice(
-      navigationActions.indexOf("const setActiveThreadId ="),
-      navigationActions.indexOf("const preloadThread ="),
+      navigationActions.indexOf("const selectThread ="),
+      navigationActions.indexOf("const openSearchThread ="),
     );
     const mainDetail = ownerConversationDetail;
     const mainBoundary = destinationView.slice(destinationView.indexOf('label="Conversation"'));
-    const subagentSelection = subagentSheet.slice(
-      subagentSheet.indexOf("const [selectedId"),
-      subagentSheet.indexOf("return ("),
-    );
+    const subagentSelection = agentsRoute;
     const subagentBoundary = subagentSheet.slice(
-      subagentSheet.indexOf('label="Subagent conversation"'),
-      subagentSheet.indexOf("function SubagentConversationDetail"),
+      subagentSheet.indexOf("function RouteSubagentDetailBoundary"),
+      subagentSheet.indexOf("function RouteSubagentDetail("),
     );
     const subagentDetail = subagentSheet.slice(
-      subagentSheet.indexOf("function SubagentConversationDetail"),
-      subagentSheet.indexOf("const detailRows"),
+      subagentSheet.indexOf("function RouteSubagentDetail"),
+      subagentSheet.indexOf("return renderThread"),
     );
 
     // Main-chat navigation now reveals cached data or a skeleton immediately;
     // retaining the previous destination until hydration is no longer its UX contract.
     expect(mainSelection).not.toContain("startThreadTransition(");
-    expect(mainSelection).toContain("threadNavigation.select(value, reloadSelected)");
+    expect(mainSelection).toContain("open({");
+    expect(mainSelection).toContain(
+      'mode: same ? "replace" : router.selectionMode',
+    );
+    expect(mainSelection).toContain("navigationId,");
+    expect(mainSelection).toContain("params,");
     expect(mainSelection).not.toContain("setThreadSelection(");
     const fallback = navigationBoundary.slice(navigationBoundary.indexOf("function ConversationNavigationLoader"), navigationBoundary.indexOf("function ConversationNavigationFallback"));
     expect(fallback).toContain("<MessageListSkeleton />");
     expect(fallback).not.toContain("<ActivityIndicator");
-    expect(subagentSelection).toContain("startSubagentTransition(() => setSelectedId(threadId))");
+    expect(subagentSelection).toContain("startSubagentTransition(() =>");
+    expect(subagentSelection).toContain('pathname: "/v1/threads/[connectionId]/[threadId]/agents/[agentThreadId]"');
     expect(mainBoundary.indexOf("<Suspense fallback=")).toBeLessThan(mainBoundary.indexOf("<ConversationDestination"));
-    expect(subagentBoundary.indexOf("<Suspense fallback=")).toBeLessThan(subagentBoundary.indexOf("<SubagentConversationDetail"));
+    expect(subagentBoundary.indexOf("<Suspense")).toBeLessThan(
+      subagentBoundary.indexOf("<RouteSubagentDetail"),
+    );
     expect(mainDetail).toContain("useThreadChatWindow(chatDatabase, chatWindowRequest, false)");
     expect(publication).toContain("searchState === null ? history.messageListState");
     expect(ownerConversationTimelineSurface).toContain("<MessageListBoundary state={messageListState}>");

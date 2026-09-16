@@ -30,7 +30,7 @@ describe("model-centric persistence boundary", () => {
 
   it("does not rebuild domain indexes by rescanning the hot collection", () => {
     const details = readFileSync(new URL("thread-detail-database.native.ts", dataDirectory), "utf8");
-    const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+    const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
     expect(details).not.toContain("source.replaceLoaded(collection.toArray)");
     expect(screen).not.toContain("useRetainedReadyRows");
   });

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource } from "./source-contract";
 
 const screen = compactSource(
-  readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
 );
 const fullscreenOverlay = readFileSync(
   new URL("../src/ui/AppFullscreenOverlay.tsx", import.meta.url),
@@ -103,7 +103,8 @@ describe("tool output presentation", () => {
     expect(asyncResourceStore).toContain("const cacheKey = asyncResourceCacheKey(key, revision)");
     expect(compactSource(asyncResourceStore)).toContain("getAsyncResource<T>( key, revision");
     expect(frame).toContain("<LargeContentViewerHost>");
-    expect(ownerFullContentViewer).toContain("fullscreenOverlay.present(({ close }) => (");
+    expect(ownerFullContentViewer).toContain("navigation.openContent(request)");
+    expect(ownerFullContentViewer).toContain("function LargeContentViewerSession");
     expect(ownerFullContentViewerBody).toContain('<View testID="full-content-viewer"');
     expect(controls).not.toContain("largeContentChunk");
     expect(ownerFullContentViewer).toContain(

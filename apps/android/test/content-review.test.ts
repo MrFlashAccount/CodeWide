@@ -25,7 +25,7 @@ const documentPreview = readFileSync(
   "utf8",
 );
 const screen = compactSource(
-  readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
 );
 const selectionModule = readFileSync(
   new URL(
@@ -105,8 +105,8 @@ describe("content review", () => {
       '<ContentReviewComposer targetId={markdownReviewTarget.id} anchorKind="text" />',
     );
     expect(overlays).toContain('<ContentReviewComposer targetPrefix="agent-response:" />');
-    expect(compactSource(attachmentDocument)).toContain(
-      '<ContentReviewComposer targetId={`markdown-document:${document.request.path}`} anchorKind="text" />',
+    expect(compactSource(attachmentDocument)).toMatch(
+      /<ContentReviewComposer(?=[^>]*anchorKind="text")(?=[^>]*targetId=\{`markdown-document:\$\{document\.request\.path\}`\})[^>]*\/>/u,
     );
     expect(compactSource(mermaidDiagram)).toContain(
       '<ContentReviewComposer targetId={reviewTarget.id} anchorKind="mermaid" diagramId={diagramId} />',

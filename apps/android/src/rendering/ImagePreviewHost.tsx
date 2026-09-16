@@ -1,5 +1,13 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  createElement,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { ActivityIndicator, Image, Linking, Pressable, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 
@@ -37,38 +45,27 @@ import {
   useImageReviewPoints,
 } from "./ContentReviewHost";
 import { imageReviewPoint } from "./image-review-point";
-import type { ImageDraftTarget } from "../data/quickdraw-attachment";
+import { ImagePreviewContext, type ImagePreviewController } from "./imagePreviewController";
+import type {
+  ImageAnnotationHandler,
+  ImagePreviewItem,
+  ImagePreviewRequest,
+} from "./imagePreviewTypes";
 
-export type ImagePreviewItem = {
-  id: string;
-  label: string;
-  source: { uri: string; headers?: Record<string, string> };
-  link?: string | null;
-  reference?: string | null;
-  download?: (() => Promise<void>) | null;
-  order?: number;
-  draft?: ImageDraftTarget;
-};
-
-export type ImagePreviewRequest = ImagePreviewItem & {
-  groupId?: string | null;
-};
+export type { ImagePreviewItem, ImagePreviewRequest } from "./imagePreviewTypes";
 
 type PreviewSession = { items: ImagePreviewItem[]; index: number };
 type RegisteredPreviewItem = ImagePreviewItem & { sequence: number };
-type ImageAnnotationHandler = (item: ImagePreviewItem, onAttached: () => void) => Promise<void>;
-type PreviewController = {
-  open(request: ImagePreviewRequest, fullscreen: AppFullscreenOverlayController): void;
-  register(groupId: string, item: ImagePreviewItem): () => void;
-  registerAnnotationHandler(handler: ImageAnnotationHandler): () => void;
-};
-
-const ImagePreviewContext = createContext<PreviewController>({
-  open: () => undefined,
-  register: () => () => undefined,
-  registerAnnotationHandler: () => () => undefined,
-});
 const ImagePreviewGroupContext = createContext<string | null>(null);
+
+function createImagePreviewSessionNode(
+  request: ImagePreviewRequest,
+  onClose: () => void,
+  getAnnotationHandler: () => ImageAnnotationHandler | null,
+): React.ReactElement {
+  const initialSession = { index: 0, items: [request] };
+  return createElement(ImagePreviewSession, { getAnnotationHandler, initialSession, onClose });
+}
 
 /**
  * Owns preview state above the virtualized timeline. A row can be recycled or
@@ -78,7 +75,14 @@ export function ImagePreviewHost({ children }: { children: ReactNode }) {
   const registryRef = useRef(new Map<string, Map<string, RegisteredPreviewItem>>());
   const annotationRegistrationRef = useRef<ImageAnnotationHandler | null>(null);
   const sequenceRef = useRef(0);
-  const [controller] = useState<PreviewController>(() => ({
+  const [controller] = useState<ImagePreviewController>(() => ({
+    createSession(request, onClose) {
+      return createImagePreviewSessionNode(
+        request,
+        onClose,
+        () => annotationRegistrationRef.current,
+      );
+    },
     register(groupId, item) {
       let group = registryRef.current.get(groupId);
       if (group === undefined) {

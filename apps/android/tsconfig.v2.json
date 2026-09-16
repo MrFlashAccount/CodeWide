@@ -26,5 +26,13 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ],
-  "exclude": ["app/legacy.tsx", "node_modules", "android", "dist", "**/*.web.ts", "**/*.web.tsx"]
+  "exclude": [
+    "app/legacy.tsx",
+    "app/v1/**/*",
+    "node_modules",
+    "android",
+    "dist",
+    "**/*.web.ts",
+    "**/*.web.tsx"
+  ]
 }

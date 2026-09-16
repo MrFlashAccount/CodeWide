@@ -26,7 +26,6 @@ export function useComposerEditing({
   saveDraft,
   saveDraftAttachments,
   voiceController,
-  setMenuVisible,
 }: {
   composerScope: Parameters<typeof useComposerEditorEvents>[0]["composerScope"];
   composerState: Parameters<typeof useComposerDraftState>[1];
@@ -46,7 +45,6 @@ export function useComposerEditing({
   saveDraft: Parameters<typeof useComposerDraftCommands>[0]["saveDraft"];
   saveDraftAttachments: Parameters<typeof useComposerDraftCommands>[0]["saveDraftAttachments"];
   voiceController: Parameters<typeof useComposerEditorEvents>[0]["voiceController"];
-  setMenuVisible: Parameters<typeof useComposerSuggestions>[0]["setMenuVisible"];
 }) {
   const {
     composerUploadScope,
@@ -119,7 +117,6 @@ export function useComposerEditing({
     updateDraft,
     voiceController,
     composerScope,
-    setMenuVisible,
     currentControlsResource,
     onLoadControls,
     cwd,

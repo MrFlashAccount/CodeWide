@@ -17,20 +17,15 @@ interface MessageAttachmentCardProps {
 export function MessageAttachmentCard(props: MessageAttachmentCardProps) {
   const { attachment, getAccess } = props;
   const openDocument = useDocumentPreview();
-  const openCodeDocument = useContext(ThreadCodeDocumentContext);
+  const openRouteDocument = useContext(ThreadCodeDocumentContext);
   const openVideo = useAttachmentVideoPreview();
   const video = isAttachmentVideo(attachment.name);
   const source = attachmentPrivateSource(attachment);
   const kind = remoteFileKind(attachment.name, attachment.name);
   const open = () => {
     if (getAccess === undefined) return;
-    if (video) {
-      openVideo({ name: attachment.name, source, getAccess });
-      return;
-    }
-    const openPreview =
-      kind === "text" && openCodeDocument !== null ? openCodeDocument : openDocument;
-    openPreview({
+    const request = {
+      getTransferAccess: getAccess,
       kind,
       name: attachment.name,
       path:
@@ -38,8 +33,16 @@ export function MessageAttachmentCard(props: MessageAttachmentCardProps) {
           ? attachment.source.path
           : attachment.name,
       source,
-      getTransferAccess: getAccess,
-    });
+    };
+    if (openRouteDocument !== null && (video || kind !== "download")) {
+      openRouteDocument(request);
+      return;
+    }
+    if (video) {
+      openVideo({ name: attachment.name, source, getAccess });
+      return;
+    }
+    openDocument(request);
   };
   return (
     <MessageAttachmentTile

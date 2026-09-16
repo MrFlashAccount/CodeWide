@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListServer } from "../connections/connectionPresentation";
 import type { ThreadListFilter } from "./threadListFilters";
 import type { SidebarProjectsNavigation, ThreadListMode } from "./threadListModel";
@@ -7,7 +8,7 @@ import type { ThreadListItem } from "./threadListTypes";
 /** Thread-list data and navigation actions used by the compact mobile surface. */
 export type MobileThreadsProps = {
   servers: ThreadListServer[];
-  activeServerId: string;
+  serverScope: ServerScope;
   threads: ThreadListItem[];
   archivedThreads: ThreadListItem[];
   mode: ThreadListMode;
@@ -23,7 +24,7 @@ export type MobileThreadsProps = {
   onOffsetChange(offset: number): void;
   onSelectThread(id: string): void;
   onPreloadThread(id: string): (() => void) | undefined;
-  onSelectServer(id: string): void;
+  onSelectServer(scope: ServerScope): void;
   onNewThread(): void;
   onSettings(): void;
   onTogglePin(thread: ThreadListItem): Promise<void>;

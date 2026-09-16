@@ -1,10 +1,8 @@
 import { useEvent } from "../../react/useEvent";
-import { useConversationState } from "../../ui/use-conversation-scope";
 import type { ThreadChangeScope, ThreadResourcesValue } from "../../data/thread-resource-types";
 
-/** Sheet selection is local; canonical resource loading remains below the feature. */
+/** Starts attachment resource loading before handing destination ownership to Router. */
 export function useAttachmentVisibility(
-  composerScope: string,
   dismissKeyboard: () => void,
   loadResources:
     | ((
@@ -13,19 +11,16 @@ export function useAttachmentVisibility(
       ) => Promise<ThreadResourcesValue>)
     | undefined,
   openChanges: () => void,
+  openAttachments: () => void,
 ) {
-  const [threadResourceSheet, setThreadResourceSheet] = useConversationState<
-    "changes" | "attachments" | null
-  >(composerScope, () => null);
   const openThreadResources = useEvent((kind: "changes" | "attachments") => {
     if (kind === "changes") {
       openChanges();
       return;
     }
     dismissKeyboard();
-    setThreadResourceSheet("attachments");
     void loadResources?.(undefined, "attachments").catch(() => undefined);
+    openAttachments();
   });
-  const closeThreadResources = useEvent(() => setThreadResourceSheet(null));
-  return { threadResourceSheet, openThreadResources, closeThreadResources };
+  return { openThreadResources };
 }

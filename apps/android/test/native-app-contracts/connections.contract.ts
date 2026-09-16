@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { connectionAdapter, connectionProjection } from "./connections-sources";
-import { ownerWorkspaceOverlays } from "./workspace-sources";
+import { ownerNewServerRoute } from "./workspace-sources";
 
 it("never consumes a one-time pairing token before local profiles are ready", () => {
   const addConnectionStart = connectionAdapter.indexOf("const addConnection = async");
@@ -24,7 +24,9 @@ it("never consumes a one-time pairing token before local profiles are ready", ()
   expect(addConnection).toContain("savedServerId: connectionId");
   expect(addConnection).not.toContain("deleteNativeConnection(connectionId)");
   expect(addConnection).toContain("profiles.reconcileRuntimeConfigs(nativeConfigs)");
-  expect(ownerWorkspaceOverlays).toContain("localReady={runtime.ready && runtime.error === null}");
+  expect(ownerNewServerRoute).toContain(
+    "localReady={resources.runtime.ready && resources.runtime.error === null}",
+  );
 });
 
 it("preserves connections integration contracts", () => {

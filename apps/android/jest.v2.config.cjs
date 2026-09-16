@@ -6,6 +6,10 @@ module.exports = {
   setupFiles: ["react-native-gesture-handler/jestSetup.js"],
   setupFilesAfterEnv: ["<rootDir>/test/setup-v2-render-console.cjs"],
   testMatch: ["<rootDir>/test/**/*.render.test.tsx", "<rootDir>/test/compose-named-icon.native.test.tsx", "<rootDir>/test/app-dialog-window.native.test.tsx", "<rootDir>/test/settings-sheet.native.test.tsx", "<rootDir>/test/app-list-row.native.test.tsx", "<rootDir>/test/app-popover.native.test.tsx", "<rootDir>/test/codewide-menu.native.test.tsx", "<rootDir>/test/image-preview.native.test.tsx", "<rootDir>/test/content-review-keyboard-dock.native.test.tsx", "<rootDir>/test/composer-send-gesture.native.test.tsx", "<rootDir>/test/composer-mention-input.native.test.tsx", "<rootDir>/test/ui-generation-control.native.test.tsx", "<rootDir>/test/project-directory.native.test.tsx", "<rootDir>/test/wave-text.native.test.tsx", "<rootDir>/test/skills-picker.native.test.tsx", "<rootDir>/test/skill-picker-row.native.test.tsx"],
+  testPathIgnorePatterns: [
+    "<rootDir>/test/v1-.*\\.render\\.test\\.tsx$",
+    "<rootDir>/test/workspace-navigation\\.render\\.test\\.tsx$",
+  ],
   moduleNameMapper: {
     "^@expo/vector-icons$": "<rootDir>/test/mocks/ExpoVectorIcons.tsx",
     "^@expo/vector-icons/.*$": "<rootDir>/test/mocks/ExpoVectorIcons.tsx",

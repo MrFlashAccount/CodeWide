@@ -1,15 +1,7 @@
-import { controlSize } from "../../theme";
-import {
-  conversationBottomContentInset,
-  conversationHeaderChromeHeight,
-} from "../../ui/conversation-chrome-layout";
-import { useDocumentTransferAccess } from "../attachments/documentNavigation";
-import { useComposerCommands } from "../composer/composerCommands";
 import { useComposerInteractions } from "../composer/composerInteractions";
 import { ThreadGoalChip } from "../goal/ThreadGoalChip";
 import { projectInlineQueue } from "../queue/QueueFeature";
-import { ApprovalPrompt } from "../requests/RequestFeature";
-import { useRequestResponse } from "../requests/requestResponse";
+import { useConversationRequestPrompts } from "../requests/ConversationRequestPrompts";
 import type { ConversationCompositionCapabilities } from "./conversationCompositionCapabilities";
 import { ConversationSelectionPlaceholder } from "./ConversationEmptyState";
 import { useConversationScopeFeatures } from "./conversationScopeFeatures";
@@ -18,85 +10,50 @@ import { useConversationTools } from "./ConversationTools";
 import { useConversationTimelineRead } from "./timeline/conversationTimelineRead";
 import { useConversationAndroidBack } from "./timeline/overlayScrollOwnership";
 import { useThreadTimeline, useThreadTimelineActions } from "./timeline/ThreadTimeline";
+import { useConversationComposerCommands } from "./conversationComposerCommands";
+import { conversationStatusLayout } from "./conversationStatusLayout";
 
 /** Binds conversation capabilities to the read, tool, and composer surfaces. */
-export function ConversationComposition(props: ConversationCompositionCapabilities) {
+export function ConversationComposition(
+  props: ConversationCompositionCapabilities,
+): React.JSX.Element {
   const scoped = useConversationScopeFeatures({
-    surfaceInputs: props.surface,
-    readInputs: props.read,
+    changesInputs: props.changes,
     composerInputs: props.composer,
     goalInputs: props.goal,
-    queueInputs: props.queue,
-    changesInputs: props.changes,
     projectsInputs: props.projects,
+    queueInputs: props.queue,
+    readInputs: props.read,
+    surfaceInputs: props.surface,
   });
 
   const visibleQueuedPrompts = props.queue.queuedPrompts;
   const inlineQueueBinding = projectInlineQueue(visibleQueuedPrompts);
   const timelineRead = useConversationTimelineRead({
-    timelineState: scoped.timelineState,
-    unread: props.surface.unread,
-    readInputs: props.read,
     composerScope: scoped.activation.composerScope,
-    surfaceInputs: props.surface,
+    conversationOwner: scoped.activation.conversationOwner,
+    currentOutcome: props.read.currentOutcome,
     draftConnectionId: scoped.activation.draftConnectionId,
     draftThreadId: scoped.activation.draftThreadId,
-    historyViewport: props.read.historyViewport,
-    currentOutcome: props.read.currentOutcome,
-    messageListState: props.read.messageListState,
-    overlayScrollStateBinding: scoped.overlayScrollStateBinding,
-    searchWindow: props.read.searchWindow,
-    newChat: props.surface.newChat,
     historyRestoreReady: props.read.historyRestoreReady,
-    conversationOwner: scoped.activation.conversationOwner,
+    historyViewport: props.read.historyViewport,
+    messageListState: props.read.messageListState,
+    newChat: props.surface.newChat,
     overlayScrollOwnershipBinding: scoped.overlayScrollOwnershipBinding,
+    overlayScrollStateBinding: scoped.overlayScrollStateBinding,
+    readInputs: props.read,
+    searchWindow: props.read.searchWindow,
+    surfaceInputs: props.surface,
+    timelineState: scoped.timelineState,
+    unread: props.surface.unread,
   });
-  const liveTurnPlanVisible =
-    timelineRead.conversationPresentationBinding.liveTurnPlan !== null &&
-    timelineRead.timelinePositioned &&
-    !timelineRead.timelineSearchProjectionBinding.threadSearchActive;
-  const currentGoal = scoped.goalResource?.goal ?? null;
-  const threadGoalVisible =
-    currentGoal !== null &&
-    timelineRead.timelinePositioned &&
-    !timelineRead.timelineSearchProjectionBinding.threadSearchActive;
-  const liveStatusVisible = liveTurnPlanVisible || threadGoalVisible;
-  const inlineQueueMaxHeight = Math.max(
-    controlSize.touch * 3,
-    scoped.activation.conversationPaneGeometryBinding.conversationPaneHeight -
-      conversationHeaderChromeHeight(
-        scoped.timelineState.timelineSearchStateBinding.threadSearchVisible,
-      ) -
-      conversationBottomContentInset(
-        scoped.timelineState.timelineViewportStateBinding.bottomChromeHeight,
-        liveStatusVisible,
-      ),
+  const { currentGoal, inlineQueueMaxHeight, liveStatusVisible } = conversationStatusLayout(
+    scoped,
+    timelineRead,
   );
-  const requestResponseBinding = useRequestResponse(props.requests.onRespondToRequest);
-  const embeddedRequestPrompt =
-    props.requests.pendingRequest === null ? null : (
-      <ApprovalPrompt
-        key={props.requests.pendingRequest.requestKey}
-        embedded
-        request={props.requests.pendingRequest}
-        requestCount={props.requests.pendingRequestCount}
-        {...(props.requests.onRespondToRequest === undefined
-          ? {}
-          : { onRespond: requestResponseBinding.respondToRequest })}
-      />
-    );
-  const bottomRequestPrompt =
-    props.requests.pendingRequest === null ? null : (
-      <ApprovalPrompt
-        key={props.requests.pendingRequest.requestKey}
-        request={props.requests.pendingRequest}
-        requestCount={props.requests.pendingRequestCount}
-        {...(props.requests.onRespondToRequest === undefined
-          ? {}
-          : { onRespond: props.requests.onRespondToRequest })}
-      />
-    );
-  const getStableTransferAccess = useDocumentTransferAccess(props.attachments.getTransferAccess);
+  const { bottomRequestPrompt, embeddedRequestPrompt } = useConversationRequestPrompts(
+    props.requests,
+  );
   const threadTimelineActionsBinding = useThreadTimelineActions(
     props.diagnostics.onFixUnsupportedBlock,
     props.actions.onFork,
@@ -109,94 +66,85 @@ export function ConversationComposition(props: ConversationCompositionCapabiliti
     props.surface.compact,
     props.surface.onBack,
   );
-  const composerCommands = useComposerCommands({
-    composerStateBinding: scoped.composerStateBinding,
-    queueVisibilityBinding: scoped.queueVisibilityBinding,
-    queueInputs: props.queue,
-    conversationOwner: scoped.activation.conversationOwner,
-    overlayScrollOwnershipBinding: scoped.overlayScrollOwnershipBinding,
-    composerScope: scoped.activation.composerScope,
-    draftConnectionId: scoped.activation.draftConnectionId,
-    draftThreadId: scoped.activation.draftThreadId,
-    attachmentsInputs: props.attachments,
-    getStableTransferAccess,
-    composerInputs: props.composer,
-    fileTransferController: props.attachments.fileTransferController,
-    voiceController: props.composer.voiceController,
+  const { composerCommands, getStableTransferAccess } = useConversationComposerCommands({
+    props,
+    scoped,
+    timelineRead,
+    visibleQueuedPrompts,
   });
   const toolsBinding = useConversationTools({
+    actionsInputs: props.actions,
+    agentsInputs: props.agents,
+    appVoiceInputRuntime: scoped.activation.appVoiceInputRuntime,
+    attachmentsInputs: props.attachments,
+    changeResourcePresentationBinding: scoped.changeResourcePresentationBinding,
+    changesInputs: props.changes,
+    changesPreferencesBinding: scoped.changesPreferencesBinding,
+    composerCommands,
+    composerInputs: props.composer,
     composerScope: scoped.activation.composerScope,
-    subagentSummaryDatabase: props.agents.subagentSummaryDatabase,
+    composerStateBinding: scoped.composerStateBinding,
+    cwd: props.surface.cwd,
+    diagnosticsInputs: props.diagnostics,
     draftConnectionId: scoped.activation.draftConnectionId,
     draftThreadId: scoped.activation.draftThreadId,
-    surfaceInputs: props.surface,
-    subagentThreadDetails: props.agents.subagentThreadDetails,
-    agentsInputs: props.agents,
-    changesInputs: props.changes,
-    attachmentsInputs: props.attachments,
-    diagnosticsInputs: props.diagnostics,
-    threadTimelineActionsBinding,
-    readInputs: props.read,
-    overlayScrollOwnershipBinding: scoped.overlayScrollOwnershipBinding,
-    cwd: props.surface.cwd,
-    actionsInputs: props.actions,
-    composerCommands,
     fileTransferController: props.attachments.fileTransferController,
-    composerStateBinding: scoped.composerStateBinding,
-    appVoiceInputRuntime: scoped.activation.appVoiceInputRuntime,
-    voiceController: props.composer.voiceController,
-    composerInputs: props.composer,
-    changesPreferencesBinding: scoped.changesPreferencesBinding,
     getStableTransferAccess,
-    changeResourcePresentationBinding: scoped.changeResourcePresentationBinding,
+    overlayScrollOwnershipBinding: scoped.overlayScrollOwnershipBinding,
+    portForwardingConnectionId: props.ports.portForwardingConnectionId,
     portsInputs: props.ports,
-    threadResourcesModel: props.changes.threadResourcesModel,
+    readInputs: props.read,
+    subagentSummaryDatabase: props.agents.subagentSummaryDatabase,
+    subagentThreadDetails: props.agents.subagentThreadDetails,
+    surfaceInputs: props.surface,
     threadResourceId: props.changes.threadResourceId,
     threadResourceRevision: props.changes.threadResourceRevision,
-    portForwardingConnectionId: props.ports.portForwardingConnectionId,
+    threadResourcesModel: props.changes.threadResourcesModel,
+    threadTimelineActionsBinding,
+    voiceController: props.composer.voiceController,
   });
   const threadTimelineBinding = useThreadTimeline({
+    animateLiveUpdates: scoped.activation.animateLiveUpdates,
+    composerScope: scoped.activation.composerScope,
     fixUnsupportedBlock: threadTimelineActionsBinding.fixUnsupportedBlock,
+    focusSearchMessage: timelineRead.timelineSearchActionsBinding.focusSearchMessage,
     forkThroughTurn: threadTimelineActionsBinding.forkThroughTurn,
+    getStableTransferAccess,
+    getTransferAccess: props.attachments.getTransferAccess,
+    latestUnreadAgentTurnId: timelineRead.unreadReceiptBinding.latestUnreadAgentTurnId,
     loadStableTurnItems: threadTimelineActionsBinding.loadStableTurnItems,
     onFixUnsupportedBlock: props.diagnostics.onFixUnsupportedBlock,
     onFork: props.actions.onFork,
     onLoadTurnItems: props.read.onLoadTurnItems,
-    timelineDateLabels: timelineRead.timelineDateLabels,
-    searchWindow: props.read.searchWindow,
-    focusSearchMessage: timelineRead.timelineSearchActionsBinding.focusSearchMessage,
+    onRetryFailedMessage: props.composer.onRetryFailedMessage,
     openThreadDocumentLink: toolsBinding.documentNavigationBinding.openThreadDocumentLink,
-    composerScope: scoped.activation.composerScope,
-    getTransferAccess: props.attachments.getTransferAccess,
-    getStableTransferAccess,
-    timelineCompact: scoped.activation.timelineCompact,
-    animateLiveUpdates: scoped.activation.animateLiveUpdates,
-    threadSearchActive: timelineRead.timelineSearchProjectionBinding.threadSearchActive,
     requestPrompt: embeddedRequestPrompt,
-    latestUnreadAgentTurnId: timelineRead.unreadReceiptBinding.latestUnreadAgentTurnId,
-    setLatestUnreadAgentNode: timelineRead.unreadReceiptActionsBinding.setLatestUnreadAgentNode,
     scheduleUnreadAgentVisibilityCheck:
       timelineRead.unreadReceiptActionsBinding.scheduleUnreadAgentVisibilityCheck,
-    onRetryFailedMessage: props.composer.onRetryFailedMessage,
+    searchWindow: props.read.searchWindow,
+    setLatestUnreadAgentNode: timelineRead.unreadReceiptActionsBinding.setLatestUnreadAgentNode,
+    threadSearchActive: timelineRead.timelineSearchProjectionBinding.threadSearchActive,
+    timelineCompact: scoped.activation.timelineCompact,
+    timelineDateLabels: timelineRead.timelineDateLabels,
   });
   const composerDelivery = useComposerInteractions({
     composerCommands,
-    openDrawing: toolsBinding.drawingFeatureBinding.openDrawing,
+    composerInputs: props.composer,
+    composerScope: scoped.activation.composerScope,
+    composerStateBinding: scoped.composerStateBinding,
+    conversationOwner: scoped.activation.conversationOwner,
     createAndOpenTerminal: toolsBinding.terminalActionsBinding.createAndOpenTerminal,
-    onGetGoal: props.goal.onGetGoal,
-    newChat: props.surface.newChat,
+    currentTurnId: timelineRead.conversationPresentationBinding.currentTurnId,
     draftConnectionId: scoped.activation.draftConnectionId,
     draftThreadId: scoped.activation.draftThreadId,
+    newChat: props.surface.newChat,
+    onGetGoal: props.goal.onGetGoal,
+    openDrawing: toolsBinding.drawingFeatureBinding.openDrawing,
     portForwardingConnectionId: props.ports.portForwardingConnectionId,
-    composerStateBinding: scoped.composerStateBinding,
-    composerScope: scoped.activation.composerScope,
-    threadLifecycleActive: timelineRead.conversationPresentationBinding.threadLifecycleActive,
-    currentTurnId: timelineRead.conversationPresentationBinding.currentTurnId,
-    conversationOwner: scoped.activation.conversationOwner,
-    composerInputs: props.composer,
     queueInputs: props.queue,
-    voiceController: props.composer.voiceController,
     remoteThread: props.read.remoteThread,
+    threadLifecycleActive: timelineRead.conversationPresentationBinding.threadLifecycleActive,
+    voiceController: props.composer.voiceController,
   });
   const goalContent =
     currentGoal === null ? null : (
@@ -207,34 +155,34 @@ export function ConversationComposition(props: ConversationCompositionCapabiliti
     return <ConversationSelectionPlaceholder />;
   }
   const { frameBinding } = createConversationSurfaceAssembly({
-    thread: props.surface.thread,
-    scoped,
-    timelineRead,
-    liveStatusVisible,
-    readInputs: props.read,
-    threadTimelineBinding,
-    surfaceInputs: props.surface,
-    projectsInputs: props.projects,
-    inlineQueueBinding,
-    inlineQueueMaxHeight,
-    queueInputs: props.queue,
-    visibleQueuedPrompts,
-    composerCommands,
-    composerInputs: props.composer,
-    goalContent,
-    bottomRequestPrompt,
-    composerDelivery,
-    toolsBinding,
-    attachmentsInputs: props.attachments,
-    getStableTransferAccess,
-    portsInputs: props.ports,
     accountsInputs: props.accounts,
     actionsInputs: props.actions,
-    terminalInputs: props.terminal,
-    goalInputs: props.goal,
-    reviewInputs: props.review,
-    changesInputs: props.changes,
     agentsInputs: props.agents,
+    attachmentsInputs: props.attachments,
+    bottomRequestPrompt,
+    changesInputs: props.changes,
+    composerCommands,
+    composerDelivery,
+    composerInputs: props.composer,
+    getStableTransferAccess,
+    goalContent,
+    goalInputs: props.goal,
+    inlineQueueBinding,
+    inlineQueueMaxHeight,
+    liveStatusVisible,
+    portsInputs: props.ports,
+    projectsInputs: props.projects,
+    queueInputs: props.queue,
+    readInputs: props.read,
+    reviewInputs: props.review,
+    scoped,
+    surfaceInputs: props.surface,
+    terminalInputs: props.terminal,
+    thread: props.surface.thread,
+    threadTimelineBinding,
+    timelineRead,
+    toolsBinding,
+    visibleQueuedPrompts,
   });
 
   return frameBinding.frame;

@@ -6,89 +6,89 @@ import { sidebarListState } from "../threadList/SidebarListFeedback";
 import { desktopThreadSidebarWidth } from "../../presentation/layouts/windowLayout";
 /** Binds the shared list capabilities to their desktop or mobile presentation. */
 export function WorkspaceThreadList({
-  threadListSources,
-  projectLimit,
-  loadMoreProjectThreads,
-  sidebarProject,
-  pinnedSidebarProjects,
-  openSidebarProject,
-  closeSidebarProject,
-  sidebarCatalogState,
-  servers,
-  activeServerId,
-  serverThreads,
   archivedThreads,
-  sidebarMode,
-  sidebarFilter,
-  threadNavigation,
-  changeSidebarMode,
-  changeSidebarFilter,
-  loadMoreThreads,
-  selectThread,
-  openGlobalSearch,
-  sidebarSearch,
-  preloadThread,
-  selectServer,
-  createSidebarThread,
-  toggleListThreadPin,
   archiveListThread,
-  unarchiveListThread,
-  markListThreadRead,
-  refreshThreadListAccountRateLimits,
-  mobileVisibleThreads,
-  mobileVisibleArchivedThreads,
+  changeSidebarFilter,
+  changeSidebarMode,
+  closeSidebarProject,
+  createSidebarThread,
   desktop,
-  viewportWidth,
-  sidebarScopeKey,
-  mobileThreadOffset,
-  setProjectsSheetVisible,
-  setSettingsVisible,
-  normalizedMobileThreadQuery,
+  loadMoreProjectThreads,
+  loadMoreThreads,
+  markListThreadRead,
   mobileRemoteSearchResource,
+  mobileThreadOffset,
   mobileThreadQuery,
+  mobileVisibleArchivedThreads,
+  mobileVisibleThreads,
+  normalizedMobileThreadQuery,
+  openGlobalSearch,
+  openProjects,
+  openSettings,
+  openSidebarProject,
+  pinnedSidebarProjects,
+  preloadThread,
+  projectLimit,
+  refreshThreadListAccountRateLimits,
+  selectedThreadKey,
+  selectServer,
+  selectThread,
+  servers,
+  serverScope,
+  serverThreads,
   setMobileThreadQuery,
+  sidebarCatalogState,
+  sidebarFilter,
+  sidebarMode,
+  sidebarProject,
+  sidebarScopeKey,
+  sidebarSearch,
+  threadListSources,
+  toggleListThreadPin,
+  unarchiveListThread,
+  viewportWidth,
 }: {
-  threadListSources: ThreadSidebarProps["remote"];
-  projectLimit: ThreadSidebarProps["projectLimit"];
-  loadMoreProjectThreads: ThreadSidebarProps["onLoadMoreProject"];
-  sidebarProject: ThreadSidebarProps["project"];
-  pinnedSidebarProjects: ThreadSidebarProps["projects"];
-  openSidebarProject: ThreadSidebarProps["onOpenProject"];
-  closeSidebarProject: ThreadSidebarProps["onBackToProjects"];
-  sidebarCatalogState: ThreadSidebarProps["catalogState"];
-  servers: ThreadSidebarProps["servers"];
-  activeServerId: ThreadSidebarProps["activeServerId"];
-  serverThreads: ThreadSidebarProps["threads"];
   archivedThreads: ThreadSidebarProps["archivedThreads"];
-  sidebarMode: ThreadSidebarProps["mode"];
-  sidebarFilter: ThreadSidebarProps["filter"];
-  threadNavigation: ThreadSidebarProps["navigation"];
-  changeSidebarMode: ThreadSidebarProps["onModeChange"];
-  changeSidebarFilter: ThreadSidebarProps["onFilterChange"];
-  loadMoreThreads: ThreadSidebarProps["onLoadMore"];
-  selectThread: ThreadSidebarProps["onSelect"];
-  openGlobalSearch: ThreadSidebarProps["onOpenSearch"];
-  sidebarSearch: ThreadSidebarProps["searchContent"];
-  preloadThread: ThreadSidebarProps["onPreload"];
-  selectServer: ThreadSidebarProps["onSelectServer"];
-  createSidebarThread: ThreadSidebarProps["onNewThread"];
-  toggleListThreadPin: ThreadSidebarProps["onTogglePin"];
   archiveListThread: ThreadSidebarProps["onArchive"];
-  unarchiveListThread: ThreadSidebarProps["onUnarchive"];
-  markListThreadRead: ThreadSidebarProps["onMarkRead"];
-  refreshThreadListAccountRateLimits: NonNullable<ThreadSidebarProps["onRefreshAccountRateLimits"]>;
-  mobileVisibleThreads: ThreadSidebarProps["threads"];
-  mobileVisibleArchivedThreads: ThreadSidebarProps["archivedThreads"];
+  changeSidebarFilter: ThreadSidebarProps["onFilterChange"];
+  changeSidebarMode: ThreadSidebarProps["onModeChange"];
+  closeSidebarProject: ThreadSidebarProps["onBackToProjects"];
+  createSidebarThread: ThreadSidebarProps["onNewThread"];
   desktop: boolean;
-  viewportWidth: number;
-  sidebarScopeKey: string;
-  mobileThreadOffset: ReturnType<typeof useThreadListState>["mobileThreadOffset"];
-  setProjectsSheetVisible: (visible: boolean) => void;
-  setSettingsVisible: (visible: boolean) => void;
-  normalizedMobileThreadQuery: string;
+  loadMoreProjectThreads: ThreadSidebarProps["onLoadMoreProject"];
+  loadMoreThreads: ThreadSidebarProps["onLoadMore"];
+  markListThreadRead: ThreadSidebarProps["onMarkRead"];
   mobileRemoteSearchResource: ReturnType<typeof useThreadSearch>["mobileRemoteSearchResource"];
+  mobileThreadOffset: ReturnType<typeof useThreadListState>["mobileThreadOffset"];
   mobileThreadQuery: string;
+  mobileVisibleArchivedThreads: ThreadSidebarProps["archivedThreads"];
+  mobileVisibleThreads: ThreadSidebarProps["threads"];
+  normalizedMobileThreadQuery: string;
+  openGlobalSearch: ThreadSidebarProps["onOpenSearch"];
+  openProjects: () => void;
+  openSettings: () => void;
+  openSidebarProject: ThreadSidebarProps["onOpenProject"];
+  pinnedSidebarProjects: ThreadSidebarProps["projects"];
+  preloadThread: ThreadSidebarProps["onPreload"];
+  projectLimit: ThreadSidebarProps["projectLimit"];
+  refreshThreadListAccountRateLimits: NonNullable<ThreadSidebarProps["onRefreshAccountRateLimits"]>;
+  selectedThreadKey: ThreadSidebarProps["selectedThreadKey"];
+  selectServer: ThreadSidebarProps["onSelectServer"];
+  selectThread: ThreadSidebarProps["onSelect"];
+  servers: ThreadSidebarProps["servers"];
+  serverScope: ThreadSidebarProps["serverScope"];
+  serverThreads: ThreadSidebarProps["threads"];
   setMobileThreadQuery: (query: string) => void;
+  sidebarCatalogState: ThreadSidebarProps["catalogState"];
+  sidebarFilter: ThreadSidebarProps["filter"];
+  sidebarMode: ThreadSidebarProps["mode"];
+  sidebarProject: ThreadSidebarProps["project"];
+  sidebarScopeKey: string;
+  sidebarSearch: ThreadSidebarProps["searchContent"];
+  threadListSources: ThreadSidebarProps["remote"];
+  toggleListThreadPin: ThreadSidebarProps["onTogglePin"];
+  unarchiveListThread: ThreadSidebarProps["onUnarchive"];
+  viewportWidth: number;
 }) {
   return (
     <ThreadListFeature
@@ -99,16 +99,7 @@ export function WorkspaceThreadList({
           ? {
               mode: "desktop",
               props: {
-                remote: threadListSources,
-                projectLimit: projectLimit,
-                onLoadMoreProject: loadMoreProjectThreads,
-                initialOffset: mobileThreadOffset.read(sidebarScopeKey),
-                onOffsetChange: (offset) => mobileThreadOffset.write(sidebarScopeKey, offset),
-                project: sidebarProject,
-                projects: pinnedSidebarProjects,
-                onOpenProject: openSidebarProject,
-                onBackToProjects: closeSidebarProject,
-                onManageProjects: () => setProjectsSheetVisible(true),
+                archivedThreads: archivedThreads,
                 catalogState:
                   normalizedMobileThreadQuery === ""
                     ? sidebarCatalogState
@@ -117,68 +108,81 @@ export function WorkspaceThreadList({
                         mobileRemoteSearchResource.error,
                         false,
                       ),
-                width: desktopThreadSidebarWidth(viewportWidth),
-                servers: servers,
-                activeServerId: activeServerId,
-                threads: serverThreads,
-                archivedThreads: archivedThreads,
-                mode: sidebarMode,
                 filter: sidebarFilter,
-                navigation: threadNavigation,
-                onModeChange: changeSidebarMode,
+                initialOffset: mobileThreadOffset.read(sidebarScopeKey),
+                mode: sidebarMode,
+                onArchive: archiveListThread,
+                onBackToProjects: closeSidebarProject,
                 onFilterChange: changeSidebarFilter,
                 onLoadMore: loadMoreThreads,
-                onSelect: selectThread,
-                onOpenSearch: openGlobalSearch,
-                searchContent: sidebarSearch,
-                onPreload: preloadThread,
-                onSelectServer: selectServer,
-                onSettings: () => setSettingsVisible(true),
-                onNewThread: createSidebarThread,
-                onTogglePin: toggleListThreadPin,
-                onArchive: archiveListThread,
-                onUnarchive: unarchiveListThread,
+                onLoadMoreProject: loadMoreProjectThreads,
+                onManageProjects: openProjects,
                 onMarkRead: markListThreadRead,
+                onModeChange: changeSidebarMode,
+                onNewThread: createSidebarThread,
+                onOffsetChange: (offset) => {
+                  mobileThreadOffset.write(sidebarScopeKey, offset);
+                },
+                onOpenProject: openSidebarProject,
+                onOpenSearch: openGlobalSearch,
+                onPreload: preloadThread,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
+                onSelect: selectThread,
+                onSelectServer: selectServer,
+                onSettings: openSettings,
+                onTogglePin: toggleListThreadPin,
+                onUnarchive: unarchiveListThread,
+                project: sidebarProject,
+                projectLimit: projectLimit,
+                projects: pinnedSidebarProjects,
+                remote: threadListSources,
+                searchContent: sidebarSearch,
+                selectedThreadKey,
+                servers: servers,
+                serverScope,
+                threads: serverThreads,
+                width: desktopThreadSidebarWidth(viewportWidth),
               },
             }
           : {
               mode: "mobile",
               props: {
-                remote: threadListSources,
-                projectLimit: projectLimit,
-                onLoadMoreProject: loadMoreProjectThreads,
-                project: sidebarProject,
-                projects: pinnedSidebarProjects,
-                onOpenProject: openSidebarProject,
-                onBackToProjects: closeSidebarProject,
-                onManageProjects: () => setProjectsSheetVisible(true),
-                catalogState: sidebarCatalogState,
-                servers: servers,
-                activeServerId: activeServerId,
-                threads: mobileVisibleThreads,
                 archivedThreads: mobileVisibleArchivedThreads,
-                mode: sidebarMode,
+                catalogState: sidebarCatalogState,
                 filter: sidebarFilter,
-                query: mobileThreadQuery,
-                onQueryChange: setMobileThreadQuery,
-                onOpenSearch: openGlobalSearch,
-                searchContent: sidebarSearch,
-                onModeChange: changeSidebarMode,
+                initialOffset: mobileThreadOffset.read(sidebarScopeKey),
+                mode: sidebarMode,
+                onArchive: archiveListThread,
+                onBackToProjects: closeSidebarProject,
                 onFilterChange: changeSidebarFilter,
                 onLoadMore: loadMoreThreads,
-                initialOffset: mobileThreadOffset.read(sidebarScopeKey),
-                onOffsetChange: (offset) => mobileThreadOffset.write(sidebarScopeKey, offset),
-                onSelectThread: selectThread,
-                onPreloadThread: preloadThread,
-                onSelectServer: selectServer,
-                onNewThread: createSidebarThread,
-                onTogglePin: toggleListThreadPin,
-                onArchive: archiveListThread,
-                onUnarchive: unarchiveListThread,
+                onLoadMoreProject: loadMoreProjectThreads,
+                onManageProjects: openProjects,
                 onMarkRead: markListThreadRead,
-                onSettings: () => setSettingsVisible(true),
+                onModeChange: changeSidebarMode,
+                onNewThread: createSidebarThread,
+                onOffsetChange: (offset) => {
+                  mobileThreadOffset.write(sidebarScopeKey, offset);
+                },
+                onOpenProject: openSidebarProject,
+                onOpenSearch: openGlobalSearch,
+                onPreloadThread: preloadThread,
+                onQueryChange: setMobileThreadQuery,
                 onRefreshAccountRateLimits: refreshThreadListAccountRateLimits,
+                onSelectServer: selectServer,
+                onSelectThread: selectThread,
+                onSettings: openSettings,
+                onTogglePin: toggleListThreadPin,
+                onUnarchive: unarchiveListThread,
+                project: sidebarProject,
+                projectLimit: projectLimit,
+                projects: pinnedSidebarProjects,
+                query: mobileThreadQuery,
+                remote: threadListSources,
+                searchContent: sidebarSearch,
+                servers: servers,
+                serverScope,
+                threads: mobileVisibleThreads,
               },
             }
       }

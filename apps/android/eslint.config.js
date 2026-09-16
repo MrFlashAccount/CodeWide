@@ -3,7 +3,7 @@ const reactHooks = require("eslint-plugin-react-hooks");
 const presentationTokens = require("./eslint-presentation-tokens.cjs");
 const v1Quality = require("./eslint-v1-quality.cjs");
 
-const v1Files = ["app/legacy.tsx", "src/**/*.{js,jsx,ts,tsx}"];
+const v1Files = ["app/legacy.tsx", "app/v1/**/*.{js,jsx,ts,tsx}", "src/**/*.{js,jsx,ts,tsx}"];
 const v1Ignores = ["src/boot/**", "src/presentation/**", "src/v2/**"];
 
 module.exports = [

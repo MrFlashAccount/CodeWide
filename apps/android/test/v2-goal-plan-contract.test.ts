@@ -15,7 +15,7 @@ const v2Conversation = readFileSync(
   "utf8",
 );
 const legacyConversation = readFileSync(
-  new URL("../src/CodeWideScreen.tsx", import.meta.url),
+  new URL("../app/v1/_layout.tsx", import.meta.url),
   "utf8",
 );
 

@@ -1,35 +1,29 @@
 import { useEvent } from "../../react/useEvent";
-import { useSelector } from "@legendapp/state/react";
 import { workspaceFeatures as features } from "./createWorkspaceFeatures";
-import { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { workspaceRuntime, type WorkspaceRuntimeSnapshot } from "../../data/workspace-runtime";
 import { AppVoiceInputProvider, type AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
-import { workspaceConversationScope } from "../navigation/conversationScope";
-import { type ThreadNavigationModel } from "../navigation/threadNavigation";
 import { BrowserFeedbackContext } from "../ports/browser/BrowserFeedbackContext";
 import type { BrowserFeedbackCapability } from "../ports/browser/feedback";
 
 export function WorkspaceConversationProviders({
-  navigation,
-  runtime,
-  fallbackServerId,
-  feedback,
+  activeConnectionId,
   children,
+  composerThreadId,
+  feedback,
+  initialBrowserDestination,
+  runtime,
 }: {
-  navigation: ThreadNavigationModel;
-  runtime: Pick<WorkspaceRuntimeSnapshot, "resources">;
-  fallbackServerId: string;
-  feedback: Omit<BrowserFeedbackCapability, "initialDestination">;
+  activeConnectionId: string;
   children: ReactNode;
+  composerThreadId: string | null;
+  feedback: Omit<BrowserFeedbackCapability, "initialDestination">;
+  initialBrowserDestination: string;
+  runtime: Pick<WorkspaceRuntimeSnapshot, "resources">;
 }) {
-  const destination = useSelector(() => navigation.destination$.get());
-  const { connectionId: activeConnectionId, composerThreadId } = workspaceConversationScope(
-    destination,
-    fallbackServerId,
-  );
   const startRemote = useEvent<NonNullable<AppVoiceInputRuntime["startRemote"]>>(
     async (listener, options) =>
-      await features.composer.startVoiceTranscription(
+      features.composer.startVoiceTranscription(
         activeConnectionId,
         composerThreadId ?? "",
         listener,
@@ -54,7 +48,7 @@ export function WorkspaceConversationProviders({
     <BrowserFeedbackContext.Provider
       value={{
         ...feedback,
-        initialDestination: destination.kind === "thread" ? destination.key : "",
+        initialDestination: initialBrowserDestination,
       }}
     >
       <AppVoiceInputProvider runtime={voiceInputRuntime}>{children}</AppVoiceInputProvider>

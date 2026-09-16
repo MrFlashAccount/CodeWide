@@ -1,13 +1,8 @@
 /** V1 contentViewerContext owner, extracted without changing interaction or resource lifetime. */
-import type { RenderContentReference } from "@codewide/renderers";
 import { createContext } from "react";
+import type { LargeContentRouteRequest } from "../../../services/content/contentRouteSession";
 
-export type LargeContentViewerRequest = {
-  pointer: string;
-  reference: RenderContentReference;
-  presentation: "markdown" | "terminal" | "text";
-  getTransferAccess(forceRefresh?: boolean): Promise<{ baseUrl: string; authorization: string }>;
-};
+export type LargeContentViewerRequest = LargeContentRouteRequest;
 
 export const LargeContentViewerContext = createContext<
   ((request: LargeContentViewerRequest) => void) | null

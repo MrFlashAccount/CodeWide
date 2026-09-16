@@ -1,6 +1,9 @@
 import { useEvent } from "../../react/useEvent";
 /** V1 documentNavigation owner, extracted without changing interaction or resource lifetime. */
-import type { DocumentPreviewRequest } from "../../rendering/DocumentPreviewHost";
+import {
+  useDocumentDownload,
+  type DocumentPreviewRequest,
+} from "../../rendering/DocumentPreviewHost";
 
 export type ThreadResourceDocumentRoute = {
   request: DocumentPreviewRequest;
@@ -8,12 +11,8 @@ export type ThreadResourceDocumentRoute = {
 };
 
 import type { GetTransferAccess } from "../../data/private-transfer";
-import {
-  isAttachmentVideo,
-  useAttachmentVideoPreview,
-} from "../../rendering/AttachmentVideoPreview";
+import { isAttachmentVideo } from "../../rendering/AttachmentVideoPreview";
 import { resolvePreviewableDocumentLink } from "../../rendering/document-preview";
-import { useDocumentPreview } from "../../rendering/DocumentPreviewHost";
 import { parseLoopbackLink, type LoopbackLinkTarget } from "../../rendering/loopback-link";
 import { useAppDialog } from "../../ui/AppDialog";
 
@@ -22,11 +21,10 @@ export function useDocumentNavigation(
   getTransferAccess: GetTransferAccess | undefined,
   getStableTransferAccess: GetTransferAccess,
   onOpenLoopbackLink: ((target: LoopbackLinkTarget) => Promise<void>) | undefined,
-  openCodeDocument: (request: DocumentPreviewRequest) => void,
+  openDocument: (request: DocumentPreviewRequest) => void,
 ) {
   const dialog = useAppDialog();
-  const openDocument = useDocumentPreview();
-  const openVideo = useAttachmentVideoPreview();
+  const downloadDocument = useDocumentDownload();
 
   const openDocumentLinkFromCwd = useEvent((href: string, sourceCwd: string) => {
     const loopback = parseLoopbackLink(href);
@@ -43,14 +41,13 @@ export function useDocumentNavigation(
     const target = resolvePreviewableDocumentLink(href, sourceCwd);
     if (target === null) return false;
     const request = { ...target, getTransferAccess: getStableTransferAccess };
-    if (isAttachmentVideo(target.name))
-      openVideo({
-        name: target.name,
-        source: { kind: "path", path: target.path },
-        getAccess: getStableTransferAccess,
+    if (target.kind === "download" && !isAttachmentVideo(target.name)) {
+      void downloadDocument(request).catch(() => {
+        dialog.alert("Download failed", "The document could not be downloaded.");
       });
-    else if (target.kind === "text") openCodeDocument(request);
-    else openDocument(request);
+    } else {
+      openDocument(request);
+    }
     return true;
   });
 

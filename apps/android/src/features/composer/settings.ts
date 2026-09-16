@@ -1,13 +1,14 @@
 /** V1 settings owner, extracted without changing interaction or resource lifetime. */
-import { projectedThreadExecutionSettings } from "@codewide/sync-client";
+import type { projectedThreadExecutionSettings } from "@codewide/sync-client";
 import type { TurnControlsValue } from "../../data/turn-controls-types";
 
 export function executionPermissionsLabel(
   settings: ReturnType<typeof projectedThreadExecutionSettings>,
   pending = true,
 ): string {
-  if (settings?.permissions !== null && settings?.permissions !== undefined)
+  if (settings?.permissions !== null && settings?.permissions !== undefined) {
     return permissionProfileLabel(settings.permissions);
+  }
   const sandbox =
     settings?.sandboxPolicy === "dangerFullAccess"
       ? "Full access"
@@ -28,22 +29,30 @@ export function executionPermissionsLabel(
           : settings?.approvalPolicy === "granular"
             ? "Granular"
             : null;
-  if (sandbox !== null && approval !== null) return `${sandbox} · ${approval}`;
+  if (sandbox !== null && approval !== null) {
+    return `${sandbox} · ${approval}`;
+  }
   return sandbox ?? approval ?? (pending ? "Loading access…" : "Access unavailable");
 }
 
 export function permissionProfileLabel(id: string): string {
-  if (id === ":workspace") return "Workspace";
-  if (id === ":read-only") return "Read only";
-  if (id === ":full-access" || id === ":danger-full-access") return "Full access";
+  if (id === ":workspace") {
+    return "Workspace";
+  }
+  if (id === ":read-only") {
+    return "Read only";
+  }
+  if (id === ":full-access" || id === ":danger-full-access") {
+    return "Full access";
+  }
   return id.startsWith(":") ? id.slice(1).replaceAll("-", " ") : id;
 }
 
 export const EMPTY_TURN_CONTROLS: TurnControlsValue = {
+  defaults: { effort: null, model: null, permissions: null },
   models: [],
-  skills: [],
   permissions: [],
-  defaults: { model: null, effort: null, permissions: null },
+  skills: [],
 };
 
 import type { Personality } from "@codewide/codex-protocol/v0.147.0";
@@ -54,19 +63,19 @@ import { useConversationRef, useConversationState } from "../../ui/use-conversat
 import type { ComposerSettingsCapabilities } from "./settingsCapabilities";
 import { rollbackOwnedModelSelection } from "./submissionRecovery";
 export function useComposerSettings({
+  composerPreferences,
   composerScope,
-  newChat,
+  controlsResourceId,
+  conversationOwner,
   cwd,
   draftConnectionId,
   draftThreadId,
-  workspaceResources,
-  controlsResourceId,
-  composerPreferences,
   latestComposerPreferencesRef,
-  conversationOwner,
+  newChat,
   onLoadControls,
   onUpdateSettings,
   saveComposerPreferences,
+  workspaceResources,
 }: ComposerSettingsCapabilities) {
   const readCurrentControls = (): TurnControlsRow | null =>
     workspaceResources === null || controlsResourceId === null
@@ -104,37 +113,45 @@ export function useComposerSettings({
 
   const selectedPermissions = composerPreferences.permissions;
 
-  const setSelectedModel = (apply: (current: string | null) => string | null) =>
+  const setSelectedModel = (apply: (current: string | null) => string | null) => {
     updateCurrentPreferences((current) => ({ ...current, model: apply(current.model) }));
-  const setSelectedEffort = (value: string | null) =>
+  };
+  const setSelectedEffort = (value: string | null) => {
     updateCurrentPreferences((current) => ({ ...current, effort: value }));
-  const updateSelectedEffort = (apply: (current: string | null) => string | null) =>
+  };
+  const updateSelectedEffort = (apply: (current: string | null) => string | null) => {
     updateCurrentPreferences((current) => ({ ...current, effort: apply(current.effort) }));
-  const setSelectedPersonality = useEvent((value: Personality | null) =>
-    updateCurrentPreferences((current) => ({ ...current, personality: value })),
-  );
-  const setSelectedPermissions = (value: string | null) =>
+  };
+  const setSelectedPersonality = useEvent((value: Personality | null) => {
+    updateCurrentPreferences((current) => ({ ...current, personality: value }));
+  });
+  const setSelectedPermissions = (value: string | null) => {
     updateCurrentPreferences((current) => ({ ...current, permissions: value }));
-  const updateSelectedPermissions = (apply: (current: string | null) => string | null) =>
+  };
+  const updateSelectedPermissions = (apply: (current: string | null) => string | null) => {
     updateCurrentPreferences((current) => ({
       ...current,
       permissions: apply(current.permissions),
     }));
+  };
 
   const settingsMutationRef = useConversationRef(composerScope, () => ({
-    model: 0,
     effort: 0,
+    model: 0,
     permissions: 0,
   }));
 
   const requestControls = useEvent(() => {
     const current = currentControlsResource();
-    if (onLoadControls === undefined || (current?.status === "loading" && current.value === null))
+    if (onLoadControls === undefined || (current?.status === "loading" && current.value === null)) {
       return;
+    }
     setControlError(null);
     void onLoadControls(cwd)
       .then((next) => {
-        if (!conversationOwner.isCurrent()) return;
+        if (!conversationOwner.isCurrent()) {
+          return;
+        }
         setSelectedModel((current) =>
           current !== null && !next.models.some((candidate) => candidate.id === current)
             ? null
@@ -146,9 +163,11 @@ export function useComposerSettings({
             : current,
         );
       })
-      .catch((cause) => {
-        if (!conversationOwner.isCurrent()) return;
-        setControlError(cause instanceof Error ? cause.message : "Could not load turn controls");
+      .catch((error: unknown) => {
+        if (!conversationOwner.isCurrent()) {
+          return;
+        }
+        setControlError(error instanceof Error ? error.message : "Could not load turn controls");
       });
   });
 
@@ -157,10 +176,12 @@ export function useComposerSettings({
     const effortMutation = ++settingsMutationRef.current.effort;
     const previousModel = selectedModel;
     const previousEffort = selectedEffort;
-    updateCurrentPreferences((current) => ({ ...current, model, effort }));
-    if (onUpdateSettings === undefined) return;
+    updateCurrentPreferences((current) => ({ ...current, effort, model }));
+    if (onUpdateSettings === undefined) {
+      return;
+    }
     setControlError(null);
-    void onUpdateSettings({ model, effort }).catch((cause) => {
+    void onUpdateSettings({ effort, model }).catch((error: unknown) => {
       const ownsModel = settingsMutationRef.current.model === modelMutation;
       const ownsEffort = settingsMutationRef.current.effort === effortMutation;
       if (
@@ -171,14 +192,14 @@ export function useComposerSettings({
           ...current,
           ...rollbackOwnedModelSelection(
             current,
-            { model, effort },
-            { model: previousModel, effort: previousEffort },
-            { model: ownsModel, effort: ownsEffort },
+            { effort, model },
+            { effort: previousEffort, model: previousModel },
+            { effort: ownsEffort, model: ownsModel },
           ),
         }));
       }
       if ((ownsModel || ownsEffort) && conversationOwner.isCurrent()) {
-        setControlError(cause instanceof Error ? cause.message : "Could not update model settings");
+        setControlError(error instanceof Error ? error.message : "Could not update model settings");
       }
     });
   });
@@ -187,16 +208,18 @@ export function useComposerSettings({
     const mutation = ++settingsMutationRef.current.effort;
     const previous = selectedEffort;
     setSelectedEffort(effort);
-    if (onUpdateSettings === undefined) return;
+    if (onUpdateSettings === undefined) {
+      return;
+    }
     setControlError(null);
-    void onUpdateSettings({ effort }).catch((cause) => {
+    void onUpdateSettings({ effort }).catch((error: unknown) => {
       const ownsMutation = settingsMutationRef.current.effort === mutation;
       if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
         updateSelectedEffort((current) => (current === effort ? previous : current));
       }
       if (ownsMutation && conversationOwner.isCurrent()) {
         setControlError(
-          cause instanceof Error ? cause.message : "Could not update thinking effort",
+          error instanceof Error ? error.message : "Could not update thinking effort",
         );
       }
     });
@@ -206,15 +229,17 @@ export function useComposerSettings({
     const mutation = ++settingsMutationRef.current.permissions;
     const previous = selectedPermissions;
     setSelectedPermissions(permissions);
-    if (onUpdateSettings === undefined) return;
+    if (onUpdateSettings === undefined) {
+      return;
+    }
     setControlError(null);
-    void onUpdateSettings({ permissions }).catch((cause) => {
+    void onUpdateSettings({ permissions }).catch((error: unknown) => {
       const ownsMutation = settingsMutationRef.current.permissions === mutation;
       if (ownsMutation && (conversationOwner.isCurrent() || !conversationOwner.hasReplacement())) {
         updateSelectedPermissions((current) => (current === permissions ? previous : current));
       }
       if (ownsMutation && conversationOwner.isCurrent()) {
-        setControlError(cause instanceof Error ? cause.message : "Could not update permissions");
+        setControlError(error instanceof Error ? error.message : "Could not update permissions");
       }
     });
   });
@@ -222,19 +247,19 @@ export function useComposerSettings({
   const capturePreferenceUpdate = useEvent(() => updateCurrentPreferences);
   return {
     captureControlsResource,
-    currentControlsResource,
-    controlError,
-    requestControls,
-    selectedModel,
-    selectedEffort,
-    selectedPersonality,
-    selectedPermissions,
-    setSelectedPersonality,
-    selectModel,
-    selectEffort,
-    selectPermissions,
-    updateComposerPreferences,
     capturePreferenceUpdate,
+    controlError,
+    currentControlsResource,
+    requestControls,
+    selectedEffort,
+    selectedModel,
+    selectedPermissions,
+    selectedPersonality,
+    selectEffort,
+    selectModel,
+    selectPermissions,
+    setSelectedPersonality,
+    updateComposerPreferences,
   };
 }
 
@@ -244,45 +269,41 @@ type ComposerControlActions = Pick<
   ReturnType<typeof useComposerSettings>,
   "currentControlsResource" | "requestControls"
 > & {
-  closeInlineQueueOverlay(): void;
+  closeInlineQueueOverlay: () => void;
+  dismissComposerKeyboardForOverlay: () => void;
+  openToolRoute: (page: ComposerMenuPage) => void;
   setComposerTrayVisible: Dispatch<SetStateAction<boolean>>;
-  dismissComposerKeyboardForOverlay(): void;
-  setMenuInitialPage: Dispatch<SetStateAction<ComposerMenuPage>>;
-  setMenuVisible: Dispatch<SetStateAction<boolean>>;
 };
 export function useComposerControlActions({
   closeInlineQueueOverlay,
-  setComposerTrayVisible,
-  dismissComposerKeyboardForOverlay,
-  setMenuInitialPage,
-  setMenuVisible,
   currentControlsResource,
+  dismissComposerKeyboardForOverlay,
+  openToolRoute,
   requestControls,
+  setComposerTrayVisible,
 }: ComposerControlActions) {
   const openControls = useEvent((initialPage: ComposerMenuPage) => {
     closeInlineQueueOverlay();
     setComposerTrayVisible(false);
     dismissComposerKeyboardForOverlay();
-    setMenuInitialPage(initialPage);
-    setMenuVisible(true);
+    openToolRoute(initialPage);
     // A failed/background prefetch may be retried, but an already loaded sheet
     // never refetches its model, skill and permission lists.
     const current = currentControlsResource();
-    if (initialPage !== "ports" && (current === null || current.status === "error"))
+    if (initialPage !== "ports" && (current === null || current.status === "error")) {
       requestControls();
-  });
-
-  const closeControls = useEvent(() => {
-    setMenuVisible(false);
+    }
   });
 
   const openQuickControlMenu = useEvent((_scope: "model-menu" | "permissions-menu") => {
     setComposerTrayVisible(false);
     dismissComposerKeyboardForOverlay();
     const current = currentControlsResource();
-    if (current === null || current.status === "error") requestControls();
+    if (current === null || current.status === "error") {
+      requestControls();
+    }
   });
 
   const closeQuickControlMenu = useEvent((_scope: "model-menu" | "permissions-menu") => undefined);
-  return { openControls, closeControls, openQuickControlMenu, closeQuickControlMenu };
+  return { closeQuickControlMenu, openControls, openQuickControlMenu };
 }

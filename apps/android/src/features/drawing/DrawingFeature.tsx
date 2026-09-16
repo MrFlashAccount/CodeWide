@@ -7,8 +7,7 @@ import { loadQuickdrawImageSnapshot } from "../../data/quickdraw-image-source";
 import type { StoredDraftAttachment } from "../../data/thread-ui-state-types";
 import { useEvent } from "../../react/useEvent";
 import type { ImagePreviewItem } from "../../rendering/ImagePreviewHost";
-import type { AppFullscreenOverlayController } from "../../ui/AppFullscreenOverlay";
-import { DrawingWorkspace } from "./DrawingWorkspace";
+import { useConversationRouteNavigation } from "../conversation/conversationRouteNavigation";
 import { commitDrawing, type DrawingAdmission } from "./drawingAttachment";
 
 type DrawingCapabilities = Omit<DrawingAdmission, "stageAttachment"> & {
@@ -17,18 +16,13 @@ type DrawingCapabilities = Omit<DrawingAdmission, "stageAttachment"> & {
   fileAttachmentEnabled: boolean;
   readDrawingAttachments(attachmentId: string | undefined): readonly StoredDraftAttachment[];
   hideComposerTray(): void;
-  fullscreenOverlay: Pick<AppFullscreenOverlayController, "present">;
 };
 
 /** A drawing session retains the opening composer's admission until accepted or closed. */
 export function useDrawingFeature(capabilities: DrawingCapabilities) {
-  const {
-    composerScope,
-    fileAttachmentEnabled,
-    readDrawingAttachments,
-    hideComposerTray,
-    fullscreenOverlay,
-  } = capabilities;
+  const { composerScope, fileAttachmentEnabled, readDrawingAttachments, hideComposerTray } =
+    capabilities;
+  const navigation = useConversationRouteNavigation();
 
   const presentDrawing = (
     admission: DrawingAdmission,
@@ -46,19 +40,16 @@ export function useDrawingFeature(capabilities: DrawingCapabilities) {
       onAttached?(): void;
     },
   ) => {
-    fullscreenOverlay.present(({ close }) => (
-      <DrawingWorkspace
-        editing={attachment !== null}
-        initialSnapshot={initialSnapshot}
-        mode={mode}
-        onCommit={async (value) => {
-          const committed = await commitDrawing(admission, attachment, mode, name, value);
-          if (committed) onAttached?.();
-          return committed;
-        }}
-        onClose={close}
-      />
-    ));
+    navigation.openDrawing({
+      editing: attachment !== null,
+      initialSnapshot,
+      mode,
+      commit: async (value) => {
+        const committed = await commitDrawing(admission, attachment, mode, name, value);
+        if (committed) onAttached?.();
+        return committed;
+      },
+    });
   };
   const openDrawing = useEvent(() => {
     if (!fileAttachmentEnabled) return;

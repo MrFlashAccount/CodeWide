@@ -2,11 +2,7 @@ import type { QueuedPrompt } from "../../data/thread-delivery-state";
 import { useEvent } from "../../react/useEvent";
 import { useConversationState } from "../../ui/use-conversation-scope";
 
-export function useQueueVisibility(
-  composerScope: string,
-  queuedPrompts: readonly QueuedPrompt[],
-  setMenuVisible: (visible: boolean) => void,
-) {
+export function useQueueVisibility(composerScope: string, queuedPrompts: readonly QueuedPrompt[]) {
   const [inlineQueueExpanded, setInlineQueueExpanded] = useConversationState(
     composerScope,
     () => false,
@@ -20,7 +16,6 @@ export function useQueueVisibility(
       return;
     }
     if (queuedPrompts.length === 0) return;
-    setMenuVisible(false);
     setInlineQueueExpanded(true);
   });
   return {

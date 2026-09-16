@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compactSource } from "./source-contract";
 
 const screen = compactSource(
-  readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
 );
 const terminal = readFileSync(
   new URL("../src/features/terminal/TerminalWorkspace.native.tsx", import.meta.url),
@@ -28,7 +28,7 @@ const nativeManager = readFileSync(
 );
 
 const ownerTerminalFeature = compactSource(
-  readFileSync(new URL("../src/features/terminal/TerminalFeature.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/v1/threads/[connectionId]/[threadId]/terminal.tsx", import.meta.url), "utf8"),
 );
 const ownerComposerTerminalContextChip = compactSource(
   readFileSync(
@@ -85,17 +85,18 @@ const historyBinding = compactSource(
 );
 
 describe("native terminal integration", () => {
-  it("opens a thread-bound workspace through the shared fullscreen overlay host", () => {
+  it("opens a thread-bound workspace through a retained route session", () => {
     expect(ownerComposerAccessoryTray).toContain('{ id: "terminal", label: "Terminal"');
     expect(ownerComposerAccessoryTray).toContain('{ id: "ports", label: "Port forward"');
     expect(screen).not.toContain('label: "Open terminal"');
     expect(ownerTerminalActions).toContain("const createAndOpenTerminal = useEvent(() => {");
     expect(ownerComposerFeatureActions).toContain("createAndOpenTerminal();");
-    expect(ownerTerminalFeature).toContain("fullscreenOverlay.present( ({ close }) => (");
-    expect(ownerTerminalFeature).toContain(
-      "<TerminalWorkspace connectionId={draftConnectionId} threadId={draftThreadId}",
+    expect(ownerTerminalFeature).toContain("terminalRouteSessions.get");
+    expect(ownerTerminalFeature).toMatch(
+      /<TerminalWorkspace(?=[^>]*connectionId=\{session\.request\.connectionId\})(?=[^>]*threadId=\{session\.request\.threadId\})[^>]*>/u,
     );
-    expect(ownerTerminalFeature).toContain("{ dismissOnScopeUnmount: false }");
+    expect(ownerTerminalFeature).toContain("terminalRouteSessions.close(session.id)");
+    expect(ownerTerminalFeature).toContain("recoverUnavailableRoute(router, v1ThreadDestination(params.value))");
     expect(ownerComposerTerminalContextChip).toContain('ComposerContextCount label="Terminals"');
     expect(ownerComposerTerminalContextChip).toContain("workspace.tabs.length");
   });

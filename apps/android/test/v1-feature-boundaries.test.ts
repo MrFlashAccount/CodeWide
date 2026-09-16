@@ -30,8 +30,12 @@ describe("V1 feature gate coverage", () => {
     );
 
     const knip = (await import(new URL("../knip.v1.config.mjs", import.meta.url))).default;
-    expect(knip.entry).toEqual(expect.arrayContaining(["app/legacy.tsx", "test/**/*.{ts,tsx}"]));
-    expect(knip.project).toEqual(expect.arrayContaining(["app/legacy.tsx", "src/**/*.{ts,tsx}"]));
+    expect(knip.entry).toEqual(
+      expect.arrayContaining(["app/legacy.tsx", "app/v1/**/*.{ts,tsx}", "test/**/*.{ts,tsx}"]),
+    );
+    expect(knip.project).toEqual(
+      expect.arrayContaining(["app/legacy.tsx", "app/v1/**/*.{ts,tsx}", "src/**/*.{ts,tsx}"]),
+    );
   });
 
   it("applies presentation, React, layout, style, and public-API rules to a V1 feature path", async () => {
@@ -83,8 +87,22 @@ describe("V1 feature gate coverage", () => {
       "src/features/forbidden/private.ts":
         'import type { Private } from "../projects/privateSession"; export type Leaked = Private;',
       "src/features/conversation/privateScope.ts": "export type Scope = { thread: string };",
+      "src/features/agents/RouteSubagentWorkspace.tsx":
+        "export type AgentComposition = { route: true };",
       "src/features/conversation/ConversationReadSurface.tsx":
-        "export type ReadSurface = { readonly: true };",
+        'import type { AgentComposition } from "../agents/RouteSubagentWorkspace"; export type ReadSurface = AgentComposition;',
+      "src/features/conversation/ConversationDetail.tsx":
+        'import type { AgentComposition } from "../agents/RouteSubagentWorkspace"; export type Detail = AgentComposition;',
+      "src/features/conversation/SubagentConversation.tsx":
+        'import type { AgentComposition } from "../agents/RouteSubagentWorkspace"; export type Child = AgentComposition;',
+      "src/features/conversation/timeline/forbiddenAgent.tsx":
+        'import type { AgentComposition } from "../../agents/RouteSubagentWorkspace"; export type Timeline = AgentComposition;',
+      "src/features/conversation/turns/forbiddenAgent.tsx":
+        'import type { AgentComposition } from "../../agents/RouteSubagentWorkspace"; export type Turn = AgentComposition;',
+      "src/features/conversation/protocol/forbiddenAgent.tsx":
+        'import type { AgentComposition } from "../../agents/RouteSubagentWorkspace"; export type Protocol = AgentComposition;',
+      "src/features/conversation/content/forbiddenAgent.tsx":
+        'import type { AgentComposition } from "../../agents/RouteSubagentWorkspace"; export type Content = AgentComposition;',
       "src/features/goal/ThreadGoalChip.tsx": "export type GoalChip = { goal: true };",
       "src/features/requests/RequestFeature.tsx": "export type RequestPrompt = { request: true };",
       "src/features/conversation/timeline/forbiddenGoal.tsx":
@@ -106,6 +124,11 @@ describe("V1 feature gate coverage", () => {
       "src/CodeWideScreen.tsx": "export type Composition = { route: string };",
       "src/features/forbidden/root.ts":
         'import type { Composition } from "../../CodeWideScreen"; export type Feature = Composition;',
+      "src/services/forbidden/router.ts":
+        'import type { Href } from "expo-router"; export type Route = Href;',
+      "app/v1/private.ts": "export type RoutePrivate = { route: true };",
+      "src/components/forbidden/route.ts":
+        'import type { RoutePrivate } from "../../../app/v1/private"; export type View = RoutePrivate;',
     };
     try {
       for (const [relativePath, source] of Object.entries(files)) {
@@ -207,18 +230,45 @@ describe("V1 feature gate coverage", () => {
             from: "src/features/conversation/timeline/forbiddenGoal.tsx",
             to: "src/features/goal/ThreadGoalChip.tsx",
             rule: expect.objectContaining({
-              name: "v1-conversation-read-owners-do-not-import-feature-composition",
+              name: "v1-conversation-core-read-owners-do-not-import-feature-composition",
             }),
           }),
           expect.objectContaining({
             from: "src/features/conversation/turns/forbiddenRequest.tsx",
             to: "src/features/requests/RequestFeature.tsx",
             rule: expect.objectContaining({
-              name: "v1-conversation-read-owners-do-not-import-feature-composition",
+              name: "v1-conversation-core-read-owners-do-not-import-feature-composition",
             }),
+          }),
+          expect.objectContaining({
+            from: "src/services/forbidden/router.ts",
+            rule: expect.objectContaining({ name: "v1-router-imports-stay-in-routes" }),
+          }),
+          expect.objectContaining({
+            from: "src/components/forbidden/route.ts",
+            rule: expect.objectContaining({ name: "v1-source-does-not-import-routes" }),
           }),
         ]),
       );
+      expect(
+        report.summary.violations
+          .filter(
+            (violation) =>
+              violation.to === "src/features/agents/RouteSubagentWorkspace.tsx" &&
+              violation.rule.name ===
+                "v1-conversation-read-owners-do-not-import-feature-composition",
+          )
+          .map((violation) => violation.from)
+          .sort(),
+      ).toEqual([
+        "src/features/conversation/ConversationDetail.tsx",
+        "src/features/conversation/ConversationReadSurface.tsx",
+        "src/features/conversation/SubagentConversation.tsx",
+        "src/features/conversation/content/forbiddenAgent.tsx",
+        "src/features/conversation/protocol/forbiddenAgent.tsx",
+        "src/features/conversation/timeline/forbiddenAgent.tsx",
+        "src/features/conversation/turns/forbiddenAgent.tsx",
+      ]);
       expect(report.summary.violations).not.toEqual(
         expect.arrayContaining([
           expect.objectContaining({ from: "src/features/allowed/contracts.ts" }),
@@ -227,9 +277,10 @@ describe("V1 feature gate coverage", () => {
           expect.objectContaining({ from: "src/features/workspace/createWorkspaceFeatures.ts" }),
         ]),
       );
-      expect(report.summary.violations).not.toEqual(
+      expect(report.summary.violations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
+            from: "src/services/forbidden/router.ts",
             rule: expect.objectContaining({ name: "v1-no-unresolved-dependencies" }),
           }),
         ]),

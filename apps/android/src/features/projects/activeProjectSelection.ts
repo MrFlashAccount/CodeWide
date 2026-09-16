@@ -5,9 +5,11 @@ import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import type { WorkspaceSupport } from "../../data/workspace-creation";
 import { useEvent } from "../../react/useEvent";
 import { useAsyncResource } from "../../rendering/async-resource-store";
-import type { NewChatDraft } from "../navigation/threadNavigation";
-import type { SelectWorkspaceThread, ThreadNavigationModel } from "../navigation/threadNavigation";
-import { threadSelectionKey } from "../navigation/threadSelection";
+import type { NewThreadDraft } from "../../services/threads/newThreadService";
+import {
+  threadSelectionKey,
+  type SelectWorkspaceThread,
+} from "../../services/threads/threadRouteParams";
 import { useRemoteProjectCatalog } from "./useRemoteProjectCatalog";
 /** Project commands retain the original thread/detail and workspace authorities. */
 export type ActiveProjectCapability = {
@@ -27,8 +29,8 @@ export function useActiveProjectSelection(
   activeConnectionId: string,
   activeRemoteThreadId: string | null,
   activeStoredThread: StoredThreadSummary | null,
-  newChatDraft: NewChatDraft | null,
-  threadNavigation: ThreadNavigationModel,
+  newChatDraft: NewThreadDraft | null,
+  changeDraftProject: (draftId: string, cwd: string | null) => void,
   setActiveThreadId: SelectWorkspaceThread,
 ) {
   const projectCatalog = useRemoteProjectCatalog(
@@ -41,13 +43,13 @@ export function useActiveProjectSelection(
 
   const workspaceSupportResource = useAsyncResource<WorkspaceSupport | null>(
     remote.native && newChatDraft?.cwd !== null && newChatDraft?.cwd !== undefined
-      ? `new-chat-workspace-support:${newChatDraft.serverId}:${newChatDraft.cwd}`
+      ? `new-chat-workspace-support:${newChatDraft.connectionId}:${newChatDraft.cwd}`
       : null,
-    `${newChatDraft?.serverId ?? "none"}:${newChatDraft?.cwd ?? "none"}`,
+    `${newChatDraft?.connectionId ?? "none"}:${newChatDraft?.cwd ?? "none"}`,
     async () =>
       newChatDraft?.cwd === null || newChatDraft?.cwd === undefined
         ? null
-        : await remote.inspectWorkspace(newChatDraft.serverId, newChatDraft.cwd),
+        : await remote.inspectWorkspace(newChatDraft.connectionId, newChatDraft.cwd),
   );
 
   const activeWorkspaceSupport =
@@ -68,7 +70,7 @@ export function useActiveProjectSelection(
 
   const changeEmptyThreadProject = useEvent(async (cwd: string | null): Promise<void> => {
     if (newChatDraft !== null) {
-      threadNavigation.changeDraftProject(newChatDraft.id, cwd);
+      changeDraftProject(newChatDraft.id, cwd);
       return;
     }
     if (!remote.native || activeConnectionId === "" || activeRemoteThreadId === null) return;
@@ -82,11 +84,7 @@ export function useActiveProjectSelection(
     if ((cwd ?? null) === (activeStoredThread?.cwd || null)) return;
     const previousThreadId = activeRemoteThreadId;
     const nextThreadId = await remote.startThread(activeConnectionId, cwd ?? undefined);
-    setActiveThreadId(
-      threadSelectionKey({ id: nextThreadId, serverId: activeConnectionId }),
-      undefined,
-      activeConnectionId,
-    );
+    setActiveThreadId(threadSelectionKey({ id: nextThreadId, serverId: activeConnectionId }));
     await remote.deleteThread(activeConnectionId, previousThreadId);
   });
 

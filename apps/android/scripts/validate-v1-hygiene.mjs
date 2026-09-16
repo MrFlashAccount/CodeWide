@@ -26,7 +26,10 @@ function readDiagnostic(value) {
     return { code: value.code, filename: value.filename };
   }
 
-  if (value.message === "Unused eslint-disable directive (no problems were reported).") {
+  if (
+    value.message === "Unused eslint-disable directive (no problems were reported)." ||
+    value.message === "Unused oxlint-disable directive (no problems were reported)."
+  ) {
     return { code: UNUSED_DISABLE_CODE, filename: value.filename };
   }
 
@@ -48,6 +51,7 @@ const result = spawnSync(
     "json",
     "--no-error-on-unmatched-pattern",
     "app/legacy.tsx",
+    "app/v1",
     "src",
   ],
   {
@@ -150,10 +154,7 @@ if (updateBaseline) {
     );
     process.exitCode = 1;
   } else {
-    const baselineCount = baselineEntries.reduce(
-      (sum, [, count]) => sum + count,
-      0,
-    );
+    const baselineCount = baselineEntries.reduce((sum, [, count]) => sum + count, 0);
     process.stdout.write(
       `V1 hygiene: ${report.diagnostics.length} current violations, ${baselineCount} baseline; no regressions.\n`,
     );

@@ -3,7 +3,7 @@ import { Pressable, View } from "react-native";
 import { colors, iconSize } from "../../theme";
 import { InlineIcon } from "../../ui/InlineIcon";
 import { AppText as Text } from "../../ui/Typography";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
+import { serverScopeIncludes } from "../../services/servers/serverScope";
 import { SidebarProjectHeader } from "../projects/SidebarProjects";
 import { ThreadFilterMenu, ThreadListMenu } from "./ThreadListMenus";
 import { styles } from "./ThreadSidebar.styles";
@@ -22,7 +22,7 @@ export function ThreadSidebarHeader({
     onBackToProjects,
     onManageProjects,
     servers,
-    activeServerId,
+    serverScope,
     mode,
     filter,
     onOpenSearch,
@@ -78,9 +78,9 @@ export function ThreadSidebarHeader({
             onManageProjects={onManageProjects}
             onSettings={onSettings}
             catalogConnectionIds={
-              activeServerId === ALL_SERVERS_ID
+              serverScope.kind === "all"
                 ? servers.map((entry) => entry.id)
-                : [activeServerId]
+                : [serverScope.connectionId]
             }
             onToggleArchive={() => {
               setQuery("");
@@ -89,9 +89,7 @@ export function ThreadSidebarHeader({
             archived={mode === "archived"}
             includeArchiveCount={project === null}
             accountDatabase={remote.accountRateLimitsDatabase}
-            accountServers={servers.filter(
-              (server) => activeServerId === ALL_SERVERS_ID || server.id === activeServerId,
-            )}
+            accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}
             {...(onRefreshAccountRateLimits === undefined ? {} : { onRefreshAccountRateLimits })}
           />
         </View>
@@ -112,7 +110,7 @@ export function ThreadSidebarHeader({
               mode={mode}
               projectScoped={project !== null}
               servers={servers}
-              activeServerId={activeServerId}
+              serverScope={serverScope}
               selected={filter}
               onSelect={onFilterChange}
               onSelectServer={onSelectServer}

@@ -6,14 +6,14 @@ import {
   type VoiceTranscriptionOptions,
 } from "../../data/voice-input-controller";
 import type { ThreadChangeScope } from "../../data/workspace-resource-database";
+import type { NewThreadDraft } from "../../services/threads/newThreadService";
 import { useGoalCommands } from "../goal/goalCommands";
-import type { NewChatDraft } from "../navigation/threadNavigation";
 import type { createNewChatSubmission } from "../projects/newChatSubmission";
 import { useQueueCommands } from "../queue/queueCommands";
 import type { ConversationWorkspaceFeatures } from "./conversationWorkspaceFeatures";
 
 type Scope =
-  | { kind: "draft"; draft: NewChatDraft; onSend: ReturnType<typeof createNewChatSubmission> }
+  | { kind: "draft"; draft: NewThreadDraft; onSend: ReturnType<typeof createNewChatSubmission> }
   | { kind: "thread"; connectionId: string; threadId: string }
   | { kind: "empty" };
 /** Enables only the feature capabilities belonging to the captured selection scope. */
@@ -28,15 +28,15 @@ export function createConversationScopeBindings(
     return {
       onSend: scope.onSend,
       onLoadControls: async (cwd: string) =>
-        await features.composer.loadTurnControls(newChatDraft.serverId, cwd),
+        await features.composer.loadTurnControls(newChatDraft.connectionId, cwd),
       getTransferAccess: async (forceRefresh = false) =>
-        await features.attachments.transferAccess(newChatDraft.serverId, forceRefresh),
+        await features.attachments.transferAccess(newChatDraft.connectionId, forceRefresh),
       onStartVoiceTranscription: async (
         listener: (event: VoiceTranscriptionEvent) => void,
         options?: VoiceTranscriptionOptions,
       ) =>
         await features.composer.startVoiceTranscription(
-          newChatDraft.serverId,
+          newChatDraft.connectionId,
           newChatDraft.id,
           listener,
           options,

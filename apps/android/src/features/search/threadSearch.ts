@@ -1,6 +1,6 @@
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
 import { useAsyncResource } from "../../rendering/async-resource-store";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
+import { serverScopeConnectionId, type ServerScope } from "../../services/servers/serverScope";
 import type { SidebarProject } from "../projects/sidebarProjects";
 import { storedThreadToListItem } from "../threadList/threadListProjection";
 import type { ThreadListItem } from "../threadList/threadListTypes";
@@ -11,7 +11,7 @@ type ThreadSearch = (query: string, connectionId?: string | null) => Promise<Sto
 export function useThreadSearch(
   native: boolean,
   searchThreads: ThreadSearch,
-  activeServerId: string,
+  serverScope: ServerScope,
   sidebarProject: SidebarProject | null,
   mobileThreadQuery: string,
   serverThreads: ThreadListItem[],
@@ -19,7 +19,7 @@ export function useThreadSearch(
 ) {
   const normalizedMobileThreadQuery = mobileThreadQuery.trim().toLocaleLowerCase();
 
-  const mobileSearchKey = `${activeServerId}\u0000${normalizedMobileThreadQuery}`;
+  const mobileSearchKey = `${serverScope.kind === "all" ? "all" : serverScope.connectionId}\u0000${normalizedMobileThreadQuery}`;
 
   const mobileRemoteSearchResource = useAsyncResource<ThreadListItem[]>(
     native && sidebarProject === null ? "mobile-thread-search" : null,
@@ -27,10 +27,7 @@ export function useThreadSearch(
     async (_publish, signal) => {
       if (normalizedMobileThreadQuery === "") return [];
       await abortableDelay(60, signal);
-      const results = await searchThreads(
-        mobileThreadQuery,
-        activeServerId === ALL_SERVERS_ID ? null : activeServerId,
-      );
+      const results = await searchThreads(mobileThreadQuery, serverScopeConnectionId(serverScope));
       return results.map(storedThreadToListItem);
     },
   );

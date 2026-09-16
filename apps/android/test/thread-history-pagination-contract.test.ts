@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { compactSource } from "./source-contract";
 
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
 const timelineListSource = readFileSync(new URL("../src/rendering/ThreadTimelineList.tsx", import.meta.url), "utf8");
 const initialPositionSource = readFileSync(new URL("../src/rendering/timeline-initial-position.ts", import.meta.url), "utf8");
 const uiStateDatabase = readFileSync(new URL("../src/data/thread-ui-state-database.native.ts", import.meta.url), "utf8");

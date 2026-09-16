@@ -4,15 +4,17 @@ import { describe, expect, it } from "vitest";
 
 import { compactSource } from "./source-contract";
 
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+const screen = compactSource(readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"));
 
 const sidebarBody = compactSource(readFileSync(new URL("../src/features/threadList/ThreadSidebar.tsx", import.meta.url), "utf8"));
 const mobileBody = compactSource(readFileSync(new URL("../src/features/threadList/MobileThreads.tsx", import.meta.url), "utf8"));
 const sidebarHeader = compactSource(readFileSync(new URL("../src/features/threadList/ThreadSidebarHeader.tsx", import.meta.url), "utf8"));
 const mobileHeader = compactSource(readFileSync(new URL("../src/features/threadList/MobileThreadsHeader.tsx", import.meta.url), "utf8"));
 const listMenus = compactSource(readFileSync(new URL("../src/features/threadList/ThreadListMenus.tsx", import.meta.url), "utf8"));
-const serverSelection = compactSource(readFileSync(new URL("../src/features/navigation/serverSelection.ts", import.meta.url), "utf8"));
-const newChat = compactSource(readFileSync(new URL("../src/features/projects/newChat.ts", import.meta.url), "utf8"));
+const serverSelection = compactSource(readFileSync(new URL("../src/services/servers/serverScope.ts", import.meta.url), "utf8"));
+const newChat = compactSource(
+  readFileSync(new URL("../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url), "utf8"),
+);
 const newThreadButton = compactSource(readFileSync(new URL("../src/features/projects/NewThreadFloatingButton.tsx", import.meta.url), "utf8"));
 const listFilters = compactSource(readFileSync(new URL("../src/features/threadList/threadListFilters.ts", import.meta.url), "utf8"));
 const rowContent = compactSource(readFileSync(new URL("../src/features/threadList/ThreadRowContent.tsx", import.meta.url), "utf8"));
@@ -56,9 +58,11 @@ describe("unified thread filters", () => {
     const filters = listMenus.slice(listMenus.indexOf("function ThreadFilterMenu("));
     const selectServer = serverSelection;
 
-    expect(serverSelection).toContain("const [requestedServerId, setActiveServerId] = useState(ALL_SERVERS_ID)");
-    expect(serverSelection).toContain("servers.length <= 1 || requestedServerId === ALL_SERVERS_ID");
-    expect(filters).toContain('id: `server:${ALL_SERVERS_ID}`');
+    expect(serverSelection).toContain(
+      "const [requested, setRequested] = useState<ServerScope>(ALL_SERVER_SCOPE)",
+    );
+    expect(serverSelection).toContain("connections.length <= 1 || requested.kind === \"all\"");
+    expect(filters).toContain('id: "server:all"');
     expect(filters).toContain('section: "Server"');
     expect(filters).toContain('section: "Threads"');
     expect(filters).toContain('label: "All servers"');
@@ -66,15 +70,19 @@ describe("unified thread filters", () => {
     expect(filters).not.toContain("<ControlOption");
     expect(filters).toContain("selectedCriteria.join(\" and \")");
     expect(listFilters).toContain('label: "Approval needed"');
-    expect(selectServer).toContain("setActiveServerId(serverId)");
+    expect(selectServer).toContain("setRequested({");
+    expect(selectServer).toContain("connectionId");
+    expect(selectServer).toContain('kind: "connection"');
     expect(selectServer).not.toContain("setActiveThreadId(");
     expect(selectServer).toContain("setDesktopDefaultThreadEnabled(false)");
     for (const body of [sidebarBody, mobileBody])
-      expect(body.match(/activeServerId === ALL_SERVERS_ID && servers\.length > 1/gu)).toHaveLength(1);
+      expect(body.match(/serverScope\.kind === "all" && servers\.length > 1/gu)).toHaveLength(1);
     expect(rowContent).toContain('accessibilityLabel={`Server ${server.name}`}');
     expect(ownerWorkspaceThreadList).toContain('initialOffset: mobileThreadOffset.read(sidebarScopeKey)');
-    expect(ownerWorkspaceThreadList).toMatch(/onOffsetChange: \(offset\) =>\s*mobileThreadOffset\.write\(sidebarScopeKey, offset\)/u);
-    expect(projectList).toContain('`${activeServerId}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`');
+    expect(ownerWorkspaceThreadList).toMatch(
+      /onOffsetChange: \(offset\) => \{\s*mobileThreadOffset\.write\(sidebarScopeKey, offset\);\s*\}/u,
+    );
+    expect(projectList).toContain('`${serverScopeKey}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`');
   });
 
   it("hides the server criterion in projects and removes impossible archive states", () => {
@@ -101,10 +109,14 @@ describe("unified thread filters", () => {
   });
 
   it("creates a new sidebar thread in the selected project context", () => {
-    const createSidebarThread = newChat.slice(newChat.indexOf("const createSidebarThread ="), newChat.indexOf("return { createSidebarThread"));
+    const createSidebarThread = newChat.slice(
+      newChat.indexOf("const createSidebarThread ="),
+      newChat.indexOf("const openGlobalSearch ="),
+    );
 
-    expect(createSidebarThread).toContain("if (sidebarProject !== null)");
-    expect(createSidebarThread).toContain("openNewChat(sidebarProject.connectionId, sidebarProject.path)");
+    expect(createSidebarThread).toContain("if (list.projectSelection.sidebarProject !== null)");
+    expect(createSidebarThread).toContain("list.projectSelection.sidebarProject.connectionId");
+    expect(createSidebarThread).toContain("list.projectSelection.sidebarProject.path");
     expect(listBinding.match(/onNewThread: createSidebarThread/gu)).toHaveLength(2);
     expect(newThreadButton).toContain('accessibilityLabel={projectName === null ? "New thread" : `New thread in ${projectName}`}');
   });
@@ -112,7 +124,9 @@ describe("unified thread filters", () => {
   it("scopes account subscriptions identically in folded and unfolded thread lists", () => {
     for (const body of [sidebarHeader, mobileHeader]) {
       expect(body).toContain("accountDatabase={remote.accountRateLimitsDatabase}");
-      expect(body).toContain("accountServers={servers.filter( (server) => activeServerId === ALL_SERVERS_ID || server.id === activeServerId, )}");
+      expect(body).toContain(
+        "accountServers={servers.filter((server) => serverScopeIncludes(serverScope, server.id))}",
+      );
     }
   });
 

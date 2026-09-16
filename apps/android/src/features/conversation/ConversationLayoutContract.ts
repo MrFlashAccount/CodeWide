@@ -9,10 +9,8 @@ import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
 export type ConversationLayoutProps = {
   searchContent: ReactElement;
   jumpContent: ReactElement;
-  menuContent: ReactElement;
   projectPickerContent: ReactElement;
   renameContent: ReactElement;
-  resourcesContent: ReactElement;
   compact: boolean;
   setConversationPaneHeight: Dispatch<SetStateAction<number>>;
   setNarrowConversationPane: Dispatch<SetStateAction<boolean>>;
@@ -28,8 +26,6 @@ export type ConversationLayoutProps = {
   awayFromLatest: boolean;
   bottomChrome: ReactElement;
   reviewContent: ReactElement;
-  menuVisible: boolean;
   projectPickerVisible: boolean;
   threadRenameVisible: boolean;
-  resourcesVisible: boolean;
 };

@@ -196,18 +196,8 @@ export function useComposerMenuState(composerScope: string) {
     () => false,
   );
 
-  const [menuVisible, setMenuVisible] = useConversationState(composerScope, () => false);
-
-  const [menuInitialPage, setMenuInitialPage] = useConversationState<ComposerMenuPage>(
-    composerScope,
-    () => "model",
-  );
   return {
     composerTrayVisible,
     setComposerTrayVisible,
-    menuVisible,
-    setMenuVisible,
-    menuInitialPage,
-    setMenuInitialPage,
   };
 }

@@ -1,12 +1,14 @@
 import { useEvent } from "../../react/useEvent";
-import type { SelectWorkspaceThread, ThreadNavigationModel } from "../navigation/threadNavigation";
-import { threadSelectionKey } from "../navigation/threadSelection";
+import {
+  threadSelectionKey,
+  type SelectWorkspaceThread,
+} from "../../services/threads/threadRouteParams";
 import type { ThreadListItem } from "./threadListTypes";
 import type { ThreadListMutations } from "../turnActions/turnActionCapabilities";
 /** List actions keep selection cleanup separate from canonical thread mutation. */
 export function useThreadListActions(
   remote: ThreadListMutations,
-  threadNavigation: ThreadNavigationModel,
+  selectedThreadKey: string | null,
   setActiveThreadId: SelectWorkspaceThread,
 ) {
   const toggleListThreadPin = useEvent(async (thread: ThreadListItem): Promise<void> => {
@@ -15,12 +17,12 @@ export function useThreadListActions(
 
   const archiveListThread = useEvent(async (thread: ThreadListItem): Promise<void> => {
     await remote.archiveThread(thread.serverId, thread.id);
-    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
+    if (selectedThreadKey === threadSelectionKey(thread)) setActiveThreadId(null);
   });
 
   const unarchiveListThread = useEvent(async (thread: ThreadListItem): Promise<void> => {
     await remote.unarchiveThread(thread.serverId, thread.id);
-    if (threadNavigation.current().id === threadSelectionKey(thread)) setActiveThreadId(null);
+    if (selectedThreadKey === threadSelectionKey(thread)) setActiveThreadId(null);
   });
 
   const markListThreadRead = useEvent(async (thread: ThreadListItem): Promise<void> => {

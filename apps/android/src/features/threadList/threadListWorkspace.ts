@@ -2,7 +2,8 @@ import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { useEvent } from "../../react/useEvent";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
+import { serverScopeConnectionId, type ServerScope } from "../../services/servers/serverScope";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import { ThreadListProjection } from "./summaryProjection";
 import { THREAD_LIST_PAGE_SIZE, type ThreadListMode } from "./threadListModel";
 import {
@@ -11,10 +12,11 @@ import {
   ThreadListScopeProjection,
 } from "./threadListProjection";
 import type { ThreadListSources } from "./threadListSources";
+import type { ThreadListItem } from "./threadListTypes";
 /** Stable projections and page admission use the existing catalog resource. */
 export function useThreadListWorkspace(
   remote: ThreadListSources,
-  activeServerId: string,
+  serverScope: ServerScope,
   threadListMode: ThreadListMode,
   threadListLimit: number,
   setThreadListLimit: Dispatch<SetStateAction<number>>,
@@ -25,8 +27,7 @@ export function useThreadListWorkspace(
 
   const [threadListScopeProjection] = useState(() => new ThreadListScopeProjection());
 
-  const threadConnectionId =
-    activeServerId === ALL_SERVERS_ID || activeServerId === "" ? null : activeServerId;
+  const threadConnectionId = serverScopeConnectionId(serverScope);
 
   const threadSummaryView = useThreadSummaryView(remote.threadSummaryDatabase, {
     connectionId: threadConnectionId,
@@ -57,7 +58,7 @@ export function useThreadListWorkspace(
 
   const threads = threadListItemProjection.project(projectedThreadSummaries);
 
-  const threadScope = threadListScopeProjection.project(threads, activeServerId);
+  const threadScope = threadListScopeProjection.project(threads, serverScope);
 
   const scopedThreads = threadScope.scoped;
 
@@ -81,4 +82,14 @@ export function useThreadListWorkspace(
     archivedThreads,
     loadMoreThreads,
   };
+}
+
+/** Selects the initial desktop row until the user chooses a server or thread explicitly. */
+export function defaultDesktopThreadSelection(
+  desktop: boolean,
+  enabled: boolean,
+  threads: readonly ThreadListItem[],
+): string | null {
+  const first = threads[0];
+  return desktop && enabled && first !== undefined ? threadSelectionKey(first) : null;
 }

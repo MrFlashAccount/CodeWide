@@ -1,8 +1,8 @@
 # Android V1 feature migration ledger
 
-Status: **M0–M8 source migration implemented; final available validation and device limits are recorded below**. Selected contract: [feature architecture](android-v1-feature-architecture.md). Source baseline: `3630ca4ed87a90916bd0a7cb4beaaba230fa28ce`; source line numbers and consumer inventories refer to this revision. Paths beginning `features/`, `data/`, `ui/` or `rendering/` are relative to `apps/android/src/`; other repository paths are named explicitly.
+Status: **M0–M8 capability migration implemented; post-M8 route closure recorded in the route ledger**. Selected contract: [feature architecture](android-v1-feature-architecture.md). Current application navigation: [route architecture](android-v1-route-architecture.md) and [route ledger](android-v1-route-migration.md). Source baseline: `3630ca4ed87a90916bd0a7cb4beaaba230fa28ce`; source line numbers and consumer inventories refer to this revision. Paths beginning `features/`, `data/`, `ui/` or `rendering/` are relative to `apps/android/src/`; other repository paths are named explicitly.
 
-This ledger preserves the complete approved ownership/move contract and baseline inventories. Its implementation evidence records the later authorized M0–M8 migration: CodeWideScreen is the stable composition wrapper and the RemoteWorkspace facade is deleted. Platform mechanisms and database schemas remain at their existing authorities. Historical per-unit evidence below records the state at each unit; the final M8 closure supersedes its pending-work notes.
+This ledger preserves the complete approved capability ownership/move contract and baseline inventories. Its implementation evidence records the authorized M0–M8 migration. `CodeWideScreen` was the stable composition wrapper at M8 and was deleted by the later route migration; the `RemoteWorkspace` facade remains deleted. Platform mechanisms and database schemas remain at their existing authorities. Historical per-unit evidence below records the state at each unit; the M8 closure supersedes earlier pending-work notes, and the route ledger supersedes M8 application-navigation ownership.
 
 Navigate: [owners](#entity-delta-and-ownership), [runtime fields](../apps/android/src/data/CONTEXT.md#current-startup-and-complete-runtime-state-closure), [actions](#feature-action-mapping), [lifetimes](#lifetime-and-cancellation-matrix), [migration units](#migration--pr-slices), [source appendices](#source-mapping-appendices).
 
@@ -1104,3 +1104,15 @@ Final available validation on 2026-09-15:
 | Diff hygiene | `git diff --check` passes |
 
 Actual Android camera pairing, sign-in browser handoff, biometric settings, microphone, native gestures/keyboard, retained native views, device startup/failure/retry and relative same-device/build performance remain explicitly unverified because no device is attached. Available source/model/boot-slot tests do not establish those device behaviors. The resolved device disclosure permits completing source migration and available validation; no device parity or performance improvement is claimed. No commit, push, release, deployment or external mutation was performed.
+
+## Post-M8 route ownership closure
+
+The subsequent route migration deleted the M8 `CodeWideScreen`, `WorkspaceScreen`,
+`WorkspaceOverlays`, `features/navigation/**`, `ComposerMenuComposition`, and duplicate
+agent/Terminal route wrappers. Expo Router now owns V1 destinations under `app/v1/**`; typed
+services own cross-route identity and bounded private sessions. Feature capabilities and lower
+runtime owners from M0–M8 remain in place. See the [route ledger](android-v1-route-migration.md) for
+the current source disposition, behavior contracts, test migration and validation state. Final
+route closure passed `pnpm validate:android:v1` with 2,601 modules and 9,967 dependencies cruised,
+and full `pnpm test` passed 305 files and 2,214 tests. Device-only interaction and performance
+scenarios remain unverified as recorded there.

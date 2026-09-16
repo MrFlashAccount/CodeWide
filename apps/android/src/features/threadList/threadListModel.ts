@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { ThreadListSources } from "./threadListSources";
 import { useThreadSummaryView } from "../../data/use-thread-summary-view";
 import { threadListLayout } from "../../ui/thread-list-layout";
-import { threadSelectionKey } from "../navigation/threadSelection";
+import { threadSelectionKey } from "../../services/threads/threadRouteParams";
 import type { SidebarProject } from "../projects/sidebarProjects";
 import { sidebarListState, type SidebarListState } from "./SidebarListFeedback";
 import type { SidebarRow } from "./sidebarRows";

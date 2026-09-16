@@ -15,6 +15,7 @@ export default {
   ],
   entry: [
     "app/legacy.tsx",
+    "app/v1/**/*.{ts,tsx}",
     "test/**/*.{ts,tsx}",
     // WHY: These excluded Android owners are external consumers of V1 exports. Treating
     // them as roots prevents Knip from narrowing a cross-generation public contract.
@@ -31,6 +32,7 @@ export default {
   ],
   project: [
     "app/legacy.tsx",
+    "app/v1/**/*.{ts,tsx}",
     "src/**/*.{ts,tsx}",
     "test/**/*.{ts,tsx}",
     "!src/boot/**",

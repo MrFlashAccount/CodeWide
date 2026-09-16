@@ -11,6 +11,10 @@ interface SharedValue<Value> {
 }
 
 export const Easing = {
+  bezier:
+    () =>
+    (value: number): number =>
+      value,
   cubic: (value: number): number => value,
   ease: (value: number): number => value,
   in: <Value>(value: Value): Value => value,
@@ -21,18 +25,37 @@ export const Easing = {
 // WHY: HeroUI constructs native layout keyframes at import time; Node renders final layout only.
 export class Keyframe {
   constructor(_definitions: unknown) {}
-  duration(_milliseconds: number): this { return this; }
-  easing(_easing: unknown): this { return this; }
-  springify(): this { return this; }
-  damping(_value: number): this { return this; }
-  stiffness(_value: number): this { return this; }
-  mass(_value: number): this { return this; }
+  duration(_milliseconds: number): this {
+    return this;
+  }
+  easing(_easing: unknown): this {
+    return this;
+  }
+  withInitialValues(_values: unknown): this {
+    return this;
+  }
+  springify(): this {
+    return this;
+  }
+  damping(_value: number): this {
+    return this;
+  }
+  stiffness(_value: number): this {
+    return this;
+  }
+  mass(_value: number): this {
+    return this;
+  }
 }
 export const LinearTransition = new Keyframe({});
 export const FadeIn = new Keyframe({});
+export const FadeInDown = new Keyframe({});
+export const FadeInUp = new Keyframe({});
 export const FadeOut = new Keyframe({});
 
-export function useReducedMotion(): boolean { return true; }
+export function useReducedMotion(): boolean {
+  return true;
+}
 export function useDerivedValue<Value>(factory: () => Value): SharedValue<Value> {
   return useSharedValue(factory());
 }
@@ -54,8 +77,12 @@ export function useEvent<Handler>(handler: Handler): Handler {
 export function useSharedValue<Value>(initial: Value): SharedValue<Value> {
   let value = initial;
   return {
-    get value() { return value; },
-    set value(next: Value) { value = next; },
+    get value() {
+      return value;
+    },
+    set value(next: Value) {
+      value = next;
+    },
     get: () => value,
     set: (next) => {
       value = next;

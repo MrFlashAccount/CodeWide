@@ -1,4 +1,3 @@
-import { useState } from "react";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import {
   isProfileOnlyConnectionUpdate,
@@ -19,23 +18,12 @@ export type ConnectionActions = {
   moveConnection(connectionId: string, direction: -1 | 1): Promise<void>;
 };
 
-/** Owns pairing visibility and profile-only versus credential-changing edit admission. */
+/** Binds connection commands; route-local pairing state is owned by the pairing service. */
 export function useConnectionActions(
   actions: ConnectionActions,
   connections: readonly StoredConnection[],
   onAdded: (connection: StoredConnection) => void,
 ) {
-  const [connectionSheetVisible, setConnectionSheetVisible] = useState(false);
-  const [pendingPairingCode, setPendingPairingCode] = useState<string | null>(null);
-  const openConnectionSheet = useEvent(() => setConnectionSheetVisible(true));
-  const openPairingCode = useEvent((code: string) => {
-    setPendingPairingCode(code);
-    setConnectionSheetVisible(true);
-  });
-  const closeConnectionSheet = useEvent(() => {
-    setConnectionSheetVisible(false);
-    setPendingPairingCode(null);
-  });
   const saveConnection = useEvent(async (input: ConnectionInput): Promise<void> => {
     const added = await actions.addConnection(input);
     onAdded(added);
@@ -70,11 +58,6 @@ export function useConnectionActions(
       await actions.moveConnection(connectionId, direction),
   );
   return {
-    connectionSheetVisible,
-    pendingPairingCode,
-    openConnectionSheet,
-    openPairingCode,
-    closeConnectionSheet,
     saveConnection,
     toggleConnection,
     reconnectSavedConnection,

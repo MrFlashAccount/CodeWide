@@ -1,7 +1,7 @@
 import { createContext } from "react";
 import type { DocumentPreviewRequest } from "./DocumentPreviewHost";
 
-/** Text attachments and message links use the same thread-owned code viewer. */
+/** Timeline and composer attachments delegate preview navigation to the owning generation. */
 export const ThreadCodeDocumentContext = createContext<
   ((request: DocumentPreviewRequest) => void) | null
 >(null);

@@ -1,8 +1,8 @@
 import { useImagePreviewAnnotationHandler } from "../../rendering/ImagePreviewHost";
+import type { StoredThreadSummary } from "../../data/thread-summary-types";
+import { useEvent } from "../../react/useEvent";
 import { useAgentSelection } from "../agents/agentSelection";
-import { useAgentsFeature } from "../agents/AgentsFeature";
 import { ComposerSubagentContextChip } from "../agents/ComposerSubagentContextChip";
-import type { SubagentThreadView } from "../agents/SubagentSheet";
 import { useAttachmentVisibility } from "../attachments/attachmentVisibility";
 import { useDocumentNavigation } from "../attachments/documentNavigation";
 import { useChangesFeature } from "../changes/ChangesFeature";
@@ -13,49 +13,36 @@ import { useReviewFeature } from "../review/ReviewFeature";
 import { useReviewSubmission } from "../review/reviewSubmission";
 import { ComposerTerminalContextChip } from "../terminal/ComposerTerminalContextChip";
 import { useTerminalActions, useTerminalDeletion } from "../terminal/terminalActions";
-import { useTerminalFeature } from "../terminal/TerminalFeature";
 import type { UseConversationToolsProps } from "./ConversationTools.types";
-import { SubagentConversation } from "./SubagentConversation";
+import { useConversationRouteNavigation } from "./conversationRouteNavigation";
 
 export function useConversationTools(props: UseConversationToolsProps) {
+  const routeNavigation = useConversationRouteNavigation();
   const currentSubagentSummaries = useAgentSelection(
     props.composerScope,
     props.subagentSummaryDatabase,
     props.draftConnectionId,
     props.draftThreadId,
   );
-  const renderSubagentThread = (view: SubagentThreadView) => (
-    <SubagentConversation
-      key={`${view.connectionId}:${view.thread.id}`}
-      view={view}
-      server={props.surfaceInputs.server}
-      summaries={props.subagentSummaryDatabase}
-      details={props.subagentThreadDetails}
-      refresh={props.agentsInputs.onRefreshSubagents}
-      loadTurnChanges={props.changesInputs.onLoadTurnChanges}
-      getTransferAccess={props.attachmentsInputs.getTransferAccess}
-      fixUnsupportedBlock={
-        props.diagnosticsInputs.onFixUnsupportedBlock === undefined
-          ? undefined
-          : props.threadTimelineActionsBinding.fixUnsupportedBlock
+  const openSubagents = useEvent(
+    (_summaries: readonly StoredThreadSummary[], initialThreadId: string | null = null): void => {
+      if (props.draftThreadId === null) {
+        return;
       }
-    />
+      void props.agentsInputs.onRefreshSubagents?.(props.draftThreadId).catch(() => undefined);
+      routeNavigation.openAgents(initialThreadId);
+    },
   );
-  const openSubagents = useAgentsFeature(
-    props.draftConnectionId,
-    props.draftThreadId,
-    props.readInputs.remoteThread ?? null,
-    props.subagentThreadDetails,
-    props.agentsInputs.onRefreshSubagents,
-    props.overlayScrollOwnershipBinding.fullscreenOverlay,
-    renderSubagentThread,
-  );
-  const presentTerminal = useTerminalFeature(
-    props.draftConnectionId,
-    props.draftThreadId,
-    props.cwd,
-    props.overlayScrollOwnershipBinding.fullscreenOverlay,
-  );
+  const presentTerminal = useEvent(() => {
+    if (props.draftConnectionId === null || props.draftThreadId === null) {
+      return;
+    }
+    routeNavigation.openTerminal({
+      connectionId: props.draftConnectionId,
+      cwd: props.cwd,
+      threadId: props.draftThreadId,
+    });
+  });
   const terminalActionsBinding = useTerminalActions(
     props.draftConnectionId,
     props.draftThreadId,
@@ -77,16 +64,16 @@ export function useConversationTools(props: UseConversationToolsProps) {
       props.fileTransferController !== null &&
       props.attachmentsInputs.getTransferAccess !== undefined &&
       props.draftThreadId !== null,
-    draftThreadId: props.draftThreadId,
-    composerScope: props.composerScope,
-    fileAttachmentEnabled: props.composerCommands.composerAttachmentsBinding.fileAttachmentEnabled,
-    readDrawingAttachments:
-      props.composerCommands.composerAttachmentsBinding.readDrawingAttachments,
     captureStageAttachment:
       props.composerCommands.composerAttachmentsBinding.captureStageAttachment,
-    hideComposerTray: () =>
-      props.composerStateBinding.composerMenuStateBinding.setComposerTrayVisible(false),
-    fullscreenOverlay: props.overlayScrollOwnershipBinding.fullscreenOverlay,
+    composerScope: props.composerScope,
+    draftThreadId: props.draftThreadId,
+    fileAttachmentEnabled: props.composerCommands.composerAttachmentsBinding.fileAttachmentEnabled,
+    hideComposerTray: () => {
+      props.composerStateBinding.composerMenuStateBinding.setComposerTrayVisible(false);
+    },
+    readDrawingAttachments:
+      props.composerCommands.composerAttachmentsBinding.readDrawingAttachments,
   });
   useImagePreviewAnnotationHandler(drawingFeatureBinding.annotateImage);
   useReviewFeature(
@@ -99,77 +86,92 @@ export function useConversationTools(props: UseConversationToolsProps) {
     reviewSubmissionBinding.attachContentReview,
   );
   const changesFeatureBinding = useChangesFeature({
-    cwd: props.cwd,
-    remoteThread: props.readInputs.remoteThread,
-    changesPreferences: props.changesPreferencesBinding.changesPreferences,
-    setChangesPreferences: props.changesPreferencesBinding.setChangesPreferences,
-    dismissComposerKeyboardForOverlay:
-      props.overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay,
-    fullscreenOverlay: props.overlayScrollOwnershipBinding.fullscreenOverlay,
     appVoiceInputRuntime: props.appVoiceInputRuntime,
-    getStableTransferAccess: props.getStableTransferAccess,
     attachCodeReview: reviewSubmissionBinding.attachCodeReview,
-    onLoadTurnChanges: props.changesInputs.onLoadTurnChanges,
-    onLoadThreadResources: props.changesInputs.onLoadThreadResources,
-    onLoadThreadChangeDiff: props.changesInputs.onLoadThreadChangeDiff,
-    currentThreadResources: props.changeResourcePresentationBinding.currentThreadResources,
+    changesPreferences: props.changesPreferencesBinding.changesPreferences,
     currentChangePresentation: props.changeResourcePresentationBinding.currentChangePresentation,
+    currentThreadResources: props.changeResourcePresentationBinding.currentThreadResources,
+    cwd: props.cwd,
+    getStableTransferAccess: props.getStableTransferAccess,
+    onLoadThreadChangeDiff: props.changesInputs.onLoadThreadChangeDiff,
+    onLoadThreadResources: props.changesInputs.onLoadThreadResources,
+    onLoadTurnChanges: props.changesInputs.onLoadTurnChanges,
+    remoteThread: props.readInputs.remoteThread,
+    setChangesPreferences: props.changesPreferencesBinding.setChangesPreferences,
   });
   const attachmentVisibilityBinding = useAttachmentVisibility(
-    props.composerScope,
-    () => props.overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay(),
+    () => {
+      props.overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay();
+    },
     props.changesInputs.onLoadThreadResources,
-    () => changesFeatureBinding.openChangesResource(),
+    () => {
+      changesFeatureBinding.openChangesResource();
+    },
+    routeNavigation.openAttachments,
+  );
+  const openTimelineDocument = useEvent(
+    (request: Parameters<typeof routeNavigation.openDocument>[0]) => {
+      if (request.kind === "text") {
+        changesFeatureBinding.openCodeDocument(request);
+        return;
+      }
+      routeNavigation.openDocument(request);
+    },
   );
   const documentNavigationBinding = useDocumentNavigation(
     props.cwd,
     props.attachmentsInputs.getTransferAccess,
     props.getStableTransferAccess,
     props.portsInputs.onOpenLoopbackLink,
-    (request) => changesFeatureBinding.openCodeDocument(request),
+    openTimelineDocument,
   );
   const toolContextChips = (
     <>
       {props.changesInputs.onLoadThreadResources !== undefined && (
         <ThreadResourceContextChips
+          load={props.changesInputs.onLoadThreadResources}
           model={props.threadResourcesModel}
+          onOpen={attachmentVisibilityBinding.openThreadResources}
+          onPreferencesChange={props.changesPreferencesBinding.setChangesPreferences}
+          preferences={props.changesPreferencesBinding.changesPreferences}
           resourceId={props.threadResourceId}
           revision={props.threadResourceRevision}
-          load={props.changesInputs.onLoadThreadResources}
-          preferences={props.changesPreferencesBinding.changesPreferences}
-          onPreferencesChange={props.changesPreferencesBinding.setChangesPreferences}
-          onOpen={attachmentVisibilityBinding.openThreadResources}
         />
       )}
       <ComposerPortContextChip
         connectionId={props.portForwardingConnectionId}
-        onOpen={() => props.composerCommands.composerControlActionsBinding.openControls("ports")}
+        onOpen={() => {
+          props.composerCommands.composerControlActionsBinding.openControls("ports");
+        }}
       />
       <ComposerTerminalContextChip
         connectionId={props.draftConnectionId}
-        threadId={props.draftThreadId}
         onOpen={terminalActionsBinding.openTerminal}
+        threadId={props.draftThreadId}
       />
       {props.subagentThreadDetails !== null && (
         <ComposerSubagentContextChip
-          database={props.subagentSummaryDatabase}
           connectionId={props.draftConnectionId}
+          database={props.subagentSummaryDatabase}
+          onOpen={(summaries) => {
+            openSubagents(summaries);
+          }}
           parentThreadId={props.draftThreadId}
-          onOpen={(summaries) => openSubagents(summaries)}
         />
       )}
     </>
   );
   return {
+    attachmentVisibilityBinding,
+    changesFeatureBinding,
+    currentSubagentSummaries,
+    deleteThread,
     documentNavigationBinding,
     drawingFeatureBinding,
+    openSubagents,
+    openTimelineDocument,
+    reviewSubmissionBinding,
     terminalActionsBinding,
     toolContextChips,
-    deleteThread,
-    attachmentVisibilityBinding,
-    reviewSubmissionBinding,
-    openSubagents,
-    currentSubagentSummaries,
-    changesFeatureBinding,
   };
 }

@@ -15,10 +15,10 @@ import {
 } from "../src/rendering/document-preview";
 
 const changes = readFileSync(
-  new URL("../src/features/changes/ChangesFeature.tsx", import.meta.url),
+  new URL("../src/features/changes/RouteCodeDocumentReview.tsx", import.meta.url),
   "utf8",
 );
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
 const workspace = readFileSync(
   new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url),
   "utf8",
@@ -42,6 +42,10 @@ const migratedDocumentNavigation = readFileSync(
 );
 const migratedAttachmentPreview = readFileSync(
   new URL("../src/features/attachments/attachmentPreview.tsx", import.meta.url),
+  "utf8",
+);
+const conversationTools = readFileSync(
+  new URL("../src/features/conversation/ConversationTools.tsx", import.meta.url),
   "utf8",
 );
 
@@ -141,14 +145,16 @@ describe("document preview", () => {
   });
 
   it("opens source references at a one-shot highlighted line without opening a comment", () => {
-    expect(changes).toContain("initialLine: request.line");
-    expect(changes).toContain("initialColumn: request.column");
+    expect(changes).toContain("initialLine: document.line");
+    expect(changes).toContain("initialColumn: document.column");
     expect(screen).not.toContain('target.kind === "text" || target.line !== undefined');
-    expect(migratedDocumentNavigation).toContain(
-      'if (target.kind === "text") openCodeDocument(request);',
-    );
+    expect(migratedDocumentNavigation).toContain("openDocument(request);");
+    expect(conversationTools).toContain('if (request.kind === "text") {');
+    expect(conversationTools).toContain("changesFeatureBinding.openCodeDocument(request);");
+    expect(conversationTools).toContain("openTimelineDocument,");
     expect(migratedAttachmentPreview).toContain('if (request.kind === "text") {');
-    expect(changes).toContain("fullscreenOverlay.present(({ close }) => (");
+    expect(changes).toContain("<CodeReviewWorkspace");
+    expect(changes).toContain("onClose={onClose}");
     expect(workspace).toContain(
       "revealReference={selectedReference === null ? revealReference : null}",
     );

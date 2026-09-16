@@ -7,7 +7,7 @@ import type { ThreadListMode } from "./threadListModel";
 import { THREAD_LIST_PAGE_SIZE } from "./threadListModel";
 /** Project pages keep independent limits and filters while changing the visible scope. */
 export function useProjectThreadList(
-  activeServerId: string,
+  serverScopeKey: string,
   sidebarProject: SidebarProject | null,
   threadListMode: ThreadListMode,
   setThreadListMode: (mode: ThreadListMode) => void,
@@ -35,7 +35,7 @@ export function useProjectThreadList(
     (sidebarProject === null ? setThreadListFilter : setProjectListFilter)(filter),
   );
 
-  const sidebarScopeKey = `${activeServerId}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`;
+  const sidebarScopeKey = `${serverScopeKey}:${sidebarMode}${sidebarProject === null ? "" : `:${sidebarProject.key}`}`;
 
   const projectLimitKey = `${sidebarProject?.key ?? ""}:${projectListMode}`;
 

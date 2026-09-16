@@ -21,22 +21,18 @@ const ownerMainConversationHistory = readFileSync(new URL("../../src/features/co
 
 it("preserves conversation composition integration contracts", () => {
   expect(ownerMainConversationPublication).toContain("queuedPrompts: history.projection.queuedPrompts");
-  expect(conversationLayout).toContain("{menuVisible && menuContent}");
-  expect(conversationOverlay).toContain("<ComposerMenuComposition");
+  expect(conversationLayout).not.toContain("menuVisible");
+  expect(conversationOverlay).not.toContain("ComposerMenuComposition");
   expect(conversationLayout).toContain("{projectPickerVisible && projectPickerContent}");
   expect(conversationOverlay).toContain("<ProjectPickerSheet");
   expect(conversationLayout).toContain("{threadRenameVisible && renameContent}");
   expect(conversationOverlay).toContain("<ThreadRenameDialog");
-  expect(conversationLayout).toContain("{resourcesVisible && resourcesContent}");
-  expect(conversationOverlay).toContain("<ThreadResourcesSheet");
+  expect(conversationLayout).not.toContain("resourcesVisible");
+  expect(ownerConversationTools).toContain("routeNavigation.openAttachments");
   expect(ownerConversationLayout).toContain("<MessageActionMenuProvider>");
   expect(ownerConversationWorkspaceContent).toContain("onStartVoiceTranscription");
   expect(ownerActiveConversationScope).toContain("&& selectedThread === null;");
-  expect(ownerConversationDestinationSurface).toContain("scope=\"desktop-default-thread\"");
-  expect(ownerConversationDestinationSurface).toContain(
-    "revision={props.destination.kind === \"empty\" ? props.defaultDesktopThreadId : null}",
-  );
-  expect(ownerConversationDestinationSurface).toContain("onCommit={props.scope.commitDefaultDesktopThread}");
+  expect(ownerConversationDestinationSurface).not.toContain("defaultDesktopThreadId");
   expect(ownerConversationTools).toContain(
     "useImagePreviewAnnotationHandler(drawingFeatureBinding.annotateImage)",
   );

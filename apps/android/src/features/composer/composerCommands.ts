@@ -1,102 +1,108 @@
-import { useConversationOwner } from "../../ui/use-conversation-owner";
+import type { useConversationOwner } from "../../ui/use-conversation-owner";
 import type { QueueWorkspaceCapabilities } from "../queue/queueWorkspaceCapabilities";
 import { useComposerAttachments } from "./attachments/composerAttachments";
-import { useComposerState } from "./composerState";
+import type { useComposerState } from "./composerState";
 import type { ComposerWorkspaceCapabilities } from "./composerWorkspaceCapabilities";
 import { useQueueEditActions } from "./queueEdit";
 import { useComposerControlActions } from "./settings";
+import type { ComposerMenuPage } from "./composerTypes";
 
 export function useComposerCommands({
-  composerStateBinding,
-  queueVisibilityBinding,
-  queueInputs,
-  conversationOwner,
-  overlayScrollOwnershipBinding,
+  attachmentsInputs,
+  composerInputs,
   composerScope,
+  composerStateBinding,
+  conversationOwner,
   draftConnectionId,
   draftThreadId,
-  attachmentsInputs,
-  getStableTransferAccess,
-  composerInputs,
   fileTransferController,
+  getStableTransferAccess,
+  openToolRoute,
+  overlayScrollOwnershipBinding,
+  queueInputs,
+  queueVisibilityBinding,
   voiceController,
 }: {
-  composerStateBinding: ReturnType<typeof useComposerState>;
-  queueVisibilityBinding: { closeInlineQueueOverlay(): void };
-  queueInputs: QueueWorkspaceCapabilities;
-  conversationOwner: ReturnType<typeof useConversationOwner>;
-  overlayScrollOwnershipBinding: { dismissComposerKeyboardForOverlay(): void };
-  composerScope: string;
-  draftConnectionId: string | null;
-  draftThreadId: string | null;
   attachmentsInputs: {
     getTransferAccess: Parameters<typeof useComposerAttachments>[0]["getTransferAccess"];
   };
-  getStableTransferAccess: Parameters<typeof useComposerAttachments>[0]["getStableTransferAccess"];
   composerInputs: ComposerWorkspaceCapabilities;
+  composerScope: string;
+  composerStateBinding: ReturnType<typeof useComposerState>;
+  conversationOwner: ReturnType<typeof useConversationOwner>;
+  draftConnectionId: string | null;
+  draftThreadId: string | null;
   fileTransferController: Parameters<typeof useComposerAttachments>[0]["fileTransferController"];
+  getStableTransferAccess: Parameters<typeof useComposerAttachments>[0]["getStableTransferAccess"];
+  openToolRoute: (
+    page: ComposerMenuPage,
+    queueEdit: ReturnType<typeof useQueueEditActions>,
+  ) => void;
+  overlayScrollOwnershipBinding: { dismissComposerKeyboardForOverlay: () => void };
+  queueInputs: QueueWorkspaceCapabilities;
+  queueVisibilityBinding: { closeInlineQueueOverlay: () => void };
   voiceController: ComposerWorkspaceCapabilities["voiceController"];
 }) {
   const queueEditActionsBinding = useQueueEditActions({
+    closeInlineQueueOverlay: queueVisibilityBinding.closeInlineQueueOverlay,
+    composerInputRef: composerStateBinding.composerEditingBinding.composerInputRef,
+    composerMarkdownRef: composerStateBinding.composerEditingBinding.composerMarkdownRef,
+    composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
+    conversationOwner,
+    draftSelectionRef: composerStateBinding.composerEditingBinding.draftSelectionRef,
+    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
+    onEditQueued: queueInputs.onEditQueued,
+    onListQueue: queueInputs.onListQueue,
     queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
-    setQueuedComposerEdit: composerStateBinding.queueEditStateBinding.setQueuedComposerEdit,
     queuedComposerEditBusy: composerStateBinding.queueEditStateBinding.queuedComposerEditBusy,
+    setQueuedComposerEdit: composerStateBinding.queueEditStateBinding.setQueuedComposerEdit,
     setQueuedComposerEditBusy: composerStateBinding.queueEditStateBinding.setQueuedComposerEditBusy,
     setQueuedComposerEditError:
       composerStateBinding.queueEditStateBinding.setQueuedComposerEditError,
-    composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
-    draftSelectionRef: composerStateBinding.composerEditingBinding.draftSelectionRef,
-    composerInputRef: composerStateBinding.composerEditingBinding.composerInputRef,
-    composerMarkdownRef: composerStateBinding.composerEditingBinding.composerMarkdownRef,
-    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
     uploadsBlockSend: composerStateBinding.composerEditingBinding.uploadsBlockSend,
     voicePhase: composerStateBinding.composerVoiceStateBinding.voicePhase,
-    closeInlineQueueOverlay: queueVisibilityBinding.closeInlineQueueOverlay,
-    setMenuVisible: composerStateBinding.composerMenuStateBinding.setMenuVisible,
-    onEditQueued: queueInputs.onEditQueued,
-    onListQueue: queueInputs.onListQueue,
-    conversationOwner,
   });
   const composerControlActionsBinding = useComposerControlActions({
     closeInlineQueueOverlay: queueVisibilityBinding.closeInlineQueueOverlay,
-    setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
+    currentControlsResource: composerStateBinding.composerEditingBinding.currentControlsResource,
     dismissComposerKeyboardForOverlay:
       overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay,
-    setMenuInitialPage: composerStateBinding.composerMenuStateBinding.setMenuInitialPage,
-    setMenuVisible: composerStateBinding.composerMenuStateBinding.setMenuVisible,
-    currentControlsResource: composerStateBinding.composerEditingBinding.currentControlsResource,
+    openToolRoute: (page) => {
+      openToolRoute(page, queueEditActionsBinding);
+    },
     requestControls: composerStateBinding.composerEditingBinding.requestControls,
+    setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
   });
   const composerAttachmentsBinding = useComposerAttachments({
+    attachmentCount: composerStateBinding.composerEditingBinding.attachmentCount,
+    captureDraftMutations: composerStateBinding.composerEditingBinding.captureDraftMutations,
     composerScope,
     composerUploadScope: composerStateBinding.composerEditingBinding.composerUploadScope,
-    draftConnectionId,
-    draftThreadId,
-    getTransferAccess: attachmentsInputs.getTransferAccess,
-    getStableTransferAccess,
-    queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
-    upsertDraftAttachment: composerInputs.upsertDraftAttachment,
-    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
-    captureDraftMutations: composerStateBinding.composerEditingBinding.captureDraftMutations,
-    fileTransferController,
-    attachmentCount: composerStateBinding.composerEditingBinding.attachmentCount,
-    setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
-    dismissComposerKeyboardForOverlay:
-      overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay,
     contentReviewAttachmentId:
       composerStateBinding.reviewAttachmentIdsBinding.contentReviewAttachmentId,
-    setContentReviewAttachmentId:
-      composerStateBinding.reviewAttachmentIdsBinding.setContentReviewAttachmentId,
-    latestDraftRef: composerStateBinding.composerEditingBinding.latestDraftRef,
+    dismissComposerKeyboardForOverlay:
+      overlayScrollOwnershipBinding.dismissComposerKeyboardForOverlay,
+    draftConnectionId,
     draftSelectionRef: composerStateBinding.composerEditingBinding.draftSelectionRef,
-    voiceController,
-    setPastedAttachmentPending:
-      composerStateBinding.largePasteStateBinding.setPastedAttachmentPending,
+    draftThreadId,
+    fileTransferController,
+    getStableTransferAccess,
+    getTransferAccess: attachmentsInputs.getTransferAccess,
+    largePasteOperationRef: composerStateBinding.largePasteStateBinding.largePasteOperationRef,
+    latestAttachmentsRef: composerStateBinding.composerEditingBinding.latestAttachmentsRef,
+    latestDraftRef: composerStateBinding.composerEditingBinding.latestDraftRef,
     pastedAttachmentPendingRef:
       composerStateBinding.largePasteStateBinding.pastedAttachmentPendingRef,
-    largePasteOperationRef: composerStateBinding.largePasteStateBinding.largePasteOperationRef,
-    updateAttachments: composerStateBinding.composerEditingBinding.updateAttachments,
+    queuedComposerEdit: composerStateBinding.queueEditStateBinding.queuedComposerEdit,
     removeDraftAttachment: composerInputs.removeDraftAttachment,
+    setComposerTrayVisible: composerStateBinding.composerMenuStateBinding.setComposerTrayVisible,
+    setContentReviewAttachmentId:
+      composerStateBinding.reviewAttachmentIdsBinding.setContentReviewAttachmentId,
+    setPastedAttachmentPending:
+      composerStateBinding.largePasteStateBinding.setPastedAttachmentPending,
+    updateAttachments: composerStateBinding.composerEditingBinding.updateAttachments,
+    upsertDraftAttachment: composerInputs.upsertDraftAttachment,
+    voiceController,
   });
   return { composerAttachmentsBinding, composerControlActionsBinding, queueEditActionsBinding };
 }

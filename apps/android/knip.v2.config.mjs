@@ -66,6 +66,7 @@ export default {
     "!app/legacy.tsx",
     "!app/pair.tsx",
     "!app/thread.tsx",
+    "!app/v1/**",
     "src/boot/RootGenerationGate.tsx",
     // WHY: The excluded legacy root bridge dynamically owns this cross-generation diagnostics host.
     "src/boot/UiGenerationDiagnosticsHost.tsx",
@@ -81,5 +82,6 @@ export default {
     "!app/legacy.tsx",
     "!app/pair.tsx",
     "!app/thread.tsx",
+    "!app/v1/**",
   ],
 };

@@ -7,14 +7,19 @@ import { codeReviewVoiceInputScope, type CodeReviewLineReference } from "../src/
 
 const codeReviewWorkspace = readFileSync(new URL("../src/features/review/CodeReviewWorkspace.tsx", import.meta.url), "utf8");
 const imagePreviewHost = readFileSync(new URL("../src/rendering/ImagePreviewHost.tsx", import.meta.url), "utf8");
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
 const fullscreenModal = readFileSync(new URL("../src/ui/AppFullscreenModal.native.tsx", import.meta.url), "utf8");
 
 const ownerReviewVoice = readFileSync(new URL("../src/features/review/reviewVoice.ts", import.meta.url), "utf8");
 
 const reviewVoiceOwner = readFileSync(new URL("../src/features/review/reviewVoice.ts", import.meta.url), "utf8");
 
-const overlays = compactSource(readFileSync(new URL("../src/features/conversation/ConversationOverlayContent.tsx", import.meta.url), "utf8"));
+const changesRoute = compactSource(
+  readFileSync(
+    new URL("../src/features/changes/RouteChangesWorkspace.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("review voice input", () => {
   it("keeps a line's voice identity stable and isolates other lines, files, windows and threads", () => {
@@ -49,7 +54,7 @@ describe("review voice input", () => {
   });
 
   it("connects review voice capture and fullscreen overlays to the shared native glow", () => {
-    expect(overlays).toContain("voiceRuntime={appVoiceInputRuntime}");
+    expect(changesRoute).toContain("voiceRuntime={request.voiceRuntime}");
     expect(fullscreenModal).toContain("setNativeVoiceAuraTarget(reactTag)");
   });
 });

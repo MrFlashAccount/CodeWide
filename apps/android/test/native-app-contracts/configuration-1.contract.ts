@@ -20,7 +20,7 @@ import {
 } from "./native-sources";
 import { ownerProtocolBlock } from "./conversation-protocol-sources";
 import { ownerComposerMicrophone, ownerSubmission } from "./composer-sources";
-import { conversationOverlay } from "./conversation-composition-sources";
+import { readFileSync } from "node:fs";
 import { voiceController } from "./voice-runtime-sources";
 import {
   androidSettings,
@@ -33,6 +33,10 @@ import {
 } from "./native-sources-1";
 
 it("keeps running indicators visible, consistent and reduced-motion aware", () => {
+  const conversationTimeline = readFileSync(
+    new URL("../../src/features/conversation/ConversationTimelineContent.tsx", import.meta.url),
+    "utf8",
+  );
   expect(calmSpinner).toContain("function CalmSpinner");
   expect(waveText).toContain("function WaveText");
   expect(reducedMotionStore).toContain('AccessibilityInfo.addEventListener("reduceMotionChanged"');
@@ -118,8 +122,8 @@ it("keeps running indicators visible, consistent and reduced-motion aware", () =
   expect(ownerSubmission).toMatch(
     /const sentAttachments = composerUploads\.readyAttachments\(\s*composerUploadScope,\s*latestAttachmentsRef\.current\.latest,?\s*\)/u,
   );
-  expect(conversationOverlay).toContain(
-    "{ onBeginQueuedEdit: composerCommands.queueEditActionsBinding.beginQueuedComposerEdit }",
+  expect(conversationTimeline).toContain(
+    "beginQueuedComposerEdit={props.queueEditActionsBinding.beginQueuedComposerEdit}",
   );
   expect(ownerSubmission).toMatch(
     /resolveComposerSendMode\(\s*preference,\s*threadLifecycleActive,\s*currentTurnId,?\s*\)/u,

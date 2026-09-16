@@ -7,7 +7,7 @@ import { compactSource, sourceObjectDeclaration } from "./source-contract";
 
 const sourceRoot = fileURLToPath(new URL("../src", import.meta.url));
 const screen = compactSource(
-  readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8"),
 );
 const threadListFeature = compactSource(
   readFileSync(
@@ -48,7 +48,7 @@ const mermaid = readFileSync(
   "utf8",
 );
 const subagentSheet = readFileSync(
-  new URL("../src/features/agents/SubagentSheet.tsx", import.meta.url),
+  new URL("../src/features/agents/RouteSubagentWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const subagentWorkspace = readFileSync(
@@ -84,7 +84,16 @@ const ownerComposerSubagentContextChip = compactSource(
   ),
 );
 const ownerAgentsFeature = compactSource(
-  readFileSync(new URL("../src/features/agents/AgentsFeature.tsx", import.meta.url), "utf8"),
+  readFileSync(
+    new URL("../src/features/conversation/ConversationTools.tsx", import.meta.url),
+    "utf8",
+  ),
+);
+const agentsRoute = compactSource(
+  readFileSync(
+    new URL("../app/v1/threads/[connectionId]/[threadId]/agents/index.tsx", import.meta.url),
+    "utf8",
+  ),
 );
 
 const ownerOverlayScrollOwnership = compactSource(
@@ -110,7 +119,7 @@ const ownerComposerFeatureStyles = compactSource(
 );
 const ownerComposerMenuComposition = compactSource(
   readFileSync(
-    new URL("../src/features/workspace/ComposerMenuComposition.tsx", import.meta.url),
+    new URL("../src/features/composer/ComposerRuntimeRoutes.tsx", import.meta.url),
     "utf8",
   ),
 );
@@ -356,15 +365,20 @@ describe("fullscreen workspace presentation", () => {
     const start = contextStrip.indexOf('<ScrollView testID="composer-context-strip"');
     const end = contextStrip.indexOf("</ScrollView>", start);
     const strip = toolsOwner;
+    expect(strip).toContain("<ComposerPortContextChip");
+    expect(strip).toContain("connectionId={props.portForwardingConnectionId}");
     expect(strip).toContain(
-      '<ComposerPortContextChip connectionId={props.portForwardingConnectionId} onOpen={() => props.composerCommands.composerControlActionsBinding.openControls("ports")} />',
+      'props.composerCommands.composerControlActionsBinding.openControls("ports")',
     );
     expect(ownerComposerPortContextChip).toContain('testID="composer-ports-label"');
     expect(ownerComposerPortContextChip).toContain("snapshot.profiles.length === 0");
     expect(ownerComposerPortContextChip).toContain(
       'snapshot.profiles.some(({ status }) => status === "live") ? colors.green : colors.textMuted',
     );
-    expect(ownerComposerMenuComposition).toContain('page === "ports" ? (');
+    expect(ownerComposerMenuComposition).toContain("function ComposerPortsRoute(");
+    expect(ownerComposerMenuComposition).toContain(
+      "const resource = useTunnelRow(request.resources, request.tunnelResourceId)",
+    );
     expect(ownerPortsFeature).toContain(
       "<PortForwardingManager {...portForwarding} renderScrollComponent={AppSheetScrollView} />",
     );
@@ -390,20 +404,24 @@ describe("fullscreen workspace presentation", () => {
     expect(subagentSheet).toContain("useThreadChatWindow(threadDetails");
     expect(subagentSheet).not.toContain("useAsyncResource");
     expect(screen).not.toContain("readSubagentThread");
-    expect(ownerAgentsFeature).toContain("void onRefreshSubagents?.(draftThreadId).catch");
+    expect(ownerAgentsFeature).toContain(
+      "void props.agentsInputs.onRefreshSubagents?.(props.draftThreadId).catch",
+    );
 
     expect(subagentRenderer).toContain("<ConversationReadSurface");
     expect(subagentRenderer).toContain("<ReadOnlyComposerContext");
     expect(subagentRenderer).toContain("onOpenSubagentThread={onOpenSubagent}");
     expect(subagentRenderer).not.toContain("<SubagentTranscript");
-    expect(ownerAgentsFeature).toContain("{ dismissOnScopeUnmount: false }");
+    expect(agentsRoute).toContain(
+      "parentThread={threadDetails.getThread(connectionId, parentThreadId)}",
+    );
     expect(screen).not.toContain('testID="subagent-task-card"');
     expect(subagentSheet).not.toContain("onLoadResources");
-    expect(subagentSheet).toContain("initialThreadId");
-    expect(subagentSheet).toContain("onOpenSubagent={openById}");
-    expect(subagentSheet).toContain("startSubagentTransition(() => setSelectedId(threadId))");
-    expect(subagentSheet).toContain("<Suspense\n              fallback={");
-    expect(subagentSheet.indexOf("function SubagentConversationDetail")).toBeGreaterThan(
+    expect(subagentSheet).toContain("resolveSubagentRouteSelection(subagents, selection)");
+    expect(subagentSheet).toContain("onOpenSubagent={onSelect}");
+    expect(agentsRoute).toContain("startSubagentTransition(() =>");
+    expect(subagentSheet).toContain("<Suspense");
+    expect(subagentSheet.indexOf("function RouteSubagentDetail")).toBeGreaterThan(
       subagentSheet.indexOf("<Suspense fallback={"),
     );
     expect(fullscreenOverlay).toContain(
@@ -412,10 +430,10 @@ describe("fullscreen workspace presentation", () => {
   });
 
   it("keeps the model-owned cached subagent text visible and updates recycled selection", () => {
-    expect(subagentSheet).toContain("applyThreadSummaryMetadata(materializedThread, summary)");
+    expect(subagentSheet).toContain("applyThreadSummaryMetadata(materialized, summary)");
     expect(subagentSheet).toContain("did not materialize from its ready window");
     expect(subagentSheet).toContain("if (conversation === null)");
-    expect(subagentSheet).toContain("useState<string | null>(initialThreadId)");
+    expect(subagentSheet).toContain('resolvedSelection.status === "selected"');
     expect(subagentSheet).not.toContain("remoteThreadResource");
     expect(subagentWorkspace).toContain("extraData={selected?.remoteThreadId ?? null}");
   });
@@ -437,7 +455,7 @@ describe("fullscreen workspace presentation", () => {
     expect(turnOwner).toContain('scope="bubble"');
     expect(ownerThreadTimeline).toContain('label="Conversation item"');
     expect(subagentSheet).toContain('label="Subagent conversation"');
-    expect(subagentSheet).toContain("<SubagentConversationDetail");
+    expect(subagentSheet).toContain("<RouteSubagentDetail");
     expect(fullscreenOverlay).toContain("fullscreen-overlay-suspense-fallback");
     expect(fullscreenOverlay).toContain('label="Fullscreen overlay content"');
     expect(fullscreenOverlay).toContain("onDismiss={() => close(entry.id)}");

@@ -16,7 +16,6 @@ export function useComposerSuggestions({
   updateDraft,
   voiceController,
   composerScope,
-  setMenuVisible,
   currentControlsResource,
   onLoadControls,
   cwd,
@@ -34,7 +33,6 @@ export function useComposerSuggestions({
       editor.focus();
       editor.insertLinkedText(`$${skill.name}`, composerSkillUrl(skill.path));
       editor.insertText(" ");
-      setMenuVisible(false);
       return;
     }
     const selection = draftSelectionRef.current;
@@ -45,7 +43,6 @@ export function useComposerSuggestions({
     updateDraft(next);
     draftSelectionRef.current = { start: cursor, end: cursor };
     voiceController?.setPendingSelection(composerScope, { start: cursor, end: cursor });
-    setMenuVisible(false);
   });
 
   const handleComposerTextChange = useEvent((nextText: string) => {

@@ -4,12 +4,24 @@ export const ownerUseWindowLayout = readFileSync(
   new URL("../../src/features/workspace/useWindowLayout.ts", import.meta.url),
   "utf8",
 );
-export const ownerWorkspaceOverlays = readFileSync(
-  new URL("../../src/features/workspace/WorkspaceOverlays.tsx", import.meta.url),
+export const ownerNewServerRoute = readFileSync(
+  new URL("../../app/v1/settings/servers/new/index.tsx", import.meta.url),
   "utf8",
 );
-export const ownerWorkspaceScreen = readFileSync(
-  new URL("../../src/features/workspace/WorkspaceScreen.tsx", import.meta.url),
+export const ownerWorkspaceLayout = readFileSync(
+  new URL("../../app/v1/V1WorkspaceShell.tsx", import.meta.url),
+  "utf8",
+);
+export const ownerWorkspaceComposition = readFileSync(
+  new URL("../../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url),
+  "utf8",
+);
+export const ownerSettingsRoute = readFileSync(
+  new URL("../../app/v1/settings/index.tsx", import.meta.url),
+  "utf8",
+);
+export const ownerNewThreadRoute = readFileSync(
+  new URL("../../app/v1/new/index.tsx", import.meta.url),
   "utf8",
 );
 export const ownerWorkspaceThreadList = readFileSync(

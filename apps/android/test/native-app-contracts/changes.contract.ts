@@ -26,6 +26,6 @@ it("preserves changes integration contracts", () => {
     /<ComposerContextCount\s+label="Attachments"\s+value=\{attachmentCount\}\s+testID="composer-attachments-label"\s*\/>/,
   );
   expect(migratedChangesFeature).toMatch(
-    /onInitialLoad: \(\) =>\s*onLoadThreadResources\(changesPreferences\.scope \?\? undefined, "changes"\)/,
+    /onInitialLoad: async \(\) =>\s*loadResources\(scope, "changes"\)/,
   );
 });

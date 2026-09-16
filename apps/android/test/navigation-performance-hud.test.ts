@@ -7,11 +7,11 @@ const generationHost = readFileSync(
   new URL("../src/boot/UiGenerationDiagnosticsHost.tsx", import.meta.url),
   "utf8",
 );
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
 const performanceModule = readFileSync(new URL("../android/app/src/main/java/dev/codewide/app/performance/CodexPerformanceModule.kt", import.meta.url), "utf8");
 
 const ownerThreadNavigationCommit = readFileSync(new URL("../src/features/diagnostics/ThreadNavigationCommit.tsx", import.meta.url), "utf8");
-const ownerNavigationActions = readFileSync(new URL("../src/features/navigation/navigationActions.ts", import.meta.url), "utf8");
+const ownerNavigationActions = readFileSync(new URL("../src/services/threads/threadNavigationService.ts", import.meta.url), "utf8");
 const ownerThreadTimelineNavigationCommit = readFileSync(new URL("../src/features/conversation/timeline/ThreadTimelineNavigationCommit.tsx", import.meta.url), "utf8");
 
 describe("navigation performance HUD", () => {

@@ -43,7 +43,6 @@ export function useQueueEditActions({
   uploadsBlockSend,
   voicePhase,
   closeInlineQueueOverlay,
-  setMenuVisible,
   onEditQueued,
   onListQueue,
   conversationOwner,
@@ -72,7 +71,6 @@ export function useQueueEditActions({
       attachments: item.attachments,
     });
     setQueuedComposerEditError(null);
-    setMenuVisible(false);
     requestAnimationFrame(() => composerInputRef.current?.focus());
   });
 

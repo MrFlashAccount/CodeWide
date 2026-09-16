@@ -25,13 +25,15 @@ const ownerActiveConversationScope = readFileSync(new URL("../../src/features/co
 
 it("keeps a server-scoped new chat local until the first send", () => {
   expect(newChat).toContain("resolveNewThreadRoute({");
-  expect(newChat).toContain("openNewChat(route.serverId, defaultProjectCwd(route.serverId))");
+  expect(newChat).toContain(
+    "project.projectWorkspace.defaultProjectCwd(destination.serverId)",
+  );
   expect(ownerActiveConversationScope).toContain("title: \"New Chat\"");
   expect(ownerConversationWorkspace).toMatch(
     /createConversationScopeBindings\(\s*props\.features,\s*scope\.newChatDraft !== null/u,
   );
   expect(ownerNewChatSubmission).toMatch(
-    /await commands\.startThreadInWorkspace\(\s*draftChat\.serverId,\s*draftChat\.cwd,\s*draftChat\.id,?\s*\)/u,
+    /await commands\.startThreadInWorkspace\(\s*draftChat\.connectionId,\s*draftChat\.cwd,\s*draftChat\.id,?\s*\)/u,
   );
   expect(projectWorkspaceAdapter).toContain("startThread: (cwd) => startThread(connectionId, cwd)");
   expect(ownerNewChatSubmission).toContain("const commandId = await commands.sendText(");

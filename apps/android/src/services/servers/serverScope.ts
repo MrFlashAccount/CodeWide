@@ -1,0 +1,59 @@
+import type { StoredConnection } from "../../data/connection-profile-types";
+import { useState } from "react";
+import { useEvent } from "../../react/useEvent";
+
+/** V1 thread-list scope, which is filtering state rather than a destination. */
+export type ServerScope =
+  | { readonly kind: "all" }
+  | { readonly connectionId: string; readonly kind: "connection" };
+
+export const ALL_SERVER_SCOPE: ServerScope = { kind: "all" };
+
+export type ServerScopeBinding = {
+  readonly desktopDefaultThreadEnabled: boolean;
+  readonly scope: ServerScope;
+  readonly select: (next: ServerScope) => void;
+  readonly selectConnection: (connectionId: string) => void;
+};
+
+/** Keeps a requested V1 list scope valid as saved connections change. */
+export function normalizeServerScope(
+  requested: ServerScope,
+  connections: readonly StoredConnection[],
+): ServerScope {
+  if (connections.length <= 1 || requested.kind === "all") {
+    return ALL_SERVER_SCOPE;
+  }
+  return connections.some((connection) => connection.id === requested.connectionId)
+    ? requested
+    : ALL_SERVER_SCOPE;
+}
+
+/** Returns the lower read qualifier represented by a V1 server scope. */
+export function serverScopeConnectionId(scope: ServerScope): string | null {
+  return scope.kind === "connection" ? scope.connectionId : null;
+}
+
+/** Tests a server-qualified row against the current V1 list scope. */
+export function serverScopeIncludes(scope: ServerScope, connectionId: string): boolean {
+  return scope.kind === "all" || scope.connectionId === connectionId;
+}
+
+/** Owns the V1 All-or-one list scope without creating a route destination. */
+export function useServerScope(
+  connections: readonly StoredConnection[],
+  resetThreadList: () => void,
+): ServerScopeBinding {
+  const [requested, setRequested] = useState<ServerScope>(ALL_SERVER_SCOPE);
+  const [desktopDefaultThreadEnabled, setDesktopDefaultThreadEnabled] = useState(true);
+  const scope = normalizeServerScope(requested, connections);
+  const select = useEvent((next: ServerScope): void => {
+    resetThreadList();
+    setDesktopDefaultThreadEnabled(false);
+    setRequested(next);
+  });
+  const selectConnection = useEvent((connectionId: string): void => {
+    setRequested({ connectionId, kind: "connection" });
+  });
+  return { desktopDefaultThreadEnabled, scope, select, selectConnection };
+}

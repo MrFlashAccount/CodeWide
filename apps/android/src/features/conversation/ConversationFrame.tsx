@@ -78,10 +78,8 @@ export function createConversationFrame({
             <ConversationLayout
               searchContent={chromeView.searchContent}
               jumpContent={chromeView.jumpContent}
-              menuContent={conversationOverlayContentBinding.menuContent}
               projectPickerContent={conversationOverlayContentBinding.projectPickerContent}
               renameContent={conversationOverlayContentBinding.renameContent}
-              resourcesContent={conversationOverlayContentBinding.resourcesContent}
               compact={surfaceInputs.compact}
               setConversationPaneHeight={conversationPaneGeometryBinding.setConversationPaneHeight}
               setNarrowConversationPane={conversationPaneGeometryBinding.setNarrowConversationPane}
@@ -92,19 +90,15 @@ export function createConversationFrame({
                 composerStateBinding.composerMenuStateBinding.setComposerTrayVisible
               }
               cwd={surfaceInputs.cwd}
-              openCodeDocument={toolsBinding.changesFeatureBinding.openCodeDocument}
+              openCodeDocument={toolsBinding.openTimelineDocument}
               presentTurnChanges={toolsBinding.changesFeatureBinding.presentTurnChanges}
               timelineSurface={timelineView.timelineSurface}
               conversationBackdropVisible={timelineRead.conversationBackdropVisible}
               awayFromLatest={timelineState.historyAnchorStateBinding.awayFromLatest}
               bottomChrome={chromeView.bottomChrome}
               reviewContent={conversationOverlayContentBinding.reviewContent}
-              menuVisible={composerStateBinding.composerMenuStateBinding.menuVisible}
               projectPickerVisible={composerProjectSelectionBinding.projectPickerVisible}
               threadRenameVisible={threadRenameBinding.threadRenameVisible}
-              resourcesVisible={
-                toolsBinding.attachmentVisibilityBinding.threadResourceSheet !== null
-              }
             />
           </LargeContentViewerHost>
         </SubagentNavigationContext.Provider>

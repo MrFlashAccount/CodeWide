@@ -2,16 +2,12 @@ import { useState } from "react";
 import { useEvent } from "../../react/useEvent";
 import type { SidebarProject } from "./sidebarProjects";
 
-/** Project selection and directory-sheet state live for the mounted workspace. */
+/** Keeps only the sidebar's project filter; route history owns project destinations. */
 export function useProjectSelection(
   setMobileThreadQuery: (query: string) => void,
   resetProjectListMode: () => void,
 ) {
   const [sidebarProject, setSidebarProject] = useState<SidebarProject | null>(null);
-
-  const [projectsSheetVisible, setProjectsSheetVisible] = useState(false);
-
-  const [projectDirectoryServerId, setProjectDirectoryServerId] = useState<string | null>(null);
 
   const openSidebarProject = useEvent((project: SidebarProject) => {
     setSidebarProject(project);
@@ -25,10 +21,6 @@ export function useProjectSelection(
   });
   return {
     sidebarProject,
-    projectsSheetVisible,
-    setProjectsSheetVisible,
-    projectDirectoryServerId,
-    setProjectDirectoryServerId,
     openSidebarProject,
     closeSidebarProject,
   };

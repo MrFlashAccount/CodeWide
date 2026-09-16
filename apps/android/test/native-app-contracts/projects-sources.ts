@@ -5,7 +5,7 @@ export const projectPicker = readFileSync(
   "utf8",
 );
 export const newChat = readFileSync(
-  new URL("../../src/features/projects/newChat.ts", import.meta.url),
+  new URL("../../app/v1/V1WorkspaceRouteComposition.tsx", import.meta.url),
   "utf8",
 );
 export const newThreadServerSheet = readFileSync(

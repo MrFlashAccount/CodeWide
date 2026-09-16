@@ -95,7 +95,7 @@ it("preserves platform integration contracts — 2", () => {
   expect(screen).not.toContain("url.pathname = `/v1/content/${reference.id}`");
   expect(nativeCodeBlock).toContain("fillAvailableWidth && availableWidth !== null");
   expect(privateImageUri).not.toContain("asyncResourceFunctionKey");
-  expect(imagePreviewHost).toContain("const [controller] = useState<PreviewController>");
+  expect(imagePreviewHost).toContain("const [controller] = useState<ImagePreviewController>");
   expect(screen).not.toContain("turnItemsInFlightRef");
   expect(screen).not.toContain("lifecycleRepairAttemptRef");
   expect(screen).not.toContain("activeThreadHydrationScope !== hydratedThreadScope");

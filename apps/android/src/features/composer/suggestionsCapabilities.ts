@@ -1,4 +1,3 @@
-import type { Dispatch, SetStateAction } from "react";
 import type { TurnControlsValue } from "../../data/turn-controls-types";
 import type { VoiceInputController } from "../../data/voice-input-controller";
 import type { useComposerDraftCommands, useComposerDraftState } from "./draft";
@@ -16,6 +15,5 @@ export type ComposerSuggestionsCapabilities = Pick<
     voiceController: VoiceInputController | null;
     composerScope: string;
     cwd: string;
-    setMenuVisible: Dispatch<SetStateAction<boolean>>;
     onLoadControls: ((cwd: string) => Promise<TurnControlsValue>) | undefined;
   };

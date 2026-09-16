@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 import { compactSource } from "./source-contract";
 
 const sourceRoot = fileURLToPath(new URL("../src/", import.meta.url));
-const screen = compactSource(readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8"));
+const screen = compactSource(
+  readFileSync(new URL("../app/v1/V1WorkspaceShell.tsx", import.meta.url), "utf8"),
+);
 const largePasteModule = readFileSync(
   new URL("../android/app/src/main/java/dev/codewide/app/remote/LargePasteModule.kt", import.meta.url),
   "utf8",
@@ -37,10 +39,15 @@ const layout = compactSource(readFileSync(new URL("../src/features/conversation/
 
 const ownerWorkspaceConversationProviders = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceConversationProviders.tsx", import.meta.url), "utf8"));
 
-const workspaceShell = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceScreen.tsx", import.meta.url), "utf8"));
+const workspaceShell = screen;
 const listBinding = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceThreadList.tsx", import.meta.url), "utf8"));
 
-const workspaceView = compactSource(readFileSync(new URL("../src/features/workspace/WorkspaceScreenContent.tsx", import.meta.url), "utf8"));
+const threadRoute = compactSource(
+  readFileSync(
+    new URL("../app/v1/threads/[connectionId]/[threadId]/index.tsx", import.meta.url),
+    "utf8",
+  ),
+);
 
 describe("application text input contract", () => {
   it("routes every application field through AppTextInput", () => {
@@ -55,9 +62,10 @@ describe("application text input contract", () => {
     expect(ownerWorkspaceConversationProviders).toContain("const voiceInputRuntime: AppVoiceInputRuntime");
     const providers = ownerWorkspaceConversationProviders;
     expect(providers).toContain("<AppVoiceInputProvider runtime={voiceInputRuntime}>");
-    const shell = workspaceView;
-    expect(shell.indexOf("<WorkspaceConversationProviders")).toBeLessThan(shell.indexOf("<ForwardedLoopbackBrowser"));
-    expect(shell.lastIndexOf("</WorkspaceConversationProviders>")).toBeGreaterThan(shell.indexOf("<WorkspaceVoiceAura"));
+    expect(threadRoute.indexOf("<WorkspaceConversationProviders")).toBeLessThan(
+      threadRoute.indexOf("<ActiveWorkspaceConversation"),
+    );
+    expect(screen.indexOf("<WorkspaceVoiceAura")).toBeLessThan(screen.indexOf("<Slot />"));
     expect(listBinding.match(/searchContent: sidebarSearch/gu)).toHaveLength(2);
   });
 

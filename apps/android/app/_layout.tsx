@@ -134,6 +134,7 @@ function RootApplication() {
 
   const navigation = (
     <Stack screenOptions={ROOT_SCREEN_OPTIONS}>
+      <Stack.Screen name="v1" options={V2_ROUTE_SCREEN_OPTIONS} />
       <Stack.Screen name="(workspace)" options={V2_ROUTE_SCREEN_OPTIONS} />
       <Stack.Screen name="(modal)" options={V2_MODAL_SCREEN_OPTIONS} />
     </Stack>

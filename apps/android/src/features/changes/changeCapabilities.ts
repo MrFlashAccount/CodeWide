@@ -8,7 +8,6 @@ import type {
 import type { CodeReviewComment } from "../../rendering/code-review";
 import type { TurnChangedFile } from "../../rendering/turn-changes";
 import type { TurnChangesTarget } from "../../rendering/TurnChangesContext";
-import type { AppFullscreenOverlayController } from "../../ui/AppFullscreenOverlay";
 import type { AppVoiceInputRuntime } from "../../ui/VoiceInputRuntime";
 import type { ChangesPreferences, useChangeResourcePresentation } from "./changePresentation";
 
@@ -18,8 +17,6 @@ export type ChangePresentationCapabilities = ReturnType<typeof useChangeResource
   remoteThread: Thread | null | undefined;
   changesPreferences: ChangesPreferences;
   setChangesPreferences(next: ChangesPreferences): void;
-  dismissComposerKeyboardForOverlay(): void;
-  fullscreenOverlay: Pick<AppFullscreenOverlayController, "present">;
   appVoiceInputRuntime: AppVoiceInputRuntime;
   getStableTransferAccess: GetTransferAccess;
   attachCodeReview(comments: readonly CodeReviewComment[]): Promise<boolean>;

@@ -3,8 +3,8 @@ import { useSelector } from "@legendapp/state/react";
 import type { StoredConnection } from "../../data/connection-profile-types";
 import type { RemoteProject } from "../../data/remote-projects";
 import type { ThreadSummaryDatabase } from "../../data/thread-summary-database";
+import { serverScopeIncludes, type ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListServer } from "../connections/connectionPresentation";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
 import { orderSidebarProjects } from "./sidebarProjectOrder";
 import { sidebarProjects, type SidebarProject } from "./sidebarProjects";
 import { useRemoteProjectCatalog } from "./useRemoteProjectCatalog";
@@ -27,16 +27,16 @@ export type ProjectWorkspaceCapability = {
 export function useProjectWorkspace(
   remote: ProjectWorkspaceCapability,
   servers: ThreadListServer[],
-  activeServerId: string,
+  serverScope: ServerScope,
   newThreadVisible: boolean,
   searchVisible: boolean,
 ) {
   const projectOrder = useSidebarProjectOrder();
 
   const projectCatalogConnections =
-    newThreadVisible || searchVisible || activeServerId === ALL_SERVERS_ID
+    newThreadVisible || searchVisible || serverScope.kind === "all"
       ? remote.connections
-      : remote.connections.filter((connection) => connection.id === activeServerId);
+      : remote.connections.filter((connection) => serverScopeIncludes(serverScope, connection.id));
 
   const projectCatalog = useRemoteProjectCatalog(
     remote.native,
@@ -52,9 +52,7 @@ export function useProjectWorkspace(
     () => remote.threadSummaryDatabase?.projectUnread.projects$.get() ?? [],
   );
 
-  const sidebarServers = servers.filter(
-    (server) => activeServerId === ALL_SERVERS_ID || server.id === activeServerId,
-  );
+  const sidebarServers = servers.filter((server) => serverScopeIncludes(serverScope, server.id));
 
   const availableSidebarProjects = orderSidebarProjects(
     sidebarProjects(projectsByConnection, sidebarServers, unreadProjectKeys),

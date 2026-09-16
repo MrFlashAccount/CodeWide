@@ -75,7 +75,7 @@ export function renderConversationWorkspaceContent(props: RenderConversationWork
         workspaceMode: props.newChatDraft?.workspaceMode ?? "current",
         onChangeWorkspaceMode: (workspaceMode) => {
           if (props.newChatDraft !== null)
-            props.threadNavigation.changeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
+            props.onChangeDraftWorkspaceMode(props.newChatDraft.id, workspaceMode);
         },
         onAddProject: props.addActiveProject,
         onReadDirectory: props.readActiveDirectory,

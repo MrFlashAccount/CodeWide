@@ -12,7 +12,7 @@ const devToolsBoundary = readFileSync(
   new URL("../src/ui/DevToolsErrorBoundary.tsx", import.meta.url),
   "utf8",
 );
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
 const portForwarding = readFileSync(
   new URL("../src/features/ports/PortForwardingManager.tsx", import.meta.url),
   "utf8",

@@ -1,5 +1,5 @@
 import type { StoredThreadSummary } from "../../data/thread-summary-types";
-import { ALL_SERVERS_ID } from "../navigation/serverSelection";
+import { serverScopeIncludes, type ServerScope } from "../../services/servers/serverScope";
 import type { ThreadListItem } from "./threadListTypes";
 
 export class ThreadListItemProjection {
@@ -7,7 +7,9 @@ export class ThreadListItemProjection {
   #value: ThreadListItem[] = [];
 
   project(source: readonly StoredThreadSummary[]): ThreadListItem[] {
-    if (source === this.#source) return this.#value;
+    if (source === this.#source) {
+      return this.#value;
+    }
     this.#source = source;
     this.#value = source.map(storedThreadToListItem);
     return this.#value;
@@ -16,36 +18,41 @@ export class ThreadListItemProjection {
 
 export class ThreadListScopeProjection {
   #source: readonly ThreadListItem[] | null = null;
-  #serverId = "";
+  #scope: ServerScope | null = null;
   #value: {
-    scoped: readonly ThreadListItem[];
     active: ThreadListItem[];
     archived: ThreadListItem[];
+    scoped: readonly ThreadListItem[];
   } = {
-    scoped: [],
     active: [],
     archived: [],
+    scoped: [],
   };
 
   project(
     source: readonly ThreadListItem[],
-    serverId: string,
+    scope: ServerScope,
   ): {
-    scoped: readonly ThreadListItem[];
     active: ThreadListItem[];
     archived: ThreadListItem[];
+    scoped: readonly ThreadListItem[];
   } {
-    if (source === this.#source && serverId === this.#serverId) return this.#value;
+    const previousScope = this.#scope;
+    if (
+      source === this.#source &&
+      previousScope?.kind === scope.kind &&
+      (scope.kind === "all" ||
+        (previousScope.kind === "connection" && previousScope.connectionId === scope.connectionId))
+    ) {
+      return this.#value;
+    }
     this.#source = source;
-    this.#serverId = serverId;
-    const scoped =
-      serverId === ALL_SERVERS_ID
-        ? source
-        : source.filter((thread) => thread.serverId === serverId);
+    this.#scope = scope;
+    const scoped = source.filter((thread) => serverScopeIncludes(scope, thread.serverId));
     this.#value = {
-      scoped,
       active: scoped.filter((thread) => !thread.archived),
       archived: scoped.filter((thread) => thread.archived),
+      scoped,
     };
     return this.#value;
   }
@@ -60,7 +67,9 @@ export function deduplicateThreadSummaries(
   rows: readonly StoredThreadSummary[],
 ): StoredThreadSummary[] {
   const byKey = new Map<string, StoredThreadSummary>();
-  for (const row of rows) byKey.set(`${row.connectionId}\u0000${row.remoteThreadId}`, row);
+  for (const row of rows) {
+    byKey.set(`${row.connectionId}\u0000${row.remoteThreadId}`, row);
+  }
   return [...byKey.values()];
 }
 
@@ -74,13 +83,13 @@ export function storedThreadToListItem(thread: StoredThreadSummary): ThreadListI
           ? "failed"
           : null;
   return {
-    id: thread.remoteThreadId,
-    serverId: thread.connectionId,
-    title: thread.name ?? firstLine(thread.preview) ?? "New Chat",
-    preview: thread.preview,
-    timestamp: thread.recencyAt ?? thread.updatedAt,
-    pinned: thread.pinned,
     archived: thread.archived,
+    id: thread.remoteThreadId,
+    pinned: thread.pinned,
+    preview: thread.preview,
+    serverId: thread.connectionId,
+    timestamp: thread.recencyAt ?? thread.updatedAt,
+    title: thread.name ?? firstLine(thread.preview) ?? "New Chat",
     unread: thread.unread,
     ...(state === null ? {} : { state }),
   };

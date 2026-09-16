@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { effectiveComposerSendPreference, resolveComposerSendMode } from "../src/features/composer/deliveryMode";
 
-const screen = readFileSync(new URL("../src/CodeWideScreen.tsx", import.meta.url), "utf8");
+const screen = readFileSync(new URL("../app/v1/_layout.tsx", import.meta.url), "utf8");
 
 const ownerSubmission = readFileSync(new URL("../src/features/composer/submission.ts", import.meta.url), "utf8");
 const ownerVoice = readFileSync(new URL("../src/features/composer/voice.ts", import.meta.url), "utf8");

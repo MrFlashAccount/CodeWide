@@ -18,32 +18,30 @@ import type { ActiveWorkspaceConversationProps } from "./ConversationWorkspace.t
 
 export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationProps) {
   const scope = useActiveConversationScope({
-    destination: props.destination,
-    threadNavigation: props.threadNavigation,
-    defaultDesktopThreadId: props.defaultDesktopThreadId,
-    setActiveThreadId: props.onSelectThread,
-    scopedThreads: props.scopedThreads,
-    activeServerId: props.activeServerId,
     connections: props.connections,
+    destination: props.destination,
     loadedThreadSummaries: props.loadedThreadSummaries,
+    onClose: props.onClose,
+    onExitSearchHistory: props.onExitSearchHistory,
+    scopedThreads: props.scopedThreads,
   });
   const projectSelection = useActiveProjectSelection(
     {
-      native: props.native,
-      connections: props.connections,
-      threadDetails: props.runtime.threadDetails,
-      listProjects: props.features.projects.listProjects,
       addProject: props.features.projects.addProject,
-      readDirectory: props.features.projects.readDirectory,
-      inspectWorkspace: props.features.projects.inspectWorkspace,
-      startThread: props.features.projects.startThread,
+      connections: props.connections,
       deleteThread: props.features.turnActions.deleteThread,
+      inspectWorkspace: props.features.projects.inspectWorkspace,
+      listProjects: props.features.projects.listProjects,
+      native: props.native,
+      readDirectory: props.features.projects.readDirectory,
+      startThread: props.features.projects.startThread,
+      threadDetails: props.runtime.threadDetails,
     },
     scope.activeConnectionId,
     scope.activeRemoteThreadId,
     scope.activeStoredThread,
     scope.newChatDraft,
-    props.threadNavigation,
+    props.onChangeDraftProject,
     props.onSelectThread,
   );
   const activeControlsResourceId =
@@ -63,9 +61,9 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
   );
   const { forkCurrentThread, markActiveThreadRead } = useActiveThreadActions(
     {
-      native: props.native,
       forkThread: props.features.turnActions.forkThread,
       markThreadRead: props.features.turnActions.markThreadRead,
+      native: props.native,
     },
     scope.activeThread !== null,
     scope.activeConnectionId,
@@ -76,11 +74,11 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
 
   const threadMutationActions = useThreadMutationActions(
     {
-      renameThread: props.features.turnActions.renameThread,
       archiveThread: props.features.turnActions.archiveThread,
-      unarchiveThread: props.features.turnActions.unarchiveThread,
       deleteThread: props.features.turnActions.deleteThread,
+      renameThread: props.features.turnActions.renameThread,
       setThreadPinned: props.features.turnActions.setThreadPinned,
+      unarchiveThread: props.features.turnActions.unarchiveThread,
     },
     scope.activeConnectionId,
     scope.activeRemoteThreadId,
@@ -91,9 +89,9 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
   );
   const queueCommands = useQueueCommands(
     {
-      listQueuedPrompts: props.features.queue.listQueuedPrompts,
-      editQueuedPrompt: props.features.queue.editQueuedPrompt,
       cancelQueuedPrompt: props.features.queue.cancelQueuedPrompt,
+      editQueuedPrompt: props.features.queue.editQueuedPrompt,
+      listQueuedPrompts: props.features.queue.listQueuedPrompts,
       moveQueuedPrompt: props.features.queue.moveQueuedPrompt,
       steerQueuedPrompt: props.features.queue.steerQueuedPrompt,
     },
@@ -102,44 +100,44 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
   );
   const goalCommands = useGoalCommands(
     {
+      clearThreadGoal: props.features.goal.clearThreadGoal,
       getThreadGoal: props.features.goal.getThreadGoal,
       setThreadGoal: props.features.goal.setThreadGoal,
-      clearThreadGoal: props.features.goal.clearThreadGoal,
     },
     scope.activeConnectionId,
     scope.activeRemoteThreadId,
   );
   const activeConversationNavigationKey =
     scope.newChatDraft !== null
-      ? `new-chat:${scope.newChatDraft.serverId}:${scope.newChatDraft.id}`
+      ? `new-chat:${scope.newChatDraft.connectionId}:${scope.newChatDraft.id}`
       : (scope.requestedThreadId ?? scope.activeThreadKey ?? "none");
   const activeConversationRoute: ConversationDestinationProps["route"] | null =
     scope.newChatDraft !== null
       ? {
+          connectionId: scope.newChatDraft.connectionId,
+          draftId: scope.newChatDraft.id,
           kind: "new",
           resources: {
-            threadDetails: props.runtime.threadDetails,
-            threadUiStateDatabase: props.runtime.threadUiState,
-            threadSummaryDatabase: props.runtime.threadSummaries,
-            threadHistoryModel: props.runtime.resources?.threadHistories ?? null,
-            putThreadHistory: props.runtime.resources?.putThreadHistory,
             loadTurnItems: props.features.conversation.loadTurnItems,
+            putThreadHistory: props.runtime.resources?.putThreadHistory,
+            threadDetails: props.runtime.threadDetails,
+            threadHistoryModel: props.runtime.resources?.threadHistories ?? null,
+            threadSummaryDatabase: props.runtime.threadSummaries,
+            threadUiStateDatabase: props.runtime.threadUiState,
           },
-          connectionId: scope.newChatDraft.serverId,
-          draftId: scope.newChatDraft.id,
         }
       : scope.activeRemoteThreadId !== null && scope.activeConnectionId !== ""
         ? {
+            connectionId: scope.activeConnectionId,
             kind: "thread",
             resources: {
-              threadDetails: props.runtime.threadDetails,
-              threadUiStateDatabase: props.runtime.threadUiState,
-              threadSummaryDatabase: props.runtime.threadSummaries,
-              threadHistoryModel: props.runtime.resources?.threadHistories ?? null,
-              putThreadHistory: props.runtime.resources?.putThreadHistory,
               loadTurnItems: props.features.conversation.loadTurnItems,
+              putThreadHistory: props.runtime.resources?.putThreadHistory,
+              threadDetails: props.runtime.threadDetails,
+              threadHistoryModel: props.runtime.resources?.threadHistories ?? null,
+              threadSummaryDatabase: props.runtime.threadSummaries,
+              threadUiStateDatabase: props.runtime.threadUiState,
             },
-            connectionId: scope.activeConnectionId,
             threadId: scope.activeRemoteThreadId,
             threadOpenGeneration: scope.threadOpenGeneration,
           }
@@ -148,23 +146,24 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     props.features,
     scope.newChatDraft !== null
       ? {
-          kind: "draft",
           draft: scope.newChatDraft,
-          onSend: createNewChatSubmission(
-            scope.newChatDraft,
-            {
+          kind: "draft",
+          onSend: createNewChatSubmission({
+            closeDraft: props.onDraftAdmitted,
+            commands: {
+              sendText: props.features.composer.sendText,
               startThread: props.features.projects.startThread,
               startThreadInWorkspace: props.features.projects.startThreadInWorkspace,
-              sendText: props.features.composer.sendText,
             },
-            props.onSelectThread,
-          ),
+            draftChat: scope.newChatDraft,
+            setActiveThreadId: props.onSelectThread,
+          }),
         }
       : scope.activeRemoteThreadId === null
         ? { kind: "empty" }
         : {
-            kind: "thread",
             connectionId: scope.activeConnectionId,
+            kind: "thread",
             threadId: scope.activeRemoteThreadId,
           },
     queueCommands,
@@ -177,40 +176,38 @@ export function ActiveWorkspaceConversation(props: ActiveWorkspaceConversationPr
     props.onOpenBrowser,
   );
 
-  if (!props.desktop && props.destination.kind === "empty") return null;
   return renderConversationDestinationSurface({
-    desktop: props.desktop,
-    destination: props.destination,
-    defaultDesktopThreadId: props.defaultDesktopThreadId,
-    scope,
-    activeConversationNavigationKey,
-    servers: props.servers,
-    activeConversationRoute,
-    features: props.features,
-    runtime: props.runtime,
-    conversationActions,
-    activePendingRequests,
-    markActiveThreadRead,
-    voiceController: props.voiceController,
     activeControlsResourceId,
-    threadNavigation: props.threadNavigation,
-    onManageProjects: props.onManageProjects,
-    threadMutationActions,
-    forkCurrentThread,
-    loadTurnChanges,
-    activeThreadResourceId,
-    fileTransferController: props.fileTransferController,
-    activeTunnelResourceId,
-    native: props.native,
-    onOpenBrowser: props.onOpenBrowser,
-    openActiveLoopbackLink,
-    onFixUnsupportedBlock: props.onFixUnsupportedBlock,
-    activeProjects: projectSelection.activeProjects,
+    activeConversationNavigationKey,
+    activeConversationRoute,
     activeDiscoveredProjects: projectSelection.activeDiscoveredProjects,
+    activePendingRequests,
     activeProjectError: projectSelection.activeProjectError,
-    changeEmptyThreadProject: projectSelection.changeEmptyThreadProject,
+    activeProjects: projectSelection.activeProjects,
+    activeThreadResourceId,
+    activeTunnelResourceId,
     activeWorkspaceSupport: projectSelection.activeWorkspaceSupport,
     addActiveProject: projectSelection.addActiveProject,
+    changeEmptyThreadProject: projectSelection.changeEmptyThreadProject,
+    conversationActions,
+    desktop: props.desktop,
+    destination: props.destination,
+    features: props.features,
+    fileTransferController: props.fileTransferController,
+    forkCurrentThread,
+    loadTurnChanges,
+    markActiveThreadRead,
+    native: props.native,
+    onChangeDraftWorkspaceMode: props.onChangeDraftWorkspaceMode,
+    onFixUnsupportedBlock: props.onFixUnsupportedBlock,
+    onManageProjects: props.onManageProjects,
+    onOpenBrowser: props.onOpenBrowser,
+    openActiveLoopbackLink,
     readActiveDirectory: projectSelection.readActiveDirectory,
+    runtime: props.runtime,
+    scope,
+    servers: props.servers,
+    threadMutationActions,
+    voiceController: props.voiceController,
   });
 }

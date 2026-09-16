@@ -1,5 +1,6 @@
 /** V1 AttachmentsFeature owner, extracted without changing interaction or resource lifetime. */
 import { Ionicons } from "@expo/vector-icons";
+import type { Dispatch, SetStateAction } from "react";
 import { ActivityIndicator, Pressable, View } from "react-native";
 import { ContentReviewComments, ContentReviewComposer } from "../../rendering/ContentReviewHost";
 import {
@@ -16,24 +17,38 @@ import { AppSheetScrollView } from "../../ui/AppSheet";
 import { AppText as Text } from "../../ui/Typography";
 import { styles } from "./AttachmentsFeature.styles";
 
-import type { useAttachmentPreview } from "./attachmentPreview";
+import type {
+  DocumentPreviewRequest,
+  DocumentPreviewResult,
+} from "../../rendering/DocumentPreviewHost";
+
+export type AttachmentDocumentPreviewModel = {
+  readonly document: { readonly request: DocumentPreviewRequest; readonly revision: number } | null;
+  readonly documentResult: DocumentPreviewResult;
+  readonly documentViewportWidth: number;
+  readonly downloadDocument: (request: DocumentPreviewRequest) => Promise<void>;
+  readonly navigateBack: () => void;
+  readonly openNestedDocument: (href: string) => boolean;
+  readonly retryPreview: () => void;
+  readonly setDocumentViewportWidth: Dispatch<SetStateAction<number>>;
+};
 
 export function AttachmentDocumentPreview({
-  preview,
   codePreviewMaxHeight,
+  preview,
 }: {
-  preview: ReturnType<typeof useAttachmentPreview>;
   codePreviewMaxHeight: number;
+  preview: AttachmentDocumentPreviewModel;
 }) {
   const {
     document,
     documentResult,
     documentViewportWidth,
-    setDocumentViewportWidth,
     downloadDocument,
     navigateBack,
-    retryPreview,
     openNestedDocument,
+    retryPreview,
+    setDocumentViewportWidth,
   } = preview;
   return (
     <>
@@ -41,31 +56,31 @@ export function AttachmentDocumentPreview({
         <View style={styles.threadResourceRoute}>
           <View style={styles.menuTitleRow}>
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel="Back to attachments"
+              accessibilityRole="button"
               onPress={navigateBack}
               style={styles.headerIcon}
             >
-              <Ionicons name="arrow-back" size={iconSize.action} color={colors.text} />
+              <Ionicons color={colors.text} name="arrow-back" size={iconSize.action} />
             </Pressable>
             <View style={styles.sheetHeaderIconSlot}>
               <Ionicons
+                color={colors.textMuted}
                 name={document.request.kind === "html" ? "globe-outline" : "document-text-outline"}
                 size={iconSize.action}
-                color={colors.textMuted}
               />
             </View>
-            <Text numberOfLines={1} ellipsizeMode="middle" style={styles.sheetTitle}>
+            <Text ellipsizeMode="middle" numberOfLines={1} style={styles.sheetTitle}>
               {document.request.name}
             </Text>
             <View style={styles.flex} />
             <Pressable
-              accessibilityRole="button"
               accessibilityLabel={`Download ${document.request.name}`}
+              accessibilityRole="button"
               onPress={() => void downloadDocument(document.request)}
               style={styles.headerIcon}
             >
-              <Ionicons name="download-outline" size={iconSize.action} color={colors.text} />
+              <Ionicons color={colors.text} name="download-outline" size={iconSize.action} />
             </Pressable>
           </View>
           {documentResult.phase === "loading" && (
@@ -84,20 +99,19 @@ export function AttachmentDocumentPreview({
                 onPress={retryPreview}
                 style={styles.primaryAction}
               >
-                <Ionicons name="refresh" size={iconSize.action} color={colors.onPrimary} />
+                <Ionicons color={colors.onPrimary} name="refresh" size={iconSize.action} />
                 <Text style={styles.primaryActionText}>Retry</Text>
               </Pressable>
             </View>
           )}
           {documentResult.phase === "ready" && document.request.kind === "html" && (
             <HtmlDocumentPreview
-              testID="thread-resource-html-preview"
               source={documentResult.source}
+              testID="thread-resource-html-preview"
             />
           )}
           {documentResult.phase === "ready" && document.request.kind !== "html" && (
             <AppSheetScrollView
-              style={styles.menuScroll}
               contentContainerStyle={styles.threadResourceDocumentContent}
               keyboardShouldPersistTaps="handled"
               onLayout={({ nativeEvent }) => {
@@ -109,13 +123,14 @@ export function AttachmentDocumentPreview({
                   current === nextWidth ? current : nextWidth,
                 );
               }}
+              style={styles.menuScroll}
             >
               {document.request.kind === "text" ? (
                 <NativeCodeBlock
-                  value={documentResult.source}
+                  fillAvailableWidth
                   language={nativeCodeLanguageForPath(document.request.path)}
                   maxHeight={codePreviewMaxHeight}
-                  fillAvailableWidth
+                  value={documentResult.source}
                 />
               ) : (
                 <RichContentWidthProvider
@@ -125,13 +140,13 @@ export function AttachmentDocumentPreview({
                     {documentResult.segments.map((segment, index) => (
                       <RichMarkdown
                         key={index}
-                        source={segment}
+                        reviewPathPrefix={`segment-${index}`}
                         reviewTarget={{
                           id: `markdown-document:${document.request.path}`,
                           label: document.request.name,
                           reference: document.request.path,
                         }}
-                        reviewPathPrefix={`segment-${index}`}
+                        source={segment}
                       />
                     ))}
                   </MarkdownLocalLinkProvider>
@@ -150,8 +165,8 @@ export function AttachmentDocumentPreview({
           )}
           {documentResult.phase === "ready" && document.request.kind === "markdown" && (
             <ContentReviewComposer
-              targetId={`markdown-document:${document.request.path}`}
               anchorKind="text"
+              targetId={`markdown-document:${document.request.path}`}
             />
           )}
         </View>
